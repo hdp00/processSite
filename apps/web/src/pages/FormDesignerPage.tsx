@@ -1,0 +1,1134 @@
+import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
+  AppstoreOutlined,
+  BarsOutlined,
+  CheckCircleOutlined,
+  CheckSquareOutlined,
+  CloudSyncOutlined,
+  CheckCircleFilled,
+  DeleteOutlined,
+  DragOutlined,
+  EyeOutlined,
+  FilePdfOutlined,
+  FileTextOutlined,
+  InboxOutlined,
+  PlusOutlined,
+  SaveOutlined,
+  SettingOutlined,
+  TableOutlined,
+  TagsOutlined,
+  UploadOutlined,
+} from "@ant-design/icons";
+import {
+  Alert,
+  Button,
+  Card,
+  Cascader,
+  Checkbox,
+  Divider,
+  Empty,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Radio,
+  Segmented,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+  Upload,
+  message,
+} from "antd";
+import type { TableColumnsType } from "antd";
+import { useNavigate } from "react-router-dom";
+import "./form-designer.css";
+
+const { Text, Title, Paragraph } = Typography;
+
+type FieldType = "text" | "select" | "cascader" | "radio" | "checkbox" | "attachment" | "table";
+type TableColumnType = "text" | "radio" | "checkbox" | "select";
+type ColumnAlign = "left" | "center" | "right";
+
+interface TableColumnConfig {
+  id: string;
+  label: string;
+  type: TableColumnType;
+  required: boolean;
+  defaultValue: string | string[];
+  width: number;
+  align: ColumnAlign;
+  reviewEditable: boolean;
+  options?: string[];
+}
+
+interface AttachmentConfig {
+  maxSizeMb: number;
+  maxCount: number;
+  inlinePdf: boolean;
+}
+
+interface DesignerField {
+  id: string;
+  type: FieldType;
+  label: string;
+  description: string;
+  placeholder: string;
+  required: boolean;
+  defaultValue: string | string[];
+  listVisible: boolean;
+  queryable: boolean;
+  reviewEditable: boolean;
+  options?: string[];
+  attachment?: AttachmentConfig;
+  columns?: TableColumnConfig[];
+}
+
+interface SavedDraft {
+  formName: string;
+  fields: DesignerField[];
+  savedAt?: string;
+}
+
+const DRAFT_KEY = "flowpilot-form-designer-draft-v1";
+
+const typeLabel: Record<FieldType, string> = {
+  text: "文本框",
+  select: "下拉框",
+  cascader: "多级下拉",
+  radio: "单选框",
+  checkbox: "复选框",
+  attachment: "附件上传",
+  table: "明细表格",
+};
+
+const typeIcon: Record<FieldType, ReactNode> = {
+  text: <FileTextOutlined />,
+  select: <BarsOutlined />,
+  cascader: <AppstoreOutlined />,
+  radio: <CheckCircleOutlined />,
+  checkbox: <CheckSquareOutlined />,
+  attachment: <UploadOutlined />,
+  table: <TableOutlined />,
+};
+
+const tableTypeLabel: Record<TableColumnType, string> = {
+  text: "文本",
+  radio: "单选",
+  checkbox: "复选",
+  select: "下拉",
+};
+
+const makeId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+const INITIAL_FIELDS: DesignerField[] = [
+  {
+    id: "field-document-name",
+    type: "text",
+    label: "文档名称",
+    description: "请填写与正式文件一致的完整名称",
+    placeholder: "例如：MTR-320 步进电机装配作业指导书",
+    required: true,
+    defaultValue: "MTR-320 步进电机装配作业指导书",
+    listVisible: true,
+    queryable: true,
+    reviewEditable: false,
+  },
+  {
+    id: "field-document-code",
+    type: "text",
+    label: "文档编号",
+    description: "正式流程编号由后台生成，此处为受控文件编号",
+    placeholder: "例如：WI-MTR-320",
+    required: true,
+    defaultValue: "WI-MTR-320",
+    listVisible: true,
+    queryable: true,
+    reviewEditable: false,
+  },
+  {
+    id: "field-category",
+    type: "cascader",
+    label: "文档分类",
+    description: "按公司文件体系选择所属层级",
+    placeholder: "请选择文档分类",
+    required: true,
+    defaultValue: ["质量体系", "作业指导书"],
+    listVisible: true,
+    queryable: true,
+    reviewEditable: false,
+    options: ["质量体系/作业指导书", "质量体系/检验规范", "研发体系/设计规范", "生产体系/工艺文件"],
+  },
+  {
+    id: "field-document-level",
+    type: "select",
+    label: "文件级别",
+    description: "质量审核节点可根据内容调整",
+    placeholder: "请选择文件级别",
+    required: true,
+    defaultValue: "受控文件",
+    listVisible: true,
+    queryable: true,
+    reviewEditable: true,
+    options: ["受控文件", "内部文件", "公开文件"],
+  },
+  {
+    id: "field-department",
+    type: "checkbox",
+    label: "适用部门",
+    description: "可选择多个适用部门",
+    placeholder: "请选择适用部门",
+    required: true,
+    defaultValue: ["研发中心", "质量中心", "生产中心"],
+    listVisible: false,
+    queryable: true,
+    reviewEditable: true,
+    options: ["研发中心", "质量中心", "生产中心", "供应链中心"],
+  },
+  {
+    id: "field-revision-type",
+    type: "radio",
+    label: "修订类型",
+    description: "用于评估本次文件变更范围",
+    placeholder: "请选择修订类型",
+    required: true,
+    defaultValue: "局部修订",
+    listVisible: true,
+    queryable: true,
+    reviewEditable: false,
+    options: ["首次发布", "局部修订", "全面修订"],
+  },
+  {
+    id: "field-revision-note",
+    type: "text",
+    label: "修订说明",
+    description: "概述本次修订内容，详细差异以 PDF 为准",
+    placeholder: "请输入主要变更点",
+    required: true,
+    defaultValue: "新增扭矩复检步骤，并统一关键尺寸标注方式。",
+    listVisible: false,
+    queryable: false,
+    reviewEditable: true,
+  },
+  {
+    id: "field-review-checklist",
+    type: "table",
+    label: "审核检查清单",
+    description: "发起人可增删、复制行；审核人仅能修改被授权的现有单元格",
+    placeholder: "",
+    required: true,
+    defaultValue: "",
+    listVisible: false,
+    queryable: false,
+    reviewEditable: true,
+    columns: [
+      {
+        id: "col-item",
+        label: "检查项目",
+        type: "text",
+        required: true,
+        defaultValue: "关键尺寸与技术参数",
+        width: 220,
+        align: "left",
+        reviewEditable: false,
+      },
+      {
+        id: "col-result",
+        label: "审核结论",
+        type: "radio",
+        required: true,
+        defaultValue: "符合",
+        width: 170,
+        align: "center",
+        reviewEditable: true,
+        options: ["符合", "不符合"],
+      },
+      {
+        id: "col-risk",
+        label: "风险等级",
+        type: "select",
+        required: true,
+        defaultValue: "低",
+        width: 140,
+        align: "center",
+        reviewEditable: true,
+        options: ["低", "中", "高"],
+      },
+      {
+        id: "col-corrective",
+        label: "纠正措施",
+        type: "checkbox",
+        required: false,
+        defaultValue: [],
+        width: 170,
+        align: "center",
+        reviewEditable: true,
+        options: ["需要跟进"],
+      },
+    ],
+  },
+  {
+    id: "field-pdf",
+    type: "attachment",
+    label: "正式审核文件",
+    description: "仅上传待审核的正式版本，PDF 将在流程详情页内嵌展示",
+    placeholder: "拖拽或点击上传文件",
+    required: true,
+    defaultValue: "WI-MTR-320_装配作业指导书_R07.pdf",
+    listVisible: false,
+    queryable: false,
+    reviewEditable: false,
+    attachment: { maxSizeMb: 100, maxCount: 20, inlinePdf: true },
+  },
+];
+
+const cloneInitialFields = () => JSON.parse(JSON.stringify(INITIAL_FIELDS)) as DesignerField[];
+
+const loadDraft = (): SavedDraft => {
+  if (typeof window === "undefined") return { formName: "PDF 文件审核申请单", fields: cloneInitialFields() };
+  try {
+    const saved = window.localStorage.getItem(DRAFT_KEY);
+    if (!saved) return { formName: "PDF 文件审核申请单", fields: cloneInitialFields() };
+    const parsed = JSON.parse(saved) as SavedDraft;
+    if (!Array.isArray(parsed.fields) || parsed.fields.length === 0) throw new Error("invalid draft");
+    return parsed;
+  } catch {
+    return { formName: "PDF 文件审核申请单", fields: cloneInitialFields() };
+  }
+};
+
+const createField = (type: FieldType): DesignerField => {
+  const base: DesignerField = {
+    id: makeId("field"),
+    type,
+    label: `新建${typeLabel[type]}`,
+    description: "",
+    placeholder: `请输入或选择${typeLabel[type]}`,
+    required: false,
+    defaultValue: type === "checkbox" ? [] : "",
+    listVisible: false,
+    queryable: false,
+    reviewEditable: false,
+  };
+
+  if (["select", "radio", "checkbox"].includes(type)) {
+    base.options = ["选项一", "选项二", "选项三"];
+  }
+  if (type === "cascader") {
+    base.options = ["一级选项/二级选项 A", "一级选项/二级选项 B"];
+    base.defaultValue = [];
+  }
+  if (type === "attachment") {
+    base.attachment = { maxSizeMb: 100, maxCount: 20, inlinePdf: true };
+  }
+  if (type === "table") {
+    base.reviewEditable = true;
+    base.columns = [
+      {
+        id: makeId("col"),
+        label: "内容",
+        type: "text",
+        required: true,
+        defaultValue: "",
+        width: 200,
+        align: "left",
+        reviewEditable: false,
+      },
+      {
+        id: makeId("col"),
+        label: "结论",
+        type: "select",
+        required: true,
+        defaultValue: "符合",
+        width: 150,
+        align: "center",
+        reviewEditable: true,
+        options: ["符合", "不符合"],
+      },
+    ];
+  }
+  return base;
+};
+
+interface CascaderOption {
+  value: string;
+  label: string;
+  children?: CascaderOption[];
+}
+
+const buildCascaderOptions = (paths: string[] = []): CascaderOption[] => {
+  const roots: CascaderOption[] = [];
+  paths.forEach((path) => {
+    const levels = path.split("/").map((item) => item.trim()).filter(Boolean);
+    let cursor = roots;
+    levels.forEach((level) => {
+      let option = cursor.find((item) => item.value === level);
+      if (!option) {
+        option = { value: level, label: level, children: [] };
+        cursor.push(option);
+      }
+      cursor = option.children ?? [];
+      option.children = cursor;
+    });
+  });
+  const removeEmptyChildren = (items: CascaderOption[]): CascaderOption[] =>
+    items.map((item) => ({
+      ...item,
+      children: item.children?.length ? removeEmptyChildren(item.children) : undefined,
+    }));
+  return removeEmptyChildren(roots);
+};
+
+const fieldDefaultText = (field: DesignerField) =>
+  typeof field.defaultValue === "string" ? field.defaultValue : undefined;
+
+const renderTableCell = (column: TableColumnConfig, interactive: boolean, rowIndex: number) => {
+  const key = `${column.id}-${rowIndex}`;
+  if (column.type === "radio") {
+    return (
+      <Radio.Group
+        key={key}
+        size="small"
+        disabled={!interactive}
+        defaultValue={typeof column.defaultValue === "string" ? column.defaultValue : undefined}
+        options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+      />
+    );
+  }
+  if (column.type === "checkbox") {
+    return (
+      <Checkbox.Group
+        key={key}
+        disabled={!interactive}
+        defaultValue={Array.isArray(column.defaultValue) ? column.defaultValue : []}
+        options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+      />
+    );
+  }
+  if (column.type === "select") {
+    return (
+      <Select
+        key={key}
+        size="small"
+        disabled={!interactive}
+        defaultValue={typeof column.defaultValue === "string" ? column.defaultValue : undefined}
+        options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+        style={{ width: "100%" }}
+      />
+    );
+  }
+  return (
+    <Input
+      key={key}
+      size="small"
+      disabled={!interactive}
+      defaultValue={typeof column.defaultValue === "string" ? column.defaultValue : ""}
+    />
+  );
+};
+
+const FieldControl = ({ field, interactive = false }: { field: DesignerField; interactive?: boolean }) => {
+  if (field.type === "select") {
+    return (
+      <Select
+        disabled={!interactive}
+        defaultValue={fieldDefaultText(field) || undefined}
+        placeholder={field.placeholder}
+        options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+        style={{ width: "100%" }}
+      />
+    );
+  }
+  if (field.type === "cascader") {
+    return (
+      <Cascader
+        disabled={!interactive}
+        defaultValue={Array.isArray(field.defaultValue) ? field.defaultValue : undefined}
+        options={buildCascaderOptions(field.options)}
+        placeholder={field.placeholder}
+        style={{ width: "100%" }}
+      />
+    );
+  }
+  if (field.type === "radio") {
+    return (
+      <Radio.Group
+        disabled={!interactive}
+        defaultValue={fieldDefaultText(field) || undefined}
+        options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+      />
+    );
+  }
+  if (field.type === "checkbox") {
+    return (
+      <Checkbox.Group
+        disabled={!interactive}
+        defaultValue={Array.isArray(field.defaultValue) ? field.defaultValue : []}
+        options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+      />
+    );
+  }
+  if (field.type === "attachment") {
+    return (
+      <Upload.Dragger
+        accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+        beforeUpload={() => false}
+        disabled={!interactive}
+        maxCount={field.attachment?.maxCount ?? 20}
+        multiple
+        showUploadList={false}
+        className="fd-upload"
+      >
+        <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+        <p className="ant-upload-text">{field.placeholder || "拖拽或点击上传附件"}</p>
+        <p className="ant-upload-hint">
+          单个不超过 {field.attachment?.maxSizeMb ?? 100} MB，最多 {field.attachment?.maxCount ?? 20} 个
+        </p>
+        {field.defaultValue ? <Tag icon={<FilePdfOutlined />} color="red">{String(field.defaultValue)}</Tag> : null}
+      </Upload.Dragger>
+    );
+  }
+  if (field.type === "table") {
+    const tableColumns: TableColumnsType<Record<string, unknown>> = (field.columns ?? []).map((column) => ({
+      title: (
+        <Space size={4}>
+          <span>{column.label}</span>
+          {column.required ? <Text type="danger">*</Text> : null}
+          {column.reviewEditable ? <Tag className="fd-mini-tag" color="blue">审核可改</Tag> : null}
+        </Space>
+      ),
+      key: column.id,
+      width: column.width,
+      align: column.align,
+      render: (_value: unknown, _record: Record<string, unknown>, rowIndex: number) =>
+        renderTableCell(column, interactive, rowIndex),
+    }));
+    return (
+      <div className="fd-table-preview">
+        <Table<Record<string, unknown>>
+          columns={tableColumns}
+          dataSource={[{ key: "sample-1" }, { key: "sample-2" }]}
+          pagination={false}
+          scroll={{ x: "max-content" }}
+          size="small"
+        />
+        <Space className="fd-row-actions" size={8}>
+          <Button disabled={!interactive} icon={<PlusOutlined />} size="small">新增行</Button>
+          <Button disabled={!interactive} size="small">复制行</Button>
+        </Space>
+      </div>
+    );
+  }
+  return <Input disabled={!interactive} defaultValue={fieldDefaultText(field)} placeholder={field.placeholder} />;
+};
+
+interface SortableFieldProps {
+  field: DesignerField;
+  selected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}
+
+const SortableField = ({ field, selected, onSelect, onDelete }: SortableFieldProps) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: field.id });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`fd-field-card${selected ? " is-selected" : ""}${isDragging ? " is-dragging" : ""}`}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      onClick={onSelect}
+    >
+      <div className="fd-field-card__toolbar">
+        <Space size={6}>
+          <Tooltip title="拖动排序">
+            <button
+              type="button"
+              className="fd-drag-handle"
+              aria-label={`拖动${field.label}`}
+              {...attributes}
+              {...listeners}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <DragOutlined />
+            </button>
+          </Tooltip>
+          <Tag bordered={false} icon={typeIcon[field.type]}>{typeLabel[field.type]}</Tag>
+          {field.reviewEditable ? <Tag bordered={false} color="blue">审核可改</Tag> : null}
+        </Space>
+        <Popconfirm title="删除这个字段？" description="删除后可从左侧组件库重新添加。" onConfirm={onDelete}>
+          <Button
+            aria-label={`删除${field.label}`}
+            danger
+            icon={<DeleteOutlined />}
+            size="small"
+            type="text"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </Popconfirm>
+      </div>
+      <div className="fd-field-card__content">
+        <div className="fd-field-label">
+          {field.required ? <Text type="danger">*</Text> : null}
+          <Text strong>{field.label}</Text>
+        </div>
+        {field.description ? <Paragraph className="fd-field-description">{field.description}</Paragraph> : null}
+        <FieldControl field={field} />
+      </div>
+    </div>
+  );
+};
+
+const FormDesignerPage = () => {
+  const navigate = useNavigate();
+  const [messageApi, messageHolder] = message.useMessage();
+  const initialDraft = useMemo(loadDraft, []);
+  const [formName, setFormName] = useState(initialDraft.formName);
+  const [fields, setFields] = useState<DesignerField[]>(initialDraft.fields);
+  const [selectedId, setSelectedId] = useState(initialDraft.fields[0]?.id ?? "");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [saveState, setSaveState] = useState<"saving" | "saved">("saved");
+  const [savedAt, setSavedAt] = useState(initialDraft.savedAt ?? "刚刚");
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const selectedField = fields.find((field) => field.id === selectedId);
+
+  useEffect(() => {
+    setSaveState("saving");
+    const timer = window.setTimeout(() => {
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ formName, fields, savedAt } satisfies SavedDraft));
+      setSaveState("saved");
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [fields, formName, savedAt]);
+
+  const addField = (type: FieldType) => {
+    const field = createField(type);
+    setFields((current) => [...current, field]);
+    setSelectedId(field.id);
+    messageApi.success(`${typeLabel[type]}已添加到表单底部`);
+  };
+
+  const deleteField = (id: string) => {
+    setFields((current) => {
+      const next = current.filter((field) => field.id !== id);
+      if (selectedId === id) setSelectedId(next[0]?.id ?? "");
+      return next;
+    });
+  };
+
+  const updateField = (patch: Partial<DesignerField>) => {
+    if (!selectedId) return;
+    setFields((current) => current.map((field) => (field.id === selectedId ? { ...field, ...patch } : field)));
+  };
+
+  const updateColumn = (columnId: string, patch: Partial<TableColumnConfig>) => {
+    if (!selectedField?.columns) return;
+    updateField({
+      columns: selectedField.columns.map((column) => (column.id === columnId ? { ...column, ...patch } : column)),
+    });
+  };
+
+  const addColumn = () => {
+    if (!selectedField) return;
+    const column: TableColumnConfig = {
+      id: makeId("col"),
+      label: "新字段",
+      type: "text",
+      required: false,
+      defaultValue: "",
+      width: 160,
+      align: "left",
+      reviewEditable: false,
+    };
+    updateField({ columns: [...(selectedField.columns ?? []), column] });
+  };
+
+  const deleteColumn = (columnId: string) => {
+    updateField({ columns: (selectedField?.columns ?? []).filter((column) => column.id !== columnId) });
+  };
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    setFields((current) => {
+      const oldIndex = current.findIndex((field) => field.id === active.id);
+      const newIndex = current.findIndex((field) => field.id === over.id);
+      return arrayMove(current, oldIndex, newIndex);
+    });
+  };
+
+  const saveDraft = () => {
+    const time = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
+    setSavedAt(time);
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ formName, fields, savedAt: time } satisfies SavedDraft));
+    setSaveState("saved");
+    messageApi.success("草稿已保存，本机刷新后仍可继续编辑");
+  };
+
+  const goNext = () => {
+    const invalidField = fields.find((field) => !field.label.trim());
+    if (invalidField) {
+      setSelectedId(invalidField.id);
+      messageApi.error("存在未命名字段，请补充后继续");
+      return;
+    }
+    saveDraft();
+    messageApi.success("表单校验通过，正在进入流程设计器");
+    window.setTimeout(() => navigate("/designer/flow"), 350);
+  };
+
+  const resetDraft = () => {
+    const resetFields = cloneInitialFields();
+    setFields(resetFields);
+    setFormName("PDF 文件审核申请单");
+    setSelectedId(resetFields[0].id);
+    messageApi.success("已恢复示例表单");
+  };
+
+  const renderDefaultValueEditor = (field: DesignerField) => {
+    if (field.type === "checkbox") {
+      return (
+        <Select
+          mode="multiple"
+          value={Array.isArray(field.defaultValue) ? field.defaultValue : []}
+          options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+          onChange={(value) => updateField({ defaultValue: value })}
+          placeholder="请选择默认项"
+        />
+      );
+    }
+    if (field.type === "cascader") {
+      return (
+        <Cascader
+          value={Array.isArray(field.defaultValue) ? field.defaultValue : undefined}
+          options={buildCascaderOptions(field.options)}
+          onChange={(value) => updateField({ defaultValue: value.map(String) })}
+          placeholder="请选择默认路径"
+        />
+      );
+    }
+    if (["select", "radio"].includes(field.type)) {
+      return (
+        <Select
+          allowClear
+          value={typeof field.defaultValue === "string" && field.defaultValue ? field.defaultValue : undefined}
+          options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+          onChange={(value) => updateField({ defaultValue: value ?? "" })}
+          placeholder="请选择默认值"
+        />
+      );
+    }
+    return (
+      <Input
+        value={typeof field.defaultValue === "string" ? field.defaultValue : ""}
+        onChange={(event) => updateField({ defaultValue: event.target.value })}
+        placeholder="可选"
+      />
+    );
+  };
+
+  return (
+    <div className="form-designer-page">
+      {messageHolder}
+      <div className="fd-page-header">
+        <div>
+          <div className="fd-breadcrumb">流程管理&nbsp;&nbsp;/&nbsp;&nbsp;PDF 文件审核流程&nbsp;&nbsp;/&nbsp;&nbsp;表单设计</div>
+          <Space align="center" size={10}>
+            <Title level={3}>表单设计器</Title>
+            <Tag color="gold">草稿 V3.3</Tag>
+          </Space>
+          <Text type="secondary">配置流程发起时需要填写的表单，所有字段按统一单列展示。</Text>
+        </div>
+        <Space wrap>
+          <div className="fd-save-status">
+            {saveState === "saving" ? <CloudSyncOutlined spin /> : <CheckCircleFilled />}
+            <span>{saveState === "saving" ? "正在保存" : `本地已保存 · ${savedAt}`}</span>
+          </div>
+          <Button onClick={resetDraft}>恢复示例</Button>
+          <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>预览</Button>
+          <Button icon={<SaveOutlined />} onClick={saveDraft}>保存草稿</Button>
+          <Button type="primary" onClick={goNext}>下一步：设计流程</Button>
+        </Space>
+      </div>
+
+      <div className="fd-workspace">
+        <aside className="fd-panel fd-component-panel">
+          <div className="fd-panel-title">
+            <div><TagsOutlined /> 组件库</div>
+            <Text type="secondary">点击添加</Text>
+          </div>
+          <div className="fd-component-list">
+            {(Object.keys(typeLabel) as FieldType[]).map((type) => (
+              <button key={type} type="button" className="fd-component-item" onClick={() => addField(type)}>
+                <span className={`fd-component-icon is-${type}`}>{typeIcon[type]}</span>
+                <span>
+                  <strong>{typeLabel[type]}</strong>
+                  <small>
+                    {type === "table"
+                      ? "自定义列和权限"
+                      : type === "attachment"
+                        ? "文件与 PDF 预览"
+                        : type === "cascader"
+                          ? "层级选项"
+                          : "基础表单组件"}
+                  </small>
+                </span>
+                <PlusOutlined className="fd-component-add" />
+              </button>
+            ))}
+          </div>
+          <Alert
+            className="fd-component-tip"
+            type="info"
+            showIcon
+            message="审核可修改"
+            description="先在表单中开放字段，再到审批节点选择具体可修改项。"
+          />
+        </aside>
+
+        <main className="fd-panel fd-canvas-panel">
+          <div className="fd-canvas-toolbar">
+            <div className="fd-form-name">
+              <Text type="secondary">表单名称</Text>
+              <Input value={formName} onChange={(event) => setFormName(event.target.value)} />
+            </div>
+            <Space size={8}>
+              <Tag bordered={false}>{fields.length} 个字段</Tag>
+              <Tag bordered={false} color="blue">单列布局</Tag>
+            </Space>
+          </div>
+          <div className="fd-canvas-scroll">
+            <div className="fd-form-sheet">
+              <div className="fd-form-sheet__header">
+                <div className="fd-form-mark"><FilePdfOutlined /></div>
+                <div>
+                  <Title level={4}>{formName || "未命名表单"}</Title>
+                  <Text type="secondary">PDF 文件审核流程 · 发起表单</Text>
+                </div>
+              </div>
+              {fields.length ? (
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={fields.map((field) => field.id)} strategy={verticalListSortingStrategy}>
+                    <div className="fd-field-list">
+                      {fields.map((field) => (
+                        <SortableField
+                          key={field.id}
+                          field={field}
+                          selected={selectedId === field.id}
+                          onSelect={() => setSelectedId(field.id)}
+                          onDelete={() => deleteField(field.id)}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="从左侧添加第一个字段" />
+              )}
+            </div>
+          </div>
+        </main>
+
+        <aside className="fd-panel fd-property-panel">
+          <div className="fd-panel-title">
+            <div><SettingOutlined /> 字段属性</div>
+            {selectedField ? <Tag>{typeLabel[selectedField.type]}</Tag> : null}
+          </div>
+          <div className="fd-property-scroll">
+            {selectedField ? (
+              <Form layout="vertical" size="middle">
+                <div className="fd-property-section">
+                  <div className="fd-property-section__title">基础信息</div>
+                  <Form.Item label="字段名称" required>
+                    <Input value={selectedField.label} onChange={(event) => updateField({ label: event.target.value })} />
+                  </Form.Item>
+                  <Form.Item label="字段说明">
+                    <Input.TextArea
+                      autoSize={{ minRows: 2, maxRows: 4 }}
+                      value={selectedField.description}
+                      onChange={(event) => updateField({ description: event.target.value })}
+                      placeholder="展示在字段名称下方"
+                    />
+                  </Form.Item>
+                  {!["table"].includes(selectedField.type) ? (
+                    <Form.Item label="提示文字">
+                      <Input value={selectedField.placeholder} onChange={(event) => updateField({ placeholder: event.target.value })} />
+                    </Form.Item>
+                  ) : null}
+                </div>
+
+                {selectedField.options ? (
+                  <div className="fd-property-section">
+                    <div className="fd-property-section__title">选项设置</div>
+                    <Form.Item label={selectedField.type === "cascader" ? "选项路径（使用 / 分级）" : "可选项"}>
+                      <Select
+                        mode="tags"
+                        value={selectedField.options}
+                        onChange={(value) => updateField({ options: value })}
+                        tokenSeparators={[","]}
+                        open={false}
+                      />
+                    </Form.Item>
+                    <Form.Item label="默认值">{renderDefaultValueEditor(selectedField)}</Form.Item>
+                  </div>
+                ) : null}
+
+                {selectedField.type === "text" ? (
+                  <div className="fd-property-section">
+                    <div className="fd-property-section__title">默认内容</div>
+                    <Form.Item label="默认值">{renderDefaultValueEditor(selectedField)}</Form.Item>
+                  </div>
+                ) : null}
+
+                {selectedField.type === "attachment" ? (
+                  <div className="fd-property-section">
+                    <div className="fd-property-section__title">附件规则</div>
+                    <div className="fd-two-column">
+                      <Form.Item label="单文件上限">
+                        <InputNumber
+                          min={1}
+                          max={100}
+                          addonAfter="MB"
+                          value={selectedField.attachment?.maxSizeMb ?? 100}
+                          onChange={(value) => updateField({
+                            attachment: { ...selectedField.attachment!, maxSizeMb: value ?? 100 },
+                          })}
+                        />
+                      </Form.Item>
+                      <Form.Item label="最多文件数">
+                        <InputNumber
+                          min={1}
+                          max={20}
+                          addonAfter="个"
+                          value={selectedField.attachment?.maxCount ?? 20}
+                          onChange={(value) => updateField({
+                            attachment: { ...selectedField.attachment!, maxCount: value ?? 20 },
+                          })}
+                        />
+                      </Form.Item>
+                    </div>
+                    <div className="fd-switch-row">
+                      <div>
+                        <Text strong>PDF 页面内嵌展示</Text>
+                        <Text type="secondary">审核时无需下载即可查看</Text>
+                      </div>
+                      <Switch
+                        checked={selectedField.attachment?.inlinePdf ?? true}
+                        onChange={(checked) => updateField({ attachment: { ...selectedField.attachment!, inlinePdf: checked } })}
+                      />
+                    </div>
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="安全限制"
+                      description="可上传任意业务附件；系统默认阻止可执行文件和脚本类型。"
+                    />
+                  </div>
+                ) : null}
+
+                {selectedField.type === "table" ? (
+                  <div className="fd-property-section fd-table-settings">
+                    <div className="fd-property-section__title fd-title-with-action">
+                      <span>表格字段</span>
+                      <Button icon={<PlusOutlined />} size="small" onClick={addColumn}>添加列</Button>
+                    </div>
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="行操作规则"
+                      description="发起人可新增、删除、复制行；审批节点仅可修改授权单元格。"
+                    />
+                    {(selectedField.columns ?? []).map((column, index) => (
+                      <Card
+                        key={column.id}
+                        className="fd-column-card"
+                        size="small"
+                        title={`第 ${index + 1} 列`}
+                        extra={
+                          <Popconfirm title="删除此列？" onConfirm={() => deleteColumn(column.id)}>
+                            <Button danger icon={<DeleteOutlined />} size="small" type="text" />
+                          </Popconfirm>
+                        }
+                      >
+                        <Form.Item label="列名称">
+                          <Input value={column.label} onChange={(event) => updateColumn(column.id, { label: event.target.value })} />
+                        </Form.Item>
+                        <div className="fd-two-column">
+                          <Form.Item label="字段类型">
+                            <Select
+                              value={column.type}
+                              options={(Object.keys(tableTypeLabel) as TableColumnType[]).map((type) => ({
+                                label: tableTypeLabel[type], value: type,
+                              }))}
+                              onChange={(value: TableColumnType) => updateColumn(column.id, {
+                                type: value,
+                                options: value === "text" ? undefined : column.options ?? ["选项一", "选项二"],
+                                defaultValue: value === "checkbox" ? [] : "",
+                              })}
+                            />
+                          </Form.Item>
+                          <Form.Item label="列宽">
+                            <InputNumber
+                              min={80}
+                              max={600}
+                              addonAfter="px"
+                              value={column.width}
+                              onChange={(value) => updateColumn(column.id, { width: value ?? 160 })}
+                            />
+                          </Form.Item>
+                        </div>
+                        {column.type !== "text" ? (
+                          <Form.Item label="可选项">
+                            <Select
+                              mode="tags"
+                              open={false}
+                              value={column.options}
+                              onChange={(value) => updateColumn(column.id, { options: value })}
+                            />
+                          </Form.Item>
+                        ) : null}
+                        <Form.Item label="默认值">
+                          {column.type === "checkbox" ? (
+                            <Select
+                              mode="multiple"
+                              value={Array.isArray(column.defaultValue) ? column.defaultValue : []}
+                              options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+                              onChange={(value) => updateColumn(column.id, { defaultValue: value })}
+                              placeholder="可选"
+                            />
+                          ) : column.type === "text" ? (
+                            <Input
+                              value={typeof column.defaultValue === "string" ? column.defaultValue : ""}
+                              onChange={(event) => updateColumn(column.id, { defaultValue: event.target.value })}
+                              placeholder="可选"
+                            />
+                          ) : (
+                            <Select
+                              allowClear
+                              value={typeof column.defaultValue === "string" && column.defaultValue ? column.defaultValue : undefined}
+                              options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+                              onChange={(value) => updateColumn(column.id, { defaultValue: value ?? "" })}
+                              placeholder="可选"
+                            />
+                          )}
+                        </Form.Item>
+                        <Form.Item label="对齐方式">
+                          <Segmented
+                            block
+                            options={[
+                              { label: "左", value: "left" },
+                              { label: "中", value: "center" },
+                              { label: "右", value: "right" },
+                            ]}
+                            value={column.align}
+                            onChange={(value) => updateColumn(column.id, { align: value as ColumnAlign })}
+                          />
+                        </Form.Item>
+                        <div className="fd-inline-switches">
+                          <span><Switch size="small" checked={column.required} onChange={(checked) => updateColumn(column.id, { required: checked })} /> 必填</span>
+                          <span><Switch size="small" checked={column.reviewEditable} onChange={(checked) => updateColumn(column.id, { reviewEditable: checked })} /> 审核人可改</span>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="fd-property-section">
+                  <div className="fd-property-section__title">权限与展示</div>
+                  <div className="fd-switch-row">
+                    <div><Text strong>必填项</Text><Text type="secondary">发起时必须填写</Text></div>
+                    <Switch checked={selectedField.required} onChange={(checked) => updateField({ required: checked })} />
+                  </div>
+                  <div className="fd-switch-row">
+                    <div><Text strong>在列表显示</Text><Text type="secondary">作为“所有流程”的表格列</Text></div>
+                    <Switch checked={selectedField.listVisible} onChange={(checked) => updateField({ listVisible: checked })} />
+                  </div>
+                  <div className="fd-switch-row">
+                    <div><Text strong>作为查询条件</Text><Text type="secondary">用于“所有流程”筛选</Text></div>
+                    <Switch checked={selectedField.queryable} onChange={(checked) => updateField({ queryable: checked })} />
+                  </div>
+                  <div className="fd-switch-row">
+                    <div><Text strong>允许审核人修改</Text><Text type="secondary">具体权限在审批节点中设置</Text></div>
+                    <Switch checked={selectedField.reviewEditable} onChange={(checked) => updateField({ reviewEditable: checked })} />
+                  </div>
+                </div>
+              </Form>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择一个字段后配置属性" />
+            )}
+          </div>
+        </aside>
+      </div>
+
+      <Modal
+        className="fd-preview-modal"
+        width={960}
+        open={previewOpen}
+        onCancel={() => setPreviewOpen(false)}
+        title={
+          <Space>
+            <EyeOutlined />
+            <span>表单预览</span>
+            <Tag color="blue">发起人视角</Tag>
+          </Space>
+        }
+        footer={
+          <Space>
+            <Button onClick={() => setPreviewOpen(false)}>返回编辑</Button>
+            <Button type="primary" onClick={() => messageApi.success("原型预览已完成，实际发布后可正式提交")}>模拟提交</Button>
+          </Space>
+        }
+      >
+        <div className="fd-preview-sheet">
+          <div className="fd-preview-heading">
+            <div>
+              <Title level={3}>{formName || "未命名表单"}</Title>
+              <Text type="secondary">流程编号将在提交后由系统自动生成</Text>
+            </div>
+            <Tag color="processing">PDF 文件审核流程</Tag>
+          </div>
+          <Divider />
+          <Form layout="vertical" requiredMark="optional">
+            {fields.map((field) => (
+              <Form.Item
+                key={field.id}
+                label={field.label}
+                required={field.required}
+                extra={field.description || undefined}
+              >
+                <FieldControl field={field} interactive />
+              </Form.Item>
+            ))}
+          </Form>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+
+export default FormDesignerPage;

@@ -1,0 +1,11 @@
+{
+  "name": "process-site-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.1.3",
+  "scripts": {
+    "dev": "pnpm --filter @process-site/web dev",
+    "build": "pnpm --filter @process-site/web build",
+    "typecheck": "pnpm --filter @process-site/web typecheck"
+  }
+}
