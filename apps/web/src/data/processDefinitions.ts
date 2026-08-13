@@ -28,6 +28,17 @@ export const processDefinitions = [
       { key: "testConclusion", label: "测试结论", width: 110 },
     ] satisfies TaskListFieldDefinition[],
   },
+  {
+    id: "free-collaboration",
+    label: "自由协作",
+    template: "自由协作事项流程",
+    workflowType: "free",
+    taskFields: [
+      { key: "category", label: "事项分类", width: 140 },
+      { key: "priority", label: "优先级", width: 100 },
+      { key: "currentAssignee", label: "当前受理人", width: 120 },
+    ] satisfies TaskListFieldDefinition[],
+  },
 ] as const;
 
 export type ProcessDefinitionId = (typeof processDefinitions)[number]["id"];

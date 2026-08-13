@@ -36,6 +36,7 @@ const pageMeta: Record<string, { title: string; eyebrow: string }> = {
   "/tasks": { title: "任务中心", eyebrow: "员工工作区" },
   "/designer/form": { title: "初始表单设计器", eyebrow: "流程配置" },
   "/designer/flow": { title: "可视化流程设计器", eyebrow: "流程配置" },
+  "/free-flow/new": { title: "新建自由协作事项", eyebrow: "自由协作" },
 };
 
 export function AppShell() {
@@ -188,7 +189,7 @@ export function AppShell() {
           </Space>
         </Header>
 
-        <Content className="app-content">
+        <Content className={`app-content${location.pathname.startsWith("/designer/") ? " is-designer-content" : ""}`}>
           <Outlet />
         </Content>
       </Layout>

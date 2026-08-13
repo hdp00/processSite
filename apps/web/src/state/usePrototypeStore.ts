@@ -1,13 +1,31 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { initialInstances, initialNotices } from "../data/mock";
-import type { NoticeItem, ProcessInstance } from "../data/types";
+import type { FreeFlowEntry, NoticeItem, ProcessInstance } from "../data/types";
 
 type ReviewAction = "pass" | "reject";
 type RepublishChanges = Partial<
   Pick<ProcessInstance, "title" | "documentCode" | "documentType" | "documentLevel" | "description" | "pdfName">
 >;
 export type PersonaId = "wangmin" | "zhangwei" | "lina" | "zhaolei" | "admin" | "hejing";
+
+export interface FreeFlowCreateInput {
+  title: string;
+  category: string;
+  priority: ProcessInstance["priority"];
+  description: string;
+  initialContent: string;
+  attachmentName?: string;
+  assignee: string;
+}
+
+export interface FreeFlowInitialChanges {
+  title: string;
+  category: string;
+  priority: ProcessInstance["priority"];
+  description: string;
+  initialContent: string;
+}
 
 export const personas: Array<{
   id: PersonaId;
@@ -37,6 +55,14 @@ interface PrototypeState {
   updateUnreviewedInstance: (id: string, changes: RepublishChanges) => void;
   republishInstance: (id: string, changes: RepublishChanges) => void;
   copyCompletedInstance: (sourceId: string, title: string, copyAttachment: boolean) => string | null;
+  createFreeFlow: (input: FreeFlowCreateInput) => string;
+  replyFreeFlow: (id: string, content: string) => void;
+  transferFreeFlow: (id: string, content: string, nextAssignee: string) => void;
+  editFreeFlowReply: (id: string, entryId: string, content: string) => void;
+  updateFreeFlowInitial: (id: string, changes: FreeFlowInitialChanges) => void;
+  forceReassignFreeFlow: (id: string, reason: string, assignee: string) => void;
+  closeFreeFlow: (id: string, reason: string) => void;
+  reopenFreeFlow: (id: string, reason: string, assignee: string) => void;
   resetDemo: () => void;
 }
 
@@ -51,6 +77,21 @@ const nowText = () =>
   })
     .format(new Date())
     .replaceAll("/", "-");
+
+const currentPersona = (personaId: PersonaId) =>
+  personas.find((item) => item.id === personaId) ?? personas[0];
+
+const freeEntry = (
+  type: FreeFlowEntry["type"],
+  actor: string,
+  changes: Partial<FreeFlowEntry> = {},
+): FreeFlowEntry => ({
+  id: `free-entry-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+  type,
+  actor,
+  time: nowText(),
+  ...changes,
+});
 
 export const usePrototypeStore = create<PrototypeState>()(
   persist(
@@ -204,6 +245,280 @@ export const usePrototypeStore = create<PrototypeState>()(
         });
         return createdId;
       },
+      createFreeFlow: (input) => {
+        const createdId = `free-${Date.now()}`;
+        set((state) => {
+          const persona = currentPersona(state.personaId);
+          const createdAt = nowText();
+          const created: ProcessInstance = {
+            id: createdId,
+            workflowType: "free",
+            code: `ISSUE-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
+            title: input.title.trim(),
+            template: "自由协作事项流程",
+            templateVersion: "V1.0",
+            status: "进行中",
+            initiator: persona.name,
+            department: persona.role,
+            createdAt,
+            updatedAt: createdAt,
+            round: 1,
+            currentNode: `${input.assignee}受理中`,
+            currentAssignee: input.assignee,
+            designatedReviewer: input.assignee,
+            priority: input.priority,
+            description: input.description.trim(),
+            pdfName: input.attachmentName || "无附件",
+            pdfSize: input.attachmentName ? "待上传" : "—",
+            documentCode: `ISSUE-${String(Date.now()).slice(-6)}`,
+            documentType: input.category,
+            documentLevel: "内部事项",
+            revision: "—",
+            category: input.category,
+            participants: [persona.name, input.assignee],
+            reviewers: [],
+            freeTimeline: [
+              freeEntry("created", persona.name, {
+                content: input.initialContent,
+                assignee: input.assignee,
+              }),
+            ],
+          };
+          const notice: NoticeItem = {
+            id: `notice-${Date.now()}`,
+            title: `新事项已指派给${input.assignee}`,
+            detail: created.title,
+            time: "刚刚",
+            read: false,
+            instanceId: createdId,
+          };
+          return { instances: [created, ...state.instances], notices: [notice, ...state.notices] };
+        });
+        return createdId;
+      },
+      replyFreeFlow: (id, content) =>
+        set((state) => {
+          const persona = currentPersona(state.personaId);
+          const actionAt = nowText();
+          return {
+            instances: state.instances.map((instance) => {
+              const canReply =
+                instance.workflowType === "free" &&
+                instance.status === "进行中" &&
+                (instance.participants?.includes(persona.name) || state.personaId === "admin");
+              if (instance.id !== id || !canReply) return instance;
+              return {
+                ...instance,
+                updatedAt: actionAt,
+                participants: [...new Set([...(instance.participants ?? []), persona.name])],
+                freeTimeline: [
+                  ...(instance.freeTimeline ?? []),
+                  freeEntry("reply", persona.name, { content }),
+                ],
+              };
+            }),
+          };
+        }),
+      transferFreeFlow: (id, content, nextAssignee) =>
+        set((state) => {
+          const persona = currentPersona(state.personaId);
+          const actionAt = nowText();
+          const target = state.instances.find((instance) => instance.id === id);
+          const canTransfer =
+            target?.workflowType === "free" &&
+            target.status === "进行中" &&
+            target.currentAssignee === persona.name;
+          if (!target || !canTransfer) return state;
+          const entries: FreeFlowEntry[] = [
+            ...(target.freeTimeline ?? []),
+            freeEntry("reply", persona.name, { content, assignee: nextAssignee }),
+            freeEntry("assigned", persona.name, { assignee: nextAssignee }),
+          ];
+          return {
+            instances: state.instances.map((instance) =>
+              instance.id === id
+                ? {
+                    ...instance,
+                    currentAssignee: nextAssignee,
+                    designatedReviewer: nextAssignee,
+                    currentNode: `${nextAssignee}受理中`,
+                    updatedAt: actionAt,
+                    participants: [...new Set([...(instance.participants ?? []), nextAssignee])],
+                    freeTimeline: entries,
+                  }
+                : instance,
+            ),
+            notices: [
+              {
+                id: `notice-${Date.now()}`,
+                title: `${persona.name}向你转交了一项事项`,
+                detail: target.title,
+                time: "刚刚",
+                read: false,
+                instanceId: id,
+              },
+              ...state.notices,
+            ],
+          };
+        }),
+      editFreeFlowReply: (id, entryId, content) =>
+        set((state) => {
+          const persona = currentPersona(state.personaId);
+          const editedAt = nowText();
+          return {
+            instances: state.instances.map((instance) => {
+              if (instance.id !== id || instance.workflowType !== "free" || instance.status !== "进行中") return instance;
+              return {
+                ...instance,
+                updatedAt: editedAt,
+                freeTimeline: (instance.freeTimeline ?? []).map((entry) =>
+                  entry.id === entryId && entry.type === "reply" && entry.actor === persona.name
+                    ? {
+                        ...entry,
+                        content,
+                        editedAt,
+                        revisions: [
+                          ...(entry.revisions ?? []),
+                          { content: entry.content ?? "", editedAt },
+                        ],
+                      }
+                    : entry,
+                ),
+              };
+            }),
+          };
+        }),
+      updateFreeFlowInitial: (id, changes) =>
+        set((state) => {
+          const persona = currentPersona(state.personaId);
+          const actionAt = nowText();
+          return {
+            instances: state.instances.map((instance) => {
+              if (
+                instance.id !== id ||
+                instance.workflowType !== "free" ||
+                instance.status !== "进行中" ||
+                instance.initiator !== persona.name
+              ) return instance;
+              const originalInitialContent = instance.freeTimeline?.find((entry) => entry.type === "created")?.content ?? "";
+              const fieldChanges = [
+                instance.title !== changes.title ? { field: "标题", before: instance.title, after: changes.title } : null,
+                instance.category !== changes.category ? { field: "事项分类", before: instance.category ?? "—", after: changes.category } : null,
+                instance.priority !== changes.priority ? { field: "优先级", before: instance.priority, after: changes.priority } : null,
+                instance.description !== changes.description ? { field: "事项摘要", before: instance.description, after: changes.description } : null,
+                originalInitialContent !== changes.initialContent ? { field: "初始说明", before: "原富文本内容", after: "新富文本内容" } : null,
+              ].filter((change): change is { field: string; before: string; after: string } => Boolean(change));
+              return {
+                ...instance,
+                title: changes.title,
+                category: changes.category,
+                documentType: changes.category,
+                priority: changes.priority,
+                description: changes.description,
+                updatedAt: actionAt,
+                freeTimeline: [
+                  ...(instance.freeTimeline ?? []).map((entry) =>
+                    entry.type === "created"
+                      ? {
+                          ...entry,
+                          content: changes.initialContent,
+                          editedAt: actionAt,
+                          revisions: originalInitialContent !== changes.initialContent
+                            ? [...(entry.revisions ?? []), { content: originalInitialContent, editedAt: actionAt }]
+                            : entry.revisions,
+                        }
+                      : entry,
+                  ),
+                  freeEntry("form-edited", persona.name, {
+                    content: `修改了${fieldChanges.map((change) => change.field).join("、") || "初始表单"}`,
+                    fieldChanges,
+                  }),
+                ],
+              };
+            }),
+          };
+        }),
+      forceReassignFreeFlow: (id, reason, assignee) =>
+        set((state) => {
+          const persona = currentPersona(state.personaId);
+          const actionAt = nowText();
+          return {
+            instances: state.instances.map((instance) => {
+              const canReassign =
+                instance.id === id &&
+                instance.workflowType === "free" &&
+                instance.status === "进行中" &&
+                (state.personaId === "wangmin" || state.personaId === "admin");
+              if (!canReassign) return instance;
+              return {
+                ...instance,
+                currentAssignee: assignee,
+                designatedReviewer: assignee,
+                currentNode: `${assignee}受理中`,
+                updatedAt: actionAt,
+                participants: [...new Set([...(instance.participants ?? []), assignee])],
+                freeTimeline: [
+                  ...(instance.freeTimeline ?? []),
+                  freeEntry("reassigned", persona.name, {
+                    content: reason,
+                    assignee,
+                    previousAssignee: instance.currentAssignee,
+                  }),
+                ],
+              };
+            }),
+          };
+        }),
+      closeFreeFlow: (id, reason) =>
+        set((state) => {
+          const persona = currentPersona(state.personaId);
+          const actionAt = nowText();
+          return {
+            instances: state.instances.map((instance) => {
+              const canClose =
+                instance.workflowType === "free" &&
+                instance.status === "进行中" &&
+                (instance.currentAssignee === persona.name || state.personaId === "wangmin" || state.personaId === "admin");
+              if (instance.id !== id || !canClose) return instance;
+              return {
+                ...instance,
+                status: "已关闭",
+                currentAssignee: undefined,
+                designatedReviewer: undefined,
+                currentNode: "事项已关闭",
+                updatedAt: actionAt,
+                freeTimeline: [...(instance.freeTimeline ?? []), freeEntry("closed", persona.name, { content: reason })],
+              };
+            }),
+          };
+        }),
+      reopenFreeFlow: (id, reason, assignee) =>
+        set((state) => {
+          const persona = currentPersona(state.personaId);
+          const actionAt = nowText();
+          return {
+            instances: state.instances.map((instance) => {
+              const canReopen =
+                instance.workflowType === "free" &&
+                instance.status === "已关闭" &&
+                (instance.participants?.includes(persona.name) || state.personaId === "wangmin" || state.personaId === "admin");
+              if (instance.id !== id || !canReopen) return instance;
+              return {
+                ...instance,
+                status: "进行中",
+                currentAssignee: assignee,
+                designatedReviewer: assignee,
+                currentNode: `${assignee}受理中`,
+                updatedAt: actionAt,
+                participants: [...new Set([...(instance.participants ?? []), persona.name, assignee])],
+                freeTimeline: [
+                  ...(instance.freeTimeline ?? []),
+                  freeEntry("reopened", persona.name, { content: reason, assignee }),
+                ],
+              };
+            }),
+          };
+        }),
       resetDemo: () => set((state) => ({
         instances: initialInstances,
         notices: initialNotices,
@@ -211,6 +526,17 @@ export const usePrototypeStore = create<PrototypeState>()(
         personaId: state.personaId,
       })),
     }),
-    { name: "flowpilot-prototype-v5" },
+    {
+      name: "flowpilot-prototype-v5",
+      version: 6,
+      migrate: (persisted) => {
+        const state = persisted as PrototypeState;
+        const existing = state.instances ?? [];
+        const missingFreeInstances = initialInstances.filter(
+          (instance) => instance.workflowType === "free" && !existing.some((item) => item.id === instance.id),
+        );
+        return { ...state, instances: [...existing, ...missingFreeInstances] };
+      },
+    },
   ),
 );

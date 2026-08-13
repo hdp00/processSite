@@ -4,6 +4,7 @@
   --designer-muted: #6b778c;
   --designer-blue: #3156e8;
   display: flex;
+  min-width: 0;
   flex-direction: column;
   height: calc(100vh - 64px);
   min-height: 680px;
@@ -94,7 +95,9 @@
   display: grid;
   flex: 1;
   min-height: 0;
-  grid-template-columns: 206px minmax(500px, 1fr) 328px;
+  grid-template-columns: 200px minmax(420px, 1fr) 328px;
+  gap: 14px;
+  padding: 14px;
 }
 
 .flow-designer-palette,
@@ -103,6 +106,9 @@
   z-index: 3;
   min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--designer-border);
+  border-radius: 15px;
   background: #fff;
 }
 
@@ -112,6 +118,13 @@
 
 .flow-designer-properties {
   border-left: 1px solid var(--designer-border);
+}
+
+.flow-designer-canvas {
+  overflow: hidden;
+  border: 1px solid var(--designer-border);
+  border-radius: 15px;
+  box-shadow: 0 10px 28px rgba(25, 38, 66, 0.07);
 }
 
 .designer-panel-heading {
@@ -712,7 +725,7 @@
 
 @media (max-width: 1280px) {
   .flow-designer-workspace {
-    grid-template-columns: 184px minmax(460px, 1fr) 300px;
+    grid-template-columns: 184px minmax(420px, 1fr) 300px;
   }
 
   .flow-designer-toolbar__actions .flow-designer-save-state {
@@ -724,13 +737,73 @@
   }
 }
 
+/* High-fidelity visual refinement */
+.flow-designer-page {
+  --designer-border: #dce3ed;
+  --designer-text: #15213a;
+  --designer-muted: #657188;
+  --designer-blue: #3659e3;
+  height: calc(100vh - 76px);
+  background: #eef2f7;
+}
+
+.flow-designer-toolbar {
+  border-bottom-color: #dce3ed;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 5px 20px rgba(25, 38, 66, 0.055);
+  backdrop-filter: blur(14px);
+}
+
+.flow-designer-toolbar__icon {
+  border-color: #d8e0ff;
+  border-radius: 13px;
+  background: linear-gradient(145deg, #f2f5ff, #e9eeff);
+  box-shadow: 0 8px 20px rgba(54, 89, 227, 0.11);
+}
+
+.flow-designer-palette,
+.flow-designer-properties {
+  box-shadow: 0 8px 28px rgba(25, 38, 66, 0.055);
+}
+
+.designer-panel-heading,
+.property-panel-switcher {
+  border-bottom-color: #e4e9f1;
+  background: linear-gradient(180deg, #fff, #fbfcfe);
+}
+
+.palette-node {
+  border-color: #dfe5ee;
+  border-radius: 11px;
+  box-shadow: 0 2px 7px rgba(25, 38, 66, 0.035);
+}
+
+.palette-node:hover {
+  border-color: #93a5f2;
+  background: #f6f8ff;
+  box-shadow: 0 8px 20px rgba(54, 89, 227, 0.10);
+}
+
+.flow-designer-canvas {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(54, 89, 227, 0.06), transparent 31%),
+    #f4f7fa;
+}
+
+.process-node {
+  border-color: #d9e0eb;
+  box-shadow: 0 8px 24px rgba(25, 38, 66, 0.09);
+}
+
+.process-node.is-selected {
+  border-color: #5472eb;
+  box-shadow: 0 0 0 3px rgba(54, 89, 227, 0.12), 0 14px 32px rgba(54, 89, 227, 0.14);
+}
+
 @media (max-width: 1080px) {
   .flow-designer-page {
     overflow: auto;
   }
 
-  .flow-designer-toolbar,
-  .flow-designer-workspace {
-    min-width: 1040px;
-  }
+  .flow-designer-workspace { min-width: 960px; }
 }

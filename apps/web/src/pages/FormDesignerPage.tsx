@@ -26,6 +26,7 @@ import {
   CheckCircleFilled,
   DeleteOutlined,
   DragOutlined,
+  EditOutlined,
   EyeOutlined,
   FilePdfOutlined,
   FileTextOutlined,
@@ -64,11 +65,18 @@ import {
 } from "antd";
 import type { TableColumnsType } from "antd";
 import { useNavigate } from "react-router-dom";
+import { RichTextEditor } from "../components/RichTextEditor";
+import {
+  cloneDefaultSystemListFields,
+  loadSystemListFields,
+  saveSystemListFields,
+  type SystemListFieldConfig,
+} from "../data/listFieldConfig";
 import "./form-designer.css";
 
 const { Text, Title, Paragraph } = Typography;
 
-type FieldType = "text" | "select" | "cascader" | "radio" | "checkbox" | "attachment" | "table";
+type FieldType = "text" | "richtext" | "select" | "cascader" | "radio" | "checkbox" | "attachment" | "table";
 type TableColumnType = "text" | "radio" | "checkbox" | "select";
 type ColumnAlign = "left" | "center" | "right";
 
@@ -120,6 +128,7 @@ const DRAFT_KEY = "flowpilot-form-designer-draft-v1";
 
 const typeLabel: Record<FieldType, string> = {
   text: "文本框",
+  richtext: "富文本编辑框",
   select: "下拉框",
   cascader: "多级下拉",
   radio: "单选框",
@@ -130,6 +139,7 @@ const typeLabel: Record<FieldType, string> = {
 
 const typeIcon: Record<FieldType, ReactNode> = {
   text: <FileTextOutlined />,
+  richtext: <EditOutlined />,
   select: <BarsOutlined />,
   cascader: <AppstoreOutlined />,
   radio: <CheckCircleOutlined />,
@@ -483,6 +493,17 @@ const renderTableCell = (column: TableColumnConfig, interactive: boolean, rowInd
 };
 
 const FieldControl = ({ field, interactive = false }: { field: DesignerField; interactive?: boolean }) => {
+  if (field.type === "richtext") {
+    return (
+      <RichTextEditor
+        value={fieldDefaultText(field) ?? ""}
+        onChange={() => undefined}
+        placeholder={field.placeholder || "请输入富文本内容"}
+        minHeight={interactive ? 180 : 120}
+        disabled={!interactive}
+      />
+    );
+  }
   if (field.type === "select") {
     return (
       <Select
@@ -641,6 +662,10 @@ const FormDesignerPage = () => {
   const [fields, setFields] = useState<DesignerField[]>(initialDraft.fields);
   const [selectedId, setSelectedId] = useState(initialDraft.fields[0]?.id ?? "");
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [propertyMode, setPropertyMode] = useState<"field" | "system">("field");
+  const [systemListFields, setSystemListFields] = useState<SystemListFieldConfig[]>(() =>
+    loadSystemListFields("pdf-review"),
+  );
   const [saveState, setSaveState] = useState<"saving" | "saved">("saved");
   const [savedAt, setSavedAt] = useState(initialDraft.savedAt ?? "刚刚");
 
@@ -660,10 +685,24 @@ const FormDesignerPage = () => {
     return () => window.clearTimeout(timer);
   }, [fields, formName, savedAt]);
 
+  useEffect(() => {
+    saveSystemListFields("pdf-review", systemListFields);
+  }, [systemListFields]);
+
+  const updateSystemListField = (
+    key: SystemListFieldConfig["key"],
+    patch: Partial<Pick<SystemListFieldConfig, "taskVisible" | "processListVisible">>,
+  ) => {
+    setSystemListFields((current) =>
+      current.map((field) => (field.key === key ? { ...field, ...patch } : field)),
+    );
+  };
+
   const addField = (type: FieldType) => {
     const field = createField(type);
     setFields((current) => [...current, field]);
     setSelectedId(field.id);
+    setPropertyMode("field");
     messageApi.success(`${typeLabel[type]}已添加到表单底部`);
   };
 
@@ -727,6 +766,7 @@ const FormDesignerPage = () => {
     const invalidField = fields.find((field) => !field.label.trim());
     if (invalidField) {
       setSelectedId(invalidField.id);
+      setPropertyMode("field");
       messageApi.error("存在未命名字段，请补充后继续");
       return;
     }
@@ -740,6 +780,8 @@ const FormDesignerPage = () => {
     setFields(resetFields);
     setFormName("PDF 文件审核申请单");
     setSelectedId(resetFields[0].id);
+    setPropertyMode("field");
+    setSystemListFields(cloneDefaultSystemListFields());
     messageApi.success("已恢复示例表单");
   };
 
@@ -776,6 +818,16 @@ const FormDesignerPage = () => {
         />
       );
     }
+    if (field.type === "richtext") {
+      return (
+        <RichTextEditor
+          value={typeof field.defaultValue === "string" ? field.defaultValue : ""}
+          onChange={(defaultValue) => updateField({ defaultValue })}
+          placeholder="可选的默认富文本内容"
+          minHeight={150}
+        />
+      );
+    }
     return (
       <Input
         value={typeof field.defaultValue === "string" ? field.defaultValue : ""}
@@ -789,13 +841,15 @@ const FormDesignerPage = () => {
     <div className="form-designer-page">
       {messageHolder}
       <div className="fd-page-header">
-        <div>
-          <div className="fd-breadcrumb">流程管理&nbsp;&nbsp;/&nbsp;&nbsp;PDF 文件审核流程&nbsp;&nbsp;/&nbsp;&nbsp;表单设计</div>
-          <Space align="center" size={10}>
-            <Title level={3}>表单设计器</Title>
-            <Tag color="gold">草稿 V3.3</Tag>
-          </Space>
-          <Text type="secondary">配置流程发起时需要填写的表单，所有字段按统一单列展示。</Text>
+        <div className="fd-page-header__identity">
+          <div className="fd-page-header__icon"><FilePdfOutlined /></div>
+          <div>
+            <Space align="center" size={10}>
+              <Title level={4}>PDF 文件审核流程</Title>
+              <Tag color="gold">草稿 V3.3</Tag>
+            </Space>
+            <Text type="secondary">初始表单 · 单列布局 · 配置发起时需要填写的内容</Text>
+          </div>
         </div>
         <Space wrap>
           <div className="fd-save-status">
@@ -828,7 +882,9 @@ const FormDesignerPage = () => {
                         ? "文件与 PDF 预览"
                         : type === "cascader"
                           ? "层级选项"
-                          : "基础表单组件"}
+                          : type === "richtext"
+                            ? "文字、图片与视频"
+                            : "基础表单组件"}
                   </small>
                 </span>
                 <PlusOutlined className="fd-component-add" />
@@ -873,7 +929,10 @@ const FormDesignerPage = () => {
                           key={field.id}
                           field={field}
                           selected={selectedId === field.id}
-                          onSelect={() => setSelectedId(field.id)}
+                          onSelect={() => {
+                            setSelectedId(field.id);
+                            setPropertyMode("field");
+                          }}
                           onDelete={() => deleteField(field.id)}
                         />
                       ))}
@@ -889,11 +948,22 @@ const FormDesignerPage = () => {
 
         <aside className="fd-panel fd-property-panel">
           <div className="fd-panel-title">
-            <div><SettingOutlined /> 字段属性</div>
-            {selectedField ? <Tag>{typeLabel[selectedField.type]}</Tag> : null}
+            <div><SettingOutlined /> 属性配置</div>
+            {propertyMode === "field" && selectedField ? <Tag>{typeLabel[selectedField.type]}</Tag> : <Tag color="blue">流程级</Tag>}
+          </div>
+          <div className="fd-property-mode">
+            <Segmented
+              block
+              value={propertyMode}
+              onChange={(value) => setPropertyMode(value as "field" | "system")}
+              options={[
+                { label: "字段属性", value: "field" },
+                { label: "系统字段", value: "system" },
+              ]}
+            />
           </div>
           <div className="fd-property-scroll">
-            {selectedField ? (
+            {propertyMode === "field" && selectedField ? (
               <Form layout="vertical" size="middle">
                 <div className="fd-property-section">
                   <div className="fd-property-section__title">基础信息</div>
@@ -931,9 +1001,9 @@ const FormDesignerPage = () => {
                   </div>
                 ) : null}
 
-                {selectedField.type === "text" ? (
+                {["text", "richtext"].includes(selectedField.type) ? (
                   <div className="fd-property-section">
-                    <div className="fd-property-section__title">默认内容</div>
+                    <div className="fd-property-section__title">{selectedField.type === "richtext" ? "默认富文本内容" : "默认内容"}</div>
                     <Form.Item label="默认值">{renderDefaultValueEditor(selectedField)}</Form.Item>
                   </div>
                 ) : null}
@@ -1099,15 +1169,15 @@ const FormDesignerPage = () => {
                   </div>
                   <div className="fd-switch-row">
                     <div><Text strong>在列表显示</Text><Text type="secondary">作为“流程清单”的表格列</Text></div>
-                    <Switch checked={selectedField.listVisible} onChange={(checked) => updateField({ listVisible: checked })} />
+                    <Switch disabled={selectedField.type === "richtext"} checked={selectedField.listVisible} onChange={(checked) => updateField({ listVisible: checked })} />
                   </div>
                   <div className="fd-switch-row">
                     <div><Text strong>作为查询条件</Text><Text type="secondary">用于“流程清单”筛选</Text></div>
-                    <Switch checked={selectedField.queryable} onChange={(checked) => updateField({ queryable: checked })} />
+                    <Switch disabled={selectedField.type === "richtext"} checked={selectedField.queryable} onChange={(checked) => updateField({ queryable: checked })} />
                   </div>
                   <div className="fd-switch-row">
                     <div><Text strong>在任务中心显示</Text><Text type="secondary">作为待办的流程关键信息</Text></div>
-                    <Switch checked={Boolean(selectedField.taskVisible)} onChange={(checked) => updateField({ taskVisible: checked })} />
+                    <Switch disabled={selectedField.type === "richtext"} checked={Boolean(selectedField.taskVisible)} onChange={(checked) => updateField({ taskVisible: checked })} />
                   </div>
                   {selectedField.taskVisible && (
                     <div className="fd-task-display-config">
@@ -1143,12 +1213,53 @@ const FormDesignerPage = () => {
                   )}
                   <div className="fd-switch-row">
                     <div><Text strong>允许审核人修改</Text><Text type="secondary">具体权限在审批节点中设置</Text></div>
-                    <Switch checked={selectedField.reviewEditable} onChange={(checked) => updateField({ reviewEditable: checked })} />
+                    <Switch disabled={selectedField.type === "richtext"} checked={selectedField.reviewEditable} onChange={(checked) => updateField({ reviewEditable: checked })} />
                   </div>
                 </div>
               </Form>
-            ) : (
+            ) : propertyMode === "field" ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择一个字段后配置属性" />
+            ) : (
+              <div className="fd-system-fields-panel">
+                <Alert
+                  type="info"
+                  showIcon
+                  message="系统字段展示"
+                  description="分别控制系统自动生成的信息在任务中心和流程清单中的显示。配置跟随流程版本保存。"
+                />
+                <div className="fd-system-field-list">
+                  {systemListFields.map((field) => (
+                    <div className="fd-system-field-card" key={field.key}>
+                      <div className="fd-system-field-card__head">
+                        <Text strong>{field.label}</Text>
+                        <Tag bordered={false}>系统生成</Tag>
+                      </div>
+                      <Text className="fd-system-field-card__description" type="secondary">{field.description}</Text>
+                      <div className="fd-system-field-targets">
+                        <label>
+                          <span>任务中心</span>
+                          <Switch
+                            size="small"
+                            checked={field.taskVisible}
+                            onChange={(taskVisible) => updateSystemListField(field.key, { taskVisible })}
+                          />
+                        </label>
+                        <label>
+                          <span>流程清单</span>
+                          <Switch
+                            size="small"
+                            checked={field.processListVisible}
+                            onChange={(processListVisible) => updateSystemListField(field.key, { processListVisible })}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <Text className="fd-system-fields-note" type="secondary">
+                  操作列始终保留。系统字段不属于发起表单，发起人和审核人不能修改。
+                </Text>
+              </div>
             )}
           </div>
         </aside>

@@ -47,6 +47,7 @@ const statusColor: Record<InstanceStatus, string> = {
   审核中: "processing",
   驳回待处理: "error",
   已完成: "success",
+  进行中: "processing",
   已关闭: "default",
 };
 

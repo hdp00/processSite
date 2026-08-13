@@ -21,10 +21,10 @@ export function ProcessPrintPage() {
   const navigate = useNavigate();
   const instance = usePrototypeStore((state) => state.instances.find((item) => item.id === id));
 
-  if (!instance) {
+  if (!instance || instance.workflowType === "free") {
     return (
       <main className="print-preview-page print-preview-empty">
-        <Empty description="未找到可打印的流程数据" />
+        <Empty description={instance?.workflowType === "free" ? "自由协作流程不提供 PDF 打印" : "未找到可打印的流程数据"} />
         <Button onClick={() => navigate(-1)}>返回</Button>
       </main>
     );

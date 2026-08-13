@@ -1,5 +1,23 @@
-export type InstanceStatus = "审核中" | "驳回待处理" | "已完成" | "已关闭";
+export type InstanceStatus = "审核中" | "驳回待处理" | "已完成" | "进行中" | "已关闭";
 export type ReviewStatus = "待审核" | "已通过" | "已驳回" | "已取消";
+
+export interface FreeFlowRevision {
+  content: string;
+  editedAt: string;
+}
+
+export interface FreeFlowEntry {
+  id: string;
+  type: "created" | "reply" | "assigned" | "closed" | "reopened" | "form-edited" | "reassigned";
+  actor: string;
+  time: string;
+  content?: string;
+  assignee?: string;
+  previousAssignee?: string;
+  editedAt?: string;
+  revisions?: FreeFlowRevision[];
+  fieldChanges?: Array<{ field: string; before: string; after: string }>;
+}
 
 export interface ReviewerProgress {
   key: string;
@@ -13,6 +31,7 @@ export interface ReviewerProgress {
 }
 
 export interface ProcessInstance {
+  workflowType?: "approval" | "free";
   id: string;
   code: string;
   title: string;
@@ -39,6 +58,10 @@ export interface ProcessInstance {
   productModel?: string;
   testType?: string;
   testConclusion?: string;
+  category?: string;
+  currentAssignee?: string;
+  participants?: string[];
+  freeTimeline?: FreeFlowEntry[];
   reviewers: ReviewerProgress[];
 }
 

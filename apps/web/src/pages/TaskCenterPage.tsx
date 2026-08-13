@@ -1,5 +1,6 @@
 import {
   AuditOutlined,
+  MessageOutlined,
   SearchOutlined,
   TeamOutlined,
   UserOutlined,
@@ -20,6 +21,11 @@ import {
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { processDefinitions, type TaskListFieldDefinition } from "../data/processDefinitions";
+import {
+  cloneDefaultSystemListFields,
+  isSystemFieldVisible,
+  loadSystemListFields,
+} from "../data/listFieldConfig";
 import type { ProcessInstance } from "../data/types";
 import { personas, usePrototypeStore } from "../state/usePrototypeStore";
 
@@ -34,27 +40,37 @@ export function TaskCenterPage() {
 
   const actionable = useMemo(
     () =>
-      persona.reviewerKey
-        ? instances.filter(
-            (item) =>
-              item.status === "审核中" &&
-              item.reviewers.some(
-                (reviewer) => reviewer.key === persona.reviewerKey && reviewer.status === "待审核",
-              ),
-          )
-        : [],
+      instances.filter((item) => {
+        if (item.workflowType === "free") {
+          return item.status === "进行中" && item.currentAssignee === persona.name;
+        }
+        return Boolean(
+          persona.reviewerKey &&
+          item.status === "审核中" &&
+          item.reviewers.some(
+            (reviewer) => reviewer.key === persona.reviewerKey && reviewer.status === "待审核",
+          ),
+        );
+      }),
     [instances, persona.reviewerKey],
   );
 
   const myTasks = actionable.filter(
-    (item) => !item.designatedReviewer || item.designatedReviewer === persona.name,
+    (item) => item.workflowType === "free" || !item.designatedReviewer || item.designatedReviewer === persona.name,
   );
   const substituteTasks = actionable.filter(
-    (item) => Boolean(item.designatedReviewer && item.designatedReviewer !== persona.name),
+    (item) => item.workflowType !== "free" && Boolean(item.designatedReviewer && item.designatedReviewer !== persona.name),
   );
 
   const source = tab === "mine" ? myTasks : substituteTasks;
   const selectedDefinition = processDefinitions.find((item) => item.template === template);
+  const systemListFields = selectedDefinition
+    ? loadSystemListFields(selectedDefinition.id)
+    : cloneDefaultSystemListFields();
+  const showSystemField = (key: Parameters<typeof isSystemFieldVisible>[1]) =>
+    isSystemFieldVisible(systemListFields, key, "task");
+  const showTitleCell = showSystemField("title") || showSystemField("template") || showSystemField("templateVersion");
+  const showNodeCell = showSystemField("currentNode") || showSystemField("round");
   const filtered = source.filter((item) => {
     const matchesKeyword = `${item.code}${item.title}${item.initiator}`
       .toLowerCase()
@@ -119,55 +135,70 @@ export function TaskCenterPage() {
   };
 
   const columns: TableProps<ProcessInstance>["columns"] = [
-    {
+    ...(showSystemField("code") ? [{
       title: "实例编号",
       dataIndex: "code",
       width: 174,
-      render: (value: string, record) => (
+      render: (value: string, record: ProcessInstance) => (
         <button className="table-link strong" type="button" onClick={() => navigate(`/processes/${record.id}`)}>
           {value}
         </button>
       ),
-    },
-    {
-      title: "流程与标题",
+    }] : []),
+    ...(showTitleCell ? [{
+      title: showSystemField("title") ? "流程与标题" : "流程信息",
       dataIndex: "title",
       width: 350,
-      render: (value: string, record) => (
+      render: (value: string, record: ProcessInstance) => (
         <div className="title-cell">
-          <strong>{value}</strong>
-          <span>{record.template} · {record.templateVersion}</span>
+          {showSystemField("title") ? <strong>{value}</strong> : null}
+          {(showSystemField("template") || showSystemField("templateVersion")) ? (
+            <span>
+              {[
+                showSystemField("template") ? record.template : "",
+                showSystemField("templateVersion") ? record.templateVersion : "",
+              ].filter(Boolean).join(" · ")}
+            </span>
+          ) : null}
         </div>
       ),
-    },
+    }] : []),
     ...dynamicColumns,
-    {
+    ...(showSystemField("status") ? [{
+      title: "状态",
+      dataIndex: "status",
+      width: 110,
+      render: (value: string) => <Tag color="blue">{value}</Tag>,
+    }] : []),
+    ...(showNodeCell ? [{
       title: "当前节点",
       dataIndex: "currentNode",
       width: 185,
-      render: (value: string, record) => (
+      render: (value: string, record: ProcessInstance) => (
         <div className="node-cell">
           <span className="node-pulse" />
-          <span>{value}</span>
-          <small>第 {record.round} 轮</small>
+          {showSystemField("currentNode") ? <span>{value}</span> : null}
+          {showSystemField("round") && record.workflowType !== "free" ? <small>第 {record.round} 轮</small> : null}
         </div>
       ),
-    },
-    {
+    }] : []),
+    ...(showSystemField("initiator") ? [{
       title: "发起人",
       dataIndex: "initiator",
       width: 108,
-      render: (value: string, record) => (
+      render: (value: string, record: ProcessInstance) => (
         <div className="person-cell"><AvatarText name={value} /><span>{value}<small>{record.department}</small></span></div>
       ),
-    },
+    }] : []),
+    ...(showSystemField("createdAt") ? [{ title: "发起时间", dataIndex: "createdAt", width: 150 }] : []),
+    ...(showSystemField("updatedAt") ? [{ title: "更新时间", dataIndex: "updatedAt", width: 150 }] : []),
     {
       title: "任务归属",
       dataIndex: "designatedReviewer",
       width: 135,
       render: (value?: string) =>
         tab === "mine" ? (
-          <Tag icon={<UserOutlined />} color="blue">指定给我</Tag>
+          <Tag icon={<UserOutlined />} color={value ? "blue" : "default"}>{value ? "当前由我受理" : "指定给我"}</Tag>
         ) : (
           <Tooltip title={`默认责任人：${value ?? "未指定"}。同组成员可直接代为审核。`}>
             <Tag icon={<TeamOutlined />} color="purple">可代办 · {value}</Tag>
@@ -180,12 +211,12 @@ export function TaskCenterPage() {
       width: 76,
       align: "center",
       render: (_, record) => (
-        <Tooltip title="进入审核">
+        <Tooltip title={record.workflowType === "free" ? "进入处理" : "进入审核"}>
           <Button
             className="task-action-button"
             type="text"
-            icon={<AuditOutlined />}
-            aria-label={`审核：${record.title}`}
+            icon={record.workflowType === "free" ? <MessageOutlined /> : <AuditOutlined />}
+            aria-label={`${record.workflowType === "free" ? "处理" : "审核"}：${record.title}`}
             onClick={() => navigate(`/processes/${record.id}`)}
           />
         </Tooltip>
@@ -235,6 +266,7 @@ export function TaskCenterPage() {
           </Space>
         </div>
         <Table<ProcessInstance>
+          className={`task-table ${selectedDefinition ? "is-single-process" : "is-mixed-process"}`}
           rowKey="id"
           columns={columns}
           dataSource={filtered}
