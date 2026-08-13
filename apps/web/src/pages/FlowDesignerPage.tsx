@@ -52,6 +52,8 @@ import {
   Input,
   message,
   Modal,
+  Radio,
+  Segmented,
   Select,
   Space,
   Switch,
@@ -84,6 +86,7 @@ interface FlowMeta {
   version: string;
   basedOn: string;
   status: "草稿" | "已发布";
+  rejectionHandling: "resubmit-or-close" | "resubmit-only" | "auto-close";
   lastSavedAt: string;
 }
 
@@ -121,6 +124,31 @@ const editableFieldOptions = [
   "生效日期",
   "现场备注",
 ];
+
+const rejectionHandlingOptions: Array<{
+  value: FlowMeta["rejectionHandling"];
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "resubmit-or-close",
+    label: "重新发布或关闭",
+    description: "进入驳回待处理，由发布方修改后重新发布，或直接关闭流程。",
+  },
+  {
+    value: "resubmit-only",
+    label: "仅允许重新发布",
+    description: "进入驳回待处理，发布方修改后必须重新发布，不能在此状态关闭。",
+  },
+  {
+    value: "auto-close",
+    label: "自动关闭流程",
+    description: "驳回结果提交后立即关闭流程，不再等待发布方处理。",
+  },
+];
+
+const getRejectionHandlingLabel = (value: FlowMeta["rejectionHandling"]) =>
+  rejectionHandlingOptions.find((option) => option.value === value)?.label ?? "重新发布或关闭";
 
 const kindMeta: Record<
   NodeKind,
@@ -252,6 +280,7 @@ const initialMeta: FlowMeta = {
   version: "V3.4",
   basedOn: "V3.3",
   status: "草稿",
+  rejectionHandling: "resubmit-or-close",
   lastSavedAt: "尚未保存",
 };
 
@@ -282,7 +311,16 @@ const readStoredDraft = (): StoredDraft => {
     ) {
       return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
     }
-    return parsed as StoredDraft;
+    return {
+      nodes: parsed.nodes,
+      edges: parsed.edges,
+      meta: {
+        ...initialMeta,
+        ...parsed.meta,
+        rejectionHandling:
+          parsed.meta.rejectionHandling ?? initialMeta.rejectionHandling,
+      },
+    } as StoredDraft;
   } catch {
     return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
   }
@@ -489,6 +527,7 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
   const [edges, setEdges, onEdgesChange] = useEdgesState<DesignerEdge>(initialDraft.edges);
   const [meta, setMeta] = useState<FlowMeta>(initialDraft.meta);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>("approval-quality");
+  const [propertyMode, setPropertyMode] = useState<"flow" | "node">("node");
   const [validationOpen, setValidationOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [autoSaved, setAutoSaved] = useState(true);
@@ -564,6 +603,7 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
       };
       setNodes((currentNodes) => [...currentNodes, node]);
       setSelectedNodeId(id);
+      setPropertyMode("node");
     },
     [screenToFlowPosition, setNodes],
   );
@@ -588,6 +628,7 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
       ),
     );
     setSelectedNodeId(null);
+    setPropertyMode("flow");
     message.success(`已删除节点“${selectedNode.data.label}”`);
   };
 
@@ -631,6 +672,7 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
     setEdges(initialEdges);
     setMeta(initialMeta);
     setSelectedNodeId("approval-quality");
+    setPropertyMode("node");
     window.localStorage.removeItem(STORAGE_KEY);
     message.success("已恢复 PDF 审核流程示例");
   };
@@ -739,10 +781,19 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            onPaneClick={() => setSelectedNodeId(null)}
+            onNodeClick={(_, node) => {
+              setSelectedNodeId(node.id);
+              setPropertyMode("node");
+            }}
+            onPaneClick={() => {
+              setSelectedNodeId(null);
+              setPropertyMode("flow");
+            }}
             onNodesDelete={(deleted) => {
-              if (deleted.some((node) => node.id === selectedNodeId)) setSelectedNodeId(null);
+              if (deleted.some((node) => node.id === selectedNodeId)) {
+                setSelectedNodeId(null);
+                setPropertyMode("flow");
+              }
             }}
             fitView
             fitViewOptions={{ padding: 0.18, maxZoom: 1.08 }}
@@ -767,15 +818,29 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
         <aside className="flow-designer-properties">
           <div className="designer-panel-heading designer-panel-heading--properties">
             <div>
-              <Text strong>{selectedNode ? "节点属性" : "流程设置"}</Text>
+              <Text strong>属性面板</Text>
               <Text type="secondary">
-                {selectedNode ? kindMeta[selectedNode.data.kind].label : "当前草稿"}
+                {propertyMode === "node" && selectedNode
+                  ? selectedNode.data.label
+                  : `${meta.name} · ${meta.version}`}
               </Text>
             </div>
             <SettingOutlined />
           </div>
 
-          {selectedNode ? (
+          <div className="property-panel-switcher">
+            <Segmented
+              block
+              value={propertyMode}
+              options={[
+                { label: "流程属性", value: "flow" },
+                { label: "节点属性", value: "node", disabled: !selectedNode },
+              ]}
+              onChange={(value) => setPropertyMode(value as "flow" | "node")}
+            />
+          </div>
+
+          {propertyMode === "node" && selectedNode ? (
             <div className="property-form">
               <div className="property-node-summary">
                 <span
@@ -897,6 +962,32 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
                   流程编号由后台自动生成。
                 </Text>
               </label>
+              <Divider />
+              <div className="property-field">
+                <span className="property-field__label">驳回后的处理方式</span>
+                <Text type="secondary" className="property-field__help property-field__help--above">
+                  此规则随流程版本发布，新配置只影响之后发起的实例。
+                </Text>
+                <Radio.Group
+                  className="rejection-rule-options"
+                  value={meta.rejectionHandling}
+                  onChange={(event) =>
+                    setMeta((current) => ({
+                      ...current,
+                      rejectionHandling: event.target.value as FlowMeta["rejectionHandling"],
+                    }))
+                  }
+                >
+                  {rejectionHandlingOptions.map((option) => (
+                    <Radio key={option.value} value={option.value}>
+                      <span className="rejection-rule-option__content">
+                        <Text strong>{option.label}</Text>
+                        <Text type="secondary">{option.description}</Text>
+                      </span>
+                    </Radio>
+                  ))}
+                </Radio.Group>
+              </div>
               <div className="property-version-card">
                 <span>
                   <Text type="secondary">当前草稿</Text>
@@ -1007,6 +1098,10 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
               <Text type="secondary">校验结果</Text>
               <strong className="publish-preview__passed">全部通过</strong>
             </div>
+          </div>
+          <div className="publish-preview__rule">
+            <Text type="secondary">驳回后的处理方式</Text>
+            <Text strong>{getRejectionHandlingLabel(meta.rejectionHandling)}</Text>
           </div>
           <Alert
             type="info"
