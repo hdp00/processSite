@@ -1,47 +1,58 @@
 import {
+  CopyOutlined,
   DownOutlined,
   EyeOutlined,
   FilterOutlined,
+  PrinterOutlined,
   ReloadOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
 import {
+  Alert,
   Button,
   Card,
+  Checkbox,
   Col,
-  Collapse,
   DatePicker,
   Form,
   Input,
+  Modal,
   Row,
   Select,
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
+  message,
   type TableProps,
 } from "antd";
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { getProcessDefinition } from "../data/processDefinitions";
 import type { InstanceStatus, ProcessInstance } from "../data/types";
-import { personas, usePrototypeStore } from "../state/usePrototypeStore";
+import { usePrototypeStore } from "../state/usePrototypeStore";
 
-const statusMeta: Record<InstanceStatus, { color: string; dot: string }> = {
-  审核中: { color: "processing", dot: "blue" },
-  驳回待处理: { color: "error", dot: "red" },
-  已完成: { color: "success", dot: "green" },
-  已关闭: { color: "default", dot: "gray" },
+const statusMeta: Record<InstanceStatus, { className: string }> = {
+  审核中: { className: "is-reviewing" },
+  驳回待处理: { className: "is-rejected" },
+  已完成: { className: "is-completed" },
+  已关闭: { className: "is-closed" },
 };
 
 export function ProcessListPage() {
   const navigate = useNavigate();
-  const { instances, personaId } = usePrototypeStore();
-  const persona = personas.find((item) => item.id === personaId) ?? personas[2];
+  const [searchParams] = useSearchParams();
+  const definition = getProcessDefinition(searchParams.get("definitionId"));
+  const { instances, personaId, copyCompletedInstance } = usePrototypeStore();
   const [form] = Form.useForm();
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<InstanceStatus>();
-  const [template, setTemplate] = useState<string>();
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [copySource, setCopySource] = useState<ProcessInstance | null>(null);
+  const [copyTitle, setCopyTitle] = useState("");
+  const [copyAttachment, setCopyAttachment] = useState(true);
+  const canCopyCompleted = personaId === "wangmin";
 
   const filtered = useMemo(
     () =>
@@ -49,9 +60,9 @@ export function ProcessListPage() {
         const matchesKeyword = `${item.code}${item.title}${item.documentCode}${item.initiator}`
           .toLowerCase()
           .includes(keyword.trim().toLowerCase());
-        return matchesKeyword && (!status || item.status === status) && (!template || item.template === template);
+        return matchesKeyword && (!status || item.status === status) && item.template === definition.template;
       }),
-    [instances, keyword, status, template],
+    [instances, keyword, status, definition.template],
   );
 
   const columns: TableProps<ProcessInstance>["columns"] = [
@@ -71,12 +82,8 @@ export function ProcessListPage() {
         <div className="title-cell"><strong>{value}</strong><span>{record.template}</span></div>
       ),
     },
-    ...(template
-      ? [
-          { title: "文件编号", dataIndex: "documentCode", width: 145 },
-          { title: "文件类型", dataIndex: "documentType", width: 120 },
-        ]
-      : []),
+    { title: "文件编号", dataIndex: "documentCode", width: 145 },
+    { title: "文件类型", dataIndex: "documentType", width: 120 },
     {
       title: "版本",
       dataIndex: "templateVersion",
@@ -87,7 +94,12 @@ export function ProcessListPage() {
       title: "状态",
       dataIndex: "status",
       width: 120,
-      render: (value: InstanceStatus) => <Tag color={statusMeta[value].color}>{value}</Tag>,
+      render: (value: InstanceStatus) => (
+        <span className={`status-pill ${statusMeta[value].className}`} aria-label={`流程状态：${value}`}>
+          <span className="status-pill-dot" />
+          {value}
+        </span>
+      ),
     },
     {
       title: "当前节点",
@@ -115,44 +127,65 @@ export function ProcessListPage() {
     {
       title: "操作",
       fixed: "right",
-      width: 86,
-      render: (_, record) => <Button type="link" icon={<EyeOutlined />} onClick={() => navigate(`/processes/${record.id}`)}>查看</Button>,
+      width: 154,
+      align: "center",
+      render: (_, record) => (
+        <Space size={6}>
+          <Tooltip title="查看流程">
+            <Button
+              className="task-action-button"
+              type="text"
+              icon={<EyeOutlined />}
+              aria-label={`查看流程：${record.title}`}
+              onClick={() => navigate(`/processes/${record.id}`)}
+            />
+          </Tooltip>
+          <Tooltip title="打印为 PDF">
+            <Button
+              className="task-action-button is-print"
+              type="text"
+              icon={<PrinterOutlined />}
+              aria-label={`打印流程为 PDF：${record.title}`}
+              onClick={() => window.open(`/processes/${record.id}/print`, "_blank", "noopener,noreferrer")}
+            />
+          </Tooltip>
+          {record.status === "已完成" && (
+            <Tooltip title={canCopyCompleted ? "复制新建" : "需要该流程的发布权限"}>
+              <span>
+                <Button
+                  className="task-action-button is-copy"
+                  type="text"
+                  disabled={!canCopyCompleted}
+                  icon={<CopyOutlined />}
+                  aria-label={`复制新建：${record.title}`}
+                  onClick={() => {
+                    setCopySource(record);
+                    setCopyTitle(`${record.title}（复制）`);
+                    setCopyAttachment(true);
+                  }}
+                />
+              </span>
+            </Tooltip>
+          )}
+        </Space>
+      ),
     },
   ];
 
   const reset = () => {
     setKeyword("");
     setStatus(undefined);
-    setTemplate(undefined);
     form.resetFields();
   };
 
   return (
     <div className="page-stack">
-      <div className="page-heading">
-        <div>
-          <Typography.Title level={2}>所有流程</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            查询你有权查看的流程实例及完整表单信息。
-          </Typography.Paragraph>
-        </div>
-        <div className="scope-badge">
-          <span className="scope-icon"><EyeOutlined /></span>
-          <span><small>当前数据范围</small><strong>{persona.id === "admin" ? "全部流程实例" : persona.id === "hejing" ? "额外授权 · 只读" : `${persona.role}相关流程`}</strong></span>
-        </div>
-      </div>
-
       <Card className="query-card">
         <Form form={form} layout="vertical" requiredMark={false}>
           <Row gutter={16} align="bottom">
             <Col flex="280px">
               <Form.Item label="关键词">
                 <Input prefix={<SearchOutlined />} allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="实例编号、标题、文件编号" />
-              </Form.Item>
-            </Col>
-            <Col flex="220px">
-              <Form.Item label="流程名称">
-                <Select allowClear value={template} onChange={setTemplate} placeholder="全部流程" options={[{ value: "PDF 文件审核流程", label: "PDF 文件审核流程" }]} />
               </Form.Item>
             </Col>
             <Col flex="180px">
@@ -178,7 +211,6 @@ export function ProcessListPage() {
                   <Button icon={<ReloadOutlined />} onClick={reset}>重置</Button>
                   <Button
                     type="link"
-                    disabled={!template}
                     icon={<FilterOutlined />}
                     onClick={() => setAdvancedOpen((value) => !value)}
                   >
@@ -189,7 +221,7 @@ export function ProcessListPage() {
             </Col>
           </Row>
         </Form>
-        {advancedOpen && template && (
+        {advancedOpen && (
           <div className="advanced-query">
             <div className="advanced-query-title"><FilterOutlined /> 当前流程的可查询表单字段</div>
             <Row gutter={16}>
@@ -205,17 +237,56 @@ export function ProcessListPage() {
       <Card className="content-card" styles={{ body: { padding: 0 } }}>
         <div className="table-result-head">
           <div><strong>流程实例</strong><Tag bordered={false}>{filtered.length} 条</Tag></div>
-          <Typography.Text type="secondary">选择具体流程后，表格会追加该表单配置的列表字段</Typography.Text>
+          <Typography.Text type="secondary">{definition.label} · 包含当前用户可见的全部历史版本实例</Typography.Text>
         </div>
         <Table<ProcessInstance>
           rowKey="id"
           columns={columns}
           dataSource={filtered}
-          scroll={{ x: template ? 1530 : 1270 }}
+          scroll={{ x: 1530 }}
           pagination={{ pageSize: 8, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录` }}
           onRow={(record) => ({ onDoubleClick: () => navigate(`/processes/${record.id}`) })}
         />
       </Card>
+
+      <Modal
+        open={Boolean(copySource)}
+        title="复制新建流程"
+        okText="复制并创建"
+        cancelText="取消"
+        onCancel={() => setCopySource(null)}
+        onOk={() => {
+          if (!copySource || !copyTitle.trim()) {
+            message.warning("请输入新流程标题");
+            return;
+          }
+          const createdId = copyCompletedInstance(copySource.id, copyTitle, copyAttachment);
+          if (!createdId) {
+            message.error("复制失败，请确认流程状态和发布权限");
+            return;
+          }
+          setCopySource(null);
+          message.success("新流程已创建，当前尚无人审核，可以继续修改");
+          navigate(`/processes/${createdId}`);
+        }}
+      >
+        <div className="copy-process-modal">
+          <Alert
+            type="info"
+            showIcon
+            message="复制最终表单内容，创建新的流程实例"
+            description="新实例会生成独立编号并从第1轮开始；原审批记录、审核结果、通知和流转历史不会复制。"
+          />
+          <label className="field-block">
+            <span>新流程标题</span>
+            <Input value={copyTitle} onChange={(event) => setCopyTitle(event.target.value)} maxLength={120} showCount />
+          </label>
+          <Checkbox checked={copyAttachment} onChange={(event) => setCopyAttachment(event.target.checked)}>
+            同时复制原附件
+          </Checkbox>
+          <Typography.Text type="secondary">创建后进入尚无人审核状态，发布方仍可修改；首位审核人提交后内容锁定。</Typography.Text>
+        </div>
+      </Modal>
     </div>
   );
 }

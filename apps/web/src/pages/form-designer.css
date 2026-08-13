@@ -444,6 +444,34 @@
   border-bottom: 1px dashed #edf0f4;
 }
 
+.fd-task-display-config {
+  margin: 8px 0 12px;
+  padding: 12px;
+  border: 1px solid #dfe5f7;
+  border-radius: 10px;
+  background: #f7f9ff;
+}
+
+.fd-task-display-config .ant-form-item {
+  margin-bottom: 10px;
+}
+
+.fd-task-display-config__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.fd-task-display-config__grid .ant-input-number {
+  width: 100%;
+}
+
+.fd-task-display-config > .ant-typography {
+  display: block;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
 .fd-switch-row:last-child {
   border-bottom: 0;
 }

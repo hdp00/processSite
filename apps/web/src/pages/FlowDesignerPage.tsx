@@ -64,7 +64,7 @@ import "./flow-designer.css";
 
 const { Text, Title } = Typography;
 
-type NodeKind = "start" | "approval" | "parallel" | "end";
+type NodeKind = "start" | "approval" | "end";
 
 interface FlowNodeData extends Record<string, unknown> {
   kind: NodeKind;
@@ -138,15 +138,9 @@ const kindMeta: Record<
     color: "#4b6bfb",
     icon: <AuditOutlined />,
   },
-  parallel: {
-    label: "并行分支",
-    description: "多个审核节点同时处理",
-    color: "#a35bd5",
-    icon: <ApartmentOutlined />,
-  },
   end: {
     label: "结束",
-    description: "全部分支完成后结束",
+    description: "全部前置节点完成后结束",
     color: "#64748b",
     icon: <CheckCircleFilled />,
   },
@@ -156,7 +150,7 @@ const initialNodes: DesignerNode[] = [
   {
     id: "start-dcc",
     type: "processNode",
-    position: { x: 32, y: 252 },
+    position: { x: 52, y: 252 },
     data: {
       kind: "start",
       label: "文控发起",
@@ -166,20 +160,9 @@ const initialNodes: DesignerNode[] = [
     },
   },
   {
-    id: "parallel-review",
-    type: "processNode",
-    position: { x: 262, y: 252 },
-    data: {
-      kind: "parallel",
-      label: "三部门并行会审",
-      description: "任一分支驳回即结束本轮",
-      editableFields: [],
-    },
-  },
-  {
     id: "approval-rd",
     type: "processNode",
-    position: { x: 510, y: 64 },
+    position: { x: 350, y: 64 },
     data: {
       kind: "approval",
       label: "研发审核",
@@ -192,7 +175,7 @@ const initialNodes: DesignerNode[] = [
   {
     id: "approval-quality",
     type: "processNode",
-    position: { x: 510, y: 252 },
+    position: { x: 350, y: 252 },
     data: {
       kind: "approval",
       label: "质量审核",
@@ -205,7 +188,7 @@ const initialNodes: DesignerNode[] = [
   {
     id: "approval-production",
     type: "processNode",
-    position: { x: 510, y: 440 },
+    position: { x: 350, y: 440 },
     data: {
       kind: "approval",
       label: "生产审核",
@@ -218,7 +201,7 @@ const initialNodes: DesignerNode[] = [
   {
     id: "end-approved",
     type: "processNode",
-    position: { x: 788, y: 252 },
+    position: { x: 684, y: 252 },
     data: {
       kind: "end",
       label: "审核完成",
@@ -235,17 +218,16 @@ const edgeDefaults = {
 };
 
 const initialEdges: DesignerEdge[] = [
-  { id: "e-start-parallel", source: "start-dcc", target: "parallel-review", ...edgeDefaults },
-  { id: "e-parallel-rd", source: "parallel-review", target: "approval-rd", ...edgeDefaults },
+  { id: "e-start-rd", source: "start-dcc", target: "approval-rd", ...edgeDefaults },
   {
-    id: "e-parallel-quality",
-    source: "parallel-review",
+    id: "e-start-quality",
+    source: "start-dcc",
     target: "approval-quality",
     ...edgeDefaults,
   },
   {
-    id: "e-parallel-production",
-    source: "parallel-review",
+    id: "e-start-production",
+    source: "start-dcc",
     target: "approval-production",
     ...edgeDefaults,
   },
@@ -267,8 +249,8 @@ const initialEdges: DesignerEdge[] = [
 const initialMeta: FlowMeta = {
   name: "PDF 文件审核流程",
   code: "FLW-PDF-001",
-  version: "V3.3",
-  basedOn: "V3.2",
+  version: "V3.4",
+  basedOn: "V3.3",
   status: "草稿",
   lastSavedAt: "尚未保存",
 };
@@ -291,6 +273,13 @@ const readStoredDraft = (): StoredDraft => {
     if (!stored) return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
     const parsed = JSON.parse(stored) as Partial<StoredDraft>;
     if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges) || !parsed.meta) {
+      return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
+    }
+    if (
+      parsed.nodes.some(
+        (node) => (node.data as Record<string, unknown> | undefined)?.kind === "parallel",
+      )
+    ) {
       return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
     }
     return parsed as StoredDraft;
@@ -335,7 +324,6 @@ const runValidation = (nodes: DesignerNode[], edges: DesignerEdge[]): Validation
   const starts = nodes.filter((node) => node.data.kind === "start");
   const ends = nodes.filter((node) => node.data.kind === "end");
   const approvals = nodes.filter((node) => node.data.kind === "approval");
-  const parallels = nodes.filter((node) => node.data.kind === "parallel");
 
   const adjacency = new Map<string, string[]>();
   const reverseAdjacency = new Map<string, string[]>();
@@ -371,24 +359,73 @@ const runValidation = (nodes: DesignerNode[], edges: DesignerEdge[]): Validation
     (node) => !node.data.permissionGroup?.trim(),
   );
 
-  const invalidParallels = parallels.filter(
-    (node) => (adjacency.get(node.id)?.length ?? 0) < 2,
-  );
-
+  const splitNodes = nodes.filter((node) => (adjacency.get(node.id)?.length ?? 0) >= 2);
+  const joinNodes = nodes.filter((node) => (reverseAdjacency.get(node.id)?.length ?? 0) >= 2);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const invalidSplits: string[] = [];
   const conflictMessages: string[] = [];
-  parallels.forEach((parallelNode) => {
-    const branchNodes = (adjacency.get(parallelNode.id) ?? [])
-      .map((id) => nodes.find((node) => node.id === id))
-      .filter((node): node is DesignerNode => Boolean(node && node.data.kind === "approval"));
+  splitNodes.forEach((splitNode) => {
+    const branchRootIds = adjacency.get(splitNode.id) ?? [];
+    const invalidTargets = branchRootIds
+      .map((id) => nodeById.get(id))
+      .filter((node) => node?.data.kind !== "approval");
 
-    const fieldOwners = new Map<string, string[]>();
-    branchNodes.forEach((node) => {
-      node.data.editableFields.forEach((field) => {
-        fieldOwners.set(field, [...(fieldOwners.get(field) ?? []), node.data.label]);
-      });
+    const branchDistances = branchRootIds.map((rootId) => {
+      const distances = new Map<string, number>();
+      const queue: Array<[string, number]> = [[rootId, 0]];
+      while (queue.length) {
+        const [current, distance] = queue.shift()!;
+        if (distances.has(current)) continue;
+        distances.set(current, distance);
+        adjacency.get(current)?.forEach((next) => queue.push([next, distance + 1]));
+      }
+      return distances;
+    });
+    const commonJoin = joinNodes
+      .filter((node) => branchDistances.every((distances) => distances.has(node.id)))
+      .sort((left, right) => {
+        const leftDistance = branchDistances.reduce(
+          (sum, distances) => sum + (distances.get(left.id) ?? Number.MAX_SAFE_INTEGER),
+          0,
+        );
+        const rightDistance = branchDistances.reduce(
+          (sum, distances) => sum + (distances.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+          0,
+        );
+        return leftDistance - rightDistance;
+      })[0];
+
+    if (invalidTargets.length || !commonJoin) {
+      invalidSplits.push(splitNode.data.label);
+      return;
+    }
+
+    const fieldOwners = new Map<string, Array<{ branch: number; label: string }>>();
+    branchRootIds.forEach((rootId, branch) => {
+      const visited = new Set<string>();
+      const queue = [rootId];
+      while (queue.length) {
+        const current = queue.shift()!;
+        if (current === commonJoin.id || visited.has(current)) continue;
+        visited.add(current);
+        const node = nodeById.get(current);
+        if (node?.data.kind === "approval") {
+          node.data.editableFields.forEach((field) => {
+            fieldOwners.set(field, [
+              ...(fieldOwners.get(field) ?? []),
+              { branch, label: node.data.label },
+            ]);
+          });
+        }
+        adjacency.get(current)?.forEach((next) => queue.push(next));
+      }
     });
     fieldOwners.forEach((owners, field) => {
-      if (owners.length > 1) conflictMessages.push(`${field}（${owners.join("、")}）`);
+      if (new Set(owners.map((owner) => owner.branch)).size > 1) {
+        conflictMessages.push(
+          `${field}（${[...new Set(owners.map((owner) => owner.label))].join("、")}）`,
+        );
+      }
     });
   });
 
@@ -423,19 +460,21 @@ const runValidation = (nodes: DesignerNode[], edges: DesignerEdge[]): Validation
       pass: missingGroups.length === 0,
     },
     {
-      key: "parallel",
-      title: "并行分支数量",
-      detail: invalidParallels.length
-        ? `${invalidParallels.map((node) => node.data.label).join("、")} 少于 2 个分支`
-        : `${parallels.length} 个并行节点均至少包含 2 个分支`,
-      pass: invalidParallels.length === 0,
+      key: "parallel-topology",
+      title: "并行与汇聚拓扑",
+      detail: invalidSplits.length
+        ? `${invalidSplits.join("、")} 的多条分支需要直接连接审批节点并汇聚到同一后续节点`
+        : splitNodes.length
+          ? `已自动识别 ${splitNodes.length} 处并行、${joinNodes.length} 处汇聚`
+          : "当前为串行流程，无需配置并行节点",
+      pass: invalidSplits.length === 0,
     },
     {
       key: "field-conflict",
       title: "并行可修改字段冲突",
       detail: conflictMessages.length
         ? `发现冲突：${conflictMessages.join("；")}`
-        : "各并行审批节点的可修改字段互不重叠",
+        : "各并行路径中的审批节点可修改字段互不重叠",
       pass: conflictMessages.length === 0,
     },
   ];
@@ -460,6 +499,11 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
     [nodes, selectedNodeId],
   );
   const validationResults = useMemo(() => runValidation(nodes, edges), [nodes, edges]);
+  const parallelRegionCount = useMemo(() => {
+    const outgoingCount = new Map<string, number>();
+    edges.forEach((edge) => outgoingCount.set(edge.source, (outgoingCount.get(edge.source) ?? 0) + 1));
+    return [...outgoingCount.values()].filter((count) => count >= 2).length;
+  }, [edges]);
   const allValidationPassed = validationResults.every((result) => result.pass);
 
   useEffect(() => {
@@ -671,7 +715,7 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
             <div>
               <Text strong>并行审核规则</Text>
               <Text type="secondary">
-                任一分支驳回后，本轮其他待办自动取消；重新上传后全部分支重新审核。
+                同一节点引出多条审核连线时自动并行；多条连线汇入同一节点时，等待全部前置通过后继续。
               </Text>
             </div>
           </div>
@@ -681,6 +725,9 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
           <div className="flow-designer-canvas__status">
             <Tag>{nodes.length} 个节点</Tag>
             <Tag>{edges.length} 条连线</Tag>
+            <Tag color={parallelRegionCount ? "purple" : "default"}>
+              {parallelRegionCount ? `已识别 ${parallelRegionCount} 处并行` : "串行流程"}
+            </Tag>
             <Tag color={allValidationPassed ? "success" : "warning"}>
               {allValidationPassed ? "规则校验通过" : "存在待处理项"}
             </Tag>
@@ -805,7 +852,7 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
                   <div className="property-field">
                     <span className="property-field__label">审核人可修改字段</span>
                     <Text type="secondary" className="property-field__help property-field__help--above">
-                      修改内容与审核结果原子提交。并行节点之间不允许选择同一字段。
+                      修改内容与审核结果原子提交。并行路径之间不允许选择同一字段。
                     </Text>
                     <Checkbox.Group
                       value={selectedNode.data.editableFields}
@@ -819,21 +866,12 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
                 </>
               )}
 
-              {selectedNode.data.kind === "parallel" && (
-                <Alert
-                  type="info"
-                  showIcon
-                  message="并行分支约束"
-                  description="至少连接 2 个分支。发布时系统会检测各分支的可修改字段是否冲突。"
-                />
-              )}
-
               {selectedNode.data.kind === "end" && (
                 <Alert
                   type="success"
                   showIcon
                   message="结束条件"
-                  description="所有并行审批节点通过后自动到达；任一节点驳回不会进入结束节点。"
+                  description="存在多个前置节点时，系统会自动按 AND 汇聚处理：全部前置审批通过后才会到达。"
                 />
               )}
 
@@ -888,7 +926,7 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
         footer={
           <div className="validation-drawer__footer">
             <Text type={allValidationPassed ? "success" : "danger"}>
-              {allValidationPassed ? "5 项规则全部通过" : "请先修正未通过项"}
+              {allValidationPassed ? `${validationResults.length} 项规则全部通过` : "请先修正未通过项"}
             </Text>
             <Space>
               <Button onClick={() => setValidationOpen(false)}>返回设计器</Button>
@@ -962,14 +1000,8 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
               <strong>{nodes.filter((node) => node.data.kind === "approval").length}</strong>
             </div>
             <div>
-              <Text type="secondary">并行分支</Text>
-              <strong>
-                {edges.filter((edge) =>
-                  nodes.some(
-                    (node) => node.id === edge.source && node.data.kind === "parallel",
-                  ),
-                ).length}
-              </strong>
+              <Text type="secondary">并行区域</Text>
+              <strong>{parallelRegionCount}</strong>
             </div>
             <div>
               <Text type="secondary">校验结果</Text>
@@ -980,7 +1012,7 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
             type="info"
             showIcon
             message="版本生效范围"
-            description="发布后该版本不可直接修改，仅新发起的流程使用 V3.3；运行中的实例继续使用原版本。"
+            description={`发布后该版本不可直接修改，仅新发起的流程使用 ${meta.version}；运行中的实例继续使用原版本。`}
           />
         </div>
       </Modal>

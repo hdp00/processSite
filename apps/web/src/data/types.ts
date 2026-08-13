@@ -36,6 +36,9 @@ export interface ProcessInstance {
   documentType: string;
   documentLevel: string;
   revision: string;
+  productModel?: string;
+  testType?: string;
+  testConclusion?: string;
   reviewers: ReviewerProgress[];
 }
 

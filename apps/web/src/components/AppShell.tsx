@@ -27,13 +27,13 @@ import {
 } from "antd";
 import { useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { getProcessDefinition, processDefinitions } from "../data/processDefinitions";
 import { personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
 
 const { Header, Sider, Content } = Layout;
 
 const pageMeta: Record<string, { title: string; eyebrow: string }> = {
   "/tasks": { title: "任务中心", eyebrow: "员工工作区" },
-  "/processes": { title: "所有流程", eyebrow: "员工工作区" },
   "/designer/form": { title: "初始表单设计器", eyebrow: "流程配置" },
   "/designer/flow": { title: "可视化流程设计器", eyebrow: "流程配置" },
 };
@@ -53,12 +53,15 @@ export function AppShell() {
 
   const persona = personas.find((item) => item.id === personaId) ?? personas[2];
   const unreadCount = notices.filter((item) => !item.read).length;
-  const selectedKey = location.pathname.startsWith("/processes/")
-    ? "/processes"
+  const processDefinition = getProcessDefinition(new URLSearchParams(location.search).get("definitionId"));
+  const selectedKey = location.pathname === "/processes"
+    ? `/processes?definitionId=${processDefinition.id}`
     : location.pathname;
   const meta = location.pathname.startsWith("/processes/")
-    ? { title: "流程详情", eyebrow: "员工工作区" }
-    : pageMeta[location.pathname] ?? pageMeta["/tasks"];
+    ? { title: "流程详情", eyebrow: "流程清单" }
+    : location.pathname === "/processes"
+      ? { title: processDefinition.label, eyebrow: "流程清单" }
+      : pageMeta[location.pathname] ?? pageMeta["/tasks"];
 
   const menuItems: MenuProps["items"] = useMemo(
     () => [
@@ -67,7 +70,15 @@ export function AppShell() {
         label: "员工工作区",
         children: [
           { key: "/tasks", icon: <CheckSquareOutlined />, label: "任务中心" },
-          { key: "/processes", icon: <FileSearchOutlined />, label: "所有流程" },
+          {
+            key: "/processes-menu",
+            icon: <FileSearchOutlined />,
+            label: "流程清单",
+            children: processDefinitions.map((definition) => ({
+              key: `/processes?definitionId=${definition.id}`,
+              label: definition.label,
+            })),
+          },
         ],
       },
       {
@@ -123,6 +134,7 @@ export function AppShell() {
           theme="dark"
           mode="inline"
           selectedKeys={[selectedKey]}
+          defaultOpenKeys={["/processes-menu"]}
           items={menuItems}
           onClick={({ key }) => navigate(key)}
         />

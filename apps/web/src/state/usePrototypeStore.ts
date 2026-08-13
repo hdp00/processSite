@@ -4,6 +4,9 @@ import { initialInstances, initialNotices } from "../data/mock";
 import type { NoticeItem, ProcessInstance } from "../data/types";
 
 type ReviewAction = "pass" | "reject";
+type RepublishChanges = Partial<
+  Pick<ProcessInstance, "title" | "documentCode" | "documentType" | "documentLevel" | "description" | "pdfName">
+>;
 export type PersonaId = "wangmin" | "zhangwei" | "lina" | "zhaolei" | "admin" | "hejing";
 
 export const personas: Array<{
@@ -31,7 +34,9 @@ interface PrototypeState {
   markAllNoticesRead: () => void;
   reviewInstance: (id: string, action: ReviewAction, comment: string, documentLevel?: string) => void;
   closeInstance: (id: string, reason: string) => void;
-  resubmitInstance: (id: string) => void;
+  updateUnreviewedInstance: (id: string, changes: RepublishChanges) => void;
+  republishInstance: (id: string, changes: RepublishChanges) => void;
+  copyCompletedInstance: (sourceId: string, title: string, copyAttachment: boolean) => string | null;
   resetDemo: () => void;
 }
 
@@ -72,7 +77,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                   ...reviewer,
                   status: action === "pass" ? ("已通过" as const) : ("已驳回" as const),
                   actionAt,
-                  comment: comment || (action === "pass" ? "同意，按修订内容执行。" : "请修正后重新提交。"),
+                  comment: comment || (action === "pass" ? "同意，按修订内容执行。" : "请修正后重新发布。"),
                   substitute: Boolean(instance.designatedReviewer && instance.designatedReviewer !== persona.name),
                   name: persona.name,
                 };
@@ -91,7 +96,7 @@ export const usePrototypeStore = create<PrototypeState>()(
               updatedAt: actionAt,
               status: action === "reject" ? ("驳回待处理" as const) : allPassed ? ("已完成" as const) : instance.status,
               currentNode:
-                action === "reject" ? "文控重新提交" : allPassed ? "流程结束" : "研发 / 质量 / 生产并行审核",
+                action === "reject" ? "等待发布方重新发布" : allPassed ? "流程结束" : "研发 / 质量 / 生产并行审核",
             };
           });
 
@@ -123,12 +128,27 @@ export const usePrototypeStore = create<PrototypeState>()(
               : instance,
           ),
         })),
-      resubmitInstance: (id) =>
+      updateUnreviewedInstance: (id, changes) =>
+        set((state) => ({
+          instances: state.instances.map((instance) => {
+            const hasReviewAction = instance.reviewers.some(
+              (reviewer) => reviewer.status === "已通过" || reviewer.status === "已驳回",
+            );
+            if (instance.id !== id || instance.status !== "审核中" || hasReviewAction) return instance;
+            return {
+              ...instance,
+              ...changes,
+              updatedAt: nowText(),
+            };
+          }),
+        })),
+      republishInstance: (id, changes) =>
         set((state) => ({
           instances: state.instances.map((instance) =>
             instance.id === id
               ? {
                   ...instance,
+                  ...changes,
                   status: "审核中",
                   currentNode: "研发 / 质量 / 生产并行审核",
                   round: instance.round + 1,
@@ -144,6 +164,46 @@ export const usePrototypeStore = create<PrototypeState>()(
               : instance,
           ),
         })),
+      copyCompletedInstance: (sourceId, title, copyAttachment) => {
+        let createdId: string | null = null;
+        set((state) => {
+          const source = state.instances.find((instance) => instance.id === sourceId);
+          if (!source || source.status !== "已完成" || state.personaId !== "wangmin") return state;
+
+          const persona = personas.find((item) => item.id === state.personaId) ?? personas[0];
+          const timestamp = Date.now();
+          const prefix = source.template.includes("测试报告") ? "TR" : "PDF";
+          createdId = `copy-${timestamp}`;
+          const createdAt = nowText();
+          const copied: ProcessInstance = {
+            ...source,
+            id: createdId,
+            code: `${prefix}-${new Date().getFullYear()}-COPY-${String(timestamp).slice(-6)}`,
+            title: title.trim() || `${source.title}（复制）`,
+            status: "审核中",
+            initiator: persona.name,
+            department: "文控中心",
+            createdAt,
+            updatedAt: createdAt,
+            round: 1,
+            currentNode: "研发 / 质量 / 生产并行审核",
+            priority: "普通",
+            designatedReviewer: undefined,
+            designatedReviewerId: undefined,
+            pdfName: copyAttachment ? source.pdfName : "待补充附件",
+            pdfSize: copyAttachment ? source.pdfSize : "—",
+            reviewers: source.reviewers.map((reviewer) => ({
+              ...reviewer,
+              status: "待审核",
+              actionAt: undefined,
+              comment: undefined,
+              substitute: undefined,
+            })),
+          };
+          return { instances: [copied, ...state.instances] };
+        });
+        return createdId;
+      },
       resetDemo: () => set((state) => ({
         instances: initialInstances,
         notices: initialNotices,
@@ -151,6 +211,6 @@ export const usePrototypeStore = create<PrototypeState>()(
         personaId: state.personaId,
       })),
     }),
-    { name: "flowpilot-prototype-v1" },
+    { name: "flowpilot-prototype-v5" },
   ),
 );

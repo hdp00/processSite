@@ -10,6 +10,7 @@ import {
   FilePdfOutlined,
   HistoryOutlined,
   LockOutlined,
+  PrinterOutlined,
   ReloadOutlined,
   SendOutlined,
   StopOutlined,
@@ -34,6 +35,7 @@ import {
   Timeline,
   Tooltip,
   Typography,
+  Upload,
   message,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -65,19 +67,33 @@ export function ProcessDetailPage() {
     personaId,
     reviewInstance,
     closeInstance,
-    resubmitInstance,
+    updateUnreviewedInstance,
+    republishInstance,
   } = usePrototypeStore();
   const instance = instances.find((item) => item.id === id);
   const persona = personas.find((item) => item.id === personaId) ?? personas[2];
   const [comment, setComment] = useState("");
   const [documentLevel, setDocumentLevel] = useState(instance?.documentLevel ?? "受控文件");
+  const [draftTitle, setDraftTitle] = useState(instance?.title ?? "");
+  const [draftDocumentCode, setDraftDocumentCode] = useState(instance?.documentCode ?? "");
+  const [draftDocumentType, setDraftDocumentType] = useState(instance?.documentType ?? "");
+  const [draftDescription, setDraftDescription] = useState(instance?.description ?? "");
+  const [draftPdfName, setDraftPdfName] = useState(instance?.pdfName ?? "");
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [closeOpen, setCloseOpen] = useState(false);
   const [closeReason, setCloseReason] = useState("");
 
   useEffect(() => {
-    if (instance) setDocumentLevel(instance.documentLevel);
+    if (instance) {
+      setDocumentLevel(instance.documentLevel);
+      setDraftTitle(instance.title);
+      setDraftDocumentCode(instance.documentCode);
+      setDraftDocumentType(instance.documentType);
+      setDraftDescription(instance.description);
+      setDraftPdfName(instance.pdfName);
+    }
   }, [instance?.id, instance?.documentLevel]);
+
 
   const currentReviewer = useMemo(
     () => instance?.reviewers.find((reviewer) => reviewer.key === persona.reviewerKey),
@@ -90,12 +106,18 @@ export function ProcessDetailPage() {
     canReview && instance?.designatedReviewer && instance.designatedReviewer !== persona.name,
   );
   const isDcc = personaId === "wangmin";
+  const hasReviewAction = Boolean(instance?.reviewers.some(
+    (reviewer) => reviewer.status === "已通过" || reviewer.status === "已驳回",
+  ));
+  const canEditBeforeReview = Boolean(isDcc && instance?.status === "审核中" && !hasReviewAction);
+  const canRepublish = isDcc && instance?.status === "驳回待处理";
+  const canEditPublishedContent = canEditBeforeReview || canRepublish;
 
   if (!instance) {
     return (
       <Card className="empty-page-card">
         <Empty description="未找到流程实例" />
-        <Button onClick={() => navigate("/processes")}>返回所有流程</Button>
+        <Button onClick={() => navigate("/processes")}>返回流程清单</Button>
       </Card>
     );
   }
@@ -127,18 +149,45 @@ export function ProcessDetailPage() {
     message.success("流程已关闭，未完成待办已取消");
   };
 
-  const resubmit = () => {
+  const republish = () => {
+    if (!draftTitle.trim() || !draftDocumentCode.trim()) {
+      message.warning("请完善必填表单内容后再重新发布");
+      return;
+    }
     Modal.confirm({
-      title: `确认开启第 ${instance.round + 1} 轮审核？`,
-      content: "重新上传后，研发、质量、生产三个分支将全部重新审核。",
-      okText: "重新提交",
+      title: `确认重新发布并开启第 ${instance.round + 1} 轮审核？`,
+      content: "当前表单修改和可选附件变更将一起发布，全部审批分支都会重新生成待办。",
+      okText: "确认重新发布",
       cancelText: "取消",
       icon: <ReloadOutlined />,
       onOk: () => {
-        resubmitInstance(instance.id);
-        message.success("新版文件已提交，三方待办已重新生成");
+        republishInstance(instance.id, {
+          title: draftTitle.trim(),
+          documentCode: draftDocumentCode.trim(),
+          documentType: draftDocumentType,
+          documentLevel,
+          description: draftDescription.trim(),
+          pdfName: draftPdfName,
+        });
+        message.success("流程已重新发布，全部分支待办已重新生成");
       },
     });
+  };
+
+  const saveBeforeReview = () => {
+    if (!draftTitle.trim() || !draftDocumentCode.trim()) {
+      message.warning("请完善必填表单内容后再保存");
+      return;
+    }
+    updateUnreviewedInstance(instance.id, {
+      title: draftTitle.trim(),
+      documentCode: draftDocumentCode.trim(),
+      documentType: draftDocumentType,
+      documentLevel,
+      description: draftDescription.trim(),
+      pdfName: draftPdfName,
+    });
+    message.success("修改已保存，本轮待办保持不变");
   };
 
   const changedLevel = documentLevel !== instance.documentLevel;
@@ -152,8 +201,12 @@ export function ProcessDetailPage() {
       <div className="detail-topbar">
         <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>返回</Button>
         <div className="detail-topbar-actions">
+          <Button icon={<PrinterOutlined />} onClick={() => window.open(`/processes/${instance.id}/print`, "_blank", "noopener,noreferrer")}>打印为 PDF</Button>
+          {canEditBeforeReview && (
+            <Button type="primary" icon={<EditOutlined />} onClick={saveBeforeReview}>保存修改</Button>
+          )}
           {isDcc && instance.status === "驳回待处理" && (
-            <Button type="primary" icon={<UploadOutlined />} onClick={resubmit}>上传新版并重新提交</Button>
+            <Button type="primary" icon={<ReloadOutlined />} onClick={republish}>重新发布</Button>
           )}
           {isDcc && instance.status !== "已关闭" && (
             <Button danger icon={<CloseOutlined />} onClick={() => setCloseOpen(true)}>关闭流程</Button>
@@ -196,6 +249,35 @@ export function ProcessDetailPage() {
         />
       )}
 
+      {canRepublish && (
+        <Alert
+          type="warning"
+          showIcon
+          message="流程已驳回，发布内容现已解锁"
+          description="你可以修改表单，并按需更换附件；确认重新发布后将开启新一轮，全部审批分支重新审核。"
+        />
+      )}
+
+      {canEditBeforeReview && (
+        <Alert
+          type="success"
+          showIcon
+          icon={<EditOutlined />}
+          message="本轮尚无人提交审核，发布内容可以修改"
+          description="保存修改不会创建新轮次，也不会重新生成待办；任一审批人提交结果后，内容将立即锁定。"
+        />
+      )}
+
+      {isDcc && instance.status === "审核中" && hasReviewAction && (
+        <Alert
+          type="info"
+          showIcon
+          icon={<LockOutlined />}
+          message="本轮已有审核结果，发布内容已锁定"
+          description="发布方不能再修改表单或附件；如果本轮被驳回，内容会重新开放编辑。"
+        />
+      )}
+
       <Card className="progress-card" title="流程进度" extra={<Tag bordered={false}>任一分支驳回，本轮立即结束</Tag>}>
         <div className="parallel-flow">
           <div className="flow-endpoint done"><CheckOutlined /><span>开始<small>{instance.createdAt.slice(5, 16)}</small></span></div>
@@ -225,8 +307,25 @@ export function ProcessDetailPage() {
       <div className="detail-workspace">
         <Card
           className="pdf-card"
-          title={<Space><FilePdfOutlined className="pdf-red" />{instance.pdfName}<Tag>{instance.pdfSize}</Tag></Space>}
-          extra={<Space><Button type="text" icon={<DownloadOutlined />} onClick={() => message.info("原型：已触发受控下载")}>下载</Button><Tag color="success" icon={<EyeOutlined />}>页面内展示</Tag></Space>}
+          title={<Space><FilePdfOutlined className="pdf-red" />{draftPdfName}<Tag>{instance.pdfSize}</Tag></Space>}
+          extra={
+            <Space>
+              {canEditPublishedContent && (
+                <Upload
+                  showUploadList={false}
+                  beforeUpload={(file) => {
+                    setDraftPdfName(file.name);
+                    message.success(canRepublish ? "附件已暂存，将在重新发布时一并提交" : "附件已暂存，请保存修改");
+                    return false;
+                  }}
+                >
+                  <Button type="text" icon={<UploadOutlined />}>更换附件（可选）</Button>
+                </Upload>
+              )}
+              <Button type="text" icon={<DownloadOutlined />} onClick={() => message.info("原型：已触发受控下载")}>下载</Button>
+              <Tag color="success" icon={<EyeOutlined />}>页面内展示</Tag>
+            </Space>
+          }
         >
           <div className="pdf-viewer-toolbar">
             <span>第 1 / 12 页</span>
@@ -261,23 +360,29 @@ export function ProcessDetailPage() {
           <Card
             className="form-card"
             title={<span>流程表单 <Tag bordered={false}>动态表单</Tag></span>}
-            extra={canReview ? <Tag color="gold" icon={<EditOutlined />}>2 项本节点可修改</Tag> : <Tag icon={<LockOutlined />}>只读</Tag>}
+            extra={canRepublish
+              ? <Tag color="orange" icon={<EditOutlined />}>驳回后可修改</Tag>
+              : canEditBeforeReview
+                ? <Tag color="green" icon={<EditOutlined />}>首人审核前可修改</Tag>
+              : canReview
+                ? <Tag color="gold" icon={<EditOutlined />}>2 项本节点可修改</Tag>
+                : <Tag icon={<LockOutlined />}>只读</Tag>}
           >
             <div className="form-field-grid">
-              <label className="field-block"><span>文件标题</span><Input value={instance.title} readOnly /></label>
-              <label className="field-block"><span>文件编号</span><Input value={instance.documentCode} readOnly /></label>
-              <label className="field-block"><span>文件类型</span><Select value={instance.documentType} disabled options={[{ value: instance.documentType }]} /></label>
-              <label className={canReview ? "field-block editable-field" : "field-block"}>
+              <label className={canEditPublishedContent ? "field-block editable-field" : "field-block"}><span>文件标题</span><Input value={draftTitle} readOnly={!canEditPublishedContent} onChange={(event) => setDraftTitle(event.target.value)} /></label>
+              <label className={canEditPublishedContent ? "field-block editable-field" : "field-block"}><span>文件编号</span><Input value={draftDocumentCode} readOnly={!canEditPublishedContent} onChange={(event) => setDraftDocumentCode(event.target.value)} /></label>
+              <label className={canEditPublishedContent ? "field-block editable-field" : "field-block"}><span>文件类型</span><Select value={draftDocumentType} disabled={!canEditPublishedContent} onChange={setDraftDocumentType} options={["作业指导书", "检验规范", "工程变更通知", "测试报告"].map((value) => ({ value }))} /></label>
+              <label className={canReview || canEditPublishedContent ? "field-block editable-field" : "field-block"}>
                 <span>文件密级 {canReview && <em>本节点可修改</em>}</span>
                 <Select
                   value={documentLevel}
-                  disabled={!canReview}
+                  disabled={!canReview && !canEditPublishedContent}
                   onChange={setDocumentLevel}
                   options={["受控文件", "内部文件", "公开文件"].map((value) => ({ value }))}
                 />
               </label>
               <label className="field-block field-wide"><span>产品线</span><Input value="工业控制 / 驱动器 / MTR-320" readOnly /></label>
-              <label className="field-block field-wide"><span>变更说明</span><Input.TextArea value={instance.description} readOnly autoSize={{ minRows: 2, maxRows: 4 }} /></label>
+              <label className={canEditPublishedContent ? "field-block field-wide editable-field" : "field-block field-wide"}><span>变更说明</span><Input.TextArea value={draftDescription} readOnly={!canEditPublishedContent} onChange={(event) => setDraftDescription(event.target.value)} autoSize={{ minRows: 2, maxRows: 4 }} /></label>
             </div>
 
             <Divider titlePlacement="start">变更明细</Divider>
@@ -324,7 +429,7 @@ export function ProcessDetailPage() {
           )}
 
           {!canReview && instance.status === "审核中" && (
-            <Alert message="当前以只读方式查看" description="你没有此待办的处理权限，或该节点已由其他成员完成。" type="info" showIcon />
+            !isDcc && <Alert message="当前以只读方式查看" description="你没有此待办的处理权限，或该节点已由其他成员完成。" type="info" showIcon />
           )}
         </div>
       </div>

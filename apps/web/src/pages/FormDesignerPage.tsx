@@ -100,6 +100,10 @@ interface DesignerField {
   defaultValue: string | string[];
   listVisible: boolean;
   queryable: boolean;
+  taskVisible?: boolean;
+  taskDisplayName?: string;
+  taskOrder?: number;
+  taskWidth?: number;
   reviewEditable: boolean;
   options?: string[];
   attachment?: AttachmentConfig;
@@ -154,6 +158,10 @@ const INITIAL_FIELDS: DesignerField[] = [
     defaultValue: "MTR-320 步进电机装配作业指导书",
     listVisible: true,
     queryable: true,
+    taskVisible: true,
+    taskDisplayName: "文件标题",
+    taskOrder: 1,
+    taskWidth: 240,
     reviewEditable: false,
   },
   {
@@ -166,6 +174,10 @@ const INITIAL_FIELDS: DesignerField[] = [
     defaultValue: "WI-MTR-320",
     listVisible: true,
     queryable: true,
+    taskVisible: true,
+    taskDisplayName: "文件编号",
+    taskOrder: 2,
+    taskWidth: 150,
     reviewEditable: false,
   },
   {
@@ -178,6 +190,10 @@ const INITIAL_FIELDS: DesignerField[] = [
     defaultValue: ["质量体系", "作业指导书"],
     listVisible: true,
     queryable: true,
+    taskVisible: true,
+    taskDisplayName: "文档分类",
+    taskOrder: 3,
+    taskWidth: 180,
     reviewEditable: false,
     options: ["质量体系/作业指导书", "质量体系/检验规范", "研发体系/设计规范", "生产体系/工艺文件"],
   },
@@ -313,7 +329,20 @@ const loadDraft = (): SavedDraft => {
     if (!saved) return { formName: "PDF 文件审核申请单", fields: cloneInitialFields() };
     const parsed = JSON.parse(saved) as SavedDraft;
     if (!Array.isArray(parsed.fields) || parsed.fields.length === 0) throw new Error("invalid draft");
-    return parsed;
+    const initialById = new Map(INITIAL_FIELDS.map((field) => [field.id, field]));
+    return {
+      ...parsed,
+      fields: parsed.fields.map((field) => {
+        const initial = initialById.get(field.id);
+        return {
+          taskVisible: initial?.taskVisible ?? false,
+          taskDisplayName: initial?.taskDisplayName ?? field.label,
+          taskOrder: initial?.taskOrder ?? 1,
+          taskWidth: initial?.taskWidth ?? 150,
+          ...field,
+        };
+      }),
+    };
   } catch {
     return { formName: "PDF 文件审核申请单", fields: cloneInitialFields() };
   }
@@ -330,6 +359,10 @@ const createField = (type: FieldType): DesignerField => {
     defaultValue: type === "checkbox" ? [] : "",
     listVisible: false,
     queryable: false,
+    taskVisible: false,
+    taskDisplayName: `新建${typeLabel[type]}`,
+    taskOrder: 1,
+    taskWidth: 150,
     reviewEditable: false,
   };
 
@@ -1065,13 +1098,49 @@ const FormDesignerPage = () => {
                     <Switch checked={selectedField.required} onChange={(checked) => updateField({ required: checked })} />
                   </div>
                   <div className="fd-switch-row">
-                    <div><Text strong>在列表显示</Text><Text type="secondary">作为“所有流程”的表格列</Text></div>
+                    <div><Text strong>在列表显示</Text><Text type="secondary">作为“流程清单”的表格列</Text></div>
                     <Switch checked={selectedField.listVisible} onChange={(checked) => updateField({ listVisible: checked })} />
                   </div>
                   <div className="fd-switch-row">
-                    <div><Text strong>作为查询条件</Text><Text type="secondary">用于“所有流程”筛选</Text></div>
+                    <div><Text strong>作为查询条件</Text><Text type="secondary">用于“流程清单”筛选</Text></div>
                     <Switch checked={selectedField.queryable} onChange={(checked) => updateField({ queryable: checked })} />
                   </div>
+                  <div className="fd-switch-row">
+                    <div><Text strong>在任务中心显示</Text><Text type="secondary">作为待办的流程关键信息</Text></div>
+                    <Switch checked={Boolean(selectedField.taskVisible)} onChange={(checked) => updateField({ taskVisible: checked })} />
+                  </div>
+                  {selectedField.taskVisible && (
+                    <div className="fd-task-display-config">
+                      <Form.Item label="任务列表显示名称">
+                        <Input
+                          value={selectedField.taskDisplayName ?? selectedField.label}
+                          onChange={(event) => updateField({ taskDisplayName: event.target.value })}
+                          placeholder={selectedField.label}
+                        />
+                      </Form.Item>
+                      <div className="fd-task-display-config__grid">
+                        <Form.Item label="显示顺序">
+                          <InputNumber
+                            min={1}
+                            max={6}
+                            value={selectedField.taskOrder ?? 1}
+                            onChange={(value) => updateField({ taskOrder: value ?? 1 })}
+                          />
+                        </Form.Item>
+                        <Form.Item label="展开列宽">
+                          <InputNumber
+                            min={100}
+                            max={360}
+                            step={10}
+                            addonAfter="px"
+                            value={selectedField.taskWidth ?? 150}
+                            onChange={(value) => updateField({ taskWidth: value ?? 150 })}
+                          />
+                        </Form.Item>
+                      </div>
+                      <Text type="secondary">混合流程时在任务下方的信息带显示，最多6项；选择单个流程后最多展开6列。</Text>
+                    </div>
+                  )}
                   <div className="fd-switch-row">
                     <div><Text strong>允许审核人修改</Text><Text type="secondary">具体权限在审批节点中设置</Text></div>
                     <Switch checked={selectedField.reviewEditable} onChange={(checked) => updateField({ reviewEditable: checked })} />

@@ -324,11 +324,6 @@
   border-radius: 34px;
 }
 
-.process-node--parallel {
-  background: linear-gradient(135deg, #fff 0%, #fbf8ff 100%);
-  border-color: #ded3ed;
-}
-
 .process-node__icon {
   display: grid;
   flex: 0 0 auto;

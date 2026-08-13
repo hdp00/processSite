@@ -8,6 +8,7 @@ import FormDesignerPage from "./pages/FormDesignerPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProcessDetailPage } from "./pages/ProcessDetailPage";
 import { ProcessListPage } from "./pages/ProcessListPage";
+import { ProcessPrintPage } from "./pages/ProcessPrintPage";
 import { TaskCenterPage } from "./pages/TaskCenterPage";
 import { usePrototypeStore } from "./state/usePrototypeStore";
 
@@ -52,6 +53,7 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
+            <Route path="/processes/:id/print" element={<ProtectedRoute><ProcessPrintPage /></ProtectedRoute>} />
             <Route
               element={
                 <ProtectedRoute>

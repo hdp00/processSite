@@ -1,13 +1,10 @@
 import {
-  ArrowRightOutlined,
-  ClockCircleOutlined,
-  ReloadOutlined,
+  AuditOutlined,
   SearchOutlined,
   TeamOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import {
-  Badge,
   Button,
   Card,
   Empty,
@@ -18,16 +15,13 @@ import {
   Table,
   Tag,
   Tooltip,
-  Typography,
-  message,
   type TableProps,
 } from "antd";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { processDefinitions, type TaskListFieldDefinition } from "../data/processDefinitions";
 import type { ProcessInstance } from "../data/types";
 import { personas, usePrototypeStore } from "../state/usePrototypeStore";
-
-const priorityColor = { 紧急: "error", 普通: "default" } as const;
 
 export function TaskCenterPage() {
   const navigate = useNavigate();
@@ -35,6 +29,7 @@ export function TaskCenterPage() {
   const [tab, setTab] = useState<"mine" | "substitute">("mine");
   const [keyword, setKeyword] = useState("");
   const [template, setTemplate] = useState<string>();
+  const [expandedInfoIds, setExpandedInfoIds] = useState<string[]>([]);
   const persona = personas.find((item) => item.id === personaId) ?? personas[2];
 
   const actionable = useMemo(
@@ -59,6 +54,7 @@ export function TaskCenterPage() {
   );
 
   const source = tab === "mine" ? myTasks : substituteTasks;
+  const selectedDefinition = processDefinitions.find((item) => item.template === template);
   const filtered = source.filter((item) => {
     const matchesKeyword = `${item.code}${item.title}${item.initiator}`
       .toLowerCase()
@@ -66,6 +62,61 @@ export function TaskCenterPage() {
     const matchesTemplate = !template || item.template === template;
     return matchesKeyword && matchesTemplate;
   });
+
+  const formatTaskFieldValue = (record: ProcessInstance, field: TaskListFieldDefinition) => {
+    const value = record[field.key];
+    if (Array.isArray(value)) return value.join("、") || "—";
+    if (value === undefined || value === null || value === "") return "—";
+    return String(value);
+  };
+
+  const dynamicColumns: TableProps<ProcessInstance>["columns"] = selectedDefinition
+    ? selectedDefinition.taskFields.slice(0, 6).map((field) => ({
+        title: field.label,
+        key: String(field.key),
+        width: field.width,
+        ellipsis: true,
+        render: (_, record) => (
+          <span className="task-dynamic-value">{formatTaskFieldValue(record, field)}</span>
+        ),
+      }))
+    : [];
+
+  const renderTaskInformation = (record: ProcessInstance) => {
+    const definition = processDefinitions.find((item) => item.template === record.template);
+    const fields = definition?.taskFields ?? [];
+    const isFullyExpanded = expandedInfoIds.includes(record.id);
+    const visibleFields = isFullyExpanded ? fields : fields.slice(0, 6);
+    const remainingCount = fields.length - visibleFields.length;
+
+    return (
+      <div className="task-detail-band">
+        <div className="task-detail-band__label">流程信息</div>
+        <div className="task-detail-band__fields">
+          {visibleFields.map((field) => {
+            const value = formatTaskFieldValue(record, field);
+            return (
+              <Tooltip title={value} key={String(field.key)}>
+                <div className="task-detail-field">
+                  <small>{field.label}</small>
+                  <strong>{value}</strong>
+                </div>
+              </Tooltip>
+            );
+          })}
+        </div>
+        {remainingCount > 0 && (
+          <Button
+            type="link"
+            size="small"
+            onClick={() => setExpandedInfoIds((ids) => [...ids, record.id])}
+          >
+            其余 {remainingCount} 项
+          </Button>
+        )}
+      </div>
+    );
+  };
 
   const columns: TableProps<ProcessInstance>["columns"] = [
     {
@@ -89,6 +140,7 @@ export function TaskCenterPage() {
         </div>
       ),
     },
+    ...dynamicColumns,
     {
       title: "当前节点",
       dataIndex: "currentNode",
@@ -123,67 +175,41 @@ export function TaskCenterPage() {
         ),
     },
     {
-      title: "时限",
-      dataIndex: "dueText",
-      width: 125,
-      render: (value: string, record) => (
-        <span className={record.priority === "紧急" ? "due-text is-urgent" : "due-text"}>
-          <ClockCircleOutlined /> {value}
-        </span>
-      ),
-    },
-    {
       title: "操作",
       fixed: "right",
-      width: 105,
+      width: 76,
+      align: "center",
       render: (_, record) => (
-        <Button type="link" icon={<ArrowRightOutlined />} iconPosition="end" onClick={() => navigate(`/processes/${record.id}`)}>
-          去审核
-        </Button>
+        <Tooltip title="进入审核">
+          <Button
+            className="task-action-button"
+            type="text"
+            icon={<AuditOutlined />}
+            aria-label={`审核：${record.title}`}
+            onClick={() => navigate(`/processes/${record.id}`)}
+          />
+        </Tooltip>
       ),
     },
   ];
 
   return (
     <div className="page-stack tasks-page">
-      <div className="page-heading">
-        <div>
-          <Typography.Title level={2}>任务中心</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            处理指定给你的审核，也可以在组内同事不在时直接代办。
-          </Typography.Paragraph>
-        </div>
-        <Space>
-          <Tag color={persona.reviewerKey ? "processing" : "default"}>{persona.role}</Tag>
-          <Button icon={<ReloadOutlined />} onClick={() => message.success("待办已刷新")}>刷新</Button>
-        </Space>
-      </div>
-
-      <div className="task-summary-grid">
-        <button className={tab === "mine" ? "summary-card active" : "summary-card"} type="button" onClick={() => setTab("mine")}>
-          <span className="summary-icon blue"><UserOutlined /></span>
-          <span><small>我的待办</small><strong>{myTasks.length}</strong><em>指定给我的任务</em></span>
-          <ArrowRightOutlined />
-        </button>
-        <button className={tab === "substitute" ? "summary-card active purple" : "summary-card purple"} type="button" onClick={() => setTab("substitute")}>
-          <span className="summary-icon purple"><TeamOutlined /></span>
-          <span><small>可代办</small><strong>{substituteTasks.length}</strong><em>流程权限组内共享</em></span>
-          <ArrowRightOutlined />
-        </button>
-        <div className="summary-note">
-          <span className="summary-note-mark">i</span>
-          <span><strong>临时代办无需转交</strong><small>组内任意一人提交即完成本节点，系统会记录实际处理人。</small></span>
-        </div>
-      </div>
-
       <Card className="content-card" styles={{ body: { padding: 0 } }}>
         <div className="table-toolbar">
           <Segmented
+            className={`task-tabs is-${tab}`}
             value={tab}
             onChange={(value) => setTab(value as "mine" | "substitute")}
             options={[
-              { label: <span>我的待办 <Badge count={myTasks.length} showZero color="#3157d5" /></span>, value: "mine" },
-              { label: <span>可代办 <Badge count={substituteTasks.length} showZero color="#7658c9" /></span>, value: "substitute" },
+              {
+                label: <span className="task-tab-label">我的待办 <span className="task-tab-count">{myTasks.length}</span></span>,
+                value: "mine",
+              },
+              {
+                label: <span className="task-tab-label is-purple">可代办 <span className="task-tab-count">{substituteTasks.length}</span></span>,
+                value: "substitute",
+              },
             ]}
           />
           <Space wrap>
@@ -201,7 +227,10 @@ export function TaskCenterPage() {
               value={template}
               onChange={setTemplate}
               style={{ width: 180 }}
-              options={[{ value: "PDF 文件审核流程", label: "PDF 文件审核流程" }]}
+              options={processDefinitions.map((definition) => ({
+                value: definition.template,
+                label: definition.label,
+              }))}
             />
           </Space>
         </div>
@@ -209,7 +238,17 @@ export function TaskCenterPage() {
           rowKey="id"
           columns={columns}
           dataSource={filtered}
-          scroll={{ x: 1180 }}
+          scroll={{ x: selectedDefinition ? 1300 : 1020 }}
+          expandable={
+            selectedDefinition
+              ? undefined
+              : {
+                  expandedRowRender: renderTaskInformation,
+                  expandedRowKeys: filtered.map((record) => record.id),
+                  showExpandColumn: false,
+                  expandRowByClick: false,
+                }
+          }
           pagination={{ pageSize: 6, showSizeChanger: false, showTotal: (total) => `共 ${total} 项任务` }}
           locale={{
             emptyText: (
