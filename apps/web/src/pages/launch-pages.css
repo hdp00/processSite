@@ -350,6 +350,16 @@
   grid-column: 1 / -1;
 }
 
+.configured-table-field {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.configured-table-field .ant-table-wrapper {
+  min-width: 0;
+}
+
 .start-form-grid .ant-form-item {
   min-width: 0;
   margin-bottom: 18px;

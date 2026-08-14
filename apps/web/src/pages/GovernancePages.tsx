@@ -50,6 +50,7 @@ import {
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBeforeUnload, useBlocker, useNavigate, useSearchParams } from "react-router-dom";
+import { StatusPill } from "../components/StatusPill";
 import {
   ROLE_PERMISSION_STORAGE_KEY,
   normalizeRolePermissionList,
@@ -192,7 +193,7 @@ function makeUsers(): UserRecord[] {
 }
 
 function StatusTag({ status }: { status: EnableStatus }) {
-  return <Tag color={status === "启用" ? "success" : "default"}>{status}</Tag>;
+  return <StatusPill status={status} />;
 }
 
 function PersonChip({ name, detail }: { name: string; detail?: string }) {
@@ -280,14 +281,14 @@ export function UserManagementPage() {
       title: "操作", fixed: "right", width: 146, align: "center",
       render: (_, record) => (
         <Space size={4}>
-          <Tooltip title={record.builtIn ? "系统内置账号不可编辑" : "编辑用户"}><Button disabled={record.builtIn} type="text" icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>
+          <Tooltip title={record.builtIn ? "系统内置账号不可编辑" : "编辑用户"}><Button disabled={record.builtIn} type="text" aria-label={`编辑用户：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>
           <Tooltip title={record.status === "启用" ? "停用账号" : "启用账号"}>
             <Popconfirm disabled={record.builtIn} title={`确认${record.status === "启用" ? "停用" : "启用"} ${record.name}？`} onConfirm={() => {
               setUsers((rows) => rows.map((item) => item.id === record.id ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item));
               message.success(`账号已${record.status === "启用" ? "停用" : "启用"}`);
-            }}><Button disabled={record.builtIn} type="text" icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm>
+            }}><Button disabled={record.builtIn} type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}用户：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm>
           </Tooltip>
-          <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : "重置密码"}><Popconfirm disabled={record.builtIn} title="生成临时密码并立即生效？" onConfirm={() => message.success(`已为 ${record.name} 重置密码：a`)}><Button disabled={record.builtIn} type="text" icon={<KeyOutlined />} /></Popconfirm></Tooltip>
+          <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : "重置密码"}><Popconfirm disabled={record.builtIn} title="生成临时密码并立即生效？" onConfirm={() => message.success(`已为 ${record.name} 重置密码：a`)}><Button disabled={record.builtIn} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} /></Popconfirm></Tooltip>
         </Space>
       ),
     },
@@ -393,8 +394,8 @@ export function DepartmentManagementPage() {
   const selected = departments.find((item) => item.key === selectedKey) ?? departments[0];
   const treeData = departments.filter((item) => item.level === 1).sort((a, b) => a.sort - b.sort).map((root) => ({
     key: root.key,
-    title: <span className="gov-tree-title"><span>{root.name}</span><Tag bordered={false}>{root.users} 人</Tag>{root.status === "停用" ? <Tag>停用</Tag> : null}</span>,
-    children: departments.filter((item) => item.parentKey === root.key).sort((a, b) => a.sort - b.sort).map((child) => ({ key: child.key, title: <span className="gov-tree-title"><span>{child.name}</span><Tag bordered={false}>{child.users} 人</Tag>{child.status === "停用" ? <Tag>停用</Tag> : null}</span> })),
+    title: <span className="gov-tree-title"><span>{root.name}</span><Tag bordered={false}>{root.users} 人</Tag>{root.status === "停用" ? <StatusPill status="停用" compact /> : null}</span>,
+    children: departments.filter((item) => item.parentKey === root.key).sort((a, b) => a.sort - b.sort).map((child) => ({ key: child.key, title: <span className="gov-tree-title"><span>{child.name}</span><Tag bordered={false}>{child.users} 人</Tag>{child.status === "停用" ? <StatusPill status="停用" compact /> : null}</span> })),
   }));
   const openDepartmentEditor = (mode: "new-root" | "new-child" | "edit") => {
     const record = mode === "edit" ? selected : undefined;
@@ -421,8 +422,8 @@ export function DepartmentManagementPage() {
       fixed: "right",
       align: "center",
       render: (_, record) => <Space size={4}>
-        <Tooltip title="编辑职务"><Button type="text" icon={<EditOutlined />} onClick={() => openJobTitleEditor(record)} /></Tooltip>
-        <Tooltip title={record.status === "启用" ? "停用职务" : "启用职务"}><Button type="text" icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => { setJobTitles((rows) => rows.map((item) => item.id === record.id ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item)); message.success(`职务已${record.status === "启用" ? "停用" : "启用"}`); }} /></Tooltip>
+        <Tooltip title="编辑职务"><Button type="text" aria-label={`编辑职务：${record.name}`} icon={<EditOutlined />} onClick={() => openJobTitleEditor(record)} /></Tooltip>
+        <Tooltip title={record.status === "启用" ? "停用职务" : "启用职务"}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}职务：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => { setJobTitles((rows) => rows.map((item) => item.id === record.id ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item)); message.success(`职务已${record.status === "启用" ? "停用" : "启用"}`); }} /></Tooltip>
         <Tooltip title={record.users ? "已有用户使用，不能删除" : "删除职务"}><Popconfirm disabled={record.users > 0} title="确认删除这个职务？" onConfirm={() => { setJobTitles((rows) => rows.filter((item) => item.id !== record.id)); message.success("职务已删除"); }}><Button type="text" danger disabled={record.users > 0} icon={<DeleteOutlined />} /></Popconfirm></Tooltip>
       </Space>,
     },
@@ -432,6 +433,7 @@ export function DepartmentManagementPage() {
     <div className="page-stack gov-page">
       <Card className="gov-org-section-switch" bordered={false}>
         <Segmented
+          className="app-mode-segmented gov-org-tabs"
           block
           value={section}
           onChange={(value) => { setSection(value as "departments" | "jobTitles"); setEditor(null); setJobTitleEditor(null); }}
@@ -926,7 +928,7 @@ export function WorkflowPermissionGroupsPage() {
     { title: "运行待办", dataIndex: "openTasks", width: 100, render: (value: number) => value ? <Tag color="processing">{value} 项</Tag> : <Tag>无</Tag> },
     { title: "状态", dataIndex: "status", width: 84, render: (value: EnableStatus) => <StatusTag status={value} /> },
     { title: "更新时间", dataIndex: "updatedAt", width: 150 },
-    { title: "操作", fixed: "right", width: 142, align: "center", render: (_, record) => <Space size={4}><Tooltip title="编辑"><Button type="text" icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip><Tooltip title="有效成员预览"><Button type="text" icon={<EyeOutlined />} onClick={() => setPreview(record)} /></Tooltip><Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => { setGroups((rows) => rows.map((item) => item.id === record.id ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item)); message.success(`权限组已${record.status === "启用" ? "停用" : "启用"}`); }}><Button type="text" icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip></Space> },
+    { title: "操作", fixed: "right", width: 142, align: "center", render: (_, record) => <Space size={4}><Tooltip title="编辑"><Button type="text" aria-label={`编辑权限组：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip><Tooltip title="有效成员预览"><Button type="text" aria-label={`预览有效成员：${record.name}`} icon={<EyeOutlined />} onClick={() => setPreview(record)} /></Tooltip><Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => { setGroups((rows) => rows.map((item) => item.id === record.id ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item)); message.success(`权限组已${record.status === "启用" ? "停用" : "启用"}`); }}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}权限组：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip></Space> },
   ];
   return (
     <div className="page-stack gov-page">
@@ -988,15 +990,15 @@ export function WorkflowPermissionGroupsPage() {
 type InstanceMonitorStatus = "审核中" | "驳回待处理" | "已完成" | "已关闭" | "进行中";
 interface MonitorRecord { id: string; code: string; title: string; process: string; version: string; status: InstanceMonitorStatus; node: string; initiator: string; department: string; createdAt: string; updatedAt: string; }
 const monitorRows: MonitorRecord[] = [
-  { id: "MON-1", code: "PDF-202608-0042", title: "MTR-320 步进电机装配作业指导书", process: "PDF审核", version: "v2", status: "审核中", node: "研发、质量、生产审核", initiator: "王敏", department: "文控", createdAt: "2026-08-13 09:10", updatedAt: "2026-08-13 11:26" },
-  { id: "MON-2", code: "PDF-202608-0041", title: "驱动器来料检验规范", process: "PDF审核", version: "v2", status: "驳回待处理", node: "发布方重新处理", initiator: "曹颖", department: "文控", createdAt: "2026-08-12 16:35", updatedAt: "2026-08-13 10:02" },
-  { id: "MON-3", code: "TR-202608-0019", title: "高低温循环测试报告", process: "测试报告审核", version: "v1", status: "审核中", node: "质量复核", initiator: "周宁", department: "研发 / 测试", createdAt: "2026-08-12 14:20", updatedAt: "2026-08-13 09:46" },
-  { id: "MON-4", code: "PDF-202608-0038", title: "包装工位作业指导书", process: "PDF审核", version: "v1", status: "已完成", node: "", initiator: "王敏", department: "文控", createdAt: "2026-08-10 08:42", updatedAt: "2026-08-11 16:18" },
-  { id: "MON-5", code: "FC-202608-0015", title: "产线扫码异常排查", process: "自由协作", version: "v1", status: "进行中", node: "张伟", initiator: "韩松", department: "生产 / 一车间", createdAt: "2026-08-11 10:06", updatedAt: "2026-08-13 12:40" },
-  { id: "MON-6", code: "FC-202608-0011", title: "供应商标签信息确认", process: "自由协作", version: "v1", status: "已关闭", node: "", initiator: "徐洁", department: "质量 / 来料检验", createdAt: "2026-08-08 13:34", updatedAt: "2026-08-12 15:10" },
-  { id: "MON-7", code: "PDF-202608-0035", title: "MTR-180 最终检验规范", process: "PDF审核", version: "v1", status: "已关闭", node: "", initiator: "冯浩", department: "文控", createdAt: "2026-08-07 09:12", updatedAt: "2026-08-09 17:22" },
+  { id: "MON-1", code: "PDF-202608-0042", title: "MTR-320 步进电机装配作业指导书", process: "PDF审核", version: "V2", status: "审核中", node: "研发、质量、生产审核", initiator: "王敏", department: "文控", createdAt: "2026-08-13 09:10", updatedAt: "2026-08-13 11:26" },
+  { id: "MON-2", code: "PDF-202608-0041", title: "驱动器来料检验规范", process: "PDF审核", version: "V2", status: "驳回待处理", node: "发布方重新处理", initiator: "曹颖", department: "文控", createdAt: "2026-08-12 16:35", updatedAt: "2026-08-13 10:02" },
+  { id: "MON-3", code: "TR-202608-0019", title: "高低温循环测试报告", process: "测试报告审核", version: "V1", status: "审核中", node: "质量复核", initiator: "周宁", department: "研发 / 测试", createdAt: "2026-08-12 14:20", updatedAt: "2026-08-13 09:46" },
+  { id: "MON-4", code: "PDF-202608-0038", title: "包装工位作业指导书", process: "PDF审核", version: "V1", status: "已完成", node: "", initiator: "王敏", department: "文控", createdAt: "2026-08-10 08:42", updatedAt: "2026-08-11 16:18" },
+  { id: "MON-5", code: "FC-202608-0015", title: "产线扫码异常排查", process: "自由协作", version: "V1", status: "进行中", node: "张伟", initiator: "韩松", department: "生产 / 一车间", createdAt: "2026-08-11 10:06", updatedAt: "2026-08-13 12:40" },
+  { id: "MON-6", code: "FC-202608-0011", title: "供应商标签信息确认", process: "自由协作", version: "V1", status: "已关闭", node: "", initiator: "徐洁", department: "质量 / 来料检验", createdAt: "2026-08-08 13:34", updatedAt: "2026-08-12 15:10" },
+  { id: "MON-7", code: "PDF-202608-0035", title: "MTR-180 最终检验规范", process: "PDF审核", version: "V1", status: "已关闭", node: "", initiator: "冯浩", department: "文控", createdAt: "2026-08-07 09:12", updatedAt: "2026-08-09 17:22" },
 ];
-const monitorStatusColor: Record<InstanceMonitorStatus, string> = { "审核中": "processing", "驳回待处理": "error", "已完成": "success", "已关闭": "default", "进行中": "cyan" };
+const monitorStatuses: InstanceMonitorStatus[] = ["审核中", "驳回待处理", "已完成", "已关闭", "进行中"];
 
 export function InstanceMonitorPage() {
   const [keyword, setKeyword] = useState("");
@@ -1008,20 +1010,20 @@ export function InstanceMonitorPage() {
     { title: "实例编号", dataIndex: "code", width: 170, fixed: "left", render: (value: string, record) => <Button className="gov-table-link" type="link" onClick={() => setDetail(record)}>{value}</Button> },
     { title: "标题", dataIndex: "title", width: 280, ellipsis: true },
     { title: "流程 / 版本", dataIndex: "process", width: 155, render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.version}</small></div> },
-    { title: "状态", dataIndex: "status", width: 118, render: (value: InstanceMonitorStatus) => <Tag color={monitorStatusColor[value]}>{value}</Tag> },
+    { title: "状态", dataIndex: "status", width: 118, render: (value: InstanceMonitorStatus) => <StatusPill status={value} /> },
     { title: "当前节点", dataIndex: "node", width: 210, ellipsis: true, render: (value: string) => value || "—" },
     { title: "发起人", dataIndex: "initiator", width: 125, render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.department}</small></div> },
     { title: "发起时间", dataIndex: "createdAt", width: 155 },
     { title: "更新时间", dataIndex: "updatedAt", width: 155 },
-    { title: "操作", fixed: "right", width: 80, align: "center", render: (_, record) => <Tooltip title="查看详情"><Button type="text" icon={<EyeOutlined />} onClick={() => setDetail(record)} /></Tooltip> },
+    { title: "操作", fixed: "right", width: 80, align: "center", render: (_, record) => <Tooltip title="查看详情"><Button type="text" aria-label={`查看流程实例：${record.title}`} icon={<EyeOutlined />} onClick={() => setDetail(record)} /></Tooltip> },
   ];
   return (
     <div className="page-stack gov-page">
       <Alert type="info" showIcon message="实例监控为只读页面" description="运维人员可以查询和查看流程、表单及流转信息，但不能强制关闭、改派、跳过节点或修改业务数据。" />
-      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--monitor"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="实例编号、标题或发起人" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={["PDF审核", "测试报告审核", "自由协作"].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={Object.keys(monitorStatusColor).map((value) => ({ value }))} /></label><label><span>发起时间</span><DatePicker.RangePicker /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => message.success(`已查询到 ${filtered.length} 条实例`)}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); }}>重置</Button></div></div></Card>
+      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--monitor"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="实例编号、标题或发起人" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={["PDF审核", "测试报告审核", "自由协作"].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={monitorStatuses.map((value) => ({ value }))} /></label><label><span>发起时间</span><DatePicker.RangePicker /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => message.success(`已查询到 ${filtered.length} 条实例`)}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); }}>重置</Button></div></div></Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程实例" count={filtered.length} extra={<Typography.Text type="secondary"><LockOutlined /> 全部操作只读</Typography.Text>} /><Table<MonitorRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1510 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条实例` }} /></Card>
       <Drawer width={660} open={Boolean(detail)} onClose={() => setDetail(null)} title="流程实例详情（只读）">
-        {detail ? <><div className="gov-detail-hero-row"><span className="gov-detail-icon"><FileSearchOutlined /></span><div><Typography.Title level={4}>{detail.title}</Typography.Title><Typography.Text type="secondary">{detail.code} · {detail.process} {detail.version}</Typography.Text></div><Tag color={monitorStatusColor[detail.status]}>{detail.status}</Tag></div><Descriptions bordered column={2} size="small" items={[{ key: "initiator", label: "发起人", children: `${detail.initiator}（${detail.department}）` }, { key: "created", label: "发起时间", children: detail.createdAt }, { key: "node", label: "当前节点", children: detail.node || "—" }, { key: "updated", label: "更新时间", children: detail.updatedAt }]} /><div className="gov-detail-section"><div className="gov-section-title">流转概览</div><Timeline items={[{ color: "green", children: <><strong>{detail.initiator} 发起流程</strong><small>{detail.createdAt}</small></> }, { color: "blue", children: <><strong>进入 {detail.node || "结束"}</strong><small>{detail.updatedAt}</small></> }, { color: "gray", children: <Typography.Text type="secondary">后续流转记录将在这里按时间显示</Typography.Text> }]} /></div><Alert type="warning" showIcon message="只读限制" description="本页没有强制关闭、异常改派、跳过节点或修改表单的入口。" /></> : null}
+        {detail ? <><div className="gov-detail-hero-row"><span className="gov-detail-icon"><FileSearchOutlined /></span><div><Typography.Title level={4}>{detail.title}</Typography.Title><Typography.Text type="secondary">{detail.code} · {detail.process} {detail.version}</Typography.Text></div><StatusPill status={detail.status} /></div><Descriptions bordered column={2} size="small" items={[{ key: "initiator", label: "发起人", children: `${detail.initiator}（${detail.department}）` }, { key: "created", label: "发起时间", children: detail.createdAt }, { key: "node", label: "当前节点", children: detail.node || "—" }, { key: "updated", label: "更新时间", children: detail.updatedAt }]} /><div className="gov-detail-section"><div className="gov-section-title">流转概览</div><Timeline items={[{ color: "green", children: <><strong>{detail.initiator} 发起流程</strong><small>{detail.createdAt}</small></> }, { color: "blue", children: <><strong>进入 {detail.node || "结束"}</strong><small>{detail.updatedAt}</small></> }, { color: "gray", children: <Typography.Text type="secondary">后续流转记录将在这里按时间显示</Typography.Text> }]} /></div><Alert type="warning" showIcon message="只读限制" description="本页没有强制关闭、异常改派、跳过节点或修改表单的入口。" /></> : null}
       </Drawer>
     </div>
   );
@@ -1051,9 +1053,9 @@ export function AuditLogPage() {
     { title: "模块", dataIndex: "module", width: 120, render: (value: string) => <Tag>{value}</Tag> },
     { title: "操作对象", dataIndex: "object", width: 285, ellipsis: true, render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.objectId}</small></div> },
     { title: "动作", dataIndex: "action", width: 120 },
-    { title: "结果", dataIndex: "result", width: 88, render: (value: AuditResult) => <Tag color={value === "成功" ? "success" : "error"}>{value}</Tag> },
+    { title: "结果", dataIndex: "result", width: 88, render: (value: AuditResult) => <StatusPill status={value} /> },
     { title: "IP 地址", dataIndex: "ip", width: 130 },
-    { title: "操作", fixed: "right", width: 78, align: "center", render: (_, record) => <Tooltip title="查看详情"><Button type="text" icon={<EyeOutlined />} onClick={() => setDetail(record)} /></Tooltip> },
+    { title: "操作", fixed: "right", width: 78, align: "center", render: (_, record) => <Tooltip title="查看详情"><Button type="text" aria-label={`查看审计日志：${record.id}`} icon={<EyeOutlined />} onClick={() => setDetail(record)} /></Tooltip> },
   ];
   return (
     <div className="page-stack gov-page">
@@ -1061,7 +1063,7 @@ export function AuditLogPage() {
       <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--audit"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="操作人、对象、编号或 IP" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>模块</span><Select allowClear placeholder="全部模块" value={module} onChange={setModule} options={Array.from(new Set(auditRows.map((row) => row.module))).map((value) => ({ value }))} /></label><label><span>结果</span><Select allowClear placeholder="全部结果" value={result} onChange={setResult} options={["成功", "失败"].map((value) => ({ value }))} /></label><label><span>操作时间</span><DatePicker.RangePicker showTime /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => message.success(`已查询到 ${filtered.length} 条日志`)}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setModule(undefined); setResult(undefined); }}>重置</Button></div></div></Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="操作审计" count={filtered.length} extra={<Typography.Text type="secondary"><AuditOutlined /> 审计记录只读且不可删除</Typography.Text>} /><Table<AuditRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1240 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条日志` }} /></Card>
       <Drawer width={680} open={Boolean(detail)} onClose={() => setDetail(null)} title="审计详情">
-        {detail ? <><div className="gov-audit-detail-head"><span className={`gov-audit-result is-${detail.result === "成功" ? "success" : "error"}`}>{detail.result === "成功" ? <CheckCircleOutlined /> : <StopOutlined />}</span><div><Typography.Title level={4}>{detail.action}</Typography.Title><Typography.Text type="secondary">{detail.id} · {detail.time}</Typography.Text></div><Tag color={detail.result === "成功" ? "success" : "error"}>{detail.result}</Tag></div><Descriptions bordered column={2} size="small" items={[{ key: "operator", label: "操作人", children: `${detail.operator}（${detail.department}）` }, { key: "ip", label: "IP 地址", children: detail.ip }, { key: "module", label: "模块", children: detail.module }, { key: "objectId", label: "对象编号", children: detail.objectId }, { key: "object", label: "操作对象", span: 2, children: detail.object }]} /><div className="gov-audit-values"><div><span>变更前</span><pre>{detail.before}</pre></div><div><span>变更后</span><pre>{detail.after}</pre></div></div><Alert type="info" showIcon message="操作说明" description={detail.detail} /></> : null}
+        {detail ? <><div className="gov-audit-detail-head"><span className={`gov-audit-result is-${detail.result === "成功" ? "success" : "error"}`}>{detail.result === "成功" ? <CheckCircleOutlined /> : <StopOutlined />}</span><div><Typography.Title level={4}>{detail.action}</Typography.Title><Typography.Text type="secondary">{detail.id} · {detail.time}</Typography.Text></div><StatusPill status={detail.result} /></div><Descriptions bordered column={2} size="small" items={[{ key: "operator", label: "操作人", children: `${detail.operator}（${detail.department}）` }, { key: "ip", label: "IP 地址", children: detail.ip }, { key: "module", label: "模块", children: detail.module }, { key: "objectId", label: "对象编号", children: detail.objectId }, { key: "object", label: "操作对象", span: 2, children: detail.object }]} /><div className="gov-audit-values"><div><span>变更前</span><pre>{detail.before}</pre></div><div><span>变更后</span><pre>{detail.after}</pre></div></div><Alert type="info" showIcon message="操作说明" description={detail.detail} /></> : null}
       </Drawer>
     </div>
   );

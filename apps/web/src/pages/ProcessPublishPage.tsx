@@ -1,6 +1,5 @@
 import {
   ApartmentOutlined,
-  ArrowLeftOutlined,
   AuditOutlined,
   CheckCircleFilled,
   ClockCircleOutlined,
@@ -25,14 +24,22 @@ import {
   Input,
   Modal,
   Space,
-  Steps,
   Tag,
   Typography,
   message,
 } from "antd";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { ProcessWizardPreviousButton } from "../components/ProcessWizardNavigation";
+import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
+import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import {
+  buildFlowLevels,
+  getReviewEditableFieldOptions,
+  readFlowDesignerSnapshot,
+  rejectionHandlingLabel,
+  type StoredFlowNodeSnapshot,
+} from "../utils/designerStorage";
 import { formatInstanceNumber } from "../utils/instanceNumber";
 import "./process-admin-pages.css";
 
@@ -57,8 +64,8 @@ interface PublishSnapshot {
   currentVersion: string;
   nextVersion: string;
   description: string;
-  starterGroup: string;
-  assigneeGroup?: string;
+  starterGroups: string[];
+  assigneeGroups?: string[];
   extraScope: string[];
   fields: Array<{ name: string; type: string; required?: boolean; list?: boolean }>;
   rejectionHandling?: string;
@@ -70,10 +77,10 @@ const publishDataById: Record<string, PublishSnapshot> = {
     code: "PROC-PDF-001",
     instancePrefix: "DOC",
     type: "approval",
-    currentVersion: "v3",
-    nextVersion: "v4",
+    currentVersion: "V3",
+    nextVersion: "V4",
     description: "受控 PDF 文件由研发、质量、生产并行审核。",
-    starterGroup: "PDF审核_文控_流程权限组",
+    starterGroups: ["PDF审核_文控_流程权限组"],
     extraScope: ["部门查看员", "林晓"],
     fields: [
       { name: "文档名称", type: "文本框", required: true, list: true },
@@ -92,9 +99,9 @@ const publishDataById: Record<string, PublishSnapshot> = {
     instancePrefix: "DOC",
     type: "approval",
     currentVersion: "尚未发布",
-    nextVersion: "v1",
+    nextVersion: "V1",
     description: "用于研发测试报告的会签、确认和正式发布。",
-    starterGroup: "测试报告_发起_流程权限组",
+    starterGroups: ["测试报告_发起_流程权限组"],
     extraScope: ["研发经理", "质量经理"],
     fields: [
       { name: "报告名称", type: "文本框", required: true, list: true },
@@ -110,11 +117,11 @@ const publishDataById: Record<string, PublishSnapshot> = {
     code: "PROC-FREE-003",
     instancePrefix: "ISSUE",
     type: "free",
-    currentVersion: "v2",
-    nextVersion: "v3",
+    currentVersion: "V2",
+    nextVersion: "V3",
     description: "当前受理人处理后指定下一位受理人，直至手动关闭。",
-    starterGroup: "自由协作_发起_流程权限组",
-    assigneeGroup: "自由协作_受理_流程权限组",
+    starterGroups: ["自由协作_发起_流程权限组"],
+    assigneeGroups: ["自由协作_受理_流程权限组"],
     extraScope: ["部门查看员"],
     fields: [
       { name: "事项标题", type: "文本框", required: true, list: true },
@@ -126,7 +133,18 @@ const publishDataById: Record<string, PublishSnapshot> = {
   },
 };
 
-const defaultSnapshot = publishDataById["pdf-review"];
+const emptyPublishSnapshot: PublishSnapshot = {
+  name: "流程不存在",
+  code: "—",
+  instancePrefix: "",
+  type: "approval",
+  currentVersion: "尚未发布",
+  nextVersion: "V1",
+  description: "",
+  starterGroups: [],
+  extraScope: [],
+  fields: [],
+};
 
 const formFieldTypeLabels: Record<string, string> = {
   text: "文本框",
@@ -173,41 +191,66 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
     ?? params.definitionId
     ?? params.id
     ?? searchParams.get("definitionId")
-    ?? "pdf-review";
+    ?? "";
   const definition = useProcessDefinitionStore((state) =>
     state.definitions.find((item) => item.id === resolvedId),
   );
+  const isWithdrawnDraft = Boolean(definition?.draft?.withdrawnVersionId);
+  const remainsDisabledAfterPublish = definition?.draft?.withdrawnVersionId
+    ? Boolean(definition.draft.withdrawnWasDisabled)
+    : Boolean(definition?.disabled);
   const publishDraft = useProcessDefinitionStore((state) => state.publishDraft);
-  const fallbackSnapshot = publishDataById[resolvedId] ?? defaultSnapshot;
+  const fallbackSnapshot = publishDataById[resolvedId] ?? emptyPublishSnapshot;
   const snapshot = useMemo<PublishSnapshot>(() => {
-    const config = definition?.draft?.basic
-      ?? definition?.versions.find((item) => item.version === definition.currentVersion)?.basic;
+    const effectiveVersion = getEffectiveVersion(definition);
+    const config = definition?.draft?.basic ?? effectiveVersion?.basic;
     if (!definition || !config) return fallbackSnapshot;
     return {
       name: config.name,
       code: config.code,
       instancePrefix: config.instancePrefix ?? "",
       type: config.type,
-      currentVersion: definition.currentVersion ?? "尚未发布",
-      nextVersion: definition.draft?.version ?? definition.currentVersion ?? "v1",
+      currentVersion: effectiveVersion?.version
+        ?? (definition.draft?.withdrawnVersionId ? definition.draft.version : "尚未发布"),
+      nextVersion: definition.draft?.version ?? effectiveVersion?.version ?? "V1",
       description: config.description,
-      starterGroup: config.starterGroup || "尚未选择",
-      assigneeGroup: config.assigneeGroup,
+      starterGroups: config.starterGroups,
+      assigneeGroups: config.assigneeGroups,
       extraScope: [...config.visibleRoles, ...config.visibleUsers],
       fields: readFormFields(resolvedId, fallbackSnapshot.fields),
-      rejectionHandling: fallbackSnapshot.rejectionHandling ?? "重新发布或关闭",
+      rejectionHandling: rejectionHandlingLabel(readFlowDesignerSnapshot(resolvedId)?.meta?.rejectionHandling)
+        || fallbackSnapshot.rejectionHandling
+        || "重新发布或关闭",
     };
   }, [definition, fallbackSnapshot, resolvedId]);
+  const flowSnapshot = useMemo(() => readFlowDesignerSnapshot(resolvedId), [resolvedId]);
+  const editableFieldLabelByValue = useMemo(
+    () => new Map(getReviewEditableFieldOptions(resolvedId).map((option) => [option.value, option.label])),
+    [resolvedId],
+  );
+  const flowNodes = useMemo(
+    () => flowSnapshot?.nodes.filter((node) => node.data?.kind && node.data.label) ?? [],
+    [flowSnapshot],
+  );
+  const flowLevels = useMemo(() => {
+    if (!flowSnapshot || !flowNodes.length) return [];
+    const nodeById = new Map(flowNodes.map((node) => [node.id, node]));
+    return buildFlowLevels(flowNodes, flowSnapshot.edges)
+      .map((ids) => ids.map((id) => nodeById.get(id)).filter((node): node is StoredFlowNodeSnapshot => Boolean(node)))
+      .filter((level) => level.length);
+  }, [flowNodes, flowSnapshot]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [changeNote, setChangeNote] = useState("");
   const [validating, setValidating] = useState(false);
   const [published, setPublished] = useState(false);
+  const [publishedMode, setPublishedMode] = useState<"new" | "same">();
+  const sameVersionMode = isWithdrawnDraft || publishedMode === "same";
 
   const validationItems = useMemo<ValidationItem[]>(() => {
     const draft = definition?.draft;
     const hasForm = published || Boolean(draft?.formConfigured && snapshot.fields.length);
-    const hasStarter = published || Boolean(draft?.basic.starterGroup);
+    const hasStarter = published || Boolean(draft?.basic.starterGroups.length);
     const hasInstancePrefix = published || Boolean(draft?.basic.instancePrefix?.trim());
     const common: ValidationItem[] = [
       { key: "basic", title: "基本信息完整", detail: "流程名称、定义编号、说明和流程类型均已设置。", level: "pass" },
@@ -219,15 +262,15 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
           : "请返回基本信息填写实例编号前缀，否则不能发布。",
         level: hasInstancePrefix ? "pass" : "block",
       },
-      { key: "form", title: "发起表单有效", detail: hasForm ? `${snapshot.fields.length} 个字段已完成配置，必填项和列表字段规则有效。` : "请返回表单设计步骤，至少配置并保存一个字段。", level: hasForm ? "pass" : "block" },
-      { key: "starter", title: "发起权限有效", detail: hasStarter ? `已关联“${snapshot.starterGroup}”，当前有效成员会获得发起权限。` : "请返回基本信息选择发起流程权限组。", level: hasStarter ? "pass" : "block" },
+      { key: "form", title: "初始表单有效", detail: hasForm ? `${snapshot.fields.length} 个字段已完成配置，必填项和列表字段规则有效。` : "请返回初始表单步骤，至少配置并保存一个字段。", level: hasForm ? "pass" : "block" },
+      { key: "starter", title: "发起权限有效", detail: hasStarter ? `已关联 ${snapshot.starterGroups.length} 个发起流程权限组，任一组的当前有效成员均可发起。` : "请返回基本信息选择至少一个发起流程权限组。", level: hasStarter ? "pass" : "block" },
     ];
 
     if (snapshot.type === "free") {
-      const hasAssignee = published || Boolean(draft?.basic.assigneeGroup);
+      const hasAssignee = published || Boolean(draft?.basic.assigneeGroups?.length);
       return [
         ...common,
-        { key: "assignee", title: "受理范围有效", detail: hasAssignee ? `已关联“${snapshot.assigneeGroup}”，受理人支持按姓名和部门搜索。` : "请返回基本信息选择受理流程权限组。", level: hasAssignee ? "pass" : "block" },
+        { key: "assignee", title: "受理范围有效", detail: hasAssignee ? `已关联 ${snapshot.assigneeGroups?.length ?? 0} 个受理流程权限组，候选受理人按有效成员并集搜索。` : "请返回基本信息至少选择一个受理流程权限组。", level: hasAssignee ? "pass" : "block" },
         { key: "rules", title: "自由流转规则完整", detail: "关闭、填写理由后重新打开、异常改派和本人编辑历史内容均已启用。", level: "pass" },
         { key: "notice", title: "通知模板沿用系统默认值", detail: "尚未配置专属通知文案，将使用统一的待办与站内通知模板。", level: "warning" },
       ];
@@ -239,14 +282,14 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
         key: "topology",
         title: published || draft?.flowConfigured ? "审批拓扑有效" : "审批节点存在未完成配置",
         detail: published || draft?.flowConfigured
-          ? `已保存 ${draft?.nodeCount ?? definition?.versions[0]?.nodeCount ?? 0} 个流程节点，拓扑结构已通过设计器校验。`
+          ? `已保存 ${flowNodes.length || draft?.nodeCount || getEffectiveVersion(definition)?.nodeCount || 0} 个流程节点，拓扑结构已通过设计器检查。`
           : "请返回流程设计器完成节点、权限组和连线配置。",
         level: published || draft?.flowConfigured ? "pass" : "block",
       },
-      { key: "editable", title: "并行字段权限无冲突", detail: "研发、质量、生产节点未配置修改同一字段。", level: "pass" },
+      { key: "editable", title: "并行字段权限无冲突", detail: "审批节点的可修改字段来自当前初始表单，且并行路径之间没有重复授权。", level: "pass" },
       { key: "notice", title: "通知模板沿用系统默认值", detail: "尚未配置专属通知文案，将使用统一的待办与站内通知模板。", level: "warning" },
     ];
-  }, [definition, published, snapshot]);
+  }, [definition, flowNodes.length, published, snapshot]);
 
   const blockCount = validationItems.filter((item) => item.level === "block").length;
   const warningCount = validationItems.filter((item) => item.level === "warning").length;
@@ -269,6 +312,7 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
       message.warning("请确认已了解发布影响范围");
       return;
     }
+    const publishingSameVersion = isWithdrawnDraft;
     setConfirmOpen(false);
     const released = publishDraft(resolvedId, changeNote.trim());
     if (!released) {
@@ -276,38 +320,35 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
       return;
     }
     setPublished(true);
-    message.success(`${snapshot.name} ${snapshot.nextVersion} 已发布，新发起实例将使用该版本`);
+    setPublishedMode(publishingSameVersion ? "same" : "new");
+    message.success(`${snapshot.name} ${snapshot.nextVersion} 已${publishingSameVersion ? "重新" : ""}发布并生效${publishingSameVersion ? "，版本号保持不变" : "，其他发布版本已自动失效"}${remainsDisabledAfterPublish ? "；流程仍保持停用" : ""}`);
   };
 
   return (
     <div className="page-stack pa-page pa-publish-page">
       <Card className="pa-config-head" bordered={false}>
         <div className="pa-config-head__main">
-          <Button
-            icon={<ArrowLeftOutlined />}
-            onClick={() => navigate(`/admin/processes/${resolvedId}/${snapshot.type === "approval" ? "flow" : "form"}`)}
-          >
-            上一步
-          </Button>
           <div>
             <Space size={10} wrap>
-              <Typography.Title level={3}>发布流程</Typography.Title>
+              <Typography.Title level={3}>发布并生效</Typography.Title>
               <Tag color={snapshot.type === "approval" ? "blue" : "purple"}>{snapshot.type === "approval" ? "固定审批" : "自由协作"}</Tag>
             </Space>
-            <Typography.Text type="secondary">发布前检查流程快照和权限配置，发布后形成不可修改的版本记录。</Typography.Text>
+            <Typography.Text type="secondary">{sameVersionMode
+              ? "发布前检查撤回后的完整快照和权限配置；重新发布后恢复生效，版本号保持不变。"
+              : "发布前检查完整快照和权限配置；发布后本版本生效，原生效版本自动失效。"}</Typography.Text>
           </div>
         </div>
-        <Button loading={validating} icon={<ReloadOutlined />} onClick={rerunValidation}>重新校验</Button>
+        <div className="pa-config-head__actions">
+          <ProcessWizardPreviousButton
+            step={snapshot.type === "approval" ? "流程设计" : "初始表单"}
+            onClick={() => navigate(`/admin/processes/${resolvedId}/${snapshot.type === "approval" ? "flow" : "form"}`)}
+          />
+          <Button loading={validating} icon={<ReloadOutlined />} onClick={rerunValidation}>重新校验</Button>
+        </div>
       </Card>
 
       <Card className="pa-steps-card" bordered={false}>
-        <Steps
-          size="small"
-          current={snapshot.type === "approval" ? 3 : 2}
-          items={snapshot.type === "approval"
-            ? [{ title: "基本信息" }, { title: "表单设计" }, { title: "流程设计" }, { title: "发布" }]
-            : [{ title: "基本信息" }, { title: "表单设计" }, { title: "发布校验" }]}
-        />
+        <ProcessWizardSteps workflowType={snapshot.type} current={snapshot.type === "approval" ? 3 : 2} />
       </Card>
 
       {published && (
@@ -316,7 +357,11 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
           type="success"
           showIcon
           message={`${snapshot.nextVersion} 已成功发布`}
-          description="新发起的流程将使用本版本；运行中的流程继续按其发起时版本执行。"
+          description={remainsDisabledAfterPublish
+            ? "完整版本快照已生成并恢复生效；流程仍保持停用，不会开放新发起。"
+            : sameVersionMode
+              ? "流程已恢复发起，版本号保持不变；首次发布时间和本次发布时间均已保留。"
+              : "新发起流程将使用本版本；运行中的流程继续按其发起时版本执行。"}
           action={<Button size="small" onClick={() => navigate(`/admin/processes/${resolvedId}/versions`)}>查看版本记录</Button>}
         />
       )}
@@ -338,10 +383,12 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
                   children: <Space wrap><Tag color="blue">前缀 {snapshot.instancePrefix || "未配置"}</Tag><span>{snapshot.instancePrefix ? formatInstanceNumber(snapshot.instancePrefix, 1) : "—"}</span><Typography.Text type="secondary">同前缀跨流程共享月序列</Typography.Text></Space>,
                   span: 2,
                 },
-                { key: "version", label: "发布版本", children: <Space><span className="pa-muted">{snapshot.currentVersion}</span><span>→</span><Tag color="blue">{snapshot.nextVersion}</Tag></Space> },
+                { key: "version", label: "发布版本", children: sameVersionMode
+                  ? <Space><Tag color="blue">{snapshot.nextVersion}</Tag><Typography.Text type="secondary">重新发布，版本号不变</Typography.Text></Space>
+                  : <Space><span className="pa-muted">{snapshot.currentVersion}</span><span>→</span><Tag color="blue">{snapshot.nextVersion}</Tag></Space> },
                 { key: "type", label: "流程类型", children: snapshot.type === "approval" ? "固定审批" : "自由协作" },
-                { key: "starter", label: "发起流程权限组", children: snapshot.starterGroup, span: 2 },
-                ...(snapshot.assigneeGroup ? [{ key: "assignee", label: "受理流程权限组", children: snapshot.assigneeGroup, span: 2 as const }] : []),
+                { key: "starter", label: "发起流程权限组", children: <Space size={[4, 6]} wrap>{snapshot.starterGroups.length ? snapshot.starterGroups.map((group) => <Tag key={group}>{group}</Tag>) : <span className="pa-muted">尚未选择</span>}</Space>, span: 2 },
+                ...(snapshot.assigneeGroups?.length ? [{ key: "assignee", label: "受理流程权限组", children: <Space size={[4, 6]} wrap>{snapshot.assigneeGroups.map((group) => <Tag key={group}>{group}</Tag>)}</Space>, span: 2 as const }] : []),
                 { key: "scope", label: "额外可见范围", children: snapshot.extraScope.map((item) => <Tag key={item}>{item}</Tag>), span: 2 },
                 { key: "description", label: "流程说明", children: snapshot.description, span: 2 },
               ]}
@@ -365,17 +412,38 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
 
           {snapshot.type === "approval" ? (
             <Card className="pa-section-card" title={<span className="pa-card-title"><ApartmentOutlined /> 审批拓扑与规则</span>}>
-              <div className="pa-topology" aria-label="审批流程拓扑预览">
-                <div className="pa-topology-node is-start"><small>开始</small><strong>文控发起</strong><span>8 人</span></div>
-                <div className="pa-topology-lines"><span /><span /><span /></div>
-                <div className="pa-topology-parallel">
-                  <div className="pa-topology-node"><small>审批</small><strong>研发审核</strong><span>任一人处理</span></div>
-                  <div className="pa-topology-node"><small>审批</small><strong>质量审核</strong><span>任一人处理</span></div>
-                <div className={`pa-topology-node ${!published && !definition?.draft?.flowConfigured ? "is-invalid" : ""}`}><small>审批</small><strong>生产审核</strong><span>{!published && !definition?.draft?.flowConfigured ? "尚未完成配置" : "任一人处理"}</span></div>
+              {flowLevels.length ? (
+                <div className="pa-topology-dynamic" aria-label="审批流程拓扑预览">
+                  {flowLevels.map((level, levelIndex) => (
+                    <div className="pa-topology-stage" key={level.map((node) => node.id).join("-")}>
+                      <div className="pa-topology-stage__nodes">
+                        {level.map((node) => {
+                          const groups = node.data?.kind === "start"
+                            ? node.data.permissionGroups ?? []
+                            : node.data?.permissionGroup ? [node.data.permissionGroup] : [];
+                          return (
+                            <div className={`pa-topology-node is-${node.data?.kind}`} key={node.id}>
+                              <small>{node.data?.kind === "start" ? "开始" : node.data?.kind === "end" ? "结束" : "审批"}</small>
+                              <strong>{node.data?.label}</strong>
+                              <span>{groups.length ? groups.join("、") : node.data?.kind === "end" ? "全部前置通过" : "尚未配置权限组"}</span>
+                              {node.data?.kind === "approval" && (
+                                <span>
+                                  可修改：{node.data.editableFields?.length
+                                    ? node.data.editableFields.map((field) => editableFieldLabelByValue.get(field) ?? field).join("、")
+                                    : "无"}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {levelIndex < flowLevels.length - 1 && <span className="pa-topology-stage__arrow">→</span>}
+                    </div>
+                  ))}
                 </div>
-                <div className="pa-topology-join" />
-                <div className="pa-topology-node is-end"><small>结束</small><strong>审核完成</strong><span>全部分支通过</span></div>
-              </div>
+              ) : (
+                <Alert type="warning" showIcon message="尚未读取到流程设计快照" description="请返回流程设计器保存当前节点与连线后再发布。" />
+              )}
               <Divider />
               <div className="pa-rule-summary">
                 <span><AuditOutlined /></span>
@@ -402,7 +470,7 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
         </main>
 
         <aside className="pa-publish-aside">
-          <Card className="pa-validation-card" title={<span className="pa-card-title"><SafetyCertificateOutlined /> 发布校验</span>}>
+          <Card className="pa-validation-card" title={<span className="pa-card-title"><SafetyCertificateOutlined /> 发布前检查</span>}>
             <div className="pa-validation-score">
               <div className={blockCount > 0 ? "is-blocked" : "is-ready"}>
                 {blockCount > 0 ? <ExclamationCircleFilled /> : <CheckCircleFilled />}
@@ -426,8 +494,10 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
           <Card className="pa-publish-impact" bordered={false}>
             <InfoCircleOutlined />
             <div>
-              <strong>版本生效范围</strong>
-              <Typography.Text type="secondary">发布只影响之后新发起的实例，不迁移或重算运行中的待办。</Typography.Text>
+              <strong>唯一生效版本</strong>
+              <Typography.Text type="secondary">{sameVersionMode
+                ? "重新发布后当前版本恢复为唯一生效版本，版本号保持不变；撤回前若已停用，发布后仍保持停用。"
+                : "发布后本版本成为唯一生效版本；已有实例仍锁定原版本，停用流程不会自动启用。"}</Typography.Text>
             </div>
           </Card>
 
@@ -439,7 +509,7 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
             disabled={blockCount > 0 || published || !definition?.draft}
             onClick={() => setConfirmOpen(true)}
           >
-            {published ? `${snapshot.nextVersion} 已发布` : `发布 ${snapshot.nextVersion}`}
+            {published ? `${snapshot.nextVersion} 已生效` : `发布并生效 ${snapshot.nextVersion}`}
           </Button>
           {blockCount > 0 && (
             <Typography.Text className="pa-block-hint" type="danger">请先处理所有阻断项，再重新执行校验。</Typography.Text>
@@ -448,10 +518,10 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
       </div>
 
       <Modal
-        title={<Space><RocketOutlined /> 确认发布 {snapshot.nextVersion}</Space>}
+        title={<Space><RocketOutlined /> 确认发布并生效 {snapshot.nextVersion}</Space>}
         open={confirmOpen}
         width={580}
-        okText="确认发布"
+        okText="确认发布并生效"
         cancelText="返回检查"
         okButtonProps={{ disabled: !confirmed || !changeNote.trim() }}
         onCancel={() => setConfirmOpen(false)}
@@ -461,8 +531,10 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
           <Alert
             type="warning"
             showIcon
-            message="发布后该版本内容不可修改"
-            description="后续修改将基于此版本新建草稿。当前运行实例继续使用原版本，不会自动切换。"
+            message={sameVersionMode ? `将重新发布 ${snapshot.nextVersion}` : "发布后该版本内容不可修改"}
+            description={sameVersionMode
+              ? "本次发布替换撤回前的同版本快照，版本号不变，并同时保留首次发布时间和最近发布时间；撤回前若已停用，发布不会自动启用。"
+              : "后续修改将基于此完整快照新建草稿。原生效版本自动失效，当前运行实例继续使用原版本；若流程已停用，发布不会自动启用。"}
           />
           <Form layout="vertical" requiredMark={false}>
             <Form.Item label="变更说明" required>

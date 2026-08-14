@@ -213,44 +213,6 @@
   background: #f8f9fb;
 }
 
-.pa-status {
-  display: inline-flex;
-  height: 25px;
-  align-items: center;
-  gap: 7px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.pa-status__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.pa-status.is-draft {
-  border-color: #dfe4eb;
-  color: #647086;
-  background: #f5f7fa;
-}
-
-.pa-status.is-published {
-  border-color: #cbeadd;
-  color: #12815f;
-  background: #eefaf5;
-}
-
-.pa-status.is-disabled {
-  border-color: #e3e6ec;
-  color: #8991a0;
-  background: #f5f6f8;
-}
-
 .pa-version {
   display: inline-flex;
   min-width: 34px;
@@ -269,15 +231,21 @@
 }
 
 .pa-icon-button {
-  width: 33px !important;
-  height: 33px !important;
-  border-radius: 8px !important;
-  color: #61708a !important;
+  width: 34px !important;
+  height: 34px !important;
+  border: 1px solid #d8e0fb !important;
+  border-radius: 10px !important;
+  color: #3157d5 !important;
+  background: #eef2ff !important;
+  box-shadow: 0 3px 9px rgba(49, 87, 213, 0.08);
 }
 
 .pa-icon-button:hover {
-  color: #26334e !important;
-  background: #f1f3f7 !important;
+  border-color: #3157d5 !important;
+  color: #fff !important;
+  background: #3157d5 !important;
+  box-shadow: 0 6px 14px rgba(49, 87, 213, 0.22);
+  transform: translateY(-1px);
 }
 
 .pa-icon-button.is-primary {
@@ -286,13 +254,25 @@
 }
 
 .pa-icon-button.is-copy {
-  color: #7654c7 !important;
-  background: #f4efff !important;
+  border-color: #c9e5dc !important;
+  color: #147a62 !important;
+  background: #edf9f5 !important;
+  box-shadow: 0 3px 9px rgba(20, 122, 98, 0.08);
+}
+
+.pa-icon-button.is-copy:hover {
+  border-color: #147a62 !important;
+  color: #fff !important;
+  background: #147a62 !important;
+  box-shadow: 0 6px 14px rgba(20, 122, 98, 0.22);
 }
 
 .pa-icon-button:disabled {
+  border-color: #e1e4e9 !important;
   color: #bdc3cd !important;
-  background: transparent !important;
+  background: #f4f5f7 !important;
+  box-shadow: none;
+  transform: none;
 }
 
 .pa-modal-form {
@@ -346,6 +326,15 @@
 
 .pa-config-head__main h3.ant-typography {
   margin: 0;
+}
+
+.pa-config-head__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .pa-save-state {
@@ -515,24 +504,6 @@
   text-align: right;
 }
 
-.pa-sticky-actions {
-  position: fixed;
-  z-index: 7;
-  right: 28px;
-  bottom: 0;
-  left: 272px;
-  display: flex;
-  height: 66px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 0 28px;
-  border-top: 1px solid #e3e7ee;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 -7px 22px rgba(25, 37, 67, 0.06);
-  backdrop-filter: blur(12px);
-}
-
 /* Publish */
 .pa-summary-descriptions .ant-descriptions-item-label {
   width: 142px;
@@ -656,6 +627,44 @@
 .pa-topology-node.is-invalid {
   border-color: #f0b8b8;
   background: #fff6f6;
+}
+
+.pa-topology-dynamic {
+  display: flex;
+  min-height: 210px;
+  align-items: center;
+  gap: 14px;
+  overflow-x: auto;
+  padding: 12px 4px 18px;
+}
+
+.pa-topology-stage {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+}
+
+.pa-topology-stage__nodes {
+  display: flex;
+  width: 156px;
+  flex: 0 0 156px;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pa-topology-stage__nodes .pa-topology-node {
+  min-height: 82px;
+}
+
+.pa-topology-stage__nodes .pa-topology-node span {
+  white-space: normal;
+}
+
+.pa-topology-stage__arrow {
+  flex: 0 0 auto;
+  color: #8794ad;
+  font-size: 20px;
 }
 
 .pa-topology-lines,
@@ -1030,6 +1039,14 @@
   background: #fffdf5 !important;
 }
 
+.pa-effective-row > td {
+  background: #f7fbff !important;
+}
+
+.pa-effective-row > td:first-child {
+  box-shadow: inset 3px 0 0 #3157d5;
+}
+
 .pa-version-drawer {
   display: flex;
   flex-direction: column;
@@ -1104,6 +1121,11 @@
   flex-direction: column;
   gap: 18px;
   padding-top: 8px;
+}
+
+.pa-replacement-select {
+  width: 100%;
+  margin-top: 9px;
 }
 
 .pa-copy-source {
@@ -1210,8 +1232,4 @@
     overflow-x: auto;
   }
 
-  .pa-sticky-actions {
-    right: 18px;
-    left: 18px;
-  }
 }

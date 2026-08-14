@@ -29,23 +29,28 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { getProcessDefinition } from "../data/processDefinitions";
+import { StatusPill } from "../components/StatusPill";
+import { defaultProcessDefinition, processDefinitions } from "../data/processDefinitions";
 import { isSystemFieldVisible, loadSystemListFields } from "../data/listFieldConfig";
 import type { InstanceStatus, ProcessInstance } from "../data/types";
 import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
-
-const statusMeta: Record<InstanceStatus, { className: string }> = {
-  审核中: { className: "is-reviewing" },
-  驳回待处理: { className: "is-rejected" },
-  已完成: { className: "is-completed" },
-  进行中: { className: "is-reviewing" },
-  已关闭: { className: "is-closed" },
-};
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 
 export function ProcessListPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const definition = getProcessDefinition(searchParams.get("definitionId"));
+  const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
+  const definitionId = searchParams.get("definitionId")
+    ?? managedDefinitions.find((item) => Boolean(item.effectiveVersionId || item.draft?.withdrawnVersionId))?.id
+    ?? defaultProcessDefinition.id;
+  const staticDefinition = processDefinitions.find((item) => item.id === definitionId);
+  const managedDefinition = managedDefinitions.find((item) => item.id === definitionId);
+  const definition = staticDefinition ?? {
+    id: definitionId,
+    label: managedDefinition?.name ?? "未命名流程",
+    template: managedDefinition?.name ?? "未命名流程",
+    taskFields: [],
+  };
   const { instances, personaId, copyCompletedInstance } = usePrototypeStore();
   const [form] = Form.useForm();
   const [keyword, setKeyword] = useState("");
@@ -54,7 +59,7 @@ export function ProcessListPage() {
   const [copySource, setCopySource] = useState<ProcessInstance | null>(null);
   const [copyTitle, setCopyTitle] = useState("");
   const canCopyCompleted = personaId === "wangmin" || isSuperAdminPersona(personaId);
-  const isFreeFlow = definition.id === "free-collaboration";
+  const isFreeFlow = managedDefinition?.type === "free" || definition.id === "free-collaboration";
   const systemListFields = loadSystemListFields(definition.id);
   const showSystemField = (key: Parameters<typeof isSystemFieldVisible>[1]) =>
     isSystemFieldVisible(systemListFields, key, "processList");
@@ -115,12 +120,7 @@ export function ProcessListPage() {
       title: "状态",
       dataIndex: "status",
       width: 120,
-      render: (value: InstanceStatus) => (
-        <span className={`status-pill ${statusMeta[value].className}`} aria-label={`流程状态：${value}`}>
-          <span className="status-pill-dot" />
-          {value}
-        </span>
-      ),
+      render: (value: InstanceStatus) => <StatusPill status={value} ariaLabel={`流程状态：${value}`} />,
     }] : []),
     ...(showNodeCell ? [{
       title: "当前节点",

@@ -2,6 +2,7 @@ import {
   BranchesOutlined,
   CheckCircleOutlined,
   CopyOutlined,
+  DeleteOutlined,
   EditOutlined,
   EyeOutlined,
   FileTextOutlined,
@@ -32,8 +33,10 @@ import {
 } from "antd";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { StatusPill } from "../components/StatusPill";
 import {
   definitionStatus,
+  getEffectiveVersion,
   useProcessDefinitionStore,
   type DefinitionStatus,
   type DefinitionType,
@@ -47,12 +50,6 @@ interface CreateProcessValues {
   description?: string;
 }
 
-const statusClassName: Record<DefinitionStatus, string> = {
-  草稿: "is-draft",
-  已发布: "is-published",
-  已停用: "is-disabled",
-};
-
 const typeMeta: Record<DefinitionType, { label: string; icon: React.ReactNode; className: string }> = {
   approval: { label: "固定审批", icon: <BranchesOutlined />, className: "is-approval" },
   free: { label: "自由协作", icon: <MessageOutlined />, className: "is-free" },
@@ -65,7 +62,10 @@ export function ProcessManagementPage() {
   const createProcessDefinition = useProcessDefinitionStore((state) => state.createDefinition);
   const copyProcessDefinition = useProcessDefinitionStore((state) => state.copyDefinition);
   const ensureDraft = useProcessDefinitionStore((state) => state.ensureDraft);
+  const withdrawEffectiveVersion = useProcessDefinitionStore((state) => state.withdrawEffectiveVersion);
+  const deleteProcessVersion = useProcessDefinitionStore((state) => state.deleteVersion);
   const toggleDefinition = useProcessDefinitionStore((state) => state.toggleDefinition);
+  const deleteDefinition = useProcessDefinitionStore((state) => state.deleteDefinition);
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<DefinitionStatus>();
   const [type, setType] = useState<DefinitionType>();
@@ -74,10 +74,9 @@ export function ProcessManagementPage() {
   const filteredDefinitions = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
     return definitions.filter((item) => {
-      const latestBasic = item.draft?.basic
-        ?? item.versions.find((version) => version.version === item.currentVersion)?.basic;
+      const effectiveBasic = getEffectiveVersion(item)?.basic;
       const keywordMatched = !normalizedKeyword
-        || `${item.name}${item.code}${latestBasic?.instancePrefix ?? ""}${item.description}`.toLowerCase().includes(normalizedKeyword);
+        || `${item.name}${item.code}${effectiveBasic?.instancePrefix ?? ""}${item.draft?.basic.instancePrefix ?? ""}${item.description}`.toLowerCase().includes(normalizedKeyword);
       return keywordMatched && (!status || definitionStatus(item) === status) && (!type || item.type === type);
     });
   }, [definitions, keyword, status, type]);
@@ -88,7 +87,7 @@ export function ProcessManagementPage() {
       title: nextStatus === "已停用" ? "停用这个流程？" : "重新启用这个流程？",
       content: nextStatus === "已停用"
         ? "停用后不能再发起新实例，运行中和历史实例不受影响。"
-        : "启用后将恢复当前已发布版本，符合权限的用户可再次发起。",
+        : "启用后将使用当前生效版本，符合权限的用户可再次发起。",
       okText: nextStatus === "已停用" ? "确认停用" : "确认启用",
       okButtonProps: nextStatus === "已停用" ? { danger: true } : undefined,
       cancelText: "取消",
@@ -114,6 +113,75 @@ export function ProcessManagementPage() {
     navigate(`/admin/processes/${copiedId}/basic`);
   };
 
+  const removeDefinition = (record: ProcessDefinition) => {
+    Modal.confirm({
+      title: `删除流程“${record.name}”？`,
+      content: "该流程没有创建过实例。删除后会同时移除全部版本快照、草稿和员工侧菜单，且不可恢复。",
+      okText: "确认删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: () => {
+        if (!deleteDefinition(record.id)) {
+          message.error("流程已有实例，不能删除，请改为停用");
+          return;
+        }
+        message.success("流程及其全部无实例版本已删除");
+      },
+    });
+  };
+
+  const removeDraft = (record: ProcessDefinition) => {
+    const draft = record.draft;
+    if (!draft) return;
+    const isInitialDraft = record.versions.length === 0;
+    const isWithdrawnDraft = Boolean(draft.withdrawnVersionId);
+    Modal.confirm({
+      title: isInitialDraft ? `删除草稿流程“${draft.basic.name}”？` : `删除草稿 ${draft.version}？`,
+      content: isInitialDraft
+        ? "该流程从未发布。删除后会同时移除流程定义、初始表单、流程图和列表字段设计，且不可恢复。"
+        : isWithdrawnDraft
+          ? `这会放弃 ${draft.version} 撤回后的全部修改，并恢复撤回前的发布快照及原启停状态。`
+          : `只删除未发布的 ${draft.version} 草稿；当前生效版本和已有实例不受影响。该版本号以后不会重新使用。`,
+      okText: isInitialDraft ? "删除草稿流程" : "删除草稿",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: () => {
+        const result = deleteProcessVersion(record.id, draft.id);
+        if (result === "definition-deleted") message.success("草稿流程及其设计数据已删除");
+        else if (result === "deleted" && isWithdrawnDraft) message.success(`${draft.version} 的修改已放弃，撤回前版本已恢复生效`);
+        else if (result === "deleted") message.success(`${draft.version} 草稿已删除，当前生效版本保持不变`);
+        else message.error("草稿状态已经变化，请刷新后重试");
+      },
+    });
+  };
+
+  const editDefinition = (record: ProcessDefinition) => {
+    if (record.draft) {
+      navigate(`/admin/processes/${record.id}/basic`);
+      return;
+    }
+    const effective = getEffectiveVersion(record);
+    if (effective && effective.instanceCount === 0) {
+      Modal.confirm({
+        title: `撤回 ${effective.version} 并继续编辑？`,
+        content: `该生效版本尚未创建流程实例。撤回后 ${effective.version} 将恢复为草稿，版本号保持不变；编辑期间流程暂停发起，重新发布后再次生效。`,
+        okText: "撤回并编辑",
+        cancelText: "取消",
+        onOk: () => {
+          const result = withdrawEffectiveVersion(record.id, effective.id);
+          if (result === "has-instances") message.error("该版本已经创建流程实例，不能撤回，请创建新版本");
+          else if (result === "has-draft") message.info("该流程已有草稿，已进入现有草稿");
+          else if (result !== "withdrawn") message.error("版本状态已经变化，请刷新后重试");
+          if (result === "withdrawn" || result === "has-draft") navigate(`/admin/processes/${record.id}/basic`);
+        },
+      });
+      return;
+    }
+    const created = ensureDraft(record.id);
+    if (created) message.info("已基于当前生效版本创建新版本草稿，原版本继续生效");
+    navigate(`/admin/processes/${record.id}/basic`);
+  };
+
   const getActionMenu = (record: ProcessDefinition): MenuProps["items"] => [
     {
       key: "versions",
@@ -127,15 +195,32 @@ export function ProcessManagementPage() {
       label: "复制新建",
       onClick: () => copyDefinition(record),
     },
-    { type: "divider" },
-    {
-      key: "toggle",
-      icon: record.disabled ? <CheckCircleOutlined /> : <StopOutlined />,
-      label: record.disabled ? "启用流程" : "停用流程",
-      danger: !record.disabled,
-      disabled: !record.currentVersion,
-      onClick: () => updateStatus(record),
-    },
+    ...(record.draft ? [{
+      key: "delete-draft",
+      icon: <DeleteOutlined />,
+      label: record.versions.length === 0 ? "删除草稿流程" : `删除草稿 ${record.draft.version}`,
+      danger: true,
+      onClick: () => removeDraft(record),
+    }] : []),
+    ...(record.versions.length > 0 ? [
+      { type: "divider" as const },
+      {
+        key: "toggle",
+        icon: record.disabled ? <CheckCircleOutlined /> : <StopOutlined />,
+        label: record.disabled ? "启用流程" : "停用流程",
+        danger: !record.disabled,
+        disabled: !record.effectiveVersionId,
+        onClick: () => updateStatus(record),
+      },
+      {
+        key: "delete",
+        icon: <DeleteOutlined />,
+        label: record.instanceCount > 0 ? `删除流程（已有 ${record.instanceCount} 个实例）` : "删除流程",
+        danger: true,
+        disabled: record.instanceCount > 0 || record.versions.some((item) => item.instanceCount > 0),
+        onClick: () => removeDefinition(record),
+      },
+    ] : []),
   ];
 
   const columns: TableProps<ProcessDefinition>["columns"] = [
@@ -166,15 +251,14 @@ export function ProcessManagementPage() {
       render: (value: DefinitionType) => <Tag className="pa-type-tag">{typeMeta[value].label}</Tag>,
     },
     {
-      title: "实例编号前缀",
+      title: "生效编号前缀",
       key: "instancePrefix",
       width: 132,
       render: (_, record) => {
-        const config = record.draft?.basic
-          ?? record.versions.find((version) => version.version === record.currentVersion)?.basic;
+        const config = getEffectiveVersion(record)?.basic ?? record.draft?.basic;
         return config?.instancePrefix
           ? <Tag bordered={false} color="blue">{config.instancePrefix}</Tag>
-          : <span className="pa-muted">待配置</span>;
+          : <span className="pa-muted">待发布</span>;
       },
     },
     {
@@ -183,14 +267,17 @@ export function ProcessManagementPage() {
       width: 112,
       render: (_, record) => {
         const value = definitionStatus(record);
-        return <Space size={5} wrap><span className={`pa-status ${statusClassName[value]}`}><span className="pa-status__dot" />{value}</span>{record.currentVersion && record.draft ? <Tag color="gold" bordered={false}>有草稿</Tag> : null}</Space>;
+        return <Space size={5} wrap><StatusPill status={value} />{record.effectiveVersionId && record.draft ? <Tag color="gold" bordered={false}>有草稿</Tag> : null}</Space>;
       },
     },
     {
-      title: "当前版本",
-      dataIndex: "currentVersion",
+      title: "生效版本",
+      key: "effectiveVersion",
       width: 104,
-      render: (value?: string) => <span className={!value ? "pa-muted" : "pa-version"}>{value ?? "—"}</span>,
+      render: (_, record) => {
+        const value = getEffectiveVersion(record)?.version;
+        return <span className={!value ? "pa-muted" : "pa-version"}>{value ?? "—"}</span>;
+      },
     },
     {
       title: "实例数",
@@ -224,17 +311,17 @@ export function ProcessManagementPage() {
               onClick={() => navigate(`/admin/processes/${record.id}/versions`)}
             />
           </Tooltip>
-          <Tooltip title={record.currentVersion && !record.draft ? "基于当前版本修改" : "编辑草稿"}>
+          <Tooltip title={record.draft
+            ? "编辑草稿"
+            : getEffectiveVersion(record)?.instanceCount === 0
+              ? `撤回 ${getEffectiveVersion(record)?.version} 并编辑，版本号不变`
+              : "基于生效版本创建新版本草稿"}>
             <Button
               type="text"
               className="pa-icon-button is-primary"
               icon={<EditOutlined />}
               aria-label={`编辑${record.name}`}
-              onClick={() => {
-                const created = ensureDraft(record.id);
-                if (created) message.info("已基于当前发布版本创建新版本草稿，原版本继续生效");
-                navigate(`/admin/processes/${record.id}/basic`);
-              }}
+              onClick={() => editDefinition(record)}
             />
           </Tooltip>
           <Dropdown menu={{ items: getActionMenu(record) }} trigger={["click"]} placement="bottomRight">
@@ -266,7 +353,7 @@ export function ProcessManagementPage() {
         <div className="pa-overview-copy">
           <span className="pa-eyebrow"><FileTextOutlined /> 流程配置</span>
           <Typography.Title level={3}>流程定义概览</Typography.Title>
-          <Typography.Text type="secondary">统一管理固定审批与自由协作流程，发布版本与运行实例相互隔离。</Typography.Text>
+          <Typography.Text type="secondary">流程定义管理菜单与启停；每个版本保存完整快照，并且只有一个版本生效。</Typography.Text>
         </div>
         <div className="pa-overview-stats" aria-label="流程统计">
           <span><strong>{definitions.length}</strong><small>全部流程</small></span>
@@ -309,7 +396,7 @@ export function ProcessManagementPage() {
       <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}>
         <div className="table-result-head pa-table-head">
           <div><strong>流程定义</strong><Tag bordered={false}>{filteredDefinitions.length} 条</Tag></div>
-          <Typography.Text type="secondary">停用不影响运行中及历史流程</Typography.Text>
+          <Typography.Text type="secondary">只有生效版本用于新实例；停用不影响已有实例</Typography.Text>
         </div>
         <Table<ProcessDefinition>
           rowKey="id"

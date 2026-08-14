@@ -34,7 +34,7 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { getProcessDefinition, processDefinitions } from "../data/processDefinitions";
+import { getProcessDefinition } from "../data/processDefinitions";
 import { ROLE_PERMISSIONS_CHANGED_EVENT, canPersonaAccessLaunch } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { isSuperAdminPersona, personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
@@ -70,6 +70,7 @@ export function AppShell() {
   } = usePrototypeStore();
 
   const persona = personas.find((item) => item.id === personaId) ?? personas[2];
+  const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
   const resetProcessDefinitions = useProcessDefinitionStore((state) => state.resetDefinitions);
   const unreadCount = notices.filter((item) => !item.read).length;
   const isAdmin = personaId === "admin" || isSuperAdminPersona(personaId);
@@ -79,14 +80,19 @@ export function AppShell() {
     window.addEventListener(ROLE_PERMISSIONS_CHANGED_EVENT, refreshPermissions);
     return () => window.removeEventListener(ROLE_PERMISSIONS_CHANGED_EVENT, refreshPermissions);
   }, []);
-  const processDefinition = getProcessDefinition(new URLSearchParams(location.search).get("definitionId"));
+  const selectedDefinitionId = new URLSearchParams(location.search).get("definitionId");
+  const processDefinition = getProcessDefinition(selectedDefinitionId);
+  const managedProcessDefinition = managedDefinitions.find((item) => item.id === selectedDefinitionId);
+  const selectedProcessDefinitionId = selectedDefinitionId
+    ?? managedDefinitions.find((definition) => Boolean(definition.effectiveVersionId || definition.draft?.withdrawnVersionId))?.id
+    ?? "";
   const isDesignerRoute = /^\/admin\/processes\/[^/]+\/(form|flow)$/.test(location.pathname);
   const selectedKey = location.pathname.startsWith("/launch/")
     ? "/launch"
     : location.pathname.startsWith("/admin/processes/")
       ? "/admin/processes"
       : location.pathname === "/processes"
-        ? `/processes?definitionId=${processDefinition.id}`
+        ? `/processes?definitionId=${selectedProcessDefinitionId}`
         : location.pathname;
   const meta = location.pathname.startsWith("/launch/")
     ? { title: "发起流程", eyebrow: "员工工作区" }
@@ -103,7 +109,7 @@ export function AppShell() {
       : location.pathname.startsWith("/processes/")
     ? { title: "流程详情", eyebrow: "流程清单" }
     : location.pathname === "/processes"
-      ? { title: processDefinition.label, eyebrow: "流程清单" }
+      ? { title: managedProcessDefinition?.name ?? processDefinition?.label ?? "流程清单", eyebrow: "流程清单" }
       : pageMeta[location.pathname] ?? pageMeta["/tasks"];
 
   const menuItems: MenuProps["items"] = useMemo(
@@ -118,9 +124,11 @@ export function AppShell() {
             key: "/processes-menu",
             icon: <FileSearchOutlined />,
             label: "流程清单",
-            children: processDefinitions.map((definition) => ({
+            children: managedDefinitions.filter((definition) => Boolean(
+              definition.effectiveVersionId || definition.draft?.withdrawnVersionId,
+            )).map((definition) => ({
               key: `/processes?definitionId=${definition.id}`,
-              label: definition.label,
+              label: definition.name,
             })),
           },
         ],
@@ -152,7 +160,7 @@ export function AppShell() {
         ],
       }] : []),
     ] as MenuProps["items"]),
-    [canInitiate, isAdmin, permissionRevision],
+    [canInitiate, isAdmin, managedDefinitions, permissionRevision],
   );
 
   const userMenu: MenuProps["items"] = [

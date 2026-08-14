@@ -660,6 +660,24 @@ button {
   font-weight: 700;
 }
 
+.app-back-button.ant-btn {
+  height: 36px;
+  padding-inline: 11px 13px;
+  border-color: #dfe4ec;
+  border-radius: 9px;
+  color: #536078;
+  background: #fff;
+  box-shadow: 0 2px 7px rgba(31, 43, 68, 0.04);
+  font-weight: 600;
+}
+
+.app-back-button.ant-btn:hover,
+.app-back-button.ant-btn:focus-visible {
+  border-color: #b9c6eb !important;
+  color: #3157d5 !important;
+  background: #f6f8ff !important;
+}
+
 .title-cell {
   display: flex;
   flex-direction: column;
@@ -902,34 +920,46 @@ button {
   font-size: 10px;
 }
 
-.table-toolbar .task-tabs.ant-segmented {
+.app-mode-segmented.ant-segmented {
   padding: 4px;
-  border: 1px solid #dfe4ed;
-  border-radius: 11px;
-  background: #eef1f6;
+  border: 1px solid #e4e8f0;
+  border-radius: 10px;
+  background: #f4f6f9;
 }
 
-.table-toolbar .task-tabs .ant-segmented-item-label {
-  min-width: 128px;
-  padding: 4px 13px;
-  font-weight: 600;
-}
-
-.task-tabs .ant-segmented-item {
-  color: #717b8f;
+.app-mode-segmented .ant-segmented-item {
+  min-height: 40px;
+  color: #6f7b8f;
+  border-radius: 7px;
   transition: color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
-.task-tabs.is-mine .ant-segmented-item-selected {
-  color: #fff !important;
-  background: #3157d5 !important;
-  box-shadow: 0 5px 13px rgba(49, 87, 213, 0.28) !important;
+.app-mode-segmented .ant-segmented-item:hover:not(.ant-segmented-item-selected) {
+  color: #3157d5;
+  background: #edf1fb;
 }
 
-.task-tabs.is-substitute .ant-segmented-item-selected {
-  color: #fff !important;
-  background: #7658c9 !important;
-  box-shadow: 0 5px 13px rgba(118, 88, 201, 0.28) !important;
+.app-mode-segmented .ant-segmented-item-selected {
+  color: #244bc6;
+  background: #e9efff;
+  box-shadow: inset 0 0 0 1px #aebeff, 0 2px 7px rgba(49, 87, 213, 0.14);
+}
+
+.app-mode-segmented .ant-segmented-item-selected .anticon {
+  color: #3157d5;
+}
+
+.app-mode-segmented .ant-segmented-item-label > span {
+  font-weight: 650;
+}
+
+.app-mode-segmented .ant-segmented-item-selected .ant-segmented-item-label > span {
+  font-weight: 750;
+}
+
+.task-tabs .ant-segmented-item-label {
+  min-width: 128px;
+  padding: 4px 13px;
 }
 
 .task-tab-label {
@@ -953,15 +983,10 @@ button {
   line-height: 1;
 }
 
-.task-tab-label.is-purple .task-tab-count {
-  color: #7658c9;
-  background: #e9e2fb;
-}
-
 .task-tabs .ant-segmented-item-selected .task-tab-count {
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  border: 1px solid #3157d5;
   color: #fff;
-  background: rgba(255, 255, 255, 0.18);
+  background: #3157d5;
 }
 
 @media (max-width: 1120px) {
@@ -1278,28 +1303,52 @@ button {
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
 }
 
-.status-pill.is-reviewing {
+.status-pill.is-reviewing,
+.status-pill.is-processing {
   border-color: #d4defb;
   color: #3157c8;
   background: #eef2ff;
 }
 
-.status-pill.is-rejected {
+.status-pill.is-rejected,
+.status-pill.is-danger {
   border-color: #f2cdd1;
   color: #bd3f4c;
   background: #fff0f1;
 }
 
-.status-pill.is-completed {
+.status-pill.is-completed,
+.status-pill.is-success {
   border-color: #c5e7dc;
   color: #147a62;
   background: #edf9f5;
 }
 
-.status-pill.is-closed {
+.status-pill.is-closed,
+.status-pill.is-neutral {
   border-color: #dce1e8;
   color: #687386;
   background: #f2f4f7;
+}
+
+.status-pill.is-draft {
+  border-color: #efd8a8;
+  color: #a66b12;
+  background: #fff8e8;
+}
+
+.status-pill.is-compact {
+  min-width: 0;
+  height: 22px;
+  gap: 5px;
+  padding-inline: 7px;
+  font-size: 10px;
+}
+
+.status-pill.is-compact .status-pill-dot {
+  width: 5px;
+  height: 5px;
+  flex-basis: 5px;
 }
 
 /* Detail */

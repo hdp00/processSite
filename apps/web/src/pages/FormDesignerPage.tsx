@@ -19,8 +19,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   AppstoreOutlined,
-  ArrowLeftOutlined,
-  ArrowRightOutlined,
   BarsOutlined,
   CheckCircleOutlined,
   CheckSquareOutlined,
@@ -57,7 +55,6 @@ import {
   Segmented,
   Select,
   Space,
-  Steps,
   Switch,
   Table,
   Tag,
@@ -68,14 +65,20 @@ import {
 } from "antd";
 import type { TableColumnsType } from "antd";
 import { useNavigate, useParams } from "react-router-dom";
-import { RichTextEditor } from "../components/RichTextEditor";
 import {
-  cloneDefaultSystemListFields,
+  ProcessWizardNextButton,
+  ProcessWizardPreviousButton,
+} from "../components/ProcessWizardNavigation";
+import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
+import { RichTextEditor } from "../components/RichTextEditor";
+import { StatusPill } from "../components/StatusPill";
+import {
   loadSystemListFields,
   saveSystemListFields,
   type SystemListFieldConfig,
 } from "../data/listFieldConfig";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { FORM_DESIGNER_STORAGE_KEY_PREFIX } from "../utils/designerStorage";
 import "./form-designer.css";
 
 const { Text, Title, Paragraph } = Typography;
@@ -127,8 +130,6 @@ interface SavedDraft {
   fields: DesignerField[];
   savedAt?: string;
 }
-
-const DRAFT_KEY_PREFIX = "flowpilot-form-designer-draft-v2";
 
 const typeLabel: Record<FieldType, string> = {
   text: "文本框",
@@ -336,13 +337,13 @@ const INITIAL_FIELDS: DesignerField[] = [
 
 const cloneInitialFields = () => JSON.parse(JSON.stringify(INITIAL_FIELDS)) as DesignerField[];
 
-const loadDraft = (storageKey: string, defaultName: string): SavedDraft => {
-  if (typeof window === "undefined") return { formName: defaultName, fields: cloneInitialFields() };
+const loadDraft = (storageKey: string, defaultName: string, fallbackFields: DesignerField[]): SavedDraft => {
+  if (typeof window === "undefined") return { formName: defaultName, fields: fallbackFields };
   try {
     const saved = window.localStorage.getItem(storageKey);
-    if (!saved) return { formName: defaultName, fields: cloneInitialFields() };
+    if (!saved) return { formName: defaultName, fields: fallbackFields };
     const parsed = JSON.parse(saved) as SavedDraft;
-    if (!Array.isArray(parsed.fields) || parsed.fields.length === 0) throw new Error("invalid draft");
+    if (!Array.isArray(parsed.fields)) throw new Error("invalid draft");
     const initialById = new Map(INITIAL_FIELDS.map((field) => [field.id, field]));
     return {
       ...parsed,
@@ -358,7 +359,7 @@ const loadDraft = (storageKey: string, defaultName: string): SavedDraft => {
       }),
     };
   } catch {
-    return { formName: defaultName, fields: cloneInitialFields() };
+    return { formName: defaultName, fields: fallbackFields };
   }
 };
 
@@ -660,13 +661,18 @@ const SortableField = ({ field, selected, onSelect, onDelete }: SortableFieldPro
 
 const FormDesignerPage = () => {
   const navigate = useNavigate();
-  const { definitionId = "pdf-review" } = useParams<{ definitionId: string }>();
+  const { definitionId = "" } = useParams<{ definitionId: string }>();
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const markFormConfigured = useProcessDefinitionStore((state) => state.markFormConfigured);
-  const draftKey = `${DRAFT_KEY_PREFIX}-${definitionId}`;
+  const draftKey = `${FORM_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`;
   const defaultFormName = `${definition?.name ?? "流程"}发起表单`;
+  const workflowName = definition?.draft?.basic.name ?? definition?.name ?? "流程";
   const [messageApi, messageHolder] = message.useMessage();
-  const initialDraft = useMemo(() => loadDraft(draftKey, defaultFormName), [defaultFormName, draftKey]);
+  const fallbackFields = useMemo(() => definitionId === "pdf-review" ? cloneInitialFields() : [], [definitionId]);
+  const initialDraft = useMemo(
+    () => loadDraft(draftKey, defaultFormName, fallbackFields),
+    [defaultFormName, draftKey, fallbackFields],
+  );
   const [formName, setFormName] = useState(initialDraft.formName);
   const [fields, setFields] = useState<DesignerField[]>(initialDraft.fields);
   const [selectedId, setSelectedId] = useState(initialDraft.fields[0]?.id ?? "");
@@ -781,20 +787,10 @@ const FormDesignerPage = () => {
       return;
     }
     saveDraft();
-    messageApi.success(definition?.type === "free" ? "表单校验通过，正在进入发布校验" : "表单校验通过，正在进入流程设计");
+    messageApi.success(definition?.type === "free" ? "表单校验通过，正在进入发布页面" : "表单校验通过，正在进入流程设计");
     window.setTimeout(() => navigate(definition?.type === "free"
       ? `/admin/processes/${definitionId}/publish`
       : `/admin/processes/${definitionId}/flow`), 350);
-  };
-
-  const resetDraft = () => {
-    const resetFields = cloneInitialFields();
-    setFields(resetFields);
-    setFormName(defaultFormName);
-    setSelectedId(resetFields[0].id);
-    setPropertyMode("field");
-    setSystemListFields(cloneDefaultSystemListFields());
-    messageApi.success("已恢复示例表单");
   };
 
   const renderDefaultValueEditor = (field: DesignerField) => {
@@ -854,11 +850,11 @@ const FormDesignerPage = () => {
       {messageHolder}
       <div className="fd-page-header">
         <div className="fd-page-header__identity">
-          <div className="fd-page-header__icon"><FilePdfOutlined /></div>
+          <div className="fd-page-header__icon">{definitionId === "pdf-review" ? <FilePdfOutlined /> : <FileTextOutlined />}</div>
           <div>
             <Space align="center" size={10}>
               <Title level={4}>{definition?.name ?? "流程配置"}</Title>
-              <Tag color="gold">{definition?.draft?.version ?? "草稿"} 草稿</Tag>
+              <StatusPill status="草稿" label={`${definition?.draft?.version ?? "V1"} 草稿`} />
             </Space>
             <Text type="secondary">初始表单 · 单列布局 · 配置发起时需要填写的内容</Text>
           </div>
@@ -868,19 +864,15 @@ const FormDesignerPage = () => {
             {saveState === "saving" ? <CloudSyncOutlined spin /> : <CheckCircleFilled />}
             <span>{saveState === "saving" ? "正在保存" : `本地已保存 · ${savedAt}`}</span>
           </div>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/admin/processes/${definitionId}/basic`)}>上一步</Button>
-          <Button onClick={resetDraft}>恢复示例</Button>
+          <ProcessWizardPreviousButton step="基本信息" onClick={() => navigate(`/admin/processes/${definitionId}/basic`)} />
           <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>预览</Button>
           <Button icon={<SaveOutlined />} onClick={saveDraft}>保存草稿</Button>
-          <Button type="primary" icon={<ArrowRightOutlined />} iconPosition="end" onClick={goNext}>{definition?.type === "free" ? "下一步：发布校验" : "下一步：流程设计"}</Button>
+          <ProcessWizardNextButton step={definition?.type === "free" ? "发布" : "流程设计"} onClick={goNext} />
         </Space>
       </div>
 
       <div className="fd-wizard-steps">
-        <Steps size="small" current={1} items={definition?.type === "free"
-          ? [{ title: "基本信息" }, { title: "表单设计" }, { title: "发布" }]
-          : [{ title: "基本信息" }, { title: "表单设计" }, { title: "流程设计" }, { title: "发布" }]}
-        />
+        <ProcessWizardSteps workflowType={definition?.type ?? "approval"} current={1} />
       </div>
 
       <div className="fd-workspace">
@@ -934,10 +926,10 @@ const FormDesignerPage = () => {
           <div className="fd-canvas-scroll">
             <div className="fd-form-sheet">
               <div className="fd-form-sheet__header">
-                <div className="fd-form-mark"><FilePdfOutlined /></div>
+                <div className="fd-form-mark">{definitionId === "pdf-review" ? <FilePdfOutlined /> : <FileTextOutlined />}</div>
                 <div>
                   <Title level={4}>{formName || "未命名表单"}</Title>
-                  <Text type="secondary">PDF 文件审核流程 · 发起表单</Text>
+                  <Text type="secondary">{workflowName} · 发起表单</Text>
                 </div>
               </div>
               {fields.length ? (
@@ -1094,7 +1086,7 @@ const FormDesignerPage = () => {
                         title={`第 ${index + 1} 列`}
                         extra={
                           <Popconfirm title="删除此列？" onConfirm={() => deleteColumn(column.id)}>
-                            <Button danger icon={<DeleteOutlined />} size="small" type="text" />
+                            <Button danger icon={<DeleteOutlined />} size="small" type="text" aria-label={`删除表格列：${column.label}`} />
                           </Popconfirm>
                         }
                       >
@@ -1310,7 +1302,7 @@ const FormDesignerPage = () => {
               <Title level={3}>{formName || "未命名表单"}</Title>
               <Text type="secondary">流程编号将在提交后由系统自动生成</Text>
             </div>
-            <Tag color="processing">PDF 文件审核流程</Tag>
+            <Tag color="processing">{workflowName}</Tag>
           </div>
           <Divider />
           <Form layout="vertical" requiredMark="optional">

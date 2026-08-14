@@ -1,6 +1,4 @@
 import {
-  ArrowLeftOutlined,
-  ArrowRightOutlined,
   CheckCircleFilled,
   FileTextOutlined,
   InfoCircleOutlined,
@@ -19,15 +17,20 @@ import {
   Row,
   Select,
   Space,
-  Steps,
   Tag,
   Typography,
   message,
 } from "antd";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { AppBackButton } from "../components/AppBackButton";
+import { ProcessWizardNextButton } from "../components/ProcessWizardNavigation";
+import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
+import { StatusPill } from "../components/StatusPill";
+import { workflowPermissionGroupOptions } from "../data/workflowPermissionGroups";
 import {
   definitionStatus,
+  getEffectiveVersion,
   useProcessDefinitionStore,
   type DefinitionType,
   type ProcessBasicConfig,
@@ -40,16 +43,6 @@ interface ProcessBasicConfigPageProps {
 }
 
 type BasicConfigValues = ProcessBasicConfig;
-
-const permissionGroupOptions = [
-  "PDF审核_文控_流程权限组",
-  "PDF审核_研发_流程权限组",
-  "PDF审核_质量_流程权限组",
-  "PDF审核_生产_流程权限组",
-  "自由协作_发起_流程权限组",
-  "自由协作_受理_流程权限组",
-  "测试报告_发起_流程权限组",
-].map((value) => ({ value, label: value }));
 
 const roleOptions = ["系统管理员", "文控专员", "研发经理", "质量经理", "生产经理", "部门查看员"]
   .map((value) => ({ value, label: value }));
@@ -74,18 +67,19 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     ?? params.definitionId
     ?? params.id
     ?? searchParams.get("definitionId")
-    ?? "pdf-review";
+    ?? "";
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === resolvedId));
   const ensureDraft = useProcessDefinitionStore((state) => state.ensureDraft);
   const updateDraftBasic = useProcessDefinitionStore((state) => state.updateDraftBasic);
-  const publishedBasic = definition?.versions.find((item) => item.version === definition.currentVersion)?.basic;
+  const effectiveVersion = getEffectiveVersion(definition);
+  const publishedBasic = effectiveVersion?.basic;
   const initialConfig = definition?.draft?.basic ?? publishedBasic ?? {
     name: definition?.name ?? "流程不存在",
     code: definition?.code ?? "—",
     instancePrefix: "",
     type: definition?.type ?? "approval",
     description: definition?.description ?? "",
-    starterGroup: "",
+    starterGroups: [],
     visibleRoles: [],
     visibleUsers: [],
   };
@@ -96,21 +90,22 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
   const instancePrefix = Form.useWatch("instancePrefix", form) ?? initialConfig.instancePrefix;
   const currentStatus = definition ? definitionStatus(definition) : "草稿";
   const isPublishedSource = Boolean(definition?.draft?.basedOn);
+  const isWithdrawnDraft = Boolean(definition?.draft?.withdrawnVersionId);
 
   useEffect(() => {
     if (definition && !definition.draft) ensureDraft(resolvedId);
   }, [definition, ensureDraft, resolvedId]);
-
-  const stepItems = workflowType === "approval"
-    ? [{ title: "基本信息" }, { title: "表单设计" }, { title: "流程设计" }, { title: "发布" }]
-    : [{ title: "基本信息" }, { title: "表单设计" }, { title: "发布" }];
 
   const saveDraft = async () => {
     const values = await form.validateFields();
     updateDraftBasic(resolvedId, values);
     setDirty(false);
     setLastSavedAt("刚刚");
-    message.success(isPublishedSource ? "已基于已发布版本保存为新草稿" : "流程基本信息已保存");
+    message.success(isWithdrawnDraft
+      ? `已保存到 ${definition?.draft?.version} 撤回草稿，重新发布后版本号保持不变`
+      : isPublishedSource
+        ? "已基于已发布版本保存为新草稿"
+        : "流程基本信息已保存");
   };
 
   const goNext = async () => {
@@ -122,27 +117,29 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     <div className="page-stack pa-page pa-config-page">
       <Card className="pa-config-head" bordered={false}>
         <div className="pa-config-head__main">
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/admin/processes")}>返回流程管理</Button>
+          <AppBackButton onClick={() => navigate("/admin/processes")} />
           <div>
             <Space size={10} wrap>
               <Typography.Title level={3}>{initialConfig.name}</Typography.Title>
-              <span className={`pa-status ${currentStatus === "草稿" ? "is-draft" : currentStatus === "已发布" ? "is-published" : "is-disabled"}`}>
-                <span className="pa-status__dot" />{currentStatus}
-              </span>
-              {isPublishedSource && <Tag color="blue">基于 {definition?.draft?.basedOn} 修改</Tag>}
-              {definition?.currentVersion && definition.draft && <Tag color="gold">{definition.draft.version} 草稿</Tag>}
+              <StatusPill status={currentStatus} />
+              {isPublishedSource && <Tag color="blue">{isWithdrawnDraft ? `${definition?.draft?.version} 撤回编辑` : `基于 ${definition?.draft?.basedOn} 修改`}</Tag>}
+              {definition?.effectiveVersionId && definition.draft && <StatusPill status="草稿" label={`${definition.draft.version} 草稿`} />}
             </Space>
             <Typography.Text type="secondary">配置流程身份、实例编号前缀、发起范围和额外查看范围。</Typography.Text>
           </div>
         </div>
-        <div className="pa-save-state">
-          <CheckCircleFilled />
-          <span>{dirty ? "有未保存修改" : `已保存 · ${lastSavedAt}`}</span>
+        <div className="pa-config-head__actions">
+          <div className="pa-save-state">
+            <CheckCircleFilled />
+            <span>{dirty ? "有未保存修改" : `已保存 · ${lastSavedAt}`}</span>
+          </div>
+          <Button icon={<SaveOutlined />} onClick={() => void saveDraft()}>保存草稿</Button>
+          <ProcessWizardNextButton step="初始表单" onClick={() => void goNext()} />
         </div>
       </Card>
 
       <Card className="pa-steps-card" bordered={false}>
-        <Steps size="small" current={0} items={stepItems} />
+        <ProcessWizardSteps workflowType={workflowType} current={0} />
       </Card>
 
       {isPublishedSource && (
@@ -150,8 +147,10 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
           className="pa-page-alert"
           type="info"
           showIcon
-          message="已发布版本保持只读"
-          description="本次修改会保存为独立草稿；只有再次发布后才会影响新发起的流程，运行中实例继续使用原版本。"
+          message={isWithdrawnDraft ? `${definition?.draft?.version} 已撤回发布` : "已发布版本保持只读"}
+          description={isWithdrawnDraft
+            ? "该版本没有关联实例，已按原版本号恢复为草稿。编辑期间流程暂停发起，重新发布后版本号保持不变。"
+            : "本次修改会保存为独立草稿；只有再次发布后才会影响新发起的流程，运行中实例继续使用原版本。"}
         />
       )}
 
@@ -238,31 +237,36 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
               <Row gutter={20}>
                 <Col span={workflowType === "free" ? 12 : 24}>
                   <Form.Item
-                    name="starterGroup"
-                    label="发起流程权限组"
-                    rules={[{ required: true, message: "请选择发起流程权限组" }]}
+                    name="starterGroups"
+                    label="发起流程权限组（可多选）"
+                    rules={[{ required: true, type: "array", min: 1, message: "请至少选择一个发起流程权限组" }]}
+                    extra="任一所选权限组的有效成员均可发起和关闭该流程。"
                   >
                     <Select
+                      mode="multiple"
                       showSearch
                       optionFilterProp="label"
-                      placeholder="搜索并选择流程权限组"
-                      options={permissionGroupOptions}
+                      maxTagCount="responsive"
+                      placeholder="搜索并选择一个或多个流程权限组"
+                      options={workflowPermissionGroupOptions}
                     />
                   </Form.Item>
                 </Col>
                 {workflowType === "free" && (
                   <Col span={12}>
                     <Form.Item
-                      name="assigneeGroup"
-                      label="可选受理人流程权限组"
-                      rules={[{ required: true, message: "请选择受理权限组" }]}
-                      extra="发起和每次流转时，只能从该组的当前有效成员中选择。"
+                      name="assigneeGroups"
+                      label="可选受理人流程权限组（可多选）"
+                      rules={[{ required: true, type: "array", min: 1, message: "请至少选择一个受理权限组" }]}
+                      extra="发起和每次流转时，只能从所选权限组当前有效成员的并集中选择。"
                     >
                       <Select
+                        mode="multiple"
                         showSearch
                         optionFilterProp="label"
-                        placeholder="搜索并选择流程权限组"
-                        options={permissionGroupOptions}
+                        maxTagCount="responsive"
+                        placeholder="搜索并选择一个或多个流程权限组"
+                        options={workflowPermissionGroupOptions}
                       />
                     </Form.Item>
                   </Col>
@@ -314,7 +318,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                 <ul>
                   <li>表单字段和列表字段在下一步配置。</li>
                   <li>审批人、可修改字段和并行关系在流程设计器配置。</li>
-                  <li>已发布流程的修改会生成新草稿。</li>
+                  <li>{isWithdrawnDraft ? "当前版本已撤回，重新发布后版本号保持不变。" : "已有实例的已发布版本修改时会生成下一版本草稿。"}</li>
                 </ul>
               ) : (
                 <ul>
@@ -334,15 +338,6 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
         </div>
       </Form>
 
-      <div className="pa-sticky-actions">
-        <Typography.Text type="secondary">{dirty ? "当前有未保存的配置修改" : `最近保存：${lastSavedAt}`}</Typography.Text>
-        <Space>
-          <Button icon={<SaveOutlined />} onClick={() => void saveDraft()}>保存草稿</Button>
-          <Button type="primary" icon={<ArrowRightOutlined />} iconPosition="end" onClick={() => void goNext()}>
-            下一步：表单设计
-          </Button>
-        </Space>
-      </div>
     </div>
   );
 }

@@ -1,5 +1,4 @@
 import {
-  ArrowLeftOutlined,
   CheckCircleOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -38,7 +37,9 @@ import {
 } from "antd";
 import { useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { AppBackButton } from "../components/AppBackButton";
+import { ConfiguredProcessStartPage } from "./ConfiguredProcessStartPage";
+import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { issueNextInstanceNumber, previewNextInstanceNumber } from "../utils/instanceNumber";
 import "./launch-pages.css";
@@ -46,7 +47,7 @@ import "./launch-pages.css";
 type ApprovalGroupKey = "rd" | "qa" | "production";
 
 interface StartDefinition {
-  id: "pdf-review" | "test-report-review";
+  id: string;
   name: string;
   version: string;
   description: string;
@@ -65,11 +66,11 @@ interface RequirementRow {
   expected: "通过" | "不适用";
 }
 
-const definitions: Record<StartDefinition["id"], StartDefinition> = {
+const definitions: Record<string, StartDefinition> = {
   "pdf-review": {
     id: "pdf-review",
     name: "PDF审核",
-    version: "V2.3",
+    version: "V3",
     description: "研发、质量、生产并行审核，任一分支驳回后本轮结束。",
     permissionGroup: "PDF审核_发起权限组",
     documentLabel: "待审核 PDF",
@@ -79,7 +80,7 @@ const definitions: Record<StartDefinition["id"], StartDefinition> = {
   "test-report-review": {
     id: "test-report-review",
     name: "测试报告审核",
-    version: "V1.6",
+    version: "V1",
     description: "提交测试报告及验证明细，由三个专业流程权限组并行审核。",
     permissionGroup: "测试报告_发起权限组",
     documentLabel: "测试报告 PDF",
@@ -160,9 +161,8 @@ const initialRows: RequirementRow[] = [
   },
 ];
 
-function resolveDefinitionId(paramId: string | undefined, pathname: string): StartDefinition["id"] {
-  const candidate = paramId ?? pathname.split("/").filter(Boolean).at(-1);
-  return candidate === "test-report-review" ? "test-report-review" : "pdf-review";
+function resolveDefinitionId(paramId: string | undefined, pathname: string) {
+  return paramId ?? pathname.split("/").filter(Boolean).at(-1) ?? "";
 }
 
 export function ProcessStartPage() {
@@ -170,13 +170,32 @@ export function ProcessStartPage() {
   const location = useLocation();
   const { definitionId } = useParams<{ definitionId?: string }>();
   const resolvedDefinitionId = resolveDefinitionId(definitionId, location.pathname);
-  const definition = definitions[resolvedDefinitionId];
-  const configuredInstancePrefix = useProcessDefinitionStore((state) => {
-    const item = state.definitions.find((candidate) => candidate.id === resolvedDefinitionId);
-    return item?.versions.find((version) => version.version === item.currentVersion)?.basic.instancePrefix
-      ?? item?.draft?.basic.instancePrefix;
-  });
-  const instancePrefix = configuredInstancePrefix || definition.instancePrefix;
+  const managedDefinition = useProcessDefinitionStore((state) =>
+    state.definitions.find((candidate) => candidate.id === resolvedDefinitionId),
+  );
+  const effectiveVersion = getEffectiveVersion(managedDefinition);
+  const presetDefinition = definitions[resolvedDefinitionId];
+  const definition: StartDefinition = {
+    ...(presetDefinition ?? {
+      id: resolvedDefinitionId,
+      name: effectiveVersion?.basic.name ?? "流程不存在",
+      version: effectiveVersion?.version ?? "—",
+      description: effectiveVersion?.basic.description ?? "",
+      permissionGroup: effectiveVersion?.basic.starterGroups.join("、") ?? "",
+      documentLabel: "流程附件",
+      titlePlaceholder: `例如：${effectiveVersion?.basic.name ?? "流程"}申请`,
+      instancePrefix: effectiveVersion?.basic.instancePrefix ?? "FLOW",
+    }),
+    id: resolvedDefinitionId,
+    name: effectiveVersion?.basic.name ?? presetDefinition.name,
+    version: effectiveVersion?.version ?? presetDefinition.version,
+    description: effectiveVersion?.basic.description ?? presetDefinition.description,
+    permissionGroup: effectiveVersion?.basic.starterGroups.join("、") || presetDefinition.permissionGroup,
+    instancePrefix: effectiveVersion?.basic.instancePrefix ?? presetDefinition.instancePrefix,
+    documentLabel: definitions[resolvedDefinitionId]?.documentLabel ?? "流程附件",
+    titlePlaceholder: definitions[resolvedDefinitionId]?.titlePlaceholder ?? `例如：${effectiveVersion?.basic.name ?? "流程"}申请`,
+  };
+  const instancePrefix = definition.instancePrefix;
   const existingInstances = usePrototypeStore((state) => state.instances);
   const existingInstanceCodes = existingInstances.map((item) => item.code);
   const [form] = Form.useForm();
@@ -376,11 +395,29 @@ export function ProcessStartPage() {
 
   const selectedReviewers = form.getFieldsValue(["rdReviewer", "qaReviewer", "productionReviewer"]);
 
+  if (!managedDefinition || !effectiveVersion) {
+    return (
+      <div className="page-stack process-start-page">
+        <Alert
+          type="error"
+          showIcon
+          message="流程当前不可发起"
+          description="没有找到对应的生效流程版本，请返回发起中心重新选择。"
+          action={<AppBackButton onClick={() => navigate("/launch")} />}
+        />
+      </div>
+    );
+  }
+
+  if (!presetDefinition) {
+    return <ConfiguredProcessStartPage definition={managedDefinition} version={effectiveVersion} />;
+  }
+
   return (
     <div className="page-stack process-start-page">
       <div className="process-start-toolbar">
         <div className="process-start-title">
-          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate("/launch")}>返回发起中心</Button>
+          <AppBackButton onClick={() => navigate("/launch")} />
           <Divider type="vertical" />
           <div>
             <strong>{definition.name}</strong>

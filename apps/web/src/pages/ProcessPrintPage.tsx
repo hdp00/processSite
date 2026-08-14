@@ -1,6 +1,7 @@
-import { ArrowLeftOutlined, FilePdfOutlined, PrinterOutlined } from "@ant-design/icons";
+import { FilePdfOutlined, PrinterOutlined } from "@ant-design/icons";
 import { Button, Empty, Space, Tag } from "antd";
 import { useNavigate, useParams } from "react-router-dom";
+import { AppBackButton } from "../components/AppBackButton";
 import type { ReviewerProgress } from "../data/types";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 
@@ -25,7 +26,7 @@ export function ProcessPrintPage() {
     return (
       <main className="print-preview-page print-preview-empty">
         <Empty description={instance?.workflowType === "free" ? "自由协作流程不提供 PDF 打印" : "未找到可打印的流程数据"} />
-        <Button onClick={() => navigate(-1)}>返回</Button>
+        <AppBackButton onClick={() => navigate(-1)} />
       </main>
     );
   }
@@ -35,15 +36,12 @@ export function ProcessPrintPage() {
   return (
     <main className="print-preview-page">
       <div className="print-preview-toolbar no-print">
-        <Button
-          icon={<ArrowLeftOutlined />}
+        <AppBackButton
           onClick={() => {
             if (window.opener) window.close();
             else navigate(-1);
           }}
-        >
-          返回
-        </Button>
+        />
         <div>
           <strong>流程打印预览</strong>
           <span>附件仅显示名称，不打印附件内容</span>

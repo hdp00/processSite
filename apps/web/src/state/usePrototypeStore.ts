@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { initialInstances, initialNotices } from "../data/mock";
 import type { FreeFlowEntry, NoticeItem, ProcessInstance } from "../data/types";
-import { useProcessDefinitionStore } from "./useProcessDefinitionStore";
+import { getEffectiveVersion, useProcessDefinitionStore } from "./useProcessDefinitionStore";
 import {
   extractInstancePrefix,
   issueNextInstanceNumber,
@@ -88,6 +88,11 @@ const nowText = () =>
   })
     .format(new Date())
     .replaceAll("/", "-");
+
+const normalizeTemplateVersion = (value: string) => {
+  const matched = value.match(/^v(\d+)/i);
+  return matched ? `V${Number(matched[1])}` : value;
+};
 
 const currentPersona = (personaId: PersonaId) =>
   personas.find((item) => item.id === personaId) ?? personas[0];
@@ -229,8 +234,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           const timestamp = Date.now();
           const definitionId = source.template.includes("测试报告") ? "test-report-review" : "pdf-review";
           const currentDefinition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);
-          const currentPrefix = currentDefinition?.versions
-            .find((item) => item.version === currentDefinition.currentVersion)?.basic.instancePrefix;
+          const currentPrefix = getEffectiveVersion(currentDefinition)?.basic.instancePrefix;
           const prefix = currentPrefix || extractInstancePrefix(source.code) || "DOC";
           createdId = `copy-${timestamp}`;
           const createdAt = nowText();
@@ -274,7 +278,7 @@ export const usePrototypeStore = create<PrototypeState>()(
             code: issueNextInstanceNumber(input.instancePrefix ?? "ISSUE", state.instances.map((item) => item.code)),
             title: input.title.trim(),
             template: "自由协作事项流程",
-            templateVersion: "V1.0",
+            templateVersion: getEffectiveVersion(useProcessDefinitionStore.getState().definitions.find((item) => item.type === "free"))?.version ?? "V1",
             status: "进行中",
             initiator: persona.name,
             department: persona.role,
@@ -551,12 +555,13 @@ export const usePrototypeStore = create<PrototypeState>()(
     }),
     {
       name: "flowpilot-prototype-v5",
-      version: 7,
+      version: 8,
       migrate: (persisted) => {
         const state = persisted as PrototypeState;
         const existing = (state.instances ?? []).map((instance) => ({
           ...instance,
           code: normalizeLegacyInstanceNumber(instance.code),
+          templateVersion: normalizeTemplateVersion(instance.templateVersion),
         }));
         const missingFreeInstances = initialInstances.filter(
           (instance) => instance.workflowType === "free" && !existing.some((item) => item.id === instance.id),

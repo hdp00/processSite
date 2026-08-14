@@ -28,8 +28,6 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   ApartmentOutlined,
-  ArrowLeftOutlined,
-  ArrowRightOutlined,
   AuditOutlined,
   CheckCircleFilled,
   CloseCircleFilled,
@@ -55,14 +53,27 @@ import {
   Segmented,
   Select,
   Space,
-  Steps,
   Switch,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
 import { useNavigate, useParams } from "react-router-dom";
+import { AppBackButton } from "../components/AppBackButton";
+import {
+  ProcessWizardNextButton,
+  ProcessWizardPreviousButton,
+} from "../components/ProcessWizardNavigation";
+import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
+import { StatusPill } from "../components/StatusPill";
+import { workflowPermissionGroupOptions } from "../data/workflowPermissionGroups";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import {
+  FLOW_DESIGNER_STORAGE_KEY_PREFIX,
+  buildFlowLevels,
+  getReviewEditableFieldOptions,
+  type EditableFieldOption,
+} from "../utils/designerStorage";
 // @ts-ignore -- Vite resolves local CSS side-effect imports at build time.
 import "./flow-designer.css";
 
@@ -75,6 +86,7 @@ interface FlowNodeData extends Record<string, unknown> {
   label: string;
   description: string;
   permissionGroup?: string;
+  permissionGroups?: string[];
   specifyAssignee?: boolean;
   editableFields: string[];
 }
@@ -104,28 +116,6 @@ interface ValidationResult {
   detail: string;
   pass: boolean;
 }
-
-const STORAGE_KEY_PREFIX = "flowpilot-flow-designer-v2";
-
-const permissionGroups = [
-  "PDF审核_文控_流程权限组",
-  "PDF审核_研发_流程权限组",
-  "PDF审核_质量_流程权限组",
-  "PDF审核_生产_流程权限组",
-  "技术文件只读_流程权限组",
-];
-
-const editableFieldOptions = [
-  "文件名称",
-  "文件编号",
-  "文件等级",
-  "修订版本",
-  "变更摘要",
-  "技术版本",
-  "检验依据",
-  "生效日期",
-  "现场备注",
-];
 
 const rejectionHandlingOptions: Array<{
   value: FlowMeta["rejectionHandling"];
@@ -182,7 +172,7 @@ const initialNodes: DesignerNode[] = [
       kind: "start",
       label: "文控发起",
       description: "上传受控 PDF 文件并提交",
-      permissionGroup: "PDF审核_文控_流程权限组",
+      permissionGroups: ["PDF审核_文控_流程权限组"],
       editableFields: [],
     },
   },
@@ -273,15 +263,59 @@ const initialEdges: DesignerEdge[] = [
   },
 ];
 
-const initialMeta: FlowMeta = {
-  name: "PDF 文件审核流程",
-  code: "FLW-PDF-001",
-  version: "V3.4",
-  basedOn: "V3.3",
+const genericInitialMeta: FlowMeta = {
+  name: "流程设计",
+  code: "—",
+  version: "V1",
+  basedOn: "全新流程",
   status: "草稿",
   rejectionHandling: "resubmit-or-close",
   lastSavedAt: "尚未保存",
 };
+
+const createGenericDraft = (starterGroups: string[]): Pick<StoredDraft, "nodes" | "edges"> => ({
+  nodes: [
+    {
+      id: "start-default",
+      type: "processNode",
+      position: { x: 64, y: 220 },
+      data: {
+        kind: "start",
+        label: "流程发起",
+        description: "填写初始表单并提交",
+        permissionGroups: starterGroups,
+        editableFields: [],
+      },
+    },
+    {
+      id: "approval-default",
+      type: "processNode",
+      position: { x: 370, y: 220 },
+      data: {
+        kind: "approval",
+        label: "审批节点",
+        description: "配置流程权限组和可修改字段",
+        specifyAssignee: true,
+        editableFields: [],
+      },
+    },
+    {
+      id: "end-default",
+      type: "processNode",
+      position: { x: 680, y: 220 },
+      data: {
+        kind: "end",
+        label: "流程结束",
+        description: "全部前置审批通过后结束",
+        editableFields: [],
+      },
+    },
+  ],
+  edges: [
+    { id: "e-start-default", source: "start-default", target: "approval-default", ...edgeDefaults },
+    { id: "e-approval-default", source: "approval-default", target: "end-default", ...edgeDefaults },
+  ],
+});
 
 const formatTime = () =>
   new Intl.DateTimeFormat("zh-CN", {
@@ -291,37 +325,50 @@ const formatTime = () =>
     hour12: false,
   }).format(new Date());
 
-const readStoredDraft = (storageKey: string, fallbackMeta: FlowMeta): StoredDraft => {
+const readStoredDraft = (
+  storageKey: string,
+  fallbackMeta: FlowMeta,
+  fallbackTopology: Pick<StoredDraft, "nodes" | "edges">,
+): StoredDraft => {
   if (typeof window === "undefined") {
-    return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
+    return { ...fallbackTopology, meta: fallbackMeta };
   }
 
   try {
     const stored = window.localStorage.getItem(storageKey);
-    if (!stored) return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
+    if (!stored) return { ...fallbackTopology, meta: fallbackMeta };
     const parsed = JSON.parse(stored) as Partial<StoredDraft>;
     if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges) || !parsed.meta) {
-      return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
+      return { ...fallbackTopology, meta: fallbackMeta };
     }
     if (
       parsed.nodes.some(
         (node) => (node.data as Record<string, unknown> | undefined)?.kind === "parallel",
       )
     ) {
-      return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
+      return { ...fallbackTopology, meta: fallbackMeta };
     }
     return {
-      nodes: parsed.nodes,
+      nodes: parsed.nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          permissionGroups: node.data.kind === "start"
+            ? node.data.permissionGroups ?? (node.data.permissionGroup ? [node.data.permissionGroup] : [])
+            : node.data.permissionGroups,
+          editableFields: node.data.editableFields ?? [],
+        },
+      })),
       edges: parsed.edges,
       meta: {
-        ...fallbackMeta,
         ...parsed.meta,
+        ...fallbackMeta,
         rejectionHandling:
           parsed.meta.rejectionHandling ?? fallbackMeta.rejectionHandling,
       },
     } as StoredDraft;
   } catch {
-    return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
+    return { ...fallbackTopology, meta: fallbackMeta };
   }
 };
 
@@ -329,7 +376,8 @@ const ProcessNode = ({ data, selected }: NodeProps<DesignerNode>) => {
   const meta = kindMeta[data.kind];
   const showTarget = data.kind !== "start";
   const showSource = data.kind !== "end";
-  const groupLabel = data.permissionGroup?.replace("PDF审核_", "").replace("_流程权限组", "");
+  const groups = data.kind === "start" ? data.permissionGroups : data.permissionGroup ? [data.permissionGroup] : [];
+  const groupLabel = groups?.join("、");
 
   return (
     <div className={`process-node process-node--${data.kind} ${selected ? "is-selected" : ""}`}>
@@ -357,7 +405,11 @@ const ProcessNode = ({ data, selected }: NodeProps<DesignerNode>) => {
 
 const nodeTypes = { processNode: ProcessNode };
 
-const runValidation = (nodes: DesignerNode[], edges: DesignerEdge[]): ValidationResult[] => {
+const runValidation = (
+  nodes: DesignerNode[],
+  edges: DesignerEdge[],
+  editableOptions: EditableFieldOption[],
+): ValidationResult[] => {
   const starts = nodes.filter((node) => node.data.kind === "start");
   const ends = nodes.filter((node) => node.data.kind === "end");
   const approvals = nodes.filter((node) => node.data.kind === "approval");
@@ -392,9 +444,12 @@ const runValidation = (nodes: DesignerNode[], edges: DesignerEdge[]): Validation
     (node) => !reachableFromStart.has(node.id) || !canReachEnd.has(node.id),
   );
 
-  const missingGroups = [...starts, ...approvals].filter(
-    (node) => !node.data.permissionGroup?.trim(),
+  const missingGroups = [...starts, ...approvals].filter((node) =>
+    node.data.kind === "start"
+      ? !node.data.permissionGroups?.length
+      : !node.data.permissionGroup?.trim(),
   );
+  const editableLabelByValue = new Map(editableOptions.map((option) => [option.value, option.label]));
 
   const splitNodes = nodes.filter((node) => (adjacency.get(node.id)?.length ?? 0) >= 2);
   const joinNodes = nodes.filter((node) => (reverseAdjacency.get(node.id)?.length ?? 0) >= 2);
@@ -460,7 +515,7 @@ const runValidation = (nodes: DesignerNode[], edges: DesignerEdge[]): Validation
     fieldOwners.forEach((owners, field) => {
       if (new Set(owners.map((owner) => owner.branch)).size > 1) {
         conflictMessages.push(
-          `${field}（${[...new Set(owners.map((owner) => owner.label))].join("、")}）`,
+          `${editableLabelByValue.get(field) ?? field}（${[...new Set(owners.map((owner) => owner.label))].join("、")}）`,
         );
       }
     });
@@ -520,26 +575,37 @@ const runValidation = (nodes: DesignerNode[], edges: DesignerEdge[]): Validation
 interface DesignerWorkspaceProps {
   initialDraft: StoredDraft;
   definitionId: string;
+  editableFieldOptions: EditableFieldOption[];
+  starterGroups: string[];
 }
 
-const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProps) => {
+const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, starterGroups }: DesignerWorkspaceProps) => {
   const navigate = useNavigate();
   const markFlowConfigured = useProcessDefinitionStore((state) => state.markFlowConfigured);
-  const storageKey = `${STORAGE_KEY_PREFIX}-${definitionId}`;
+  const draftBasic = useProcessDefinitionStore((state) =>
+    state.definitions.find((item) => item.id === definitionId)?.draft?.basic,
+  );
+  const updateDraftBasic = useProcessDefinitionStore((state) => state.updateDraftBasic);
+  const storageKey = `${FLOW_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`;
   const [nodes, setNodes, onNodesChange] = useNodesState<DesignerNode>(initialDraft.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<DesignerEdge>(initialDraft.edges);
   const [meta, setMeta] = useState<FlowMeta>(initialDraft.meta);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>("approval-quality");
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
+    initialDraft.nodes.find((node) => node.data.kind === "approval")?.id ?? null,
+  );
   const [propertyMode, setPropertyMode] = useState<"flow" | "node">("node");
   const [validationOpen, setValidationOpen] = useState(false);
   const [autoSaved, setAutoSaved] = useState(true);
-  const { screenToFlowPosition } = useReactFlow<DesignerNode, DesignerEdge>();
+  const { fitView, screenToFlowPosition } = useReactFlow<DesignerNode, DesignerEdge>();
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId),
     [nodes, selectedNodeId],
   );
-  const validationResults = useMemo(() => runValidation(nodes, edges), [nodes, edges]);
+  const validationResults = useMemo(
+    () => runValidation(nodes, edges, editableFieldOptions),
+    [edges, editableFieldOptions, nodes],
+  );
   const parallelRegionCount = useMemo(() => {
     const outgoingCount = new Map<string, number>();
     edges.forEach((edge) =>
@@ -557,6 +623,21 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
     }, 450);
     return () => window.clearTimeout(timer);
   }, [edges, meta, nodes, storageKey]);
+
+  useEffect(() => {
+    const allowed = new Set(editableFieldOptions.map((option) => option.value));
+    const labelToValue = new Map(editableFieldOptions.map((option) => [option.label, option.value]));
+    setNodes((currentNodes) => currentNodes.map((node) => {
+      const normalizedFields = node.data.editableFields
+        .map((field) => allowed.has(field) ? field : labelToValue.get(field))
+        .filter((field): field is string => Boolean(field));
+      const nextStarterGroups = node.data.kind === "start" ? starterGroups : node.data.permissionGroups;
+      return normalizedFields.join("|") === node.data.editableFields.join("|")
+        && (nextStarterGroups ?? []).join("|") === (node.data.permissionGroups ?? []).join("|")
+        ? node
+        : { ...node, data: { ...node.data, editableFields: normalizedFields, permissionGroups: nextStarterGroups } };
+    }));
+  }, [editableFieldOptions, setNodes, starterGroups]);
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -601,6 +682,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
           label: kind === "approval" ? "新审批节点" : kindMeta[kind].label,
           description: kindMeta[kind].description,
           permissionGroup: undefined,
+          permissionGroups: kind === "start" ? starterGroups : undefined,
           specifyAssignee: kind === "approval",
           editableFields: [],
         },
@@ -609,7 +691,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
       setSelectedNodeId(id);
       setPropertyMode("node");
     },
-    [screenToFlowPosition, setNodes],
+    [screenToFlowPosition, setNodes, starterGroups],
   );
 
   const updateSelectedNode = (changes: Partial<FlowNodeData>) => {
@@ -623,6 +705,16 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
     );
   };
 
+  const updateStarterGroups = (permissionGroups: string[]) => {
+    updateSelectedNode({ permissionGroups });
+    if (draftBasic) updateDraftBasic(definitionId, { ...draftBasic, starterGroups: permissionGroups });
+  };
+
+  const updateFlowName = (name: string) => {
+    setMeta((current) => ({ ...current, name }));
+    if (draftBasic) updateDraftBasic(definitionId, { ...draftBasic, name });
+  };
+
   const deleteSelectedNode = () => {
     if (!selectedNode) return;
     setNodes((currentNodes) => currentNodes.filter((node) => node.id !== selectedNode.id));
@@ -634,6 +726,23 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
     setSelectedNodeId(null);
     setPropertyMode("flow");
     message.success(`已删除节点“${selectedNode.data.label}”`);
+  };
+
+  const autoLayout = () => {
+    const levels = buildFlowLevels(nodes, edges);
+    const positioned = new Map<string, { x: number; y: number }>();
+    levels.forEach((ids, level) => {
+      const totalHeight = Math.max(0, ids.length - 1) * 172;
+      ids.forEach((id, index) => {
+        positioned.set(id, { x: 64 + level * 310, y: 300 - totalHeight / 2 + index * 172 });
+      });
+    });
+    setNodes((currentNodes) => currentNodes.map((node) => ({
+      ...node,
+      position: positioned.get(node.id) ?? node.position,
+    })));
+    window.setTimeout(() => void fitView({ padding: 0.2, maxZoom: 1.08, duration: 320 }), 0);
+    message.success("已按连线层级自动整理节点");
   };
 
   const saveDraft = () => {
@@ -651,7 +760,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
   const goNext = () => {
     if (!allValidationPassed) {
       setValidationOpen(true);
-      message.warning("进入发布校验前还有流程结构问题需要处理");
+      message.warning("进入发布页面前还有流程结构问题需要处理");
       return;
     }
     const nextMeta = { ...meta, status: "草稿" as const, lastSavedAt: formatTime() };
@@ -664,16 +773,6 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
     navigate(`/admin/processes/${definitionId}/publish`);
   };
 
-  const resetDraft = () => {
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-    setMeta(initialDraft.meta);
-    setSelectedNodeId("approval-quality");
-    setPropertyMode("node");
-    window.localStorage.removeItem(storageKey);
-    message.success("已恢复当前流程的设计示例");
-  };
-
   return (
     <div className="flow-designer-page">
       <header className="flow-designer-toolbar">
@@ -684,12 +783,12 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
           <div>
             <div className="flow-designer-toolbar__title-row">
               <Title level={4}>{meta.name}</Title>
-              <Tag color={meta.status === "草稿" ? "gold" : "green"}>{meta.status}</Tag>
+              <StatusPill status={meta.status} />
             </div>
             <Space size={8} split={<span className="flow-designer-toolbar__dot">·</span>}>
               <Text type="secondary">{meta.code}</Text>
               <Text type="secondary">草稿版本 {meta.version}</Text>
-              <Text type="secondary">基于已发布 {meta.basedOn}</Text>
+              <Text type="secondary">{meta.version === meta.basedOn ? `撤回后编辑 ${meta.version}` : `基于已发布 ${meta.basedOn}`}</Text>
             </Space>
           </div>
         </div>
@@ -698,36 +797,22 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
             <span className="flow-designer-save-state__dot" />
             {autoSaved ? `已保存 ${meta.lastSavedAt}` : "正在保存…"}
           </span>
-          <Button
-            icon={<ArrowLeftOutlined />}
-            onClick={() => navigate(`/admin/processes/${definitionId}/form`)}
-          >
-            上一步
+          <ProcessWizardPreviousButton step="初始表单" onClick={() => navigate(`/admin/processes/${definitionId}/form`)} />
+          <Button icon={<ApartmentOutlined />} onClick={autoLayout}>
+            自动布局
           </Button>
-          <Button onClick={resetDraft}>恢复示例</Button>
           <Button icon={<SaveOutlined />} onClick={saveDraft}>
             保存草稿
           </Button>
           <Button icon={<SafetyCertificateOutlined />} onClick={() => setValidationOpen(true)}>
-            发布校验
+            检查流程
           </Button>
-          <Button type="primary" icon={<ArrowRightOutlined />} onClick={goNext}>
-            下一步：发布校验
-          </Button>
+          <ProcessWizardNextButton step="发布" onClick={goNext} />
         </div>
       </header>
 
       <div className="flow-wizard-steps">
-        <Steps
-          current={2}
-          size="small"
-          items={[
-            { title: "基本信息" },
-            { title: "初始表单" },
-            { title: "流程设计" },
-            { title: "发布校验" },
-          ]}
-        />
+        <ProcessWizardSteps workflowType="approval" current={2} />
       </div>
 
       <div className="flow-designer-workspace">
@@ -899,14 +984,27 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
                     {selectedNode.data.kind === "start" ? "发起流程权限组" : "审核流程权限组"}
                     <Text type="danger"> *</Text>
                   </span>
-                  <Select
-                    value={selectedNode.data.permissionGroup}
-                    placeholder="请选择流程权限组"
-                    showSearch
-                    allowClear
-                    options={permissionGroups.map((group) => ({ label: group, value: group }))}
-                    onChange={(permissionGroup) => updateSelectedNode({ permissionGroup })}
-                  />
+                  {selectedNode.data.kind === "start" ? (
+                    <Select
+                      mode="multiple"
+                      value={selectedNode.data.permissionGroups}
+                      placeholder="请选择一个或多个发起流程权限组"
+                      showSearch
+                      allowClear
+                      maxTagCount="responsive"
+                      options={workflowPermissionGroupOptions}
+                      onChange={updateStarterGroups}
+                    />
+                  ) : (
+                    <Select
+                      value={selectedNode.data.permissionGroup}
+                      placeholder="请选择审核流程权限组"
+                      showSearch
+                      allowClear
+                      options={workflowPermissionGroupOptions}
+                      onChange={(permissionGroup) => updateSelectedNode({ permissionGroup })}
+                    />
+                  )}
                   <Text type="secondary" className="property-field__help">
                     成员变更立即影响运行中的待办；权限组停用不影响已有流程。
                   </Text>
@@ -937,12 +1035,20 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
                     </Text>
                     <Checkbox.Group
                       value={selectedNode.data.editableFields}
-                      options={editableFieldOptions.map((field) => ({ label: field, value: field }))}
+                      options={editableFieldOptions}
                       onChange={(values) =>
                         updateSelectedNode({ editableFields: values.map(String) })
                       }
                       className="editable-field-options"
                     />
+                    {!editableFieldOptions.length && (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="初始表单中暂无审核可修改字段"
+                        description="请返回初始表单，将普通字段或表格列开启“允许审核人修改”后再选择。"
+                      />
+                    )}
                   </div>
                 </>
               )}
@@ -968,7 +1074,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
                 <span className="property-field__label">流程名称</span>
                 <Input
                   value={meta.name}
-                  onChange={(event) => setMeta((current) => ({ ...current, name: event.target.value }))}
+                  onChange={(event) => updateFlowName(event.target.value)}
                 />
               </label>
               <label className="property-field">
@@ -1010,15 +1116,17 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
                   <Text strong>{meta.version}</Text>
                 </span>
                 <span>
-                  <Text type="secondary">来源版本</Text>
-                  <Text strong>{meta.basedOn}</Text>
+                  <Text type="secondary">{meta.version === meta.basedOn ? "编辑方式" : "来源版本"}</Text>
+                  <Text strong>{meta.version === meta.basedOn ? "原版本号保持不变" : meta.basedOn}</Text>
                 </span>
               </div>
               <Alert
                 type="warning"
                 showIcon
-                message="发布后版本不可修改"
-                description="再次编辑时会基于当前已发布版本创建新草稿；新版本仅影响新发起的实例。"
+                message={meta.version === meta.basedOn ? "当前版本已撤回发布" : "发布后版本不可修改"}
+                description={meta.version === meta.basedOn
+                  ? "该版本尚无流程实例，重新发布后继续使用当前版本号；编辑期间流程暂停发起。"
+                  : "已有实例的版本再次编辑时会基于当前已发布版本创建新草稿；新版本仅影响新发起的实例。"}
               />
             </div>
           )}
@@ -1026,7 +1134,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
       </div>
 
       <Drawer
-        title="发布前校验"
+        title="流程检查结果"
         width={480}
         open={validationOpen}
         onClose={() => setValidationOpen(false)}
@@ -1045,7 +1153,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
                   goNext();
                 }}
               >
-                进入发布校验
+                进入发布页面
               </Button>
             </Space>
           </div>
@@ -1082,23 +1190,34 @@ const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProp
 
 export const FlowDesignerPage = () => {
   const navigate = useNavigate();
-  const { definitionId = "pdf-review" } = useParams<{ definitionId: string }>();
+  const { definitionId = "" } = useParams<{ definitionId: string }>();
   const definition = useProcessDefinitionStore((state) =>
     state.definitions.find((item) => item.id === definitionId),
   );
+  const editableFieldOptions = useMemo(() => getReviewEditableFieldOptions(definitionId), [definitionId]);
+  const starterGroups = definition?.draft?.basic.starterGroups ?? [];
   const fallbackMeta = useMemo<FlowMeta>(
     () => ({
-      ...initialMeta,
-      name: definition?.draft?.basic.name ?? definition?.name ?? initialMeta.name,
-      code: definition?.code ?? initialMeta.code,
-      version: definition?.draft?.version ?? initialMeta.version,
+      ...genericInitialMeta,
+      name: definition?.draft?.basic.name ?? definition?.name ?? genericInitialMeta.name,
+      code: definition?.code ?? genericInitialMeta.code,
+      version: definition?.draft?.version ?? genericInitialMeta.version,
       basedOn: definition?.draft?.basedOn ?? "全新流程",
     }),
     [definition],
   );
   const initialDraft = useMemo(
-    () => readStoredDraft(`${STORAGE_KEY_PREFIX}-${definitionId}`, fallbackMeta),
-    [definitionId, fallbackMeta],
+    () => {
+      const fallbackTopology = definitionId === "pdf-review"
+        ? { nodes: initialNodes, edges: initialEdges }
+        : createGenericDraft(starterGroups);
+      return readStoredDraft(
+        `${FLOW_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`,
+        fallbackMeta,
+        fallbackTopology,
+      );
+    },
+    [definitionId, fallbackMeta, starterGroups],
   );
 
   if (!definition) {
@@ -1109,7 +1228,7 @@ export const FlowDesignerPage = () => {
           showIcon
           message="流程不存在"
           description="请返回流程管理重新选择需要编辑的流程。"
-          action={<Button onClick={() => navigate("/admin/processes")}>返回流程管理</Button>}
+          action={<AppBackButton onClick={() => navigate("/admin/processes")} />}
         />
       </div>
     );
@@ -1121,6 +1240,8 @@ export const FlowDesignerPage = () => {
         key={`${definitionId}-${definition.draft?.id ?? "no-draft"}`}
         initialDraft={initialDraft}
         definitionId={definitionId}
+        editableFieldOptions={editableFieldOptions}
+        starterGroups={starterGroups}
       />
     </ReactFlowProvider>
   );

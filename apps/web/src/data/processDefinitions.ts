@@ -46,5 +46,5 @@ export type ProcessDefinitionId = (typeof processDefinitions)[number]["id"];
 export const defaultProcessDefinition = processDefinitions[0];
 
 export function getProcessDefinition(id: string | null) {
-  return processDefinitions.find((item) => item.id === id) ?? defaultProcessDefinition;
+  return processDefinitions.find((item) => item.id === id);
 }

@@ -1,9 +1,10 @@
-import { ArrowLeftOutlined, InboxOutlined, SendOutlined } from "@ant-design/icons";
+import { InboxOutlined, SendOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Input, Select, Upload, message } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { AppBackButton } from "../components/AppBackButton";
 import { RichTextEditor } from "../components/RichTextEditor";
-import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { personas, usePrototypeStore } from "../state/usePrototypeStore";
 import "./free-flow.css";
 
@@ -16,8 +17,7 @@ export function FreeFlowCreatePage() {
   const createFreeFlow = usePrototypeStore((state) => state.createFreeFlow);
   const instancePrefix = useProcessDefinitionStore((state) => {
     const definition = state.definitions.find((item) => item.id === "free-collaboration");
-    const currentVersion = definition?.currentVersion;
-    return definition?.versions.find((version) => version.version === currentVersion)?.basic.instancePrefix
+    return getEffectiveVersion(definition)?.basic.instancePrefix
       ?? definition?.draft?.basic.instancePrefix
       ?? "ISSUE";
   });
@@ -43,7 +43,7 @@ export function FreeFlowCreatePage() {
   return (
     <div className="free-create-page">
       <div className="free-flow-head free-create-actions">
-        <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate("/processes?definitionId=free-collaboration")}>返回流程清单</Button>
+        <AppBackButton onClick={() => navigate("/processes?definitionId=free-collaboration")} />
         <Button type="primary" size="large" icon={<SendOutlined />} onClick={submit}>创建并发布</Button>
       </div>
 

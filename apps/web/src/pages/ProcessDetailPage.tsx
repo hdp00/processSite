@@ -1,5 +1,4 @@
 import {
-  ArrowLeftOutlined,
   CheckCircleFilled,
   CheckOutlined,
   CloseCircleFilled,
@@ -40,22 +39,16 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { InstanceStatus, ReviewerProgress } from "../data/types";
+import { AppBackButton } from "../components/AppBackButton";
+import { StatusPill } from "../components/StatusPill";
+import type { ReviewerProgress } from "../data/types";
 import { isSuperAdminPersona, personas, usePrototypeStore } from "../state/usePrototypeStore";
 
-const statusColor: Record<InstanceStatus, string> = {
-  审核中: "processing",
-  驳回待处理: "error",
-  已完成: "success",
-  进行中: "processing",
-  已关闭: "default",
-};
-
-const reviewMeta: Record<ReviewerProgress["status"], { color: string; icon: React.ReactNode }> = {
-  待审核: { color: "processing", icon: <HistoryOutlined /> },
-  已通过: { color: "success", icon: <CheckCircleFilled /> },
-  已驳回: { color: "error", icon: <CloseCircleFilled /> },
-  已取消: { color: "default", icon: <StopOutlined /> },
+const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> = {
+  待审核: { icon: <HistoryOutlined /> },
+  已通过: { icon: <CheckCircleFilled /> },
+  已驳回: { icon: <CloseCircleFilled /> },
+  已取消: { icon: <StopOutlined /> },
 };
 
 type PendingAction = "pass" | "reject" | null;
@@ -121,7 +114,7 @@ export function ProcessDetailPage() {
     return (
       <Card className="empty-page-card">
         <Empty description="未找到流程实例" />
-        <Button onClick={() => navigate("/processes")}>返回流程清单</Button>
+        <AppBackButton onClick={() => navigate("/processes")} />
       </Card>
     );
   }
@@ -203,7 +196,7 @@ export function ProcessDetailPage() {
   return (
     <div className="page-stack detail-page">
       <div className="detail-topbar">
-        <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>返回</Button>
+        <AppBackButton onClick={() => navigate(-1)} />
         <div className="detail-topbar-actions">
           <Button icon={<PrinterOutlined />} onClick={() => window.open(`/processes/${instance.id}/print`, "_blank", "noopener,noreferrer")}>打印为 PDF</Button>
           {canEditBeforeReview && (
@@ -224,7 +217,7 @@ export function ProcessDetailPage() {
           <div>
             <div className="detail-title-row">
               <Typography.Title level={2}>{instance.title}</Typography.Title>
-              <Tag color={statusColor[instance.status]}>{instance.status}</Tag>
+              <StatusPill status={instance.status} />
               {instance.priority === "紧急" && <Tag color="error">紧急</Tag>}
             </div>
             <Space split={<Divider type="vertical" />} wrap>
@@ -293,7 +286,7 @@ export function ProcessDetailPage() {
                 <div className={`branch-card status-${reviewer.status}`} key={reviewer.key}>
                   <div className="branch-card-top">
                     <span className="branch-icon">{reviewMeta[reviewer.status].icon}</span>
-                    <Tag color={reviewMeta[reviewer.status].color}>{reviewer.status}</Tag>
+                    <StatusPill status={reviewer.status} />
                   </div>
                   <strong>{reviewer.shortGroup}</strong>
                   <Tooltip title={reviewer.group}><small>{reviewer.group}</small></Tooltip>

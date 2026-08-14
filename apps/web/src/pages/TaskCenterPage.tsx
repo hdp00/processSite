@@ -21,6 +21,7 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { StatusPill } from "../components/StatusPill";
 import { processDefinitions, type TaskListFieldDefinition } from "../data/processDefinitions";
 import {
   cloneDefaultSystemListFields,
@@ -208,7 +209,7 @@ export function TaskCenterPage() {
       title: "状态",
       dataIndex: "status",
       width: 110,
-      render: (value: string) => <Tag color="blue">{value}</Tag>,
+      render: (value: string) => <StatusPill status={value} />,
     }] : []),
     ...(showNodeCell ? [{
       title: "当前节点",
@@ -271,7 +272,7 @@ export function TaskCenterPage() {
       <Card className="task-mode-card">
         <div className="task-mode-toolbar">
           <Segmented
-            className={`task-tabs is-${tab}`}
+            className="app-mode-segmented task-tabs"
             value={tab}
             onChange={(value) => setTab(value as "mine" | "substitute")}
             options={[
@@ -280,7 +281,7 @@ export function TaskCenterPage() {
                 value: "mine",
               },
               {
-                label: <span className="task-tab-label is-purple">可代办 <span className="task-tab-count">{substituteTasks.length}</span></span>,
+                label: <span className="task-tab-label">可代办 <span className="task-tab-count">{substituteTasks.length}</span></span>,
                 value: "substitute",
               },
             ]}

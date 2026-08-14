@@ -1,5 +1,4 @@
 import {
-  ArrowLeftOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
   HistoryOutlined,
@@ -29,7 +28,9 @@ import {
 } from "antd";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { AppBackButton } from "../components/AppBackButton";
 import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
+import { StatusPill } from "../components/StatusPill";
 import type { FreeFlowEntry, ProcessInstance } from "../data/types";
 import { isSuperAdminPersona, personas, usePrototypeStore } from "../state/usePrototypeStore";
 import "./free-flow.css";
@@ -158,13 +159,13 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   return (
     <div className="free-flow-page">
       <div className="free-detail-topbar">
-        <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate("/processes?definitionId=free-collaboration")}>返回流程清单</Button>
+        <AppBackButton onClick={() => navigate("/processes?definitionId=free-collaboration")} />
       </div>
       <div className="free-flow-head free-detail-head">
         <div>
           <Space align="center" wrap>
             <Title level={3}>{instance.title}</Title>
-            <span className={`status-pill ${isOpen ? "is-reviewing" : "is-closed"}`}><span className="status-pill-dot" />{instance.status}</span>
+            <StatusPill status={instance.status} />
           </Space>
           <Text type="secondary">{instance.code} · {instance.template} {instance.templateVersion}</Text>
         </div>

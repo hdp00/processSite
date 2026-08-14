@@ -9,7 +9,8 @@ import {
 import { Button, Card, Empty, Space, Tag, Typography } from "antd";
 import { useMemo, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { canPersonaLaunchDefinition } from "../state/rolePermissions";
+import { canPersonaAccessLaunch, canPersonaLaunchDefinition } from "../state/rolePermissions";
+import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import "./launch-pages.css";
 
@@ -19,7 +20,7 @@ interface LaunchDefinition {
   description: string;
   categoryLabel: string;
   version: string;
-  permissionGroup: string;
+  permissionGroups: string[];
   icon: ReactNode;
   tone: "blue" | "cyan" | "purple" | "amber";
   route: string;
@@ -31,8 +32,8 @@ const launchDefinitions: LaunchDefinition[] = [
     name: "PDF审核",
     description: "上传受控 PDF 文件，由研发、质量、生产三个流程权限组并行审核。",
     categoryLabel: "固定审批",
-    version: "V2.3",
-    permissionGroup: "PDF审核_发起权限组",
+    version: "V3",
+    permissionGroups: ["PDF审核_发起权限组"],
     icon: <FilePdfOutlined />,
     tone: "blue",
     route: "/launch/pdf-review",
@@ -42,8 +43,8 @@ const launchDefinitions: LaunchDefinition[] = [
     name: "测试报告审核",
     description: "提交测试结论和验证明细，适用于产品验证及例行测试报告。",
     categoryLabel: "固定审批",
-    version: "V1.6",
-    permissionGroup: "测试报告_发起权限组",
+    version: "V1",
+    permissionGroups: ["测试报告_发起权限组"],
     icon: <ExperimentOutlined />,
     tone: "cyan",
     route: "/launch/test-report-review",
@@ -53,8 +54,8 @@ const launchDefinitions: LaunchDefinition[] = [
     name: "自由协作",
     description: "创建协作事项并选择首位受理人，后续可持续回复、流转和手动关闭。",
     categoryLabel: "自由流程",
-    version: "V1.0",
-    permissionGroup: "自由协作_发起权限组",
+    version: "V2",
+    permissionGroups: ["自由协作_发起权限组"],
     icon: <MessageOutlined />,
     tone: "purple",
     route: "/free-flow/new",
@@ -64,8 +65,8 @@ const launchDefinitions: LaunchDefinition[] = [
     name: "工程变更审批",
     description: "用于产品设计、物料和工艺变更的跨部门评审。",
     categoryLabel: "固定审批",
-    version: "V1.2",
-    permissionGroup: "工程变更_发起权限组",
+    version: "V1",
+    permissionGroups: ["工程变更_发起权限组"],
     icon: <SafetyCertificateOutlined />,
     tone: "amber",
     route: "/launch/engineering-change",
@@ -75,9 +76,29 @@ const launchDefinitions: LaunchDefinition[] = [
 export function ProcessLaunchCenterPage() {
   const navigate = useNavigate();
   const personaId = usePrototypeStore((state) => state.personaId);
+  const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
   const availableDefinitions = useMemo(
-    () => launchDefinitions.filter((definition) => canPersonaLaunchDefinition(personaId, definition.id)),
-    [personaId],
+    () => managedDefinitions.flatMap((managed, index) => {
+      const effective = getEffectiveVersion(managed);
+      if (managed.disabled || !effective) return [];
+      const preset = launchDefinitions.find((item) => item.id === managed.id);
+      const allowed = preset
+        ? canPersonaLaunchDefinition(personaId, managed.id)
+        : canPersonaAccessLaunch(personaId) && effective.basic.starterGroups.length > 0;
+      if (!allowed) return [];
+      return [{
+        id: managed.id,
+        name: effective.basic.name,
+        description: effective.basic.description,
+        categoryLabel: managed.type === "approval" ? "固定审批" : "自由流程",
+        version: effective.version,
+        permissionGroups: effective.basic.starterGroups,
+        icon: preset?.icon ?? (managed.type === "approval" ? <SafetyCertificateOutlined /> : <MessageOutlined />),
+        tone: preset?.tone ?? (["blue", "cyan", "purple", "amber"] as const)[index % 4],
+        route: preset?.route ?? `/launch/${managed.id}`,
+      }];
+    }),
+    [managedDefinitions, personaId],
   );
 
   return (
@@ -119,7 +140,7 @@ export function ProcessLaunchCenterPage() {
                 <Typography.Paragraph>{definition.description}</Typography.Paragraph>
               </div>
               <div className="launch-card-meta">
-                <span><TeamOutlined /><span>发起权限组</span><strong>{definition.permissionGroup}</strong></span>
+                <span><TeamOutlined /><span>发起权限组</span><strong>{definition.permissionGroups.join("、")}</strong></span>
               </div>
               <div className="launch-card-foot">
                 <Button
