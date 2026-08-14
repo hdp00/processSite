@@ -1,13 +1,20 @@
 import {
-  ApartmentOutlined,
+  AuditOutlined,
   BellOutlined,
   CheckSquareOutlined,
+  ControlOutlined,
+  DeploymentUnitOutlined,
   FileSearchOutlined,
-  FormOutlined,
+  KeyOutlined,
   LogoutOutlined,
+  MonitorOutlined,
   ReloadOutlined,
+  RocketOutlined,
+  SafetyCertificateOutlined,
   SettingOutlined,
   SwapOutlined,
+  TeamOutlined,
+  UserOutlined,
 } from "@ant-design/icons";
 import {
   Avatar,
@@ -25,24 +32,34 @@ import {
   Typography,
   type MenuProps,
 } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { getProcessDefinition, processDefinitions } from "../data/processDefinitions";
+import { ROLE_PERMISSIONS_CHANGED_EVENT, canPersonaAccessLaunch } from "../state/rolePermissions";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
 
 const { Header, Sider, Content } = Layout;
 
 const pageMeta: Record<string, { title: string; eyebrow: string }> = {
+  "/launch": { title: "流程发起", eyebrow: "员工工作区" },
   "/tasks": { title: "任务中心", eyebrow: "员工工作区" },
-  "/designer/form": { title: "初始表单设计器", eyebrow: "流程配置" },
-  "/designer/flow": { title: "可视化流程设计器", eyebrow: "流程配置" },
+  "/admin/processes": { title: "流程管理", eyebrow: "流程配置" },
   "/free-flow/new": { title: "新建自由协作事项", eyebrow: "自由协作" },
+  "/admin/users": { title: "用户管理", eyebrow: "用户与权限" },
+  "/admin/departments": { title: "部门管理", eyebrow: "用户与权限" },
+  "/admin/roles": { title: "角色管理", eyebrow: "用户与权限" },
+  "/admin/permissions": { title: "权限管理", eyebrow: "用户与权限" },
+  "/admin/workflow-groups": { title: "流程权限组", eyebrow: "用户与权限" },
+  "/ops/instances": { title: "流程实例监控", eyebrow: "系统运维" },
+  "/ops/audit-logs": { title: "操作审计日志", eyebrow: "系统运维" },
 };
 
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [noticeOpen, setNoticeOpen] = useState(false);
+  const [permissionRevision, setPermissionRevision] = useState(0);
   const {
     notices,
     personaId,
@@ -53,23 +70,49 @@ export function AppShell() {
   } = usePrototypeStore();
 
   const persona = personas.find((item) => item.id === personaId) ?? personas[2];
+  const resetProcessDefinitions = useProcessDefinitionStore((state) => state.resetDefinitions);
   const unreadCount = notices.filter((item) => !item.read).length;
+  const isAdmin = personaId === "admin";
+  const canInitiate = canPersonaAccessLaunch(personaId);
+  useEffect(() => {
+    const refreshPermissions = () => setPermissionRevision((value) => value + 1);
+    window.addEventListener(ROLE_PERMISSIONS_CHANGED_EVENT, refreshPermissions);
+    return () => window.removeEventListener(ROLE_PERMISSIONS_CHANGED_EVENT, refreshPermissions);
+  }, []);
   const processDefinition = getProcessDefinition(new URLSearchParams(location.search).get("definitionId"));
-  const selectedKey = location.pathname === "/processes"
-    ? `/processes?definitionId=${processDefinition.id}`
-    : location.pathname;
-  const meta = location.pathname.startsWith("/processes/")
+  const isDesignerRoute = /^\/admin\/processes\/[^/]+\/(form|flow)$/.test(location.pathname);
+  const selectedKey = location.pathname.startsWith("/launch/")
+    ? "/launch"
+    : location.pathname.startsWith("/admin/processes/")
+      ? "/admin/processes"
+      : location.pathname === "/processes"
+        ? `/processes?definitionId=${processDefinition.id}`
+        : location.pathname;
+  const meta = location.pathname.startsWith("/launch/")
+    ? { title: "发起流程", eyebrow: "员工工作区" }
+    : location.pathname.startsWith("/admin/processes/")
+      ? location.pathname.endsWith("/basic")
+        ? { title: "流程基本信息", eyebrow: "流程配置" }
+        : location.pathname.endsWith("/form")
+          ? { title: "初始表单设计", eyebrow: "流程配置" }
+          : location.pathname.endsWith("/flow")
+            ? { title: "可视化流程设计", eyebrow: "流程配置" }
+        : location.pathname.endsWith("/publish")
+          ? { title: "预览、校验与发布", eyebrow: "流程配置" }
+          : { title: "流程版本记录", eyebrow: "流程配置" }
+      : location.pathname.startsWith("/processes/")
     ? { title: "流程详情", eyebrow: "流程清单" }
     : location.pathname === "/processes"
       ? { title: processDefinition.label, eyebrow: "流程清单" }
       : pageMeta[location.pathname] ?? pageMeta["/tasks"];
 
   const menuItems: MenuProps["items"] = useMemo(
-    () => [
+    () => ([
       {
         type: "group",
         label: "员工工作区",
         children: [
+          ...(canInitiate ? [{ key: "/launch", icon: <RocketOutlined />, label: "流程发起" }] : []),
           { key: "/tasks", icon: <CheckSquareOutlined />, label: "任务中心" },
           {
             key: "/processes-menu",
@@ -82,16 +125,34 @@ export function AppShell() {
           },
         ],
       },
-      {
+      ...(isAdmin ? [{
         type: "group",
         label: "流程配置",
         children: [
-          { key: "/designer/form", icon: <FormOutlined />, label: "表单设计器" },
-          { key: "/designer/flow", icon: <ApartmentOutlined />, label: "流程设计器" },
+          { key: "/admin/processes", icon: <ControlOutlined />, label: "流程管理" },
         ],
       },
-    ],
-    [],
+      {
+        type: "group",
+        label: "用户与权限",
+        children: [
+          { key: "/admin/users", icon: <UserOutlined />, label: "用户管理" },
+          { key: "/admin/departments", icon: <DeploymentUnitOutlined />, label: "部门管理" },
+          { key: "/admin/roles", icon: <SafetyCertificateOutlined />, label: "角色管理" },
+          { key: "/admin/permissions", icon: <KeyOutlined />, label: "权限管理" },
+          { key: "/admin/workflow-groups", icon: <TeamOutlined />, label: "流程权限组" },
+        ],
+      },
+      {
+        type: "group",
+        label: "系统运维",
+        children: [
+          { key: "/ops/instances", icon: <MonitorOutlined />, label: "实例监控" },
+          { key: "/ops/audit-logs", icon: <AuditOutlined />, label: "审计日志" },
+        ],
+      }] : []),
+    ] as MenuProps["items"]),
+    [canInitiate, isAdmin, permissionRevision],
   );
 
   const userMenu: MenuProps["items"] = [
@@ -99,7 +160,10 @@ export function AppShell() {
       key: "reset",
       icon: <ReloadOutlined />,
       label: "重置演示数据",
-      onClick: () => resetDemo(),
+      onClick: () => {
+        resetDemo();
+        resetProcessDefinitions();
+      },
     },
     { type: "divider" },
     {
@@ -130,15 +194,17 @@ export function AppShell() {
           <Tag bordered={false}>原型</Tag>
         </div>
 
-        <Menu
-          className="app-menu"
-          theme="dark"
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          defaultOpenKeys={["/processes-menu"]}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-        />
+        <div className="app-menu-scroll">
+          <Menu
+            className="app-menu"
+            theme="dark"
+            mode="inline"
+            selectedKeys={[selectedKey]}
+            defaultOpenKeys={["/processes-menu"]}
+            items={menuItems}
+            onClick={({ key }) => navigate(key)}
+          />
+        </div>
 
         <div className="sider-footnote">
           <SettingOutlined />
@@ -189,7 +255,7 @@ export function AppShell() {
           </Space>
         </Header>
 
-        <Content className={`app-content${location.pathname.startsWith("/designer/") ? " is-designer-content" : ""}`}>
+        <Content className={`app-content${isDesignerRoute ? " is-designer-content" : ""}`}>
           <Outlet />
         </Content>
       </Layout>

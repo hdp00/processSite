@@ -73,6 +73,24 @@
   margin-left: 20px;
 }
 
+.flow-wizard-steps {
+  flex: 0 0 auto;
+  padding: 12px 28px 11px;
+  background: #fff;
+  border-bottom: 1px solid var(--designer-border);
+}
+
+.flow-wizard-steps .ant-steps {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.flow-designer-page--empty {
+  height: auto;
+  min-height: 240px;
+  padding: 24px;
+}
+
 .flow-designer-save-state {
   gap: 6px;
   margin-right: 4px;

@@ -28,12 +28,12 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   ApartmentOutlined,
+  ArrowLeftOutlined,
+  ArrowRightOutlined,
   AuditOutlined,
   CheckCircleFilled,
-  CheckCircleOutlined,
   CloseCircleFilled,
   DeleteOutlined,
-  EyeOutlined,
   FilePdfOutlined,
   InfoCircleOutlined,
   PlayCircleFilled,
@@ -51,16 +51,18 @@ import {
   Drawer,
   Input,
   message,
-  Modal,
   Radio,
   Segmented,
   Select,
   Space,
+  Steps,
   Switch,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
+import { useNavigate, useParams } from "react-router-dom";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 // @ts-ignore -- Vite resolves local CSS side-effect imports at build time.
 import "./flow-designer.css";
 
@@ -103,7 +105,7 @@ interface ValidationResult {
   pass: boolean;
 }
 
-const STORAGE_KEY = "flowpilot-flow-designer-pdf-v1";
+const STORAGE_KEY_PREFIX = "flowpilot-flow-designer-v2";
 
 const permissionGroups = [
   "PDF审核_文控_流程权限组",
@@ -146,9 +148,6 @@ const rejectionHandlingOptions: Array<{
     description: "驳回结果提交后立即关闭流程，不再等待发布方处理。",
   },
 ];
-
-const getRejectionHandlingLabel = (value: FlowMeta["rejectionHandling"]) =>
-  rejectionHandlingOptions.find((option) => option.value === value)?.label ?? "重新发布或关闭";
 
 const kindMeta: Record<
   NodeKind,
@@ -292,37 +291,37 @@ const formatTime = () =>
     hour12: false,
   }).format(new Date());
 
-const readStoredDraft = (): StoredDraft => {
+const readStoredDraft = (storageKey: string, fallbackMeta: FlowMeta): StoredDraft => {
   if (typeof window === "undefined") {
-    return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
+    return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
   }
 
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (!stored) return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
+    const stored = window.localStorage.getItem(storageKey);
+    if (!stored) return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
     const parsed = JSON.parse(stored) as Partial<StoredDraft>;
     if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges) || !parsed.meta) {
-      return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
+      return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
     }
     if (
       parsed.nodes.some(
         (node) => (node.data as Record<string, unknown> | undefined)?.kind === "parallel",
       )
     ) {
-      return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
+      return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
     }
     return {
       nodes: parsed.nodes,
       edges: parsed.edges,
       meta: {
-        ...initialMeta,
+        ...fallbackMeta,
         ...parsed.meta,
         rejectionHandling:
-          parsed.meta.rejectionHandling ?? initialMeta.rejectionHandling,
+          parsed.meta.rejectionHandling ?? fallbackMeta.rejectionHandling,
       },
     } as StoredDraft;
   } catch {
-    return { nodes: initialNodes, edges: initialEdges, meta: initialMeta };
+    return { nodes: initialNodes, edges: initialEdges, meta: fallbackMeta };
   }
 };
 
@@ -520,16 +519,19 @@ const runValidation = (nodes: DesignerNode[], edges: DesignerEdge[]): Validation
 
 interface DesignerWorkspaceProps {
   initialDraft: StoredDraft;
+  definitionId: string;
 }
 
-const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
+const DesignerWorkspace = ({ initialDraft, definitionId }: DesignerWorkspaceProps) => {
+  const navigate = useNavigate();
+  const markFlowConfigured = useProcessDefinitionStore((state) => state.markFlowConfigured);
+  const storageKey = `${STORAGE_KEY_PREFIX}-${definitionId}`;
   const [nodes, setNodes, onNodesChange] = useNodesState<DesignerNode>(initialDraft.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<DesignerEdge>(initialDraft.edges);
   const [meta, setMeta] = useState<FlowMeta>(initialDraft.meta);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>("approval-quality");
   const [propertyMode, setPropertyMode] = useState<"flow" | "node">("node");
   const [validationOpen, setValidationOpen] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [autoSaved, setAutoSaved] = useState(true);
   const { screenToFlowPosition } = useReactFlow<DesignerNode, DesignerEdge>();
 
@@ -540,7 +542,9 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
   const validationResults = useMemo(() => runValidation(nodes, edges), [nodes, edges]);
   const parallelRegionCount = useMemo(() => {
     const outgoingCount = new Map<string, number>();
-    edges.forEach((edge) => outgoingCount.set(edge.source, (outgoingCount.get(edge.source) ?? 0) + 1));
+    edges.forEach((edge) =>
+      outgoingCount.set(edge.source, (outgoingCount.get(edge.source) ?? 0) + 1),
+    );
     return [...outgoingCount.values()].filter((count) => count >= 2).length;
   }, [edges]);
   const allValidationPassed = validationResults.every((result) => result.pass);
@@ -548,11 +552,11 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
   useEffect(() => {
     setAutoSaved(false);
     const timer = window.setTimeout(() => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges, meta }));
+      window.localStorage.setItem(storageKey, JSON.stringify({ nodes, edges, meta }));
       setAutoSaved(true);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [nodes, edges, meta]);
+  }, [edges, meta, nodes, storageKey]);
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -636,45 +640,38 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
     const nextMeta = { ...meta, status: "草稿" as const, lastSavedAt: formatTime() };
     setMeta(nextMeta);
     window.localStorage.setItem(
-      STORAGE_KEY,
+      storageKey,
       JSON.stringify({ nodes, edges, meta: nextMeta }),
     );
+    markFlowConfigured(definitionId, nodes.length);
     setAutoSaved(true);
     message.success("草稿已保存，刷新页面后仍会保留");
   };
 
-  const openPublishPreview = () => {
+  const goNext = () => {
     if (!allValidationPassed) {
       setValidationOpen(true);
-      message.warning("发布前还有校验项需要处理");
+      message.warning("进入发布校验前还有流程结构问题需要处理");
       return;
     }
-    setPreviewOpen(true);
-  };
-
-  const publishFlow = () => {
-    const nextMeta = {
-      ...meta,
-      status: "已发布" as const,
-      lastSavedAt: formatTime(),
-    };
+    const nextMeta = { ...meta, status: "草稿" as const, lastSavedAt: formatTime() };
     setMeta(nextMeta);
     window.localStorage.setItem(
-      STORAGE_KEY,
+      storageKey,
       JSON.stringify({ nodes, edges, meta: nextMeta }),
     );
-    setPreviewOpen(false);
-    message.success(`${meta.name} ${meta.version} 已发布，仅影响新发起的流程`);
+    markFlowConfigured(definitionId, nodes.length);
+    navigate(`/admin/processes/${definitionId}/publish`);
   };
 
   const resetDraft = () => {
     setNodes(initialNodes);
     setEdges(initialEdges);
-    setMeta(initialMeta);
+    setMeta(initialDraft.meta);
     setSelectedNodeId("approval-quality");
     setPropertyMode("node");
-    window.localStorage.removeItem(STORAGE_KEY);
-    message.success("已恢复 PDF 审核流程示例");
+    window.localStorage.removeItem(storageKey);
+    message.success("已恢复当前流程的设计示例");
   };
 
   return (
@@ -701,6 +698,12 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
             <span className="flow-designer-save-state__dot" />
             {autoSaved ? `已保存 ${meta.lastSavedAt}` : "正在保存…"}
           </span>
+          <Button
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate(`/admin/processes/${definitionId}/form`)}
+          >
+            上一步
+          </Button>
           <Button onClick={resetDraft}>恢复示例</Button>
           <Button icon={<SaveOutlined />} onClick={saveDraft}>
             保存草稿
@@ -708,11 +711,24 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
           <Button icon={<SafetyCertificateOutlined />} onClick={() => setValidationOpen(true)}>
             发布校验
           </Button>
-          <Button type="primary" icon={<EyeOutlined />} onClick={openPublishPreview}>
-            预览并发布
+          <Button type="primary" icon={<ArrowRightOutlined />} onClick={goNext}>
+            下一步：发布校验
           </Button>
         </div>
       </header>
+
+      <div className="flow-wizard-steps">
+        <Steps
+          current={2}
+          size="small"
+          items={[
+            { title: "基本信息" },
+            { title: "初始表单" },
+            { title: "流程设计" },
+            { title: "发布校验" },
+          ]}
+        />
+      </div>
 
       <div className="flow-designer-workspace">
         <aside className="flow-designer-palette">
@@ -1026,10 +1042,10 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
                 disabled={!allValidationPassed}
                 onClick={() => {
                   setValidationOpen(false);
-                  setPreviewOpen(true);
+                  goNext();
                 }}
               >
-                进入发布预览
+                进入发布校验
               </Button>
             </Space>
           </div>
@@ -1038,8 +1054,8 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
         <Alert
           type={allValidationPassed ? "success" : "warning"}
           showIcon
-          message={allValidationPassed ? "流程结构可以发布" : "流程暂不满足发布条件"}
-          description="发布不会影响当前正在运行的流程实例。"
+          message={allValidationPassed ? "流程结构校验通过" : "流程暂不满足发布条件"}
+          description="通过后进入统一发布页面，当前正在运行的流程实例不会受到影响。"
           className="validation-drawer__summary"
         />
         <div className="validation-list">
@@ -1060,67 +1076,52 @@ const DesignerWorkspace = ({ initialDraft }: DesignerWorkspaceProps) => {
         </div>
       </Drawer>
 
-      <Modal
-        title="发布预览"
-        width={640}
-        open={previewOpen}
-        onCancel={() => setPreviewOpen(false)}
-        okText={`确认发布 ${meta.version}`}
-        cancelText="继续编辑"
-        onOk={publishFlow}
-      >
-        <div className="publish-preview">
-          <div className="publish-preview__hero">
-            <div className="publish-preview__icon">
-              <CheckCircleOutlined />
-            </div>
-            <div>
-              <Title level={4}>{meta.name}</Title>
-              <Text type="secondary">
-                {meta.code} · {meta.version} · 基于 {meta.basedOn}
-              </Text>
-            </div>
-          </div>
-          <div className="publish-preview__stats">
-            <div>
-              <Text type="secondary">流程节点</Text>
-              <strong>{nodes.length}</strong>
-            </div>
-            <div>
-              <Text type="secondary">审批节点</Text>
-              <strong>{nodes.filter((node) => node.data.kind === "approval").length}</strong>
-            </div>
-            <div>
-              <Text type="secondary">并行区域</Text>
-              <strong>{parallelRegionCount}</strong>
-            </div>
-            <div>
-              <Text type="secondary">校验结果</Text>
-              <strong className="publish-preview__passed">全部通过</strong>
-            </div>
-          </div>
-          <div className="publish-preview__rule">
-            <Text type="secondary">驳回后的处理方式</Text>
-            <Text strong>{getRejectionHandlingLabel(meta.rejectionHandling)}</Text>
-          </div>
-          <Alert
-            type="info"
-            showIcon
-            message="版本生效范围"
-            description={`发布后该版本不可直接修改，仅新发起的流程使用 ${meta.version}；运行中的实例继续使用原版本。`}
-          />
-        </div>
-      </Modal>
     </div>
   );
 };
 
 export const FlowDesignerPage = () => {
-  const [initialDraft] = useState(readStoredDraft);
+  const navigate = useNavigate();
+  const { definitionId = "pdf-review" } = useParams<{ definitionId: string }>();
+  const definition = useProcessDefinitionStore((state) =>
+    state.definitions.find((item) => item.id === definitionId),
+  );
+  const fallbackMeta = useMemo<FlowMeta>(
+    () => ({
+      ...initialMeta,
+      name: definition?.draft?.basic.name ?? definition?.name ?? initialMeta.name,
+      code: definition?.code ?? initialMeta.code,
+      version: definition?.draft?.version ?? initialMeta.version,
+      basedOn: definition?.draft?.basedOn ?? "全新流程",
+    }),
+    [definition],
+  );
+  const initialDraft = useMemo(
+    () => readStoredDraft(`${STORAGE_KEY_PREFIX}-${definitionId}`, fallbackMeta),
+    [definitionId, fallbackMeta],
+  );
+
+  if (!definition) {
+    return (
+      <div className="flow-designer-page flow-designer-page--empty">
+        <Alert
+          type="error"
+          showIcon
+          message="流程不存在"
+          description="请返回流程管理重新选择需要编辑的流程。"
+          action={<Button onClick={() => navigate("/admin/processes")}>返回流程管理</Button>}
+        />
+      </div>
+    );
+  }
 
   return (
     <ReactFlowProvider>
-      <DesignerWorkspace initialDraft={initialDraft} />
+      <DesignerWorkspace
+        key={`${definitionId}-${definition.draft?.id ?? "no-draft"}`}
+        initialDraft={initialDraft}
+        definitionId={definitionId}
+      />
     </ReactFlowProvider>
   );
 };

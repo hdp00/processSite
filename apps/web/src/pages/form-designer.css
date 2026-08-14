@@ -6,8 +6,8 @@
   --fd-brand-soft: #eef1ff;
   display: flex;
   min-width: 0;
-  height: calc(100vh - 72px);
-  min-height: 680px;
+  height: 100%;
+  min-height: 0;
   flex-direction: column;
   color: var(--fd-ink);
   background: #f4f6f9;
@@ -71,6 +71,18 @@
 .fd-page-header > .ant-space {
   flex: 0 0 auto;
   flex-wrap: nowrap;
+}
+
+.fd-wizard-steps {
+  flex: 0 0 auto;
+  padding: 12px 30px;
+  border-bottom: 1px solid var(--fd-border);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.fd-wizard-steps .ant-steps {
+  max-width: 820px;
+  margin: 0 auto;
 }
 
 .fd-save-status {
@@ -140,9 +152,29 @@
 
 .fd-component-list {
   display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 8px;
   padding: 14px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-padding-block: 14px;
+}
+
+.fd-component-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.fd-component-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cbd3e1;
+}
+
+.fd-component-list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .fd-component-item {
@@ -216,7 +248,8 @@
 }
 
 .fd-component-tip {
-  margin: auto 14px 14px;
+  flex: 0 0 auto;
+  margin: 0 14px 14px;
 }
 
 .fd-component-tip .ant-alert-message,
@@ -700,7 +733,8 @@
   --fd-border: #dce3ed;
   --fd-brand: #3659e3;
   --fd-brand-soft: #edf1ff;
-  height: calc(100vh - 76px);
+  height: 100%;
+  min-height: 0;
   background:
     radial-gradient(circle at 75% 0%, rgba(54, 89, 227, 0.07), transparent 28%),
     #eef2f7;

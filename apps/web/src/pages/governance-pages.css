@@ -1,0 +1,566 @@
+.gov-page {
+  min-width: 0;
+}
+
+.gov-page .ant-alert {
+  border-radius: 12px;
+}
+
+.gov-page .ant-card,
+.gov-page .ant-table-wrapper,
+.gov-page .ant-table-container {
+  min-width: 0;
+}
+
+.gov-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #e2e7ef;
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(30, 43, 71, 0.045);
+}
+
+.gov-summary-item {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 1fr auto;
+  gap: 5px 12px;
+  padding: 18px 20px;
+  border-right: 1px solid #edf0f4;
+}
+
+.gov-summary-item:last-child {
+  border-right: 0;
+}
+
+.gov-summary-item::before {
+  position: absolute;
+  top: 0;
+  right: 20px;
+  left: 20px;
+  height: 2px;
+  border-radius: 0 0 3px 3px;
+  background: #8091d6;
+  content: "";
+}
+
+.gov-summary-item.is-green::before { background: #39a77f; }
+.gov-summary-item.is-blue::before { background: #3659e3; }
+.gov-summary-item.is-red::before { background: #d75a67; }
+
+.gov-summary-item > span {
+  align-self: center;
+  color: #667187;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.gov-summary-item strong {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  color: #1e2b44;
+  font-size: 25px;
+  letter-spacing: -0.6px;
+}
+
+.gov-summary-item small {
+  overflow: hidden;
+  color: #9aa2b1;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gov-filter-grid {
+  display: grid;
+  min-width: 0;
+  align-items: end;
+  column-gap: 14px;
+  row-gap: 16px;
+}
+
+.gov-filter-grid--users { grid-template-columns: minmax(180px, 1.3fr) minmax(170px, 1fr) minmax(115px, .65fr) minmax(155px, .9fr) minmax(115px, .65fr) auto; }
+.gov-filter-grid--groups { grid-template-columns: minmax(220px, 1fr) minmax(180px, .7fr) minmax(130px, .5fr) 1fr; }
+.gov-filter-grid--monitor,
+.gov-filter-grid--audit { grid-template-columns: minmax(200px, 1.2fr) minmax(150px, .7fr) minmax(120px, .55fr) minmax(235px, 1fr) auto; }
+
+.gov-filter-grid > label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gov-filter-grid > label > span {
+  color: #59657a;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.gov-filter-grid .ant-picker,
+.gov-filter-grid .ant-select,
+.gov-filter-grid .ant-cascader {
+  width: 100%;
+  min-width: 0;
+}
+
+.gov-filter-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.gov-content-card {
+  overflow: hidden;
+}
+
+.gov-result-head,
+.gov-toolbar,
+.gov-permission-toolbar {
+  display: flex;
+  min-height: 70px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid #e6eaf1;
+  background: linear-gradient(180deg, #fff, #fcfdff);
+}
+
+.gov-result-head > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gov-result-head strong {
+  color: #26334b;
+  font-size: 14px;
+}
+
+.gov-result-extra {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.gov-toolbar > .ant-input-affix-wrapper {
+  width: min(380px, 44%);
+}
+
+.gov-toolbar,
+.gov-permission-toolbar {
+  padding: 16px 20px 20px;
+}
+
+.gov-person-chip {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.gov-person-chip .ant-avatar {
+  flex: 0 0 auto;
+  color: #3157d5;
+  background: #edf1ff;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.gov-person-chip > span:last-child,
+.gov-primary-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gov-person-chip strong,
+.gov-primary-cell strong {
+  overflow: hidden;
+  color: #283651;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gov-person-chip small,
+.gov-primary-cell small {
+  overflow: hidden;
+  color: #929bab;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gov-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.gov-drawer-alert {
+  margin-bottom: 20px;
+}
+
+.gov-split-layout {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(280px, .34fr) minmax(0, .66fr);
+  gap: 18px;
+}
+
+.gov-tree-card,
+.gov-detail-card {
+  min-height: 580px;
+  overflow: hidden;
+}
+
+.gov-tree-search {
+  margin-bottom: 20px;
+}
+
+.gov-tree-card .ant-tree {
+  background: transparent;
+}
+
+.gov-tree-card .ant-tree-node-content-wrapper {
+  min-width: 0;
+  padding: 5px 8px !important;
+  border-radius: 8px;
+}
+
+.gov-tree-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.gov-tree-title > span:first-child {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gov-tree-title .ant-tag {
+  margin-inline-end: 0;
+  font-size: 9px;
+}
+
+.gov-detail-hero-row,
+.gov-audit-detail-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.gov-detail-hero-row > div,
+.gov-audit-detail-head > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.gov-detail-hero-row h4.ant-typography,
+.gov-audit-detail-head h4.ant-typography {
+  overflow: hidden;
+  margin: 0 0 4px;
+  color: #1e2b44;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gov-detail-icon,
+.gov-audit-result {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  place-items: center;
+  border: 1px solid #dce4ff;
+  border-radius: 13px;
+  color: #3659e3;
+  background: #eef2ff;
+  font-size: 20px;
+}
+
+.gov-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 24px;
+  padding-top: 22px;
+  border-top: 1px solid #eceff4;
+}
+
+.gov-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #2b3850;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.gov-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gov-count-link.ant-btn,
+.gov-table-link.ant-btn {
+  height: auto;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.gov-member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.gov-member-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid #e6eaf1;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+
+.gov-member-row > .gov-person-chip {
+  min-width: 140px;
+  flex: 1;
+}
+
+.gov-permission-toolbar {
+  display: grid;
+  grid-template-columns: minmax(210px, .75fr) minmax(220px, 1fr) auto;
+}
+
+.gov-permission-toolbar > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gov-permission-toolbar > div:first-child .ant-select {
+  min-width: 160px;
+}
+
+.gov-permission-summary {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 280px) 1fr;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 20px;
+  border-bottom: 1px solid #e6eaf1;
+  background: #f8faff;
+}
+
+.gov-permission-summary > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.gov-permission-summary strong {
+  color: #3157d5;
+  font-size: 22px;
+}
+
+.gov-permission-summary span {
+  color: #6d778a;
+  font-size: 11px;
+}
+
+.gov-permission-matrix {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.gov-permission-row {
+  display: grid;
+  min-width: 900px;
+  grid-template-columns: 220px 270px minmax(390px, 1fr);
+  align-items: center;
+  gap: 16px;
+  min-height: 68px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.gov-permission-row:last-child { border-bottom: 0; }
+.gov-permission-row:hover:not(.gov-permission-head) { background: #f8faff; }
+
+.gov-permission-head {
+  min-height: 46px;
+  color: #4b5870;
+  background: #f3f6fa;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.gov-permission-page {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.gov-permission-page small {
+  color: #77839a;
+  font-size: 10px;
+}
+
+.gov-permission-page small.is-continuation { color: #c0c7d3; }
+.gov-permission-page strong { color: #283651; font-size: 12px; }
+
+.gov-permission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.gov-composition {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: #5f6b81;
+  font-size: 11px;
+}
+
+.gov-composition .anticon { margin-right: 4px; color: #5871d4; }
+
+.gov-group-editor-section {
+  margin-top: 10px;
+  padding: 17px;
+  border: 1px solid #e2e7ef;
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+
+.gov-group-editor-section .ant-typography {
+  margin: 5px 0 12px;
+  font-size: 11px;
+}
+
+.gov-group-editor-section .ant-form-item { margin-bottom: 0; }
+.gov-group-editor-section .gov-section-title > span .anticon { margin-right: 7px; color: #3659e3; }
+
+.gov-effective-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 17px;
+  border: 1px solid #dce4ff;
+  border-radius: 12px;
+  background: #f5f7ff;
+}
+
+.gov-effective-preview > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gov-avatar-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gov-avatar-cloud .ant-avatar {
+  color: #3157d5;
+  background: #e5ebff;
+  font-size: 10px;
+}
+
+.gov-detail-section .ant-timeline-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gov-detail-section .ant-timeline-item-content small {
+  color: #949cac;
+  font-size: 10px;
+}
+
+.gov-audit-result.is-success {
+  border-color: #cbe9dc;
+  color: #168361;
+  background: #effaf6;
+}
+
+.gov-audit-result.is-error {
+  border-color: #f2cdd2;
+  color: #c24150;
+  background: #fff3f4;
+}
+
+.gov-audit-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.gov-audit-values > div {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e2e7ef;
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.gov-audit-values span {
+  display: block;
+  padding: 9px 12px;
+  border-bottom: 1px solid #e8ebf0;
+  color: #5f6b81;
+  background: #f4f6f9;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.gov-audit-values pre {
+  min-height: 94px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  color: #344158;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 1360px) {
+  .gov-summary-item { padding-inline: 16px; }
+  .gov-filter-grid--users { grid-template-columns: minmax(180px, 1.3fr) minmax(170px, 1fr) minmax(110px, .65fr) minmax(150px, .9fr) auto; }
+  .gov-filter-grid--users > label:nth-child(5) { display: none; }
+  .gov-filter-grid--monitor,
+  .gov-filter-grid--audit { grid-template-columns: minmax(200px, 1fr) minmax(140px, .65fr) minmax(115px, .55fr) minmax(220px, 1fr); }
+  .gov-filter-grid--monitor .gov-filter-actions,
+  .gov-filter-grid--audit .gov-filter-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}

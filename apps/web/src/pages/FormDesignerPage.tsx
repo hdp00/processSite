@@ -19,6 +19,8 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   AppstoreOutlined,
+  ArrowLeftOutlined,
+  ArrowRightOutlined,
   BarsOutlined,
   CheckCircleOutlined,
   CheckSquareOutlined,
@@ -55,6 +57,7 @@ import {
   Segmented,
   Select,
   Space,
+  Steps,
   Switch,
   Table,
   Tag,
@@ -64,7 +67,7 @@ import {
   message,
 } from "antd";
 import type { TableColumnsType } from "antd";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { RichTextEditor } from "../components/RichTextEditor";
 import {
   cloneDefaultSystemListFields,
@@ -72,6 +75,7 @@ import {
   saveSystemListFields,
   type SystemListFieldConfig,
 } from "../data/listFieldConfig";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import "./form-designer.css";
 
 const { Text, Title, Paragraph } = Typography;
@@ -124,7 +128,7 @@ interface SavedDraft {
   savedAt?: string;
 }
 
-const DRAFT_KEY = "flowpilot-form-designer-draft-v1";
+const DRAFT_KEY_PREFIX = "flowpilot-form-designer-draft-v2";
 
 const typeLabel: Record<FieldType, string> = {
   text: "文本框",
@@ -332,11 +336,11 @@ const INITIAL_FIELDS: DesignerField[] = [
 
 const cloneInitialFields = () => JSON.parse(JSON.stringify(INITIAL_FIELDS)) as DesignerField[];
 
-const loadDraft = (): SavedDraft => {
-  if (typeof window === "undefined") return { formName: "PDF 文件审核申请单", fields: cloneInitialFields() };
+const loadDraft = (storageKey: string, defaultName: string): SavedDraft => {
+  if (typeof window === "undefined") return { formName: defaultName, fields: cloneInitialFields() };
   try {
-    const saved = window.localStorage.getItem(DRAFT_KEY);
-    if (!saved) return { formName: "PDF 文件审核申请单", fields: cloneInitialFields() };
+    const saved = window.localStorage.getItem(storageKey);
+    if (!saved) return { formName: defaultName, fields: cloneInitialFields() };
     const parsed = JSON.parse(saved) as SavedDraft;
     if (!Array.isArray(parsed.fields) || parsed.fields.length === 0) throw new Error("invalid draft");
     const initialById = new Map(INITIAL_FIELDS.map((field) => [field.id, field]));
@@ -354,7 +358,7 @@ const loadDraft = (): SavedDraft => {
       }),
     };
   } catch {
-    return { formName: "PDF 文件审核申请单", fields: cloneInitialFields() };
+    return { formName: defaultName, fields: cloneInitialFields() };
   }
 };
 
@@ -656,15 +660,20 @@ const SortableField = ({ field, selected, onSelect, onDelete }: SortableFieldPro
 
 const FormDesignerPage = () => {
   const navigate = useNavigate();
+  const { definitionId = "pdf-review" } = useParams<{ definitionId: string }>();
+  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
+  const markFormConfigured = useProcessDefinitionStore((state) => state.markFormConfigured);
+  const draftKey = `${DRAFT_KEY_PREFIX}-${definitionId}`;
+  const defaultFormName = `${definition?.name ?? "流程"}发起表单`;
   const [messageApi, messageHolder] = message.useMessage();
-  const initialDraft = useMemo(loadDraft, []);
+  const initialDraft = useMemo(() => loadDraft(draftKey, defaultFormName), [defaultFormName, draftKey]);
   const [formName, setFormName] = useState(initialDraft.formName);
   const [fields, setFields] = useState<DesignerField[]>(initialDraft.fields);
   const [selectedId, setSelectedId] = useState(initialDraft.fields[0]?.id ?? "");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [propertyMode, setPropertyMode] = useState<"field" | "system">("field");
   const [systemListFields, setSystemListFields] = useState<SystemListFieldConfig[]>(() =>
-    loadSystemListFields("pdf-review"),
+    loadSystemListFields(definitionId),
   );
   const [saveState, setSaveState] = useState<"saving" | "saved">("saved");
   const [savedAt, setSavedAt] = useState(initialDraft.savedAt ?? "刚刚");
@@ -679,15 +688,15 @@ const FormDesignerPage = () => {
   useEffect(() => {
     setSaveState("saving");
     const timer = window.setTimeout(() => {
-      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ formName, fields, savedAt } satisfies SavedDraft));
+      window.localStorage.setItem(draftKey, JSON.stringify({ formName, fields, savedAt } satisfies SavedDraft));
       setSaveState("saved");
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [fields, formName, savedAt]);
+  }, [draftKey, fields, formName, savedAt]);
 
   useEffect(() => {
-    saveSystemListFields("pdf-review", systemListFields);
-  }, [systemListFields]);
+    saveSystemListFields(definitionId, systemListFields);
+  }, [definitionId, systemListFields]);
 
   const updateSystemListField = (
     key: SystemListFieldConfig["key"],
@@ -757,7 +766,8 @@ const FormDesignerPage = () => {
   const saveDraft = () => {
     const time = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
     setSavedAt(time);
-    window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ formName, fields, savedAt: time } satisfies SavedDraft));
+    window.localStorage.setItem(draftKey, JSON.stringify({ formName, fields, savedAt: time } satisfies SavedDraft));
+    markFormConfigured(definitionId, fields.length);
     setSaveState("saved");
     messageApi.success("草稿已保存，本机刷新后仍可继续编辑");
   };
@@ -771,14 +781,16 @@ const FormDesignerPage = () => {
       return;
     }
     saveDraft();
-    messageApi.success("表单校验通过，正在进入流程设计器");
-    window.setTimeout(() => navigate("/designer/flow"), 350);
+    messageApi.success(definition?.type === "free" ? "表单校验通过，正在进入发布校验" : "表单校验通过，正在进入流程设计");
+    window.setTimeout(() => navigate(definition?.type === "free"
+      ? `/admin/processes/${definitionId}/publish`
+      : `/admin/processes/${definitionId}/flow`), 350);
   };
 
   const resetDraft = () => {
     const resetFields = cloneInitialFields();
     setFields(resetFields);
-    setFormName("PDF 文件审核申请单");
+    setFormName(defaultFormName);
     setSelectedId(resetFields[0].id);
     setPropertyMode("field");
     setSystemListFields(cloneDefaultSystemListFields());
@@ -845,8 +857,8 @@ const FormDesignerPage = () => {
           <div className="fd-page-header__icon"><FilePdfOutlined /></div>
           <div>
             <Space align="center" size={10}>
-              <Title level={4}>PDF 文件审核流程</Title>
-              <Tag color="gold">草稿 V3.3</Tag>
+              <Title level={4}>{definition?.name ?? "流程配置"}</Title>
+              <Tag color="gold">{definition?.draft?.version ?? "草稿"} 草稿</Tag>
             </Space>
             <Text type="secondary">初始表单 · 单列布局 · 配置发起时需要填写的内容</Text>
           </div>
@@ -856,11 +868,19 @@ const FormDesignerPage = () => {
             {saveState === "saving" ? <CloudSyncOutlined spin /> : <CheckCircleFilled />}
             <span>{saveState === "saving" ? "正在保存" : `本地已保存 · ${savedAt}`}</span>
           </div>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/admin/processes/${definitionId}/basic`)}>上一步</Button>
           <Button onClick={resetDraft}>恢复示例</Button>
           <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>预览</Button>
           <Button icon={<SaveOutlined />} onClick={saveDraft}>保存草稿</Button>
-          <Button type="primary" onClick={goNext}>下一步：设计流程</Button>
+          <Button type="primary" icon={<ArrowRightOutlined />} iconPosition="end" onClick={goNext}>{definition?.type === "free" ? "下一步：发布校验" : "下一步：流程设计"}</Button>
         </Space>
+      </div>
+
+      <div className="fd-wizard-steps">
+        <Steps size="small" current={1} items={definition?.type === "free"
+          ? [{ title: "基本信息" }, { title: "表单设计" }, { title: "发布" }]
+          : [{ title: "基本信息" }, { title: "表单设计" }, { title: "流程设计" }, { title: "发布" }]}
+        />
       </div>
 
       <div className="fd-workspace">
