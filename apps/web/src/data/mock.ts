@@ -32,7 +32,7 @@ const parallelReviewers = (
 export const initialInstances: ProcessInstance[] = [
   {
     id: "proc-42",
-    code: "PDF-202608-0042",
+    code: "DOC26080042",
     title: "MTR-320 步进电机装配作业指导书",
     template: "PDF 文件审核流程",
     templateVersion: "V3.2",
@@ -68,7 +68,7 @@ export const initialInstances: ProcessInstance[] = [
   },
   {
     id: "proc-40",
-    code: "PDF-202608-0040",
+    code: "DOC26080040",
     title: "驱动器来料检验规范（2026版）",
     template: "PDF 文件审核流程",
     templateVersion: "V3.2",
@@ -109,7 +109,7 @@ export const initialInstances: ProcessInstance[] = [
   },
   {
     id: "proc-37",
-    code: "PDF-202608-0037",
+    code: "DOC26080037",
     title: "编码器标定工艺变更通知",
     template: "PDF 文件审核流程",
     templateVersion: "V3.1",
@@ -156,7 +156,7 @@ export const initialInstances: ProcessInstance[] = [
   },
   {
     id: "proc-31",
-    code: "PDF-202608-0031",
+    code: "DOC26080031",
     title: "伺服电机包装规范",
     template: "PDF 文件审核流程",
     templateVersion: "V3.1",
@@ -204,7 +204,7 @@ export const initialInstances: ProcessInstance[] = [
   },
   {
     id: "proc-25",
-    code: "PDF-202608-0025",
+    code: "DOC26080025",
     title: "线束组件检验作业书",
     template: "PDF 文件审核流程",
     templateVersion: "V3.0",
@@ -249,7 +249,7 @@ export const initialInstances: ProcessInstance[] = [
   },
   {
     id: "report-12",
-    code: "TR-202608-0012",
+    code: "DOC26080012",
     title: "MTR-320 高低温循环测试报告",
     template: "测试报告审核流程",
     templateVersion: "V2.0",
@@ -300,7 +300,7 @@ export const initialInstances: ProcessInstance[] = [
   },
   {
     id: "report-7",
-    code: "TR-202608-0007",
+    code: "DOC26080007",
     title: "QX-7 驱动器 EMC 型式试验报告",
     template: "测试报告审核流程",
     templateVersion: "V1.0",
@@ -352,7 +352,7 @@ export const initialInstances: ProcessInstance[] = [
   {
     id: "free-18",
     workflowType: "free",
-    code: "ISSUE-202608-0018",
+    code: "ISSUE26080018",
     title: "MTR-320 试产阶段装配干涉问题",
     template: "自由协作事项流程",
     templateVersion: "V1.0",
@@ -416,7 +416,7 @@ export const initialInstances: ProcessInstance[] = [
   {
     id: "free-12",
     workflowType: "free",
-    code: "ISSUE-202608-0012",
+    code: "ISSUE26080012",
     title: "QX-7 老化测试数据补录事项",
     template: "自由协作事项流程",
     templateVersion: "V1.0",

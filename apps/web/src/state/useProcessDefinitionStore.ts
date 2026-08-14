@@ -8,6 +8,7 @@ export type VersionStatus = "草稿" | "已发布" | "已停用";
 export interface ProcessBasicConfig {
   name: string;
   code: string;
+  instancePrefix: string;
   type: DefinitionType;
   description: string;
   starterGroup: string;
@@ -89,6 +90,7 @@ const basic = (
 ): ProcessBasicConfig => ({
   name,
   code,
+  instancePrefix: "",
   type,
   description,
   starterGroup,
@@ -129,7 +131,7 @@ const pdfBasic = basic(
   "approval",
   "受控 PDF 文件由研发、质量、生产并行审核。",
   "PDF审核_文控_流程权限组",
-  { visibleRoles: ["部门查看员"], visibleUsers: ["linxiao"] },
+  { instancePrefix: "DOC", visibleRoles: ["部门查看员"], visibleUsers: ["linxiao"] },
 );
 const testBasic = basic(
   "测试报告审核",
@@ -137,7 +139,7 @@ const testBasic = basic(
   "approval",
   "产品测试报告会签与发布流程。",
   "测试报告_发起_流程权限组",
-  { visibleRoles: ["研发经理", "质量经理"] },
+  { instancePrefix: "DOC", visibleRoles: ["研发经理", "质量经理"] },
 );
 const freeBasic = basic(
   "异常协作事项",
@@ -145,7 +147,7 @@ const freeBasic = basic(
   "free",
   "按受理人连续流转，可回复、关闭并填写理由后重新打开。",
   "自由协作_发起_流程权限组",
-  { assigneeGroup: "自由协作_受理_流程权限组", visibleRoles: ["部门查看员"] },
+  { instancePrefix: "ISSUE", assigneeGroup: "自由协作_受理_流程权限组", visibleRoles: ["部门查看员"] },
 );
 const supplierBasic = basic(
   "供应商变更评审",
@@ -153,6 +155,7 @@ const supplierBasic = basic(
   "approval",
   "供应商材料或制程变更的跨部门审批流程。",
   "供应商变更_发起_流程权限组",
+  { instancePrefix: "SC" },
 );
 
 const initialDefinitions: ProcessDefinition[] = [
@@ -351,6 +354,39 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         set({ definitions: initialDefinitions });
       },
     }),
-    { name: "flowpilot-process-definitions-v1" },
+    {
+      name: "flowpilot-process-definitions-v1",
+      version: 2,
+      migrate: (persisted) => {
+        const state = persisted as ProcessDefinitionState;
+        const definitions = state.definitions ?? initialDefinitions;
+        return {
+          ...state,
+          definitions: definitions.map((definition) => {
+            const fallback = initialDefinitions.find((item) => item.id === definition.id);
+            const fallbackPrefix = fallback?.draft?.basic.instancePrefix
+              ?? fallback?.versions[0]?.basic.instancePrefix
+              ?? "";
+            return {
+              ...definition,
+              draft: definition.draft ? {
+                ...definition.draft,
+                basic: {
+                  ...definition.draft.basic,
+                  instancePrefix: definition.draft.basic.instancePrefix ?? fallbackPrefix,
+                },
+              } : undefined,
+              versions: definition.versions.map((item) => ({
+                ...item,
+                basic: {
+                  ...item.basic,
+                  instancePrefix: item.basic.instancePrefix ?? fallbackPrefix,
+                },
+              })),
+            };
+          }),
+        };
+      },
+    },
   ),
 );

@@ -2,12 +2,21 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { initialInstances, initialNotices } from "../data/mock";
 import type { FreeFlowEntry, NoticeItem, ProcessInstance } from "../data/types";
+import { useProcessDefinitionStore } from "./useProcessDefinitionStore";
+import {
+  extractInstancePrefix,
+  issueNextInstanceNumber,
+  normalizeLegacyInstanceNumber,
+  resetInstanceNumberSequences,
+} from "../utils/instanceNumber";
 
 type ReviewAction = "pass" | "reject";
 type RepublishChanges = Partial<
   Pick<ProcessInstance, "title" | "documentCode" | "documentType" | "documentLevel" | "description" | "pdfName">
 >;
-export type PersonaId = "wangmin" | "zhangwei" | "lina" | "zhaolei" | "admin" | "hejing";
+export type PersonaId = "superadmin" | "wangmin" | "zhangwei" | "lina" | "zhaolei" | "admin" | "hejing";
+export const SUPER_ADMIN_PERSONA_ID: PersonaId = "superadmin";
+export const isSuperAdminPersona = (personaId: PersonaId) => personaId === SUPER_ADMIN_PERSONA_ID;
 
 export interface FreeFlowCreateInput {
   title: string;
@@ -17,6 +26,7 @@ export interface FreeFlowCreateInput {
   initialContent: string;
   attachmentName?: string;
   assignee: string;
+  instancePrefix?: string;
 }
 
 export interface FreeFlowInitialChanges {
@@ -39,6 +49,7 @@ export const personas: Array<{
   { id: "zhaolei", name: "赵磊", role: "生产审核人", reviewerKey: "production" },
   { id: "admin", name: "周杰", role: "系统管理员" },
   { id: "hejing", name: "何静", role: "只读查看者" },
+  { id: "superadmin", name: "超级管理员", role: "系统内置 · 全部权限" },
 ];
 
 interface PrototypeState {
@@ -54,7 +65,7 @@ interface PrototypeState {
   closeInstance: (id: string, reason: string) => void;
   updateUnreviewedInstance: (id: string, changes: RepublishChanges) => void;
   republishInstance: (id: string, changes: RepublishChanges) => void;
-  copyCompletedInstance: (sourceId: string, title: string, copyAttachment: boolean) => string | null;
+  copyCompletedInstance: (sourceId: string, title: string) => string | null;
   createFreeFlow: (input: FreeFlowCreateInput) => string;
   replyFreeFlow: (id: string, content: string) => void;
   transferFreeFlow: (id: string, content: string, nextAssignee: string) => void;
@@ -112,8 +123,11 @@ export const usePrototypeStore = create<PrototypeState>()(
             if (instance.id !== id || instance.status !== "审核中") return instance;
 
             const persona = personas.find((item) => item.id === state.personaId) ?? personas[2];
+            const reviewerKey = isSuperAdminPersona(state.personaId)
+              ? instance.reviewers.find((reviewer) => reviewer.status === "待审核")?.key
+              : persona.reviewerKey;
             const reviewers = instance.reviewers.map((reviewer) => {
-              if (reviewer.key === persona.reviewerKey && reviewer.status === "待审核") {
+              if (reviewer.key === reviewerKey && reviewer.status === "待审核") {
                 return {
                   ...reviewer,
                   status: action === "pass" ? ("已通过" as const) : ("已驳回" as const),
@@ -205,21 +219,25 @@ export const usePrototypeStore = create<PrototypeState>()(
               : instance,
           ),
         })),
-      copyCompletedInstance: (sourceId, title, copyAttachment) => {
+      copyCompletedInstance: (sourceId, title) => {
         let createdId: string | null = null;
         set((state) => {
           const source = state.instances.find((instance) => instance.id === sourceId);
-          if (!source || source.status !== "已完成" || state.personaId !== "wangmin") return state;
+          if (!source || source.status !== "已完成" || (state.personaId !== "wangmin" && !isSuperAdminPersona(state.personaId))) return state;
 
           const persona = personas.find((item) => item.id === state.personaId) ?? personas[0];
           const timestamp = Date.now();
-          const prefix = source.template.includes("测试报告") ? "TR" : "PDF";
+          const definitionId = source.template.includes("测试报告") ? "test-report-review" : "pdf-review";
+          const currentDefinition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);
+          const currentPrefix = currentDefinition?.versions
+            .find((item) => item.version === currentDefinition.currentVersion)?.basic.instancePrefix;
+          const prefix = currentPrefix || extractInstancePrefix(source.code) || "DOC";
           createdId = `copy-${timestamp}`;
           const createdAt = nowText();
           const copied: ProcessInstance = {
             ...source,
             id: createdId,
-            code: `${prefix}-${new Date().getFullYear()}-COPY-${String(timestamp).slice(-6)}`,
+            code: issueNextInstanceNumber(prefix, state.instances.map((item) => item.code)),
             title: title.trim() || `${source.title}（复制）`,
             status: "审核中",
             initiator: persona.name,
@@ -231,8 +249,8 @@ export const usePrototypeStore = create<PrototypeState>()(
             priority: "普通",
             designatedReviewer: undefined,
             designatedReviewerId: undefined,
-            pdfName: copyAttachment ? source.pdfName : "待补充附件",
-            pdfSize: copyAttachment ? source.pdfSize : "—",
+            pdfName: "待补充附件",
+            pdfSize: "—",
             reviewers: source.reviewers.map((reviewer) => ({
               ...reviewer,
               status: "待审核",
@@ -253,7 +271,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           const created: ProcessInstance = {
             id: createdId,
             workflowType: "free",
-            code: `ISSUE-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
+            code: issueNextInstanceNumber(input.instancePrefix ?? "ISSUE", state.instances.map((item) => item.code)),
             title: input.title.trim(),
             template: "自由协作事项流程",
             templateVersion: "V1.0",
@@ -305,12 +323,14 @@ export const usePrototypeStore = create<PrototypeState>()(
               const canReply =
                 instance.workflowType === "free" &&
                 instance.status === "进行中" &&
-                (instance.participants?.includes(persona.name) || state.personaId === "admin");
+                (instance.participants?.includes(persona.name) || state.personaId === "admin" || isSuperAdminPersona(state.personaId));
               if (instance.id !== id || !canReply) return instance;
               return {
                 ...instance,
                 updatedAt: actionAt,
-                participants: [...new Set([...(instance.participants ?? []), persona.name])],
+                participants: isSuperAdminPersona(state.personaId)
+                  ? instance.participants
+                  : [...new Set([...(instance.participants ?? []), persona.name])],
                 freeTimeline: [
                   ...(instance.freeTimeline ?? []),
                   freeEntry("reply", persona.name, { content }),
@@ -327,7 +347,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           const canTransfer =
             target?.workflowType === "free" &&
             target.status === "进行中" &&
-            target.currentAssignee === persona.name;
+            (target.currentAssignee === persona.name || isSuperAdminPersona(state.personaId));
           if (!target || !canTransfer) return state;
           const entries: FreeFlowEntry[] = [
             ...(target.freeTimeline ?? []),
@@ -448,7 +468,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                 instance.id === id &&
                 instance.workflowType === "free" &&
                 instance.status === "进行中" &&
-                (state.personaId === "wangmin" || state.personaId === "admin");
+                (state.personaId === "wangmin" || state.personaId === "admin" || isSuperAdminPersona(state.personaId));
               if (!canReassign) return instance;
               return {
                 ...instance,
@@ -478,7 +498,7 @@ export const usePrototypeStore = create<PrototypeState>()(
               const canClose =
                 instance.workflowType === "free" &&
                 instance.status === "进行中" &&
-                (instance.currentAssignee === persona.name || state.personaId === "wangmin" || state.personaId === "admin");
+                (instance.currentAssignee === persona.name || state.personaId === "wangmin" || state.personaId === "admin" || isSuperAdminPersona(state.personaId));
               if (instance.id !== id || !canClose) return instance;
               return {
                 ...instance,
@@ -501,7 +521,7 @@ export const usePrototypeStore = create<PrototypeState>()(
               const canReopen =
                 instance.workflowType === "free" &&
                 instance.status === "已关闭" &&
-                (instance.participants?.includes(persona.name) || state.personaId === "wangmin" || state.personaId === "admin");
+                (instance.participants?.includes(persona.name) || state.personaId === "wangmin" || state.personaId === "admin" || isSuperAdminPersona(state.personaId));
               if (instance.id !== id || !canReopen) return instance;
               return {
                 ...instance,
@@ -519,19 +539,25 @@ export const usePrototypeStore = create<PrototypeState>()(
             }),
           };
         }),
-      resetDemo: () => set((state) => ({
-        instances: initialInstances,
-        notices: initialNotices,
-        authenticated: true,
-        personaId: state.personaId,
-      })),
+      resetDemo: () => {
+        resetInstanceNumberSequences();
+        set((state) => ({
+          instances: initialInstances,
+          notices: initialNotices,
+          authenticated: true,
+          personaId: state.personaId,
+        }));
+      },
     }),
     {
       name: "flowpilot-prototype-v5",
-      version: 6,
+      version: 7,
       migrate: (persisted) => {
         const state = persisted as PrototypeState;
-        const existing = state.instances ?? [];
+        const existing = (state.instances ?? []).map((instance) => ({
+          ...instance,
+          code: normalizeLegacyInstanceNumber(instance.code),
+        }));
         const missingFreeInstances = initialInstances.filter(
           (instance) => instance.workflowType === "free" && !existing.some((item) => item.id === instance.id),
         );

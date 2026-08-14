@@ -3,16 +3,24 @@ import { Alert, Button, Card, Input, Select, Upload, message } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { RichTextEditor } from "../components/RichTextEditor";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { personas, usePrototypeStore } from "../state/usePrototypeStore";
 import "./free-flow.css";
 
 const assigneeOptions = personas
-  .filter((persona) => persona.id !== "hejing")
+  .filter((persona) => persona.id !== "hejing" && persona.id !== "superadmin")
   .map((persona) => ({ value: persona.name, label: `${persona.name} · ${persona.role}` }));
 
 export function FreeFlowCreatePage() {
   const navigate = useNavigate();
   const createFreeFlow = usePrototypeStore((state) => state.createFreeFlow);
+  const instancePrefix = useProcessDefinitionStore((state) => {
+    const definition = state.definitions.find((item) => item.id === "free-collaboration");
+    const currentVersion = definition?.currentVersion;
+    return definition?.versions.find((version) => version.version === currentVersion)?.basic.instancePrefix
+      ?? definition?.draft?.basic.instancePrefix
+      ?? "ISSUE";
+  });
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("一般协作");
   const [priority, setPriority] = useState<"普通" | "紧急">("普通");
@@ -27,7 +35,7 @@ export function FreeFlowCreatePage() {
       message.warning("请完整填写标题、摘要、初始说明和首位受理人");
       return;
     }
-    const id = createFreeFlow({ title, category, priority, description, initialContent: content, attachmentName, assignee });
+    const id = createFreeFlow({ title, category, priority, description, initialContent: content, attachmentName, assignee, instancePrefix });
     message.success("自由协作事项已创建，并生成首位受理人的待办");
     navigate(`/processes/${id}`);
   };

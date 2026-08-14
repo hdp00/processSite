@@ -36,8 +36,11 @@ import {
   type UploadFile,
   type UploadProps,
 } from "antd";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { usePrototypeStore } from "../state/usePrototypeStore";
+import { issueNextInstanceNumber, previewNextInstanceNumber } from "../utils/instanceNumber";
 import "./launch-pages.css";
 
 type ApprovalGroupKey = "rd" | "qa" | "production";
@@ -50,6 +53,7 @@ interface StartDefinition {
   permissionGroup: string;
   documentLabel: string;
   titlePlaceholder: string;
+  instancePrefix: string;
 }
 
 interface RequirementRow {
@@ -70,6 +74,7 @@ const definitions: Record<StartDefinition["id"], StartDefinition> = {
     permissionGroup: "PDF审核_发起权限组",
     documentLabel: "待审核 PDF",
     titlePlaceholder: "例如：伺服驱动器装配作业指导书发布审核",
+    instancePrefix: "DOC",
   },
   "test-report-review": {
     id: "test-report-review",
@@ -79,6 +84,7 @@ const definitions: Record<StartDefinition["id"], StartDefinition> = {
     permissionGroup: "测试报告_发起权限组",
     documentLabel: "测试报告 PDF",
     titlePlaceholder: "例如：SD700 系列高温老化测试报告审核",
+    instancePrefix: "DOC",
   },
 };
 
@@ -165,16 +171,21 @@ export function ProcessStartPage() {
   const { definitionId } = useParams<{ definitionId?: string }>();
   const resolvedDefinitionId = resolveDefinitionId(definitionId, location.pathname);
   const definition = definitions[resolvedDefinitionId];
+  const configuredInstancePrefix = useProcessDefinitionStore((state) => {
+    const item = state.definitions.find((candidate) => candidate.id === resolvedDefinitionId);
+    return item?.versions.find((version) => version.version === item.currentVersion)?.basic.instancePrefix
+      ?? item?.draft?.basic.instancePrefix;
+  });
+  const instancePrefix = configuredInstancePrefix || definition.instancePrefix;
+  const existingInstances = usePrototypeStore((state) => state.instances);
+  const existingInstanceCodes = existingInstances.map((item) => item.code);
   const [form] = Form.useForm();
   const [rows, setRows] = useState<RequirementRow[]>(initialRows);
   const [pdfFiles, setPdfFiles] = useState<UploadFile[]>([]);
   const [attachmentFiles, setAttachmentFiles] = useState<UploadFile[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const generatedCode = useMemo(
-    () => `${definition.id === "pdf-review" ? "PDF" : "TR"}-2026-${String(Date.now()).slice(-6)}`,
-    [definition.id],
-  );
+  const previewCode = previewNextInstanceNumber(instancePrefix, existingInstanceCodes);
 
   const updateRow = <K extends keyof RequirementRow>(key: string, field: K, value: RequirementRow[K]) => {
     setRows((current) => current.map((row) => row.key === key ? { ...row, [field]: value } : row));
@@ -332,7 +343,7 @@ export function ProcessStartPage() {
   };
 
   const saveDraft = () => {
-    message.success(`草稿已保存，实例编号 ${generatedCode}`);
+    message.success("草稿已保存，实例编号将在正式提交时生成");
   };
 
   const prepareSubmit = async () => {
@@ -355,9 +366,10 @@ export function ProcessStartPage() {
   const confirmSubmit = () => {
     setSubmitting(true);
     window.setTimeout(() => {
+      const issuedCode = issueNextInstanceNumber(instancePrefix, existingInstanceCodes);
       setSubmitting(false);
       setConfirmOpen(false);
-      message.success("流程已发布，三个审核节点的待办已同时生成");
+      message.success(`流程 ${issuedCode} 已发布，三个审核节点的待办已同时生成`);
       navigate("/tasks");
     }, 450);
   };
@@ -577,7 +589,7 @@ export function ProcessStartPage() {
         />
         <Descriptions className="start-confirm-descriptions" column={1} size="small" bordered>
           <Descriptions.Item label="流程">{definition.name} {definition.version}</Descriptions.Item>
-          <Descriptions.Item label="实例编号">{generatedCode}</Descriptions.Item>
+          <Descriptions.Item label="预计实例编号">{previewCode}</Descriptions.Item>
           <Descriptions.Item label="主文件">{pdfFiles[0]?.name ?? "—"}</Descriptions.Item>
           <Descriptions.Item label="研发审核">{selectedReviewers.rdReviewer ?? "张伟"}</Descriptions.Item>
           <Descriptions.Item label="质量审核">{selectedReviewers.qaReviewer ?? "林晓"}</Descriptions.Item>

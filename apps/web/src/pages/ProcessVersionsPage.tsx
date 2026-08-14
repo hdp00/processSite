@@ -54,6 +54,7 @@ interface ProcessVersionRow {
   nodeCount: number;
   starterGroup: string;
   checksum: string;
+  instancePrefix?: string;
 }
 
 interface DefinitionVersionMeta {
@@ -61,6 +62,7 @@ interface DefinitionVersionMeta {
   code: string;
   type: DefinitionType;
   currentVersion: string;
+  instancePrefix: string;
   versions: ProcessVersionRow[];
 }
 
@@ -70,6 +72,7 @@ const versionDataById: Record<string, DefinitionVersionMeta> = {
     code: "PROC-PDF-001",
     type: "approval",
     currentVersion: "v3",
+    instancePrefix: "DOC",
     versions: [
       {
         id: "pdf-v3", version: "v3", status: "已发布", publishedAt: "2026-08-02 14:30", createdBy: "王敏",
@@ -93,6 +96,7 @@ const versionDataById: Record<string, DefinitionVersionMeta> = {
     code: "PROC-TR-002",
     type: "approval",
     currentVersion: "尚未发布",
+    instancePrefix: "DOC",
     versions: [
       {
         id: "tr-draft", version: "草稿", status: "草稿", publishedAt: "—", createdBy: "林晓",
@@ -106,6 +110,7 @@ const versionDataById: Record<string, DefinitionVersionMeta> = {
     code: "PROC-FREE-003",
     type: "free",
     currentVersion: "v2",
+    instancePrefix: "ISSUE",
     versions: [
       {
         id: "free-v2", version: "v2", status: "已发布", publishedAt: "2026-07-30 16:18", createdBy: "王敏",
@@ -165,8 +170,13 @@ export function ProcessVersionsPage({ definitionId }: ProcessVersionsPageProps) 
       nodeCount: definition.draft.nodeCount,
       starterGroup: definition.draft.basic.starterGroup || "尚未选择",
       checksum: "草稿未生成",
+      instancePrefix: definition.draft.basic.instancePrefix,
     }] : [];
-    return [...draftRow, ...definition.versions];
+    const releasedRows = definition.versions.map((item) => ({
+      ...item,
+      instancePrefix: item.basic.instancePrefix,
+    }));
+    return [...draftRow, ...releasedRows];
   }, [definition, fallbackMeta.versions]);
   const [selectedVersion, setSelectedVersion] = useState<ProcessVersionRow>();
   const [copySource, setCopySource] = useState<ProcessVersionRow>();
@@ -374,6 +384,7 @@ export function ProcessVersionsPage({ definitionId }: ProcessVersionsPageProps) 
                 { key: "publishedAt", label: "发布时间", children: selectedVersion.publishedAt },
                 { key: "createdBy", label: "创建人", children: selectedVersion.createdBy },
                 { key: "instances", label: "关联实例", children: `${selectedVersion.instanceCount} 个` },
+                { key: "instancePrefix", label: "实例编号前缀", children: selectedVersion.instancePrefix ?? fallbackMeta.instancePrefix },
                 { key: "fields", label: "表单字段", children: `${selectedVersion.formFieldCount} 个` },
                 { key: "nodes", label: definitionMeta.type === "approval" ? "流程节点" : "节点设计", children: definitionMeta.type === "approval" ? `${selectedVersion.nodeCount} 个` : "自由协作不使用节点设计器" },
                 { key: "group", label: "发起权限组", children: selectedVersion.starterGroup },

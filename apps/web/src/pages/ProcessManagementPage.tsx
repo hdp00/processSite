@@ -74,8 +74,10 @@ export function ProcessManagementPage() {
   const filteredDefinitions = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
     return definitions.filter((item) => {
+      const latestBasic = item.draft?.basic
+        ?? item.versions.find((version) => version.version === item.currentVersion)?.basic;
       const keywordMatched = !normalizedKeyword
-        || `${item.name}${item.code}${item.description}`.toLowerCase().includes(normalizedKeyword);
+        || `${item.name}${item.code}${latestBasic?.instancePrefix ?? ""}${item.description}`.toLowerCase().includes(normalizedKeyword);
       return keywordMatched && (!status || definitionStatus(item) === status) && (!type || item.type === type);
     });
   }, [definitions, keyword, status, type]);
@@ -162,6 +164,18 @@ export function ProcessManagementPage() {
       dataIndex: "type",
       width: 124,
       render: (value: DefinitionType) => <Tag className="pa-type-tag">{typeMeta[value].label}</Tag>,
+    },
+    {
+      title: "实例编号前缀",
+      key: "instancePrefix",
+      width: 132,
+      render: (_, record) => {
+        const config = record.draft?.basic
+          ?? record.versions.find((version) => version.version === record.currentVersion)?.basic;
+        return config?.instancePrefix
+          ? <Tag bordered={false} color="blue">{config.instancePrefix}</Tag>
+          : <span className="pa-muted">待配置</span>;
+      },
     },
     {
       title: "状态",
@@ -301,7 +315,7 @@ export function ProcessManagementPage() {
           rowKey="id"
           columns={columns}
           dataSource={filteredDefinitions}
-          scroll={{ x: 1080 }}
+          scroll={{ x: 1210 }}
           pagination={{ pageSize: 8, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录` }}
         />
       </Card>
@@ -335,7 +349,7 @@ export function ProcessManagementPage() {
           <Form.Item name="description" label="流程说明">
             <Input.TextArea placeholder="简要说明适用范围和使用目的" rows={3} maxLength={200} showCount />
           </Form.Item>
-          <div className="pa-inline-note">流程编号由系统自动生成。新流程默认保存为草稿，不会立即对员工开放。</div>
+          <div className="pa-inline-note">流程定义编号由系统自动生成；实例编号前缀在下一步基本信息中填写。新流程默认保存为草稿，不会立即对员工开放。</div>
         </Form>
       </Modal>
     </div>

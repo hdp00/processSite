@@ -33,6 +33,7 @@ import {
 import { useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { formatInstanceNumber } from "../utils/instanceNumber";
 import "./process-admin-pages.css";
 
 type ValidationLevel = "pass" | "warning" | "block";
@@ -51,6 +52,7 @@ interface ValidationItem {
 interface PublishSnapshot {
   name: string;
   code: string;
+  instancePrefix: string;
   type: "approval" | "free";
   currentVersion: string;
   nextVersion: string;
@@ -66,6 +68,7 @@ const publishDataById: Record<string, PublishSnapshot> = {
   "pdf-review": {
     name: "PDF 文件审核",
     code: "PROC-PDF-001",
+    instancePrefix: "DOC",
     type: "approval",
     currentVersion: "v3",
     nextVersion: "v4",
@@ -86,6 +89,7 @@ const publishDataById: Record<string, PublishSnapshot> = {
   "test-report-review": {
     name: "测试报告审核",
     code: "PROC-TR-002",
+    instancePrefix: "DOC",
     type: "approval",
     currentVersion: "尚未发布",
     nextVersion: "v1",
@@ -104,6 +108,7 @@ const publishDataById: Record<string, PublishSnapshot> = {
   "free-collaboration": {
     name: "异常协作事项",
     code: "PROC-FREE-003",
+    instancePrefix: "ISSUE",
     type: "free",
     currentVersion: "v2",
     nextVersion: "v3",
@@ -181,6 +186,7 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
     return {
       name: config.name,
       code: config.code,
+      instancePrefix: config.instancePrefix ?? "",
       type: config.type,
       currentVersion: definition.currentVersion ?? "尚未发布",
       nextVersion: definition.draft?.version ?? definition.currentVersion ?? "v1",
@@ -202,8 +208,17 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
     const draft = definition?.draft;
     const hasForm = published || Boolean(draft?.formConfigured && snapshot.fields.length);
     const hasStarter = published || Boolean(draft?.basic.starterGroup);
+    const hasInstancePrefix = published || Boolean(draft?.basic.instancePrefix?.trim());
     const common: ValidationItem[] = [
-      { key: "basic", title: "基本信息完整", detail: "流程名称、编号、说明和流程类型均已设置。", level: "pass" },
+      { key: "basic", title: "基本信息完整", detail: "流程名称、定义编号、说明和流程类型均已设置。", level: "pass" },
+      {
+        key: "instance-number",
+        title: hasInstancePrefix ? "实例编号规则有效" : "缺少实例编号前缀",
+        detail: hasInstancePrefix
+          ? `新实例按“${snapshot.instancePrefix} + 两位年份 + 两位月份 + 四位月序号”生成；相同前缀跨流程共享序列。`
+          : "请返回基本信息填写实例编号前缀，否则不能发布。",
+        level: hasInstancePrefix ? "pass" : "block",
+      },
       { key: "form", title: "发起表单有效", detail: hasForm ? `${snapshot.fields.length} 个字段已完成配置，必填项和列表字段规则有效。` : "请返回表单设计步骤，至少配置并保存一个字段。", level: hasForm ? "pass" : "block" },
       { key: "starter", title: "发起权限有效", detail: hasStarter ? `已关联“${snapshot.starterGroup}”，当前有效成员会获得发起权限。` : "请返回基本信息选择发起流程权限组。", level: hasStarter ? "pass" : "block" },
     ];
@@ -316,7 +331,13 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
               column={{ xs: 1, sm: 1, md: 2, lg: 2, xl: 2, xxl: 2 }}
               items={[
                 { key: "name", label: "流程名称", children: snapshot.name },
-                { key: "code", label: "流程编号", children: snapshot.code },
+                { key: "code", label: "流程定义编号", children: snapshot.code },
+                {
+                  key: "instanceNumber",
+                  label: "实例编号规则",
+                  children: <Space wrap><Tag color="blue">前缀 {snapshot.instancePrefix || "未配置"}</Tag><span>{snapshot.instancePrefix ? formatInstanceNumber(snapshot.instancePrefix, 1) : "—"}</span><Typography.Text type="secondary">同前缀跨流程共享月序列</Typography.Text></Space>,
+                  span: 2,
+                },
                 { key: "version", label: "发布版本", children: <Space><span className="pa-muted">{snapshot.currentVersion}</span><span>→</span><Tag color="blue">{snapshot.nextVersion}</Tag></Space> },
                 { key: "type", label: "流程类型", children: snapshot.type === "approval" ? "固定审批" : "自由协作" },
                 { key: "starter", label: "发起流程权限组", children: snapshot.starterGroup, span: 2 },

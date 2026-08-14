@@ -31,12 +31,12 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
 import type { FreeFlowEntry, ProcessInstance } from "../data/types";
-import { personas, usePrototypeStore } from "../state/usePrototypeStore";
+import { isSuperAdminPersona, personas, usePrototypeStore } from "../state/usePrototypeStore";
 import "./free-flow.css";
 
 const { Text, Title } = Typography;
 const userOptions = personas
-  .filter((persona) => persona.id !== "hejing")
+  .filter((persona) => persona.id !== "hejing" && persona.id !== "superadmin")
   .map((persona) => ({ value: persona.name, label: `${persona.name} · ${persona.role}` }));
 
 const hasRichContent = (html: string) =>
@@ -71,6 +71,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   } = usePrototypeStore();
   const instance = instanceOverride ?? instances.find((item) => item.id === id);
   const persona = personas.find((item) => item.id === personaId) ?? personas[0];
+  const isSuperAdmin = isSuperAdminPersona(personaId);
   const [replyContent, setReplyContent] = useState("");
   const [nextAssignee, setNextAssignee] = useState<string>();
   const [editEntry, setEditEntry] = useState<FreeFlowEntry>();
@@ -95,14 +96,14 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const participants = instance?.participants ?? [];
   const isOpen = instance?.status === "进行中";
   const isCurrentAssignee = isOpen && instance?.currentAssignee === persona.name;
-  const canReply = Boolean(isOpen && (participants.includes(persona.name) || personaId === "admin"));
-  const canClose = Boolean(isCurrentAssignee || (isOpen && ["wangmin", "admin"].includes(personaId)));
+  const canReply = Boolean(isOpen && (participants.includes(persona.name) || personaId === "admin" || isSuperAdmin));
+  const canClose = Boolean(isCurrentAssignee || (isOpen && (["wangmin", "admin"].includes(personaId) || isSuperAdmin)));
   const canReopen = Boolean(
     instance?.status === "已关闭" &&
-    (participants.includes(persona.name) || ["wangmin", "admin"].includes(personaId)),
+    (participants.includes(persona.name) || ["wangmin", "admin"].includes(personaId) || isSuperAdmin),
   );
   const canEditInitial = Boolean(isOpen && instance?.initiator === persona.name);
-  const canForceReassign = Boolean(isOpen && ["wangmin", "admin"].includes(personaId));
+  const canForceReassign = Boolean(isOpen && (["wangmin", "admin"].includes(personaId) || isSuperAdmin));
   const initialEntry = instance?.freeTimeline?.find((entry) => entry.type === "created");
 
   const timeline = useMemo(() => instance?.freeTimeline ?? [], [instance?.freeTimeline]);
@@ -229,9 +230,9 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
                   <Text type="secondary">发表回复不会改变当前受理人。</Text>
                   <Space wrap>
                     <Button icon={<MessageOutlined />} onClick={postReply}>发表回复</Button>
-                    {isCurrentAssignee && (
+                    {(isCurrentAssignee || isSuperAdmin) && (
                       <>
-                        <Select showSearch optionFilterProp="label" placeholder="选择下一位受理人" value={nextAssignee} onChange={setNextAssignee} options={userOptions.filter((option) => option.value !== persona.name)} style={{ width: 210 }} />
+                        <Select showSearch optionFilterProp="label" placeholder="选择下一位受理人" value={nextAssignee} onChange={setNextAssignee} options={userOptions.filter((option) => option.value !== instance.currentAssignee)} style={{ width: 210 }} />
                         <Button type="primary" icon={<SendOutlined />} onClick={transfer}>处理并转交</Button>
                       </>
                     )}
@@ -247,14 +248,13 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
             {isOpen ? <div className="current-assignee"><Avatar size={42}>{instance.currentAssignee?.slice(-1)}</Avatar><div><Text type="secondary">当前受理人</Text><Text strong>{instance.currentAssignee}</Text></div></div> : <div className="closed-assignee"><LockOutlined /><Text>当前没有待办</Text></div>}
           </Card>
           <Card title="参与人员" size="small">
-            <div className="participant-list">{participants.map((name) => <Tag icon={<UserOutlined />} key={name}>{name}</Tag>)}</div>
+            <div className="participant-list">{participants.filter((name) => name !== "超级管理员").map((name) => <Tag icon={<UserOutlined />} key={name}>{name}</Tag>)}</div>
           </Card>
           <Card title="事项信息" size="small">
             <Descriptions column={1} size="small">
               <Descriptions.Item label="创建时间">{instance.createdAt}</Descriptions.Item>
               <Descriptions.Item label="最后更新">{instance.updatedAt}</Descriptions.Item>
               <Descriptions.Item label="流程版本">{instance.templateVersion}</Descriptions.Item>
-              <Descriptions.Item label="打印">不支持 PDF 打印</Descriptions.Item>
             </Descriptions>
           </Card>
         </aside>

@@ -12,7 +12,6 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Col,
   DatePicker,
   Form,
@@ -33,7 +32,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { getProcessDefinition } from "../data/processDefinitions";
 import { isSystemFieldVisible, loadSystemListFields } from "../data/listFieldConfig";
 import type { InstanceStatus, ProcessInstance } from "../data/types";
-import { usePrototypeStore } from "../state/usePrototypeStore";
+import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
 
 const statusMeta: Record<InstanceStatus, { className: string }> = {
   审核中: { className: "is-reviewing" },
@@ -54,8 +53,7 @@ export function ProcessListPage() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [copySource, setCopySource] = useState<ProcessInstance | null>(null);
   const [copyTitle, setCopyTitle] = useState("");
-  const [copyAttachment, setCopyAttachment] = useState(true);
-  const canCopyCompleted = personaId === "wangmin";
+  const canCopyCompleted = personaId === "wangmin" || isSuperAdminPersona(personaId);
   const isFreeFlow = definition.id === "free-collaboration";
   const systemListFields = loadSystemListFields(definition.id);
   const showSystemField = (key: Parameters<typeof isSystemFieldVisible>[1]) =>
@@ -192,7 +190,6 @@ export function ProcessListPage() {
                   onClick={() => {
                     setCopySource(record);
                     setCopyTitle(`${record.title}（复制）`);
-                    setCopyAttachment(true);
                   }}
                 />
               </span>
@@ -304,7 +301,7 @@ export function ProcessListPage() {
             message.warning("请输入新流程标题");
             return;
           }
-          const createdId = copyCompletedInstance(copySource.id, copyTitle, copyAttachment);
+          const createdId = copyCompletedInstance(copySource.id, copyTitle);
           if (!createdId) {
             message.error("复制失败，请确认流程状态和发布权限");
             return;
@@ -319,16 +316,13 @@ export function ProcessListPage() {
             type="info"
             showIcon
             message="复制最终表单内容，创建新的流程实例"
-            description="新实例会生成独立编号并从第1轮开始；原审批记录、审核结果、通知和流转历史不会复制。"
+            description="新实例会按目标流程当前版本的编号前缀，从该前缀的共享月序列取得新编号并从第1轮开始；原附件、审批记录、审核结果、通知和流转历史均不会复制。"
           />
           <label className="field-block">
             <span>新流程标题</span>
             <Input value={copyTitle} onChange={(event) => setCopyTitle(event.target.value)} maxLength={120} showCount />
           </label>
-          <Checkbox checked={copyAttachment} onChange={(event) => setCopyAttachment(event.target.checked)}>
-            同时复制原附件
-          </Checkbox>
-          <Typography.Text type="secondary">创建后进入尚无人审核状态，发布方仍可修改；首位审核人提交后内容锁定。</Typography.Text>
+          <Typography.Text type="secondary">创建后请重新上传所需附件；新流程在尚无人审核时仍可修改，首位审核人提交后内容锁定。</Typography.Text>
         </div>
       </Modal>
     </div>

@@ -698,6 +698,210 @@ button {
   padding: 18px 20px 20px;
 }
 
+.task-mode-card,
+.task-flow-sidebar,
+.task-list-card {
+  overflow: hidden;
+  border: 1px solid #e2e7ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 7px 22px rgba(29, 42, 70, 0.05);
+}
+
+.task-mode-card .ant-card-body {
+  padding: 13px 18px;
+}
+
+.task-mode-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.task-center-layout {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 238px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.task-flow-sidebar {
+  position: sticky;
+  top: 92px;
+}
+
+.task-flow-sidebar__head,
+.task-list-context {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #e9edf3;
+  background: linear-gradient(180deg, #fff, #fbfcff);
+}
+
+.task-flow-sidebar__head {
+  justify-content: flex-start;
+}
+
+.task-flow-sidebar__head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #2b3850;
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.task-flow-sidebar__head .anticon {
+  color: #526fe7;
+}
+
+.task-list-context .ant-tag {
+  margin: 0;
+  color: #526078;
+  background: #eef1f6;
+}
+
+.task-flow-search {
+  padding: 10px 11px 4px;
+}
+
+.task-flow-list {
+  display: flex;
+  max-height: calc(100vh - 250px);
+  min-height: 120px;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding: 8px;
+  scrollbar-width: thin;
+}
+
+.task-flow-item {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: #647087;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.task-flow-item:hover {
+  border-color: #dfe5f2;
+  color: #30415f;
+  background: #f6f8fc;
+}
+
+.task-flow-item.is-active {
+  border-color: #ccd7ff;
+  color: #294fce;
+  background: linear-gradient(90deg, #edf2ff, #f6f8ff);
+  box-shadow: inset 3px 0 0 #526fe7, 0 4px 11px rgba(64, 89, 176, 0.08);
+}
+
+.task-flow-item__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #e3e8f0;
+  border-radius: 9px;
+  color: #66758d;
+  background: #eef1f6;
+  font-size: 16px;
+}
+
+.task-flow-item.is-active .task-flow-item__icon {
+  border-color: #cbd7ff;
+  color: #3659e3;
+  background: #dfe7ff;
+}
+
+.task-flow-item__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.task-flow-item__copy strong,
+.task-flow-item__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-flow-item__copy strong {
+  color: #344158;
+  font-size: 13px;
+  font-weight: 710;
+  line-height: 1.35;
+}
+
+.task-flow-item.is-active .task-flow-item__copy strong {
+  color: #294fce;
+}
+
+.task-flow-item__copy small {
+  color: #8993a5;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.task-flow-item__count {
+  display: inline-grid;
+  min-width: 28px;
+  height: 24px;
+  place-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: #5f6b80;
+  background: #e9edf3;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.task-flow-item.is-active .task-flow-item__count {
+  color: #fff;
+  background: #526fe7;
+}
+
+.task-list-card {
+  min-width: 0;
+}
+
+.task-list-context > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-list-context strong {
+  color: #27354d;
+  font-size: 13px;
+}
+
+.task-list-context > span {
+  color: #8b95a6;
+  font-size: 10px;
+}
+
 .table-toolbar .task-tabs.ant-segmented {
   padding: 4px;
   border: 1px solid #dfe4ed;
@@ -758,6 +962,24 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.28);
   color: #fff;
   background: rgba(255, 255, 255, 0.18);
+}
+
+@media (max-width: 1120px) {
+  .task-center-layout {
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .task-flow-item {
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .task-flow-item__icon {
+    width: 32px;
+    height: 32px;
+  }
 }
 
 .node-cell {

@@ -29,7 +29,7 @@ import { ProcessListPage } from "./pages/ProcessListPage";
 import { ProcessPrintPage } from "./pages/ProcessPrintPage";
 import { TaskCenterPage } from "./pages/TaskCenterPage";
 import { canPersonaAccessLaunch, canPersonaLaunchDefinition } from "./state/rolePermissions";
-import { usePrototypeStore } from "./state/usePrototypeStore";
+import { isSuperAdminPersona, usePrototypeStore } from "./state/usePrototypeStore";
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const authenticated = usePrototypeStore((state) => state.authenticated);
@@ -46,7 +46,7 @@ function PersonaGate({ scope, definitionId, children }: { scope: "initiator" | "
   const params = useParams<{ definitionId?: string }>();
   const targetDefinitionId = definitionId ?? params.definitionId;
   const allowed = scope === "admin"
-    ? personaId === "admin"
+    ? personaId === "admin" || isSuperAdminPersona(personaId)
     : targetDefinitionId
       ? canPersonaLaunchDefinition(personaId, targetDefinitionId)
       : canPersonaAccessLaunch(personaId);
@@ -56,7 +56,7 @@ function PersonaGate({ scope, definitionId, children }: { scope: "initiator" | "
     <Result
       status="403"
       title="当前身份无权访问"
-      subTitle={scope === "admin" ? "请切换为系统管理员身份后查看此管理页面。" : "发起流程需要同时拥有角色中的流程发起权限，并属于该流程的发起流程权限组。"}
+      subTitle={scope === "admin" ? "请切换为系统管理员或超级管理员身份后查看此管理页面。" : "发起流程需要同时拥有角色中的流程发起权限，并属于该流程的发起流程权限组。"}
       extra={<Button type="primary" onClick={() => window.history.back()}>返回上一页</Button>}
     />
   );

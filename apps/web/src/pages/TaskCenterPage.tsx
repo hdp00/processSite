@@ -1,5 +1,7 @@
 import {
+  AppstoreOutlined,
   AuditOutlined,
+  FileTextOutlined,
   MessageOutlined,
   SearchOutlined,
   TeamOutlined,
@@ -11,14 +13,13 @@ import {
   Empty,
   Input,
   Segmented,
-  Select,
   Space,
   Table,
   Tag,
   Tooltip,
   type TableProps,
 } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { processDefinitions, type TaskListFieldDefinition } from "../data/processDefinitions";
 import {
@@ -27,43 +28,82 @@ import {
   loadSystemListFields,
 } from "../data/listFieldConfig";
 import type { ProcessInstance } from "../data/types";
-import { personas, usePrototypeStore } from "../state/usePrototypeStore";
+import { isSuperAdminPersona, personas, usePrototypeStore } from "../state/usePrototypeStore";
+
+const ALL_FLOWS = "__all__";
+const TASK_FLOW_STORAGE_PREFIX = "flowpilot-task-center-flow-v1";
 
 export function TaskCenterPage() {
   const navigate = useNavigate();
   const { instances, personaId } = usePrototypeStore();
   const [tab, setTab] = useState<"mine" | "substitute">("mine");
   const [keyword, setKeyword] = useState("");
-  const [template, setTemplate] = useState<string>();
+  const [flowKeyword, setFlowKeyword] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState(() =>
+    window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
+  );
   const [expandedInfoIds, setExpandedInfoIds] = useState<string[]>([]);
   const persona = personas.find((item) => item.id === personaId) ?? personas[2];
+  const isSuperAdmin = isSuperAdminPersona(personaId);
+
+  useEffect(() => {
+    setSelectedTemplate(
+      window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
+    );
+    setFlowKeyword("");
+  }, [personaId]);
 
   const actionable = useMemo(
     () =>
       instances.filter((item) => {
         if (item.workflowType === "free") {
-          return item.status === "进行中" && item.currentAssignee === persona.name;
+          return item.status === "进行中" && (isSuperAdmin || item.currentAssignee === persona.name);
         }
         return Boolean(
-          persona.reviewerKey &&
           item.status === "审核中" &&
-          item.reviewers.some(
-            (reviewer) => reviewer.key === persona.reviewerKey && reviewer.status === "待审核",
-          ),
+          (isSuperAdmin
+            ? item.reviewers.some((reviewer) => reviewer.status === "待审核")
+            : persona.reviewerKey && item.reviewers.some(
+                (reviewer) => reviewer.key === persona.reviewerKey && reviewer.status === "待审核",
+              )),
         );
       }),
-    [instances, persona.reviewerKey],
+    [instances, isSuperAdmin, persona.name, persona.reviewerKey],
   );
 
   const myTasks = actionable.filter(
-    (item) => item.workflowType === "free" || !item.designatedReviewer || item.designatedReviewer === persona.name,
+    (item) => isSuperAdmin || item.workflowType === "free" || !item.designatedReviewer || item.designatedReviewer === persona.name,
   );
   const substituteTasks = actionable.filter(
-    (item) => item.workflowType !== "free" && Boolean(item.designatedReviewer && item.designatedReviewer !== persona.name),
+    (item) => !isSuperAdmin && item.workflowType !== "free" && Boolean(item.designatedReviewer && item.designatedReviewer !== persona.name),
   );
 
   const source = tab === "mine" ? myTasks : substituteTasks;
-  const selectedDefinition = processDefinitions.find((item) => item.template === template);
+  const flowCategories = useMemo(() => {
+    const counts = new Map<string, number>();
+    source.forEach((item) => counts.set(item.template, (counts.get(item.template) ?? 0) + 1));
+    return Array.from(counts, ([template, count]) => ({
+      template,
+      count,
+      label: processDefinitions.find((definition) => definition.template === template)?.label ?? template,
+      workflowType: source.find((item) => item.template === template)?.workflowType,
+    })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"));
+  }, [source]);
+  const activeTemplate = selectedTemplate !== ALL_FLOWS
+    && flowCategories.some((category) => category.template === selectedTemplate)
+      ? selectedTemplate
+      : undefined;
+  const visibleFlowCategories = flowCategories.filter((category) =>
+    category.label.toLowerCase().includes(flowKeyword.trim().toLowerCase()),
+  );
+  const selectedDefinition = processDefinitions.find((item) => item.template === activeTemplate);
+  const activeCategoryLabel = activeTemplate
+    ? flowCategories.find((category) => category.template === activeTemplate)?.label ?? activeTemplate
+    : "全部待办";
+  const selectFlow = (template: string) => {
+    setSelectedTemplate(template);
+    window.localStorage.setItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`, template);
+  };
   const systemListFields = selectedDefinition
     ? loadSystemListFields(selectedDefinition.id)
     : cloneDefaultSystemListFields();
@@ -75,7 +115,7 @@ export function TaskCenterPage() {
     const matchesKeyword = `${item.code}${item.title}${item.initiator}`
       .toLowerCase()
       .includes(keyword.trim().toLowerCase());
-    const matchesTemplate = !template || item.template === template;
+    const matchesTemplate = !activeTemplate || item.template === activeTemplate;
     return matchesKeyword && matchesTemplate;
   });
 
@@ -197,7 +237,9 @@ export function TaskCenterPage() {
       dataIndex: "designatedReviewer",
       width: 135,
       render: (value?: string) =>
-        tab === "mine" ? (
+        isSuperAdmin ? (
+          <Tag icon={<AuditOutlined />} color="gold">超级管理员可处理</Tag>
+        ) : tab === "mine" ? (
           <Tag icon={<UserOutlined />} color={value ? "blue" : "default"}>{value ? "当前由我受理" : "指定给我"}</Tag>
         ) : (
           <Tooltip title={`默认责任人：${value ?? "未指定"}。同组成员可直接代为审核。`}>
@@ -226,8 +268,8 @@ export function TaskCenterPage() {
 
   return (
     <div className="page-stack tasks-page">
-      <Card className="content-card" styles={{ body: { padding: 0 } }}>
-        <div className="table-toolbar">
+      <Card className="task-mode-card">
+        <div className="task-mode-toolbar">
           <Segmented
             className={`task-tabs is-${tab}`}
             value={tab}
@@ -252,47 +294,89 @@ export function TaskCenterPage() {
               onChange={(event) => setKeyword(event.target.value)}
               style={{ width: 250 }}
             />
-            <Select
-              allowClear
-              placeholder="全部流程"
-              value={template}
-              onChange={setTemplate}
-              style={{ width: 180 }}
-              options={processDefinitions.map((definition) => ({
-                value: definition.template,
-                label: definition.label,
-              }))}
-            />
           </Space>
         </div>
-        <Table<ProcessInstance>
-          className={`task-table ${selectedDefinition ? "is-single-process" : "is-mixed-process"}`}
-          rowKey="id"
-          columns={columns}
-          dataSource={filtered}
-          scroll={{ x: selectedDefinition ? 1300 : 1020 }}
-          expandable={
-            selectedDefinition
-              ? undefined
-              : {
-                  expandedRowRender: renderTaskInformation,
-                  expandedRowKeys: filtered.map((record) => record.id),
-                  showExpandColumn: false,
-                  expandRowByClick: false,
-                }
-          }
-          pagination={{ pageSize: 6, showSizeChanger: false, showTotal: (total) => `共 ${total} 项任务` }}
-          locale={{
-            emptyText: (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={keyword || template ? "没有符合筛选条件的任务" : tab === "mine" ? "当前没有指定给你的待办" : "当前组内没有可代办任务"}
-              />
-            ),
-          }}
-          onRow={(record) => ({ onDoubleClick: () => navigate(`/processes/${record.id}`) })}
-        />
       </Card>
+
+      <div className="task-center-layout">
+        <Card className="task-flow-sidebar" styles={{ body: { padding: 0 } }}>
+          <div className="task-flow-sidebar__head">
+            <span><AppstoreOutlined /> 流程分类</span>
+          </div>
+          {flowCategories.length > 8 && (
+            <div className="task-flow-search">
+              <Input
+                allowClear
+                size="small"
+                prefix={<SearchOutlined />}
+                placeholder="搜索流程"
+                value={flowKeyword}
+                onChange={(event) => setFlowKeyword(event.target.value)}
+              />
+            </div>
+          )}
+          <nav className="task-flow-list" aria-label="按流程筛选任务">
+            <button
+              type="button"
+              className={!activeTemplate ? "task-flow-item is-active" : "task-flow-item"}
+              onClick={() => selectFlow(ALL_FLOWS)}
+            >
+              <span className="task-flow-item__icon"><AppstoreOutlined /></span>
+              <span className="task-flow-item__copy"><strong>全部待办</strong><small>所有流程</small></span>
+              <span className="task-flow-item__count">{source.length}</span>
+            </button>
+            {visibleFlowCategories.map((category) => (
+              <button
+                type="button"
+                key={category.template}
+                className={activeTemplate === category.template ? "task-flow-item is-active" : "task-flow-item"}
+                onClick={() => selectFlow(category.template)}
+              >
+                <span className="task-flow-item__icon">
+                  {category.workflowType === "free" ? <MessageOutlined /> : <FileTextOutlined />}
+                </span>
+                <span className="task-flow-item__copy"><strong>{category.label}</strong><small>{category.workflowType === "free" ? "自由协作" : "固定审批"}</small></span>
+                <span className="task-flow-item__count">{category.count}</span>
+              </button>
+            ))}
+          </nav>
+        </Card>
+
+        <Card className="content-card task-list-card" styles={{ body: { padding: 0 } }}>
+          <div className="task-list-context">
+            <div><strong>{activeCategoryLabel}</strong><Tag bordered={false}>{filtered.length} 项</Tag></div>
+            <span>{activeTemplate ? "按当前流程的列表字段展示" : "混合流程使用通用字段与流程信息带"}</span>
+          </div>
+          <Table<ProcessInstance>
+            key={`${tab}-${activeTemplate ?? ALL_FLOWS}`}
+            className={`task-table ${activeTemplate ? "is-single-process" : "is-mixed-process"}`}
+            rowKey="id"
+            columns={columns}
+            dataSource={filtered}
+            scroll={{ x: activeTemplate ? 1300 : 1020 }}
+            expandable={
+              activeTemplate
+                ? undefined
+                : {
+                    expandedRowRender: renderTaskInformation,
+                    expandedRowKeys: filtered.map((record) => record.id),
+                    showExpandColumn: false,
+                    expandRowByClick: false,
+                  }
+            }
+            pagination={{ defaultPageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total) => `共 ${total} 项任务` }}
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={keyword || activeTemplate ? "没有符合筛选条件的任务" : tab === "mine" ? "当前没有指定给你的待办" : "当前组内没有可代办任务"}
+                />
+              ),
+            }}
+            onRow={(record) => ({ onDoubleClick: () => navigate(`/processes/${record.id}`) })}
+          />
+        </Card>
+      </div>
     </div>
   );
 }

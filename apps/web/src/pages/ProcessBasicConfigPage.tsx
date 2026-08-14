@@ -32,6 +32,7 @@ import {
   type DefinitionType,
   type ProcessBasicConfig,
 } from "../state/useProcessDefinitionStore";
+import { formatInstanceNumber } from "../utils/instanceNumber";
 import "./process-admin-pages.css";
 
 interface ProcessBasicConfigPageProps {
@@ -81,6 +82,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
   const initialConfig = definition?.draft?.basic ?? publishedBasic ?? {
     name: definition?.name ?? "流程不存在",
     code: definition?.code ?? "—",
+    instancePrefix: "",
     type: definition?.type ?? "approval",
     description: definition?.description ?? "",
     starterGroup: "",
@@ -91,6 +93,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
   const [lastSavedAt, setLastSavedAt] = useState("2026-08-13 10:32");
   const [dirty, setDirty] = useState(false);
   const workflowType = Form.useWatch("type", form) ?? initialConfig.type;
+  const instancePrefix = Form.useWatch("instancePrefix", form) ?? initialConfig.instancePrefix;
   const currentStatus = definition ? definitionStatus(definition) : "草稿";
   const isPublishedSource = Boolean(definition?.draft?.basedOn);
 
@@ -129,7 +132,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
               {isPublishedSource && <Tag color="blue">基于 {definition?.draft?.basedOn} 修改</Tag>}
               {definition?.currentVersion && definition.draft && <Tag color="gold">{definition.draft.version} 草稿</Tag>}
             </Space>
-            <Typography.Text type="secondary">配置流程身份、发起范围和额外查看范围。流程编号由系统维护。</Typography.Text>
+            <Typography.Text type="secondary">配置流程身份、实例编号前缀、发起范围和额外查看范围。</Typography.Text>
           </div>
         </div>
         <div className="pa-save-state">
@@ -179,7 +182,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                 </Col>
               </Row>
               <Row gutter={20}>
-                <Col span={14}>
+                <Col span={8}>
                   <Form.Item name="type" label="流程类型" rules={[{ required: true }]} extra="流程类型在新建时确定，创建后不可修改。">
                     <Select<DefinitionType>
                       disabled
@@ -187,6 +190,30 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                         { value: "approval", label: "固定审批" },
                         { value: "free", label: "自由协作" },
                       ]}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item
+                    name="instancePrefix"
+                    label="实例编号前缀"
+                    extra="允许不同流程使用同一前缀，并共享该前缀的月度流水号。"
+                    rules={[
+                      { required: true, whitespace: true, message: "请输入实例编号前缀" },
+                      { pattern: /^[A-Za-z0-9_-]+$/, message: "前缀仅支持英文字母、数字、横线和下划线" },
+                      { max: 12, message: "前缀最多12个字符" },
+                    ]}
+                  >
+                    <Input placeholder="例如：DOC、PDF-A 或 QA_FLOW" maxLength={12} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="编号格式预览" extra="两位年份 + 两位月份 + 四位月序号，不插入分隔符。">
+                    <Input
+                      readOnly
+                      prefix={<LockOutlined />}
+                      className="pa-readonly-input"
+                      value={instancePrefix?.trim() ? formatInstanceNumber(instancePrefix, 1) : "前缀YYMM0001"}
                     />
                   </Form.Item>
                 </Col>

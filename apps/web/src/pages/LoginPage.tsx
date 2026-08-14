@@ -18,6 +18,7 @@ interface LoginValues {
 }
 
 const usernameMap: Record<string, PersonaId> = {
+  superadmin: "superadmin",
   wangmin: "wangmin",
   zhangwei: "zhangwei",
   lina: "lina",

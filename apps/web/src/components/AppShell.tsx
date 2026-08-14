@@ -37,7 +37,7 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { getProcessDefinition, processDefinitions } from "../data/processDefinitions";
 import { ROLE_PERMISSIONS_CHANGED_EVENT, canPersonaAccessLaunch } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
+import { isSuperAdminPersona, personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
 
 const { Header, Sider, Content } = Layout;
 
@@ -72,7 +72,7 @@ export function AppShell() {
   const persona = personas.find((item) => item.id === personaId) ?? personas[2];
   const resetProcessDefinitions = useProcessDefinitionStore((state) => state.resetDefinitions);
   const unreadCount = notices.filter((item) => !item.read).length;
-  const isAdmin = personaId === "admin";
+  const isAdmin = personaId === "admin" || isSuperAdminPersona(personaId);
   const canInitiate = canPersonaAccessLaunch(personaId);
   useEffect(() => {
     const refreshPermissions = () => setPermissionRevision((value) => value + 1);

@@ -41,7 +41,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { InstanceStatus, ReviewerProgress } from "../data/types";
-import { personas, usePrototypeStore } from "../state/usePrototypeStore";
+import { isSuperAdminPersona, personas, usePrototypeStore } from "../state/usePrototypeStore";
 
 const statusColor: Record<InstanceStatus, string> = {
   审核中: "processing",
@@ -73,6 +73,7 @@ export function ProcessDetailPage() {
   } = usePrototypeStore();
   const instance = instances.find((item) => item.id === id);
   const persona = personas.find((item) => item.id === personaId) ?? personas[2];
+  const isSuperAdmin = isSuperAdminPersona(personaId);
   const [comment, setComment] = useState("");
   const [documentLevel, setDocumentLevel] = useState(instance?.documentLevel ?? "受控文件");
   const [draftTitle, setDraftTitle] = useState(instance?.title ?? "");
@@ -97,16 +98,18 @@ export function ProcessDetailPage() {
 
 
   const currentReviewer = useMemo(
-    () => instance?.reviewers.find((reviewer) => reviewer.key === persona.reviewerKey),
-    [instance, persona.reviewerKey],
+    () => isSuperAdmin
+      ? instance?.reviewers.find((reviewer) => reviewer.status === "待审核")
+      : instance?.reviewers.find((reviewer) => reviewer.key === persona.reviewerKey),
+    [instance, isSuperAdmin, persona.reviewerKey],
   );
   const canReview = Boolean(
-    instance?.status === "审核中" && persona.reviewerKey && currentReviewer?.status === "待审核",
+    instance?.status === "审核中" && currentReviewer?.status === "待审核" && (isSuperAdmin || persona.reviewerKey),
   );
   const isSubstitute = Boolean(
     canReview && instance?.designatedReviewer && instance.designatedReviewer !== persona.name,
   );
-  const isDcc = personaId === "wangmin";
+  const isDcc = personaId === "wangmin" || isSuperAdmin;
   const hasReviewAction = Boolean(instance?.reviewers.some(
     (reviewer) => reviewer.status === "已通过" || reviewer.status === "已驳回",
   ));
@@ -245,8 +248,8 @@ export function ProcessDetailPage() {
           type="info"
           showIcon
           icon={<TeamOutlined />}
-          message={`这是 ${instance.designatedReviewer} 的默认任务，你可以作为同组成员直接代办`}
-          description="无需转交或填写代办原因；提交后系统会记录实际处理人为你，并通知默认责任人。"
+          message={isSuperAdmin ? `超级管理员正在处理“${currentReviewer?.shortGroup ?? "审批"}”待办` : `这是 ${instance.designatedReviewer} 的默认任务，你可以作为同组成员直接代办`}
+          description={isSuperAdmin ? "这是系统级处理权限，不会把超级管理员加入该节点的流程权限组或人员名单；提交后仍记录实际处理人。" : "无需转交或填写代办原因；提交后系统会记录实际处理人为你，并通知默认责任人。"}
         />
       )}
 
@@ -410,7 +413,7 @@ export function ProcessDetailPage() {
           </Card>
 
           {canReview && (
-            <Card className="approval-card" title={isSubstitute ? "代办审核" : `${currentReviewer?.shortGroup ?? "节点"}处理`}>
+            <Card className="approval-card" title={isSuperAdmin ? `超级管理员审核 · ${currentReviewer?.shortGroup ?? "节点"}` : isSubstitute ? "代办审核" : `${currentReviewer?.shortGroup ?? "节点"}处理`}>
               <label className="field-block">
                 <span>审核意见 <em className="required-hint">驳回时必填</em></span>
                 <Input.TextArea
