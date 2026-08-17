@@ -35,8 +35,6 @@ import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import {
   buildFlowLevels,
-  getReviewEditableFieldOptions,
-  readFlowDesignerSnapshot,
   rejectionHandlingLabel,
   type StoredFlowNodeSnapshot,
 } from "../utils/designerStorage";
@@ -157,26 +155,6 @@ const formFieldTypeLabels: Record<string, string> = {
   table: "明细表格",
 };
 
-const readFormFields = (definitionId: string, fallback: PublishSnapshot["fields"]) => {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(`flowpilot-form-designer-draft-v2-${definitionId}`);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as {
-      fields?: Array<{ label?: string; type?: string; required?: boolean; listVisible?: boolean }>;
-    };
-    if (!Array.isArray(parsed.fields)) return fallback;
-    return parsed.fields.map((field, index) => ({
-      name: field.label?.trim() || `未命名字段 ${index + 1}`,
-      type: formFieldTypeLabels[field.type ?? ""] ?? field.type ?? "未知类型",
-      required: field.required,
-      list: field.listVisible,
-    }));
-  } catch {
-    return fallback;
-  }
-};
-
 const levelMeta: Record<ValidationLevel, { label: string; icon: React.ReactNode; className: string }> = {
   pass: { label: "通过", icon: <CheckCircleFilled />, className: "is-pass" },
   warning: { label: "警告", icon: <WarningFilled />, className: "is-warning" },
@@ -204,6 +182,7 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
   const snapshot = useMemo<PublishSnapshot>(() => {
     const effectiveVersion = getEffectiveVersion(definition);
     const config = definition?.draft?.basic ?? effectiveVersion?.basic;
+    const designerSnapshot = definition?.draft?.snapshot ?? effectiveVersion?.snapshot;
     if (!definition || !config) return fallbackSnapshot;
     return {
       name: config.name,
@@ -217,16 +196,29 @@ export function ProcessPublishPage({ definitionId }: ProcessPublishPageProps) {
       starterGroups: config.starterGroups,
       assigneeGroups: config.assigneeGroups,
       extraScope: [...config.visibleRoles, ...config.visibleUsers],
-      fields: readFormFields(resolvedId, fallbackSnapshot.fields),
-      rejectionHandling: rejectionHandlingLabel(readFlowDesignerSnapshot(resolvedId)?.meta?.rejectionHandling)
+      fields: (designerSnapshot?.form.fields ?? []).map((field, index) => ({
+        name: field.label?.trim() || `未命名字段 ${index + 1}`,
+        type: formFieldTypeLabels[field.type] ?? field.type ?? "未知类型",
+        required: field.required,
+        list: field.listVisible,
+      })),
+      rejectionHandling: rejectionHandlingLabel(designerSnapshot?.flow.meta?.rejectionHandling)
         || fallbackSnapshot.rejectionHandling
         || "重新发布或关闭",
     };
-  }, [definition, fallbackSnapshot, resolvedId]);
-  const flowSnapshot = useMemo(() => readFlowDesignerSnapshot(resolvedId), [resolvedId]);
+  }, [definition, fallbackSnapshot]);
+  const flowSnapshot = useMemo(
+    () => definition?.draft?.snapshot.flow ?? getEffectiveVersion(definition)?.snapshot.flow,
+    [definition],
+  );
   const editableFieldLabelByValue = useMemo(
-    () => new Map(getReviewEditableFieldOptions(resolvedId).map((option) => [option.value, option.label])),
-    [resolvedId],
+    () => {
+      const fields = definition?.draft?.snapshot.form.fields ?? getEffectiveVersion(definition)?.snapshot.form.fields ?? [];
+      return new Map(fields.flatMap((field) => field.type === "table"
+        ? (field.columns ?? []).filter((column) => column.reviewEditable).map((column) => [`${field.id}.${column.id}`, `${field.label} / ${column.label}`] as const)
+        : field.reviewEditable ? [[field.id, field.label] as const] : []));
+    },
+    [definition],
   );
   const flowNodes = useMemo(
     () => flowSnapshot?.nodes.filter((node) => node.data?.kind && node.data.label) ?? [],

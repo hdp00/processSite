@@ -1,12 +1,16 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
+  captureWorkingDesignerSnapshot,
   clearDefinitionDesignerArtifacts,
+  cloneCompleteDesignerSnapshot,
   DESIGNER_VERSION_SNAPSHOT_KEY_PREFIX,
   removeDesignerVersionSnapshot,
-  restoreDesignerVersionSnapshot,
-  saveDesignerVersionSnapshot,
+  writeWorkingDesignerSnapshot,
+  type CompleteDesignerSnapshot,
 } from "../utils/designerStorage";
+import { cloneDefaultSystemListFields } from "../data/listFieldConfig";
+import { currentUserCan } from "./permissionEngine";
 
 export type DefinitionType = "approval" | "free";
 export type DefinitionStatus = "草稿" | "已发布" | "已停用";
@@ -39,6 +43,7 @@ export interface ProcessDraft {
   formFieldCount: number;
   flowConfigured: boolean;
   nodeCount: number;
+  snapshot: CompleteDesignerSnapshot;
   updatedAt: string;
 }
 
@@ -58,6 +63,7 @@ export interface ProcessVersion {
   starterGroups: string[];
   checksum: string;
   basic: ProcessBasicConfig;
+  snapshot: CompleteDesignerSnapshot;
 }
 
 export interface ProcessDefinition {
@@ -90,6 +96,8 @@ interface ProcessDefinitionState {
   resetDraftFromVersion: (definitionId: string, sourceVersion: string) => boolean;
   discardDraft: (definitionId: string) => boolean;
   updateDraftBasic: (definitionId: string, basic: ProcessBasicConfig) => void;
+  updateDraftFormSnapshot: (definitionId: string, snapshot: CompleteDesignerSnapshot["form"], systemFields: CompleteDesignerSnapshot["systemFields"]) => void;
+  updateDraftFlowSnapshot: (definitionId: string, snapshot: CompleteDesignerSnapshot["flow"]) => void;
   markFormConfigured: (definitionId: string, fieldCount: number) => void;
   markFlowConfigured: (definitionId: string, nodeCount: number) => void;
   publishDraft: (definitionId: string, changeNote: string) => string | null;
@@ -98,10 +106,64 @@ interface ProcessDefinitionState {
   deleteVersion: (definitionId: string, versionId: string, replacementVersionId?: string) => DeleteVersionResult;
   deleteDefinition: (definitionId: string) => boolean;
   toggleDefinition: (definitionId: string) => void;
+  recordInstanceCreated: (definitionId: string, versionId: string) => void;
   resetDefinitions: () => void;
 }
 
 const nowText = () => "刚刚";
+
+const emptySnapshot = (name: string): CompleteDesignerSnapshot => ({
+  form: { formName: `${name}发起表单`, fields: [] },
+  flow: { nodes: [], edges: [], meta: { rejectionHandling: "resubmit-or-close" } },
+  systemFields: cloneDefaultSystemListFields(),
+});
+
+const seedSnapshot = (
+  id: string,
+  config: ProcessBasicConfig,
+  formFieldCount: number,
+  nodeCount: number,
+): CompleteDesignerSnapshot => {
+  const fields = Array.from({ length: formFieldCount }, (_, index) => ({
+    id: index === 0 ? "title" : `field-${index + 1}`,
+    type: "text",
+    label: index === 0 ? "标题" : `历史字段 ${index + 1}`,
+    required: index === 0,
+    listVisible: index < 3,
+    queryable: index < 2,
+    reviewEditable: false,
+  }));
+  if (config.type === "free") {
+    return {
+      form: { formName: `${config.name}发起表单`, fields },
+      flow: { nodes: [], edges: [], meta: { rejectionHandling: "resubmit-or-close" } },
+      systemFields: cloneDefaultSystemListFields(),
+    };
+  }
+  const approvalGroups = id.startsWith("pdf-")
+    ? ["PDF审核_研发_流程权限组", "PDF审核_质量_流程权限组", "PDF审核_生产_流程权限组"]
+    : id.startsWith("test-")
+      ? ["测试报告_研发_流程权限组", "测试报告_质量_流程权限组", "测试报告_生产_流程权限组"]
+      : ["供应商变更_评审_流程权限组"];
+  const approvals = approvalGroups.map((permissionGroup, index) => ({
+    id: `approval-${index + 1}`,
+    data: { kind: "approval" as const, label: permissionGroup.replace(/_流程权限组$/, ""), permissionGroup, specifyAssignee: true, editableFields: [] },
+  }));
+  const nodes = [
+    { id: "start", data: { kind: "start" as const, label: "开始", permissionGroups: [...config.starterGroups] } },
+    ...approvals,
+    { id: "end", data: { kind: "end" as const, label: "结束" } },
+  ];
+  const edges = approvals.flatMap((node, index) => [
+    { id: `start-${index}`, source: "start", target: node.id },
+    { id: `${node.id}-end`, source: node.id, target: "end" },
+  ]);
+  return {
+    form: { formName: `${config.name}发起表单`, fields },
+    flow: { nodes: nodeCount >= 2 ? nodes : [], edges: nodeCount >= 2 ? edges : [], meta: { rejectionHandling: "resubmit-or-close" } },
+    systemFields: cloneDefaultSystemListFields(),
+  };
+};
 
 const basic = (
   name: string,
@@ -132,6 +194,7 @@ const version = (
   formFieldCount: number,
   nodeCount: number,
   config: ProcessBasicConfig,
+  snapshot: CompleteDesignerSnapshot,
   firstPublishedAt: string = publishedAt,
   firstPublishedBy: string = createdBy,
 ): ProcessVersion => ({
@@ -148,6 +211,7 @@ const version = (
   starterGroups: [...config.starterGroups],
   checksum: `${id.slice(-4).toUpperCase()}-${formFieldCount}F-${nodeCount}N`,
   basic: config,
+  snapshot: cloneCompleteDesignerSnapshot(snapshot),
 });
 
 const pdfBasic = basic(
@@ -188,30 +252,30 @@ const initialDefinitions: ProcessDefinition[] = [
     id: "pdf-review", code: pdfBasic.code, name: pdfBasic.name, description: pdfBasic.description, type: "approval", disabled: false,
     effectiveVersionId: "pdf-v3", nextVersionNumber: 4, updatedAt: "2026-08-12 16:42", updatedBy: "王敏", instanceCount: 128,
     versions: [
-      version("pdf-v3", "V3", "2026-08-02 14:30", "王敏", "增加质量节点可修改字段并优化并行提醒。", 42, 9, 5, pdfBasic),
-      version("pdf-v2", "V2", "2026-05-16 10:05", "刘燕", "研发、质量和生产改为同起点并行审核。", 71, 8, 5, pdfBasic),
-      version("pdf-v1", "V1", "2026-02-12 09:20", "系统管理员", "首次发布。", 15, 7, 5, pdfBasic),
+      version("pdf-v3", "V3", "2026-08-02 14:30", "王敏", "增加质量节点可修改字段并优化并行提醒。", 42, 9, 5, pdfBasic, seedSnapshot("pdf-v3", pdfBasic, 9, 5)),
+      version("pdf-v2", "V2", "2026-05-16 10:05", "刘燕", "研发、质量和生产改为同起点并行审核。", 71, 8, 5, pdfBasic, seedSnapshot("pdf-v2", pdfBasic, 8, 5)),
+      version("pdf-v1", "V1", "2026-02-12 09:20", "系统管理员", "首次发布。", 15, 7, 5, pdfBasic, seedSnapshot("pdf-v1", pdfBasic, 7, 5)),
     ],
   },
   {
     id: "test-report-review", code: testBasic.code, name: testBasic.name, description: testBasic.description, type: "approval", disabled: false,
     nextVersionNumber: 2, updatedAt: "2026-08-13 09:18", updatedBy: "林晓", instanceCount: 0, versions: [],
-    draft: { id: "test-report-v1-draft", version: "V1", basic: testBasic, formConfigured: true, formFieldCount: 5, flowConfigured: false, nodeCount: 4, updatedAt: "2026-08-13 09:18" },
+    draft: { id: "test-report-v1-draft", version: "V1", basic: testBasic, formConfigured: true, formFieldCount: 5, flowConfigured: false, nodeCount: 4, snapshot: seedSnapshot("test-v1", testBasic, 5, 4), updatedAt: "2026-08-13 09:18" },
   },
   {
     id: "free-collaboration", code: freeBasic.code, name: freeBasic.name, description: freeBasic.description, type: "free", disabled: false,
     effectiveVersionId: "free-v2", nextVersionNumber: 3, updatedAt: "2026-08-10 14:06", updatedBy: "系统管理员", instanceCount: 67,
     versions: [
-      version("free-v2", "V2", "2026-07-30 16:18", "王敏", "增加异常改派；重新打开时恢复初始表单编辑。", 39, 5, 0, freeBasic),
-      version("free-v1", "V1", "2026-04-08 11:42", "系统管理员", "首次发布自由协作流程。", 28, 4, 0, freeBasic),
+      version("free-v2", "V2", "2026-07-30 16:18", "王敏", "增加异常改派；重新打开时恢复初始表单编辑。", 39, 5, 0, freeBasic, seedSnapshot("free-v2", freeBasic, 5, 0)),
+      version("free-v1", "V1", "2026-04-08 11:42", "系统管理员", "首次发布自由协作流程。", 28, 4, 0, freeBasic, seedSnapshot("free-v1", freeBasic, 4, 0)),
     ],
   },
   {
     id: "supplier-change-review", code: supplierBasic.code, name: "供应商变更会签", description: supplierBasic.description, type: "approval", disabled: true,
     effectiveVersionId: "supplier-v2", nextVersionNumber: 3, updatedAt: "2026-07-28 11:25", updatedBy: "赵磊", instanceCount: 21,
     versions: [
-      version("supplier-v2", "V2", "2026-07-28 11:25", "赵磊", "调整评审说明和发起范围，当前没有实例。", 0, 7, 4, { ...supplierBasic, name: "供应商变更会签" }),
-      version("supplier-v1", "V1", "2026-07-20 11:25", "赵磊", "首次发布供应商变更评审。", 21, 6, 4, supplierBasic),
+      version("supplier-v2", "V2", "2026-07-28 11:25", "赵磊", "调整评审说明和发起范围，当前没有实例。", 0, 7, 4, { ...supplierBasic, name: "供应商变更会签" }, seedSnapshot("supplier-v2", { ...supplierBasic, name: "供应商变更会签" }, 7, 4)),
+      version("supplier-v1", "V1", "2026-07-20 11:25", "赵磊", "首次发布供应商变更评审。", 21, 6, 4, supplierBasic, seedSnapshot("supplier-v1", supplierBasic, 6, 4)),
     ],
   },
 ];
@@ -262,6 +326,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
     (set, get) => ({
       definitions: initialDefinitions,
       createDefinition: ({ name, type, description }) => {
+        if (!currentUserCan("config-definition:编辑")) return "";
         const definitions = get().definitions;
         const sequence = nextSequence(definitions);
         const id = `process-${Date.now()}`;
@@ -270,12 +335,13 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         const created: ProcessDefinition = {
           id, code, name: config.name, description: config.description, type, disabled: false,
           nextVersionNumber: 2, updatedAt: nowText(), updatedBy: "当前用户", instanceCount: 0, versions: [],
-          draft: { id: `${id}-v1-draft`, version: "V1", basic: config, formConfigured: false, formFieldCount: 0, flowConfigured: type === "free", nodeCount: 0, updatedAt: nowText() },
+          draft: { id: `${id}-v1-draft`, version: "V1", basic: config, formConfigured: false, formFieldCount: 0, flowConfigured: type === "free", nodeCount: 0, snapshot: emptySnapshot(config.name), updatedAt: nowText() },
         };
         set({ definitions: [created, ...definitions] });
         return id;
       },
       copyDefinition: (definitionId) => {
+        if (!currentUserCan("config-definition:编辑")) return null;
         const definitions = get().definitions;
         const source = definitions.find((item) => item.id === definitionId);
         if (!source) return null;
@@ -285,24 +351,22 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         const sourceConfig = sourceBasic(source) ?? source.draft?.basic;
         if (!sourceConfig) return null;
         const config = { ...sourceConfig, name: `${source.name}（副本）`, code, starterGroups: [...sourceConfig.starterGroups], assigneeGroups: sourceConfig.assigneeGroups ? [...sourceConfig.assigneeGroups] : undefined, visibleRoles: [...sourceConfig.visibleRoles], visibleUsers: [...sourceConfig.visibleUsers] };
+        const sourceSnapshot = source.draft?.snapshot ?? getEffectiveVersion(source)?.snapshot ?? source.versions[0]?.snapshot;
         const copied: ProcessDefinition = {
           id, code, name: config.name, description: config.description, type: source.type, disabled: false,
           nextVersionNumber: 2, updatedAt: nowText(), updatedBy: "当前用户", instanceCount: 0, versions: [],
-          draft: { id: `${id}-v1-draft`, version: "V1", basic: config, formConfigured: true, formFieldCount: source.draft?.formFieldCount ?? getEffectiveVersion(source)?.formFieldCount ?? source.versions[0]?.formFieldCount ?? 0, flowConfigured: source.type === "free" || Boolean(source.draft?.flowConfigured ?? getEffectiveVersion(source)?.nodeCount ?? source.versions[0]?.nodeCount), nodeCount: source.draft?.nodeCount ?? getEffectiveVersion(source)?.nodeCount ?? source.versions[0]?.nodeCount ?? 0, updatedAt: nowText() },
+          draft: { id: `${id}-v1-draft`, version: "V1", basic: config, formConfigured: true, formFieldCount: source.draft?.formFieldCount ?? getEffectiveVersion(source)?.formFieldCount ?? source.versions[0]?.formFieldCount ?? 0, flowConfigured: source.type === "free" || Boolean(source.draft?.flowConfigured ?? getEffectiveVersion(source)?.nodeCount ?? source.versions[0]?.nodeCount), nodeCount: source.draft?.nodeCount ?? getEffectiveVersion(source)?.nodeCount ?? source.versions[0]?.nodeCount ?? 0, snapshot: cloneCompleteDesignerSnapshot(sourceSnapshot), updatedAt: nowText() },
         };
         set({ definitions: [copied, ...definitions] });
+        writeWorkingDesignerSnapshot(id, copied.draft!.snapshot);
         return id;
       },
       ensureDraft: (definitionId, sourceVersion) => {
+        if (!currentUserCan("config-definition:编辑")) return false;
         const currentDefinition = get().definitions.find((item) => item.id === definitionId);
-        const currentEffective = getEffectiveVersion(currentDefinition);
         const selectedSource = sourceVersion
           ? currentDefinition?.versions.find((item) => item.version === sourceVersion)
-          : currentEffective;
-        if (currentEffective) saveDesignerVersionSnapshot(definitionId, currentEffective.id);
-        if (selectedSource && selectedSource.id !== currentEffective?.id) {
-          restoreDesignerVersionSnapshot(definitionId, selectedSource.id);
-        }
+          : getEffectiveVersion(currentDefinition);
         let created = false;
         set((state) => ({
           definitions: state.definitions.map((definition) => {
@@ -324,6 +388,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
                 formFieldCount: source?.formFieldCount ?? 0,
                 flowConfigured: definition.type === "free" || Boolean(source?.nodeCount),
                 nodeCount: source?.nodeCount ?? 0,
+                snapshot: cloneCompleteDesignerSnapshot(source?.snapshot),
                 updatedAt: nowText(),
               },
               updatedAt: nowText(),
@@ -331,12 +396,14 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
             };
           }),
         }));
+        const createdDraft = get().definitions.find((item) => item.id === definitionId)?.draft;
+        if (created && createdDraft) writeWorkingDesignerSnapshot(definitionId, createdDraft.snapshot);
         return created;
       },
       resetDraftFromVersion: (definitionId, sourceVersion) => {
+        if (!currentUserCan("config-definition:编辑")) return false;
         const currentDefinition = get().definitions.find((item) => item.id === definitionId);
         const selectedSource = currentDefinition?.versions.find((item) => item.version === sourceVersion);
-        if (selectedSource) restoreDesignerVersionSnapshot(definitionId, selectedSource.id);
         let reset = false;
         set((state) => ({
           definitions: state.definitions.map((definition) => {
@@ -356,14 +423,17 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
                 formFieldCount: source.formFieldCount,
                 flowConfigured: definition.type === "free" || source.nodeCount >= 2,
                 nodeCount: source.nodeCount,
+                snapshot: cloneCompleteDesignerSnapshot(source.snapshot),
                 updatedAt: nowText(),
               },
             };
           }),
         }));
+        if (reset && selectedSource) writeWorkingDesignerSnapshot(definitionId, selectedSource.snapshot);
         return reset;
       },
       discardDraft: (definitionId) => {
+        if (!currentUserCan("config-definition:编辑")) return false;
         const currentDefinition = get().definitions.find((item) => item.id === definitionId);
         const restoreVersionId = currentDefinition?.draft?.withdrawnVersionId ?? currentDefinition?.effectiveVersionId;
         let discarded = false;
@@ -374,10 +444,13 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
             return discardDraftSnapshot(definition);
           }),
         }));
-        if (discarded && restoreVersionId) restoreDesignerVersionSnapshot(definitionId, restoreVersionId);
+        const restored = restoreVersionId
+          ? get().definitions.find((item) => item.id === definitionId)?.versions.find((item) => item.id === restoreVersionId)
+          : undefined;
+        if (discarded && restored) writeWorkingDesignerSnapshot(definitionId, restored.snapshot);
         return discarded;
       },
-      updateDraftBasic: (definitionId, config) => set((state) => ({
+      updateDraftBasic: (definitionId, config) => currentUserCan("config-definition:编辑") && set((state) => ({
         definitions: state.definitions.map((definition) => definition.id === definitionId && definition.draft ? {
           ...definition,
           name: definition.effectiveVersionId ? definition.name : config.name,
@@ -387,14 +460,44 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           draft: { ...definition.draft, basic: config, updatedAt: nowText() },
         } : definition),
       })),
-      markFormConfigured: (definitionId, fieldCount) => set((state) => ({
+      updateDraftFormSnapshot: (definitionId, formSnapshot, systemFields) => currentUserCan("config-form:编辑") && set((state) => ({
+        definitions: state.definitions.map((definition) => definition.id === definitionId && definition.draft ? {
+          ...definition,
+          updatedAt: nowText(),
+          draft: {
+            ...definition.draft,
+            formConfigured: formSnapshot.fields.length > 0,
+            formFieldCount: formSnapshot.fields.length,
+            snapshot: {
+              ...definition.draft.snapshot,
+              form: structuredClone(formSnapshot),
+              systemFields: structuredClone(systemFields),
+            },
+            updatedAt: nowText(),
+          },
+        } : definition),
+      })),
+      updateDraftFlowSnapshot: (definitionId, flowSnapshot) => currentUserCan("config-definition:编辑") && set((state) => ({
+        definitions: state.definitions.map((definition) => definition.id === definitionId && definition.draft ? {
+          ...definition,
+          updatedAt: nowText(),
+          draft: {
+            ...definition.draft,
+            flowConfigured: definition.type === "free" || flowSnapshot.nodes.length >= 2,
+            nodeCount: flowSnapshot.nodes.length,
+            snapshot: { ...definition.draft.snapshot, flow: structuredClone(flowSnapshot) },
+            updatedAt: nowText(),
+          },
+        } : definition),
+      })),
+      markFormConfigured: (definitionId, fieldCount) => currentUserCan("config-form:编辑") && set((state) => ({
         definitions: state.definitions.map((definition) => definition.id === definitionId && definition.draft ? {
           ...definition,
           updatedAt: nowText(),
           draft: { ...definition.draft, formConfigured: fieldCount > 0, formFieldCount: fieldCount, updatedAt: nowText() },
         } : definition),
       })),
-      markFlowConfigured: (definitionId, nodeCount) => set((state) => ({
+      markFlowConfigured: (definitionId, nodeCount) => currentUserCan("config-definition:编辑") && set((state) => ({
         definitions: state.definitions.map((definition) => definition.id === definitionId && definition.draft ? {
           ...definition,
           updatedAt: nowText(),
@@ -402,6 +505,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         } : definition),
       })),
       publishDraft: (definitionId, changeNote) => {
+        if (!currentUserCan("config-definition:发布")) return null;
         let publishedVersion: string | null = null;
         let publishedVersionId: string | null = null;
         set((state) => ({
@@ -422,6 +526,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
               draft.formFieldCount,
               definition.type === "free" ? 0 : draft.nodeCount,
               draft.basic,
+              draft.snapshot,
               withdrawnSource?.firstPublishedAt ?? withdrawnSource?.publishedAt,
               withdrawnSource?.firstPublishedBy ?? withdrawnSource?.createdBy,
             );
@@ -445,14 +550,14 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
             };
           }),
         }));
-        if (publishedVersionId) saveDesignerVersionSnapshot(definitionId, publishedVersionId);
+        const publishedDefinition = get().definitions.find((item) => item.id === definitionId);
+        const published = publishedDefinition?.versions.find((item) => item.id === publishedVersionId);
+        if (published) writeWorkingDesignerSnapshot(definitionId, published.snapshot);
         return publishedVersion;
       },
       withdrawEffectiveVersion: (definitionId, versionId) => {
+        if (!currentUserCan("config-definition:发布")) return "not-found";
         const currentDefinition = get().definitions.find((item) => item.id === definitionId);
-        if (currentDefinition?.effectiveVersionId === versionId && !currentDefinition.draft) {
-          saveDesignerVersionSnapshot(definitionId, versionId);
-        }
         let result: WithdrawVersionResult = "not-found";
         set((state) => ({
           definitions: state.definitions.map((definition) => {
@@ -496,6 +601,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
                 formFieldCount: target.formFieldCount,
                 flowConfigured: definition.type === "free" || target.nodeCount >= 2,
                 nodeCount: target.nodeCount,
+                snapshot: cloneCompleteDesignerSnapshot(target.snapshot),
                 updatedAt: nowText(),
               },
               updatedAt: nowText(),
@@ -503,12 +609,14 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
             };
           }),
         }));
+        if ((result as WithdrawVersionResult) === "withdrawn" && currentDefinition) {
+          const target = currentDefinition.versions.find((item) => item.id === versionId);
+          if (target) writeWorkingDesignerSnapshot(definitionId, target.snapshot);
+        }
         return result;
       },
       activateVersion: (definitionId, versionId) => {
-        const currentDefinition = get().definitions.find((item) => item.id === definitionId);
-        const currentEffective = getEffectiveVersion(currentDefinition);
-        if (currentEffective) saveDesignerVersionSnapshot(definitionId, currentEffective.id);
+        if (!currentUserCan("config-definition:发布")) return false;
         let activated = false;
         set((state) => ({
           definitions: state.definitions.map((definition) => {
@@ -526,10 +634,12 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
             };
           }),
         }));
-        if (activated) restoreDesignerVersionSnapshot(definitionId, versionId);
+        const target = get().definitions.find((item) => item.id === definitionId)?.versions.find((item) => item.id === versionId);
+        if (activated && target) writeWorkingDesignerSnapshot(definitionId, target.snapshot);
         return activated;
       },
       deleteVersion: (definitionId, versionId, replacementVersionId) => {
+        if (!currentUserCan("config-definition:编辑")) return "not-found";
         const definition = get().definitions.find((item) => item.id === definitionId);
         if (!definition) return "not-found";
         if (definition.draft?.id === versionId) {
@@ -540,7 +650,8 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           }
           const restoreVersionId = definition.draft.withdrawnVersionId ?? definition.effectiveVersionId;
           set({ definitions: get().definitions.map((item) => item.id === definitionId ? discardDraftSnapshot(item) : item) });
-          if (restoreVersionId) restoreDesignerVersionSnapshot(definitionId, restoreVersionId);
+          const restored = definition.versions.find((item) => item.id === restoreVersionId);
+          if (restored) writeWorkingDesignerSnapshot(definitionId, restored.snapshot);
           return "deleted";
         }
         const target = definition.versions.find((item) => item.id === versionId);
@@ -572,10 +683,11 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           } : item),
         });
         removeDesignerVersionSnapshot(definitionId, versionId);
-        if (nextEffective && !definition.draft) restoreDesignerVersionSnapshot(definitionId, nextEffective.id);
+        if (nextEffective && !definition.draft) writeWorkingDesignerSnapshot(definitionId, nextEffective.snapshot);
         return "deleted";
       },
       deleteDefinition: (definitionId) => {
+        if (!currentUserCan("config-definition:编辑")) return false;
         const definitions = get().definitions;
         const definition = definitions.find((item) => item.id === definitionId);
         if (!definition || definition.instanceCount > 0 || definition.versions.some((item) => item.instanceCount > 0)) return false;
@@ -583,9 +695,18 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         clearDefinitionDesignerArtifacts(definitionId);
         return true;
       },
-      toggleDefinition: (definitionId) => set((state) => ({
+      toggleDefinition: (definitionId) => currentUserCan("config-definition:编辑") && set((state) => ({
         definitions: state.definitions.map((definition) => definition.id === definitionId && definition.effectiveVersionId ? {
           ...definition, disabled: !definition.disabled, updatedAt: nowText(), updatedBy: "当前用户",
+        } : definition),
+      })),
+      recordInstanceCreated: (definitionId, versionId) => set((state) => ({
+        definitions: state.definitions.map((definition) => definition.id === definitionId ? {
+          ...definition,
+          instanceCount: definition.instanceCount + 1,
+          versions: definition.versions.map((item) => item.id === versionId
+            ? { ...item, instanceCount: item.instanceCount + 1 }
+            : item),
         } : definition),
       })),
       resetDefinitions: () => {
@@ -605,7 +726,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
     }),
     {
       name: "flowpilot-process-definitions-v1",
-      version: 6,
+      version: 7,
       migrate: (persisted) => {
         const state = persisted as Partial<ProcessDefinitionState>;
         const definitions = state.definitions ?? initialDefinitions;
@@ -643,6 +764,9 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
                 visibleRoles: [...(item.basic.visibleRoles ?? [])],
                 visibleUsers: [...(item.basic.visibleUsers ?? [])],
               },
+              snapshot: cloneCompleteDesignerSnapshot(
+                item.snapshot ?? seedSnapshot(item.id, item.basic, item.formFieldCount, item.nodeCount),
+              ),
             }));
             const normalizedDraft = definition.draft ? {
               ...definition.draft,
@@ -656,6 +780,12 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
                 visibleRoles: [...(definition.draft.basic.visibleRoles ?? [])],
                 visibleUsers: [...(definition.draft.basic.visibleUsers ?? [])],
               },
+              snapshot: cloneCompleteDesignerSnapshot(
+                definition.draft.snapshot
+                ?? (captureWorkingDesignerSnapshot(definition.id).form.fields.length
+                  ? captureWorkingDesignerSnapshot(definition.id)
+                  : seedSnapshot(definition.draft.id, definition.draft.basic, definition.draft.formFieldCount, definition.draft.nodeCount)),
+              ),
             } : undefined;
             const legacyCurrent = legacy.currentVersion?.toUpperCase();
             const requestedEffectiveVersionId = definition.effectiveVersionId

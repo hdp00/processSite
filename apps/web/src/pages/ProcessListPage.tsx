@@ -30,11 +30,13 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { StatusPill } from "../components/StatusPill";
-import { defaultProcessDefinition, processDefinitions } from "../data/processDefinitions";
-import { isSystemFieldVisible, loadSystemListFields } from "../data/listFieldConfig";
+import { cloneDefaultSystemListFields, isSystemFieldVisible } from "../data/listFieldConfig";
 import type { InstanceStatus, ProcessInstance } from "../data/types";
-import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
-import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { usePrototypeStore } from "../state/usePrototypeStore";
+import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { canPersonaLaunchDefinition, hasPersonaPermission } from "../state/rolePermissions";
+import { canUserViewInstance } from "../state/workflowAccess";
+import type { StoredDesignerField } from "../utils/designerStorage";
 
 export function ProcessListPage() {
   const navigate = useNavigate();
@@ -42,25 +44,25 @@ export function ProcessListPage() {
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
   const definitionId = searchParams.get("definitionId")
     ?? managedDefinitions.find((item) => Boolean(item.effectiveVersionId || item.draft?.withdrawnVersionId))?.id
-    ?? defaultProcessDefinition.id;
-  const staticDefinition = processDefinitions.find((item) => item.id === definitionId);
+    ?? "";
   const managedDefinition = managedDefinitions.find((item) => item.id === definitionId);
-  const definition = staticDefinition ?? {
-    id: definitionId,
-    label: managedDefinition?.name ?? "未命名流程",
-    template: managedDefinition?.name ?? "未命名流程",
-    taskFields: [],
-  };
+  const currentVersion = getEffectiveVersion(managedDefinition);
+  const definition = { id: definitionId, label: currentVersion?.basic.name ?? managedDefinition?.name ?? "未命名流程" };
   const { instances, personaId, copyCompletedInstance } = usePrototypeStore();
   const [form] = Form.useForm();
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<InstanceStatus>();
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedValues, setAdvancedValues] = useState<Record<string, string>>({});
   const [copySource, setCopySource] = useState<ProcessInstance | null>(null);
   const [copyTitle, setCopyTitle] = useState("");
-  const canCopyCompleted = personaId === "wangmin" || isSuperAdminPersona(personaId);
-  const isFreeFlow = managedDefinition?.type === "free" || definition.id === "free-collaboration";
-  const systemListFields = loadSystemListFields(definition.id);
+  const canCopyCompleted = hasPersonaPermission(personaId, "work-list:复制新建")
+    && canPersonaLaunchDefinition(personaId, definition.id);
+  const canPrint = hasPersonaPermission(personaId, "work-list:打印");
+  const isFreeFlow = managedDefinition?.type === "free";
+  const systemListFields = currentVersion?.snapshot.systemFields ?? cloneDefaultSystemListFields();
+  const listFields = currentVersion?.snapshot.form.fields.filter((field) => field.listVisible && field.type !== "richtext") ?? [];
+  const queryFields = currentVersion?.snapshot.form.fields.filter((field) => field.queryable && field.type !== "attachment" && field.type !== "table" && field.type !== "richtext") ?? [];
   const showSystemField = (key: Parameters<typeof isSystemFieldVisible>[1]) =>
     isSystemFieldVisible(systemListFields, key, "processList");
   const showTitleCell = showSystemField("title") || showSystemField("template");
@@ -70,6 +72,7 @@ export function ProcessListPage() {
     setKeyword("");
     setStatus(undefined);
     setAdvancedOpen(false);
+    setAdvancedValues({});
     form.resetFields();
   }, [definition.id, form]);
 
@@ -79,10 +82,36 @@ export function ProcessListPage() {
         const matchesKeyword = `${item.code}${item.title}${item.documentCode}${item.initiator}`
           .toLowerCase()
           .includes(keyword.trim().toLowerCase());
-        return matchesKeyword && (!status || item.status === status) && item.template === definition.template;
+        const matchesAdvanced = queryFields.every((field) => {
+          const query = advancedValues[field.id]?.trim().toLowerCase();
+          if (!query) return true;
+          const raw = item.formValues?.[field.id];
+          const value = Array.isArray(raw) ? raw.join("/") : String(raw ?? "");
+          return value.toLowerCase().includes(query);
+        });
+        return matchesKeyword
+          && (!status || item.status === status)
+          && item.definitionId === definition.id
+          && canUserViewInstance(personaId, item)
+          && matchesAdvanced;
       }),
-    [instances, keyword, status, definition.template],
+    [advancedValues, definition.id, instances, keyword, personaId, queryFields, status],
   );
+
+  const fieldValue = (record: ProcessInstance, field: StoredDesignerField) => {
+    const value = record.formValues?.[field.id];
+    if (Array.isArray(value)) return value.join("、") || "—";
+    if (value && typeof value === "object") return "已填写";
+    return value === undefined || value === null || value === "" ? "—" : String(value);
+  };
+
+  const dynamicColumns: TableProps<ProcessInstance>["columns"] = listFields.map((field) => ({
+    title: field.label,
+    key: field.id,
+    width: 160,
+    ellipsis: true,
+    render: (_, record) => fieldValue(record, field),
+  }));
 
   const columns: TableProps<ProcessInstance>["columns"] = [
     ...(showSystemField("code") ? [{
@@ -100,16 +129,7 @@ export function ProcessListPage() {
         </div>
       ),
     }] : []),
-    ...(isFreeFlow
-      ? [
-          { title: "事项分类", dataIndex: "category", width: 135 },
-          { title: "当前受理人", dataIndex: "currentAssignee", width: 120, render: (value?: string) => value || "—" },
-          { title: "参与人数", dataIndex: "participants", width: 100, render: (value?: string[]) => `${value?.length ?? 0} 人` },
-        ]
-      : [
-          { title: "文件编号", dataIndex: "documentCode", width: 145 },
-          { title: "文件类型", dataIndex: "documentType", width: 120 },
-        ]),
+    ...dynamicColumns,
     ...(showSystemField("templateVersion") ? [{
       title: "版本",
       dataIndex: "templateVersion",
@@ -167,7 +187,7 @@ export function ProcessListPage() {
               onClick={() => navigate(`/processes/${record.id}`)}
             />
           </Tooltip>
-          {record.workflowType !== "free" && (
+          {record.workflowType !== "free" && canPrint && (
             <Tooltip title="打印为 PDF">
               <Button
                 className="task-action-button is-print"
@@ -204,6 +224,7 @@ export function ProcessListPage() {
     setKeyword("");
     setStatus(undefined);
     form.resetFields();
+    setAdvancedValues({});
   };
 
   return (
@@ -253,20 +274,27 @@ export function ProcessListPage() {
           <div className="advanced-query">
             <div className="advanced-query-title"><FilterOutlined /> 当前流程的可查询表单字段</div>
             <Row gutter={16}>
-              {isFreeFlow ? (
-                <>
-                  <Col span={8}><Select placeholder="事项分类" style={{ width: "100%" }} options={["生产异常", "质量问题", "设计问题", "测试记录", "一般协作"].map((value) => ({ value }))} /></Col>
-                  <Col span={8}><Select showSearch placeholder="当前受理人" style={{ width: "100%" }} options={["王敏", "张伟", "林晓", "赵磊"].map((value) => ({ value }))} /></Col>
-                  <Col span={8}><Select placeholder="优先级" style={{ width: "100%" }} options={["普通", "紧急"].map((value) => ({ value }))} /></Col>
-                </>
-              ) : (
-                <>
-                  <Col span={6}><Input placeholder="文件编号" /></Col>
-                  <Col span={6}><Select placeholder="文件类型" style={{ width: "100%" }} options={["作业指导书", "检验规范", "包装规范"].map((value) => ({ value }))} /></Col>
-                  <Col span={6}><Select placeholder="文件密级" style={{ width: "100%" }} options={["受控文件", "内部文件"].map((value) => ({ value }))} /></Col>
-                  <Col span={6}><Select placeholder="产品线" style={{ width: "100%" }} options={[{ value: "工业控制/驱动器", label: "工业控制 / 驱动器" }]} /></Col>
-                </>
-              )}
+              {queryFields.length ? queryFields.map((field) => (
+                <Col span={6} key={field.id}>
+                  {["select", "radio", "checkbox"].includes(field.type) ? (
+                    <Select
+                      allowClear
+                      placeholder={field.label}
+                      style={{ width: "100%" }}
+                      value={advancedValues[field.id] || undefined}
+                      onChange={(value) => setAdvancedValues((current) => ({ ...current, [field.id]: value ?? "" }))}
+                      options={(field.options ?? []).map((value) => ({ value, label: value }))}
+                    />
+                  ) : (
+                    <Input
+                      allowClear
+                      placeholder={field.label}
+                      value={advancedValues[field.id] ?? ""}
+                      onChange={(event) => setAdvancedValues((current) => ({ ...current, [field.id]: event.target.value }))}
+                    />
+                  )}
+                </Col>
+              )) : <Col span={24}><Typography.Text type="secondary">当前生效版本没有配置可查询字段</Typography.Text></Col>}
             </Row>
           </div>
         )}
@@ -277,7 +305,7 @@ export function ProcessListPage() {
           <div><strong>流程实例</strong><Tag bordered={false}>{filtered.length} 条</Tag></div>
           <Space>
             <Typography.Text type="secondary">{definition.label} · 包含当前用户可见的全部历史版本实例</Typography.Text>
-            {isFreeFlow && <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate("/free-flow/new")}>新建事项</Button>}
+            {isFreeFlow && canPersonaLaunchDefinition(personaId, definition.id) && <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate(`/launch/${definition.id}`)}>新建事项</Button>}
           </Space>
         </div>
         <Table<ProcessInstance>

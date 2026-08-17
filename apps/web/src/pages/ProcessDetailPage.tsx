@@ -42,7 +42,12 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { StatusPill } from "../components/StatusPill";
 import type { ReviewerProgress } from "../data/types";
-import { isSuperAdminPersona, personas, usePrototypeStore } from "../state/usePrototypeStore";
+import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
+import { findIdentityUser } from "../state/useIdentityStore";
+import { canUserCloseInstance, canUserProcessTask } from "../state/workflowAccess";
+import { hasPersonaPermission } from "../state/rolePermissions";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import type { StoredDesignerField } from "../utils/designerStorage";
 
 const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> = {
   待审核: { icon: <HistoryOutlined /> },
@@ -58,6 +63,7 @@ export function ProcessDetailPage() {
   const navigate = useNavigate();
   const {
     instances,
+    tasks,
     personaId,
     reviewInstance,
     closeInstance,
@@ -65,7 +71,9 @@ export function ProcessDetailPage() {
     republishInstance,
   } = usePrototypeStore();
   const instance = instances.find((item) => item.id === id);
-  const persona = personas.find((item) => item.id === personaId) ?? personas[2];
+  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === instance?.definitionId));
+  const lockedVersion = definition?.versions.find((version) => version.id === instance?.versionId);
+  const persona = findIdentityUser(personaId);
   const isSuperAdmin = isSuperAdminPersona(personaId);
   const [comment, setComment] = useState("");
   const [documentLevel, setDocumentLevel] = useState(instance?.documentLevel ?? "受控文件");
@@ -77,6 +85,7 @@ export function ProcessDetailPage() {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [closeOpen, setCloseOpen] = useState(false);
   const [closeReason, setCloseReason] = useState("");
+  const [dynamicValues, setDynamicValues] = useState<Record<string, unknown>>(instance?.formValues ?? {});
 
   useEffect(() => {
     if (instance) {
@@ -86,29 +95,40 @@ export function ProcessDetailPage() {
       setDraftDocumentType(instance.documentType);
       setDraftDescription(instance.description);
       setDraftPdfName(instance.pdfName);
+      setDynamicValues(structuredClone(instance.formValues ?? {}));
     }
   }, [instance?.id, instance?.documentLevel]);
 
 
+  const currentTask = useMemo(() => tasks.find((task) =>
+    task.instanceId === instance?.id && task.status === "待处理" && canUserProcessTask(personaId, task),
+  ), [instance?.id, personaId, tasks]);
   const currentReviewer = useMemo(
-    () => isSuperAdmin
-      ? instance?.reviewers.find((reviewer) => reviewer.status === "待审核")
-      : instance?.reviewers.find((reviewer) => reviewer.key === persona.reviewerKey),
-    [instance, isSuperAdmin, persona.reviewerKey],
+    () => instance?.reviewers.find((reviewer) => reviewer.key === currentTask?.nodeId),
+    [currentTask?.nodeId, instance],
   );
   const canReview = Boolean(
-    instance?.status === "审核中" && currentReviewer?.status === "待审核" && (isSuperAdmin || persona.reviewerKey),
+    instance?.status === "审核中" && currentReviewer?.status === "待审核" && currentTask,
   );
   const isSubstitute = Boolean(
-    canReview && instance?.designatedReviewer && instance.designatedReviewer !== persona.name,
+    canReview && currentTask?.defaultAssigneeId && currentTask.defaultAssigneeId !== persona?.id,
   );
-  const isDcc = personaId === "wangmin" || isSuperAdmin;
+  const isDcc = Boolean(instance && canUserCloseInstance(personaId, instance));
+  const canPrint = hasPersonaPermission(personaId, "work-list:打印");
   const hasReviewAction = Boolean(instance?.reviewers.some(
     (reviewer) => reviewer.status === "已通过" || reviewer.status === "已驳回",
   ));
   const canEditBeforeReview = Boolean(isDcc && instance?.status === "审核中" && !hasReviewAction);
   const canRepublish = isDcc && instance?.status === "驳回待处理";
   const canEditPublishedContent = canEditBeforeReview || canRepublish;
+  const dynamicText = (keywords: string[], fallback: string) => {
+    const field = lockedVersion?.snapshot.form.fields.find((item) => keywords.some((keyword) =>
+      item.id.toLowerCase().includes(keyword.toLowerCase()) || item.label.includes(keyword),
+    ));
+    const value = field ? dynamicValues[field.id] : undefined;
+    if (Array.isArray(value)) return value.join("、") || fallback;
+    return typeof value === "string" && value.trim() ? value.trim() : fallback;
+  };
 
   if (!instance) {
     return (
@@ -129,7 +149,7 @@ export function ProcessDetailPage() {
 
   const confirmReview = () => {
     if (!pendingAction) return;
-    reviewInstance(instance.id, pendingAction, comment.trim(), documentLevel);
+    reviewInstance(instance.id, pendingAction, comment.trim(), documentLevel, dynamicValues);
     message.success(pendingAction === "pass" ? "审核已通过" : "已驳回并通知文控处理");
     setPendingAction(null);
     setComment("");
@@ -147,7 +167,7 @@ export function ProcessDetailPage() {
   };
 
   const republish = () => {
-    if (!draftTitle.trim() || !draftDocumentCode.trim()) {
+    if (!draftTitle.trim()) {
       message.warning("请完善必填表单内容后再重新发布");
       return;
     }
@@ -159,12 +179,14 @@ export function ProcessDetailPage() {
       icon: <ReloadOutlined />,
       onOk: () => {
         republishInstance(instance.id, {
-          title: draftTitle.trim(),
-          documentCode: draftDocumentCode.trim(),
-          documentType: draftDocumentType,
+          title: dynamicText(["title", "标题"], draftTitle.trim()),
+          documentCode: dynamicText(["documentCode", "文件编号", "报告编号"], draftDocumentCode.trim()),
+          documentType: dynamicText(["documentType", "文件类型", "分类"], draftDocumentType),
           documentLevel,
           description: draftDescription.trim(),
           pdfName: draftPdfName,
+          formValues: dynamicValues,
+          attachmentNames: instance.attachmentNames,
         });
         message.success("流程已重新发布，全部分支待办已重新生成");
       },
@@ -172,33 +194,61 @@ export function ProcessDetailPage() {
   };
 
   const saveBeforeReview = () => {
-    if (!draftTitle.trim() || !draftDocumentCode.trim()) {
+    if (!draftTitle.trim()) {
       message.warning("请完善必填表单内容后再保存");
       return;
     }
     updateUnreviewedInstance(instance.id, {
-      title: draftTitle.trim(),
-      documentCode: draftDocumentCode.trim(),
-      documentType: draftDocumentType,
+      title: dynamicText(["title", "标题"], draftTitle.trim()),
+      documentCode: dynamicText(["documentCode", "文件编号", "报告编号"], draftDocumentCode.trim()),
+      documentType: dynamicText(["documentType", "文件类型", "分类"], draftDocumentType),
       documentLevel,
       description: draftDescription.trim(),
       pdfName: draftPdfName,
+      formValues: dynamicValues,
+      attachmentNames: instance.attachmentNames,
     });
     message.success("修改已保存，本轮待办保持不变");
   };
 
   const changedLevel = documentLevel !== instance.documentLevel;
-  const tableData = [
-    { key: "1", clause: "3.2", change: "装配扭矩复检由抽检调整为全检", type: "工艺要求", department: "生产 / 质量", risk: "低" },
-    { key: "2", clause: "5.1", change: "新增关键尺寸记录与签名栏", type: "记录要求", department: "研发 / 质量", risk: "中" },
-  ];
+  const configuredFields = lockedVersion?.snapshot.form.fields ?? [];
+  const editableFieldIds = new Set(
+    lockedVersion?.snapshot.flow.nodes.find((node) => node.id === currentTask?.nodeId)?.data?.editableFields ?? [],
+  );
+  const displayDynamicValue = (value: unknown) => {
+    if (Array.isArray(value)) return value.join("、") || "—";
+    if (typeof value === "string") return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "—";
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    return value && typeof value === "object" ? "已填写" : "—";
+  };
+  const updateDynamicValue = (fieldId: string, value: unknown) =>
+    setDynamicValues((current) => ({ ...current, [fieldId]: value }));
+  const renderDynamicField = (field: StoredDesignerField) => {
+    const value = dynamicValues[field.id];
+    const editable = canEditPublishedContent || (canReview && editableFieldIds.has(field.id));
+    if (field.type === "attachment") {
+      const names = Array.isArray(value) ? value.map(String) : instance.attachmentNames ?? [];
+      return <div className="field-block field-wide" key={field.id}><span>{field.label}</span><Space wrap>{names.length ? names.map((name) => <Tag key={name}>{name}</Tag>) : <Typography.Text type="secondary">无附件</Typography.Text>}</Space></div>;
+    }
+    if (field.type === "table") {
+      const rows = Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
+      return <div className="field-block field-wide" key={field.id}><span>{field.label}</span><Table size="small" rowKey={(row) => String(row.key ?? rows.indexOf(row))} dataSource={rows} pagination={false} scroll={{ x: 680 }} columns={(field.columns ?? []).map((column) => ({ title: column.label, dataIndex: column.id, width: column.width ?? 150, render: (cell: unknown, row: Record<string, unknown>, rowIndex: number) => {
+        const cellEditable = canEditPublishedContent || (canReview && editableFieldIds.has(`${field.id}.${column.id}`));
+        return cellEditable ? <Input size="small" value={displayDynamicValue(cell) === "—" ? "" : displayDynamicValue(cell)} onChange={(event) => updateDynamicValue(field.id, rows.map((item, index) => index === rowIndex ? { ...row, [column.id]: event.target.value } : item))} /> : displayDynamicValue(cell);
+      } }))} /><Typography.Text className="table-rule-note" type="secondary">审核节点只能修改授权单元格，不能新增或删除整行。</Typography.Text></div>;
+    }
+    if (!editable) return <div className="field-block" key={field.id}><span>{field.label}</span><strong>{displayDynamicValue(value)}</strong></div>;
+    if (["select", "radio", "checkbox"].includes(field.type)) return <label className="field-block editable-field" key={field.id}><span>{field.label} {canReview && <em>本节点可修改</em>}</span><Select mode={field.type === "checkbox" ? "multiple" : undefined} value={value as string | string[]} onChange={(next) => updateDynamicValue(field.id, next)} options={(field.options ?? []).map((option) => ({ value: option, label: option }))} /></label>;
+    return <label className={`field-block editable-field${field.type === "richtext" ? " field-wide" : ""}`} key={field.id}><span>{field.label} {canReview && <em>本节点可修改</em>}</span>{field.type === "richtext" ? <Input.TextArea value={String(value ?? "")} onChange={(event) => updateDynamicValue(field.id, event.target.value)} autoSize={{ minRows: 3, maxRows: 8 }} /> : <Input value={String(value ?? "")} onChange={(event) => updateDynamicValue(field.id, event.target.value)} />}</label>;
+  };
 
   return (
     <div className="page-stack detail-page">
       <div className="detail-topbar">
         <AppBackButton onClick={() => navigate(-1)} />
         <div className="detail-topbar-actions">
-          <Button icon={<PrinterOutlined />} onClick={() => window.open(`/processes/${instance.id}/print`, "_blank", "noopener,noreferrer")}>打印为 PDF</Button>
+          {canPrint && <Button icon={<PrinterOutlined />} onClick={() => window.open(`/processes/${instance.id}/print`, "_blank", "noopener,noreferrer")}>打印为 PDF</Button>}
           {canEditBeforeReview && (
             <Button type="primary" icon={<EditOutlined />} onClick={saveBeforeReview}>保存修改</Button>
           )}
@@ -241,7 +291,7 @@ export function ProcessDetailPage() {
           type="info"
           showIcon
           icon={<TeamOutlined />}
-          message={isSuperAdmin ? `超级管理员正在处理“${currentReviewer?.shortGroup ?? "审批"}”待办` : `这是 ${instance.designatedReviewer} 的默认任务，你可以作为同组成员直接代办`}
+          message={isSuperAdmin ? `超级管理员正在处理“${currentReviewer?.shortGroup ?? "审批"}”待办` : `这是 ${findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name ?? "其他成员"} 的默认任务，你可以作为同组成员直接代办`}
           description={isSuperAdmin ? "这是系统级处理权限，不会把超级管理员加入该节点的流程权限组或人员名单；提交后仍记录实际处理人。" : "无需转交或填写代办原因；提交后系统会记录实际处理人为你，并通知默认责任人。"}
         />
       )}
@@ -275,12 +325,12 @@ export function ProcessDetailPage() {
         />
       )}
 
-      <Card className="progress-card" title="流程进度" extra={<Tag bordered={false}>任一分支驳回，本轮立即结束</Tag>}>
+      <Card className="progress-card" title="流程进度" extra={<Tag bordered={false}>按实例锁定版本的拓扑推进</Tag>}>
         <div className="parallel-flow">
           <div className="flow-endpoint done"><CheckOutlined /><span>开始<small>{instance.createdAt.slice(5, 16)}</small></span></div>
           <div className="flow-connector"><span /></div>
           <div className="parallel-branch-wrap">
-            <div className="parallel-label"><ApartmentBadge />三方并行审核</div>
+            <div className="parallel-label"><ApartmentBadge />审批节点</div>
             <div className="parallel-branches">
               {instance.reviewers.map((reviewer) => (
                 <div className={`branch-card status-${reviewer.status}`} key={reviewer.key}>
@@ -290,7 +340,7 @@ export function ProcessDetailPage() {
                   </div>
                   <strong>{reviewer.shortGroup}</strong>
                   <Tooltip title={reviewer.group}><small>{reviewer.group}</small></Tooltip>
-                  <div className="branch-person"><UserOutlined /> 默认：{instance.designatedReviewer ?? reviewer.name}</div>
+                  <div className="branch-person"><UserOutlined /> 默认：{findIdentityUser(tasks.find((task) => task.instanceId === instance.id && task.nodeId === reviewer.key && task.round === instance.round)?.defaultAssigneeId ?? "")?.name ?? "组内共享"}</div>
                   {reviewer.actionAt && <div className="branch-action">实际：{reviewer.name}{reviewer.substitute && <Tag color="purple">代办</Tag>}</div>}
                 </div>
               ))}
@@ -304,52 +354,12 @@ export function ProcessDetailPage() {
       <div className="detail-workspace">
         <Card
           className="pdf-card"
-          title={<Space><FilePdfOutlined className="pdf-red" />{draftPdfName}<Tag>{instance.pdfSize}</Tag></Space>}
-          extra={
-            <Space>
-              {canEditPublishedContent && (
-                <Upload
-                  showUploadList={false}
-                  beforeUpload={(file) => {
-                    setDraftPdfName(file.name);
-                    message.success(canRepublish ? "附件已暂存，将在重新发布时一并提交" : "附件已暂存，请保存修改");
-                    return false;
-                  }}
-                >
-                  <Button type="text" icon={<UploadOutlined />}>更换附件（可选）</Button>
-                </Upload>
-              )}
-              <Button type="text" icon={<DownloadOutlined />} onClick={() => message.info("原型：已触发受控下载")}>下载</Button>
-              <Tag color="success" icon={<EyeOutlined />}>页面内展示</Tag>
-            </Space>
-          }
+          title={<Space><FilePdfOutlined className="pdf-red" />流程附件<Tag>{instance.attachmentNames?.length ?? (instance.pdfName === "无附件" ? 0 : 1)} 个</Tag></Space>}
+          extra={canEditPublishedContent ? <Upload showUploadList={false} beforeUpload={(file) => { setDraftPdfName(file.name); message.success(canRepublish ? "附件已暂存，将在重新发布时一并提交" : "附件已暂存，请保存修改"); return false; }}><Button type="text" icon={<UploadOutlined />}>更换附件（可选）</Button></Upload> : null}
         >
-          <div className="pdf-viewer-toolbar">
-            <span>第 1 / 12 页</span>
-            <Space><Button size="small">−</Button><span>92%</span><Button size="small">＋</Button></Space>
-          </div>
-          <div className="pdf-stage">
-            <article className="pdf-sheet">
-              <header>
-                <div className="pdf-company">MOONS'</div>
-                <div><strong>作业指导书</strong><small>WORK INSTRUCTION</small></div>
-                <div><small>文件编号</small><strong>{instance.documentCode}</strong></div>
-              </header>
-              <h1>{instance.title}</h1>
-              <div className="pdf-meta-row"><span>版本：{instance.revision}</span><span>生效日期：待审批</span><span>页码：1 / 12</span></div>
-              <h2>1. 目的</h2>
-              <p>规范 MTR-320 步进电机装配与复检过程，确保关键尺寸及扭矩参数满足设计与质量要求。</p>
-              <h2>2. 适用范围</h2>
-              <p>适用于工业控制产品线 MTR-320 系列步进电机的装配、过程检验与记录。</p>
-              <h2>3. 操作要求</h2>
-              <div className="pdf-table">
-                <div><b>序号</b><b>工序</b><b>控制要求</b></div>
-                <div><span>01</span><span>定子装配</span><span>定位面清洁，无异物残留</span></div>
-                <div><span>02</span><span>螺钉锁附</span><span>扭矩 1.8 ± 0.1 N·m，全数复检</span></div>
-                <div><span>03</span><span>尺寸确认</span><span>关键尺寸记录并由复检人员签名</span></div>
-              </div>
-              <div className="pdf-stamp">受控文件 · 审核中</div>
-            </article>
+          <Alert type="info" showIcon message="附件内容不属于动态表单数据" description="原型仅展示受控附件名称；下载和 PDF 页面预览在正式后端接入文件服务后按同一实例权限校验。" />
+          <div className="detail-attachment-list">
+            {(instance.attachmentNames?.length ? instance.attachmentNames : instance.pdfName === "无附件" ? [] : [draftPdfName]).map((name) => <div key={name}><FilePdfOutlined /><strong>{name}</strong><Button type="link" icon={<DownloadOutlined />} onClick={() => message.info("原型：已触发受控下载")}>下载</Button></div>)}
           </div>
         </Card>
 
@@ -365,44 +375,7 @@ export function ProcessDetailPage() {
                 ? <Tag color="gold" icon={<EditOutlined />}>2 项本节点可修改</Tag>
                 : <Tag icon={<LockOutlined />}>只读</Tag>}
           >
-            <div className="form-field-grid">
-              <label className={canEditPublishedContent ? "field-block editable-field" : "field-block"}><span>文件标题</span><Input value={draftTitle} readOnly={!canEditPublishedContent} onChange={(event) => setDraftTitle(event.target.value)} /></label>
-              <label className={canEditPublishedContent ? "field-block editable-field" : "field-block"}><span>文件编号</span><Input value={draftDocumentCode} readOnly={!canEditPublishedContent} onChange={(event) => setDraftDocumentCode(event.target.value)} /></label>
-              <label className={canEditPublishedContent ? "field-block editable-field" : "field-block"}><span>文件类型</span><Select value={draftDocumentType} disabled={!canEditPublishedContent} onChange={setDraftDocumentType} options={["作业指导书", "检验规范", "工程变更通知", "测试报告"].map((value) => ({ value }))} /></label>
-              <label className={canReview || canEditPublishedContent ? "field-block editable-field" : "field-block"}>
-                <span>文件密级 {canReview && <em>本节点可修改</em>}</span>
-                <Select
-                  value={documentLevel}
-                  disabled={!canReview && !canEditPublishedContent}
-                  onChange={setDocumentLevel}
-                  options={["受控文件", "内部文件", "公开文件"].map((value) => ({ value }))}
-                />
-              </label>
-              <label className="field-block field-wide"><span>产品线</span><Input value="工业控制 / 驱动器 / MTR-320" readOnly /></label>
-              <label className={canEditPublishedContent ? "field-block field-wide editable-field" : "field-block field-wide"}><span>变更说明</span><Input.TextArea value={draftDescription} readOnly={!canEditPublishedContent} onChange={(event) => setDraftDescription(event.target.value)} autoSize={{ minRows: 2, maxRows: 4 }} /></label>
-            </div>
-
-            <Divider titlePlacement="start">变更明细</Divider>
-            <Table
-              size="small"
-              rowKey="key"
-              dataSource={tableData}
-              pagination={false}
-              scroll={{ x: 680 }}
-              columns={[
-                { title: "条款", dataIndex: "clause", width: 70 },
-                { title: "变更内容", dataIndex: "change", width: 230 },
-                { title: "变更类型", dataIndex: "type", width: 110 },
-                { title: "涉及部门", dataIndex: "department", width: 120 },
-                {
-                  title: <span>质量风险 {canReview && <Tag color="gold">可改</Tag>}</span>,
-                  dataIndex: "risk",
-                  width: 115,
-                  render: (value: string) => canReview ? <Select size="small" defaultValue={value} options={["低", "中", "高"].map((item) => ({ value: item }))} /> : value,
-                },
-              ]}
-            />
-            <Typography.Text className="table-rule-note" type="secondary">审核人仅可修改已授权单元格，不能新增、删除或复制整行。</Typography.Text>
+            {configuredFields.length ? <div className="form-field-grid">{configuredFields.map(renderDynamicField)}</div> : <Descriptions bordered size="small" column={1} items={[{ key: "title", label: "标题", children: instance.title }, { key: "description", label: "说明", children: instance.description }]} />}
           </Card>
 
           {canReview && (
@@ -461,7 +434,7 @@ export function ProcessDetailPage() {
           <p>{pendingAction === "pass" ? "审核结果和表单修改将一次性提交。" : "其他未完成的并行任务会立即取消，并通知文控重新处理。"}</p>
           {changedLevel && <div><span>文件密级</span><del>{instance.documentLevel}</del><b>→</b><ins>{documentLevel}</ins></div>}
           <div><span>审核意见</span><strong>{comment.trim() || "未填写（通过时允许）"}</strong></div>
-          {isSubstitute && <Tag color="purple">将记录为代办：默认 {instance.designatedReviewer} / 实际 {persona.name}</Tag>}
+          {isSubstitute && <Tag color="purple">将记录为代办：默认 {findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name} / 实际 {persona?.name}</Tag>}
         </div>
       </Modal>
 

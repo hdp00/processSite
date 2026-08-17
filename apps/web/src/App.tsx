@@ -6,7 +6,6 @@ import { Navigate, Route, RouterProvider, createBrowserRouter, createRoutesFromE
 import { AppShell } from "./components/AppShell";
 import { AppBackButton } from "./components/AppBackButton";
 import { FlowDesignerPage } from "./pages/FlowDesignerPage";
-import { FreeFlowCreatePage } from "./pages/FreeFlowCreatePage";
 import { FreeFlowDetailPage } from "./pages/FreeFlowDetailPage";
 import FormDesignerPage from "./pages/FormDesignerPage";
 import {
@@ -29,9 +28,10 @@ import { ProcessDetailPage } from "./pages/ProcessDetailPage";
 import { ProcessListPage } from "./pages/ProcessListPage";
 import { ProcessPrintPage } from "./pages/ProcessPrintPage";
 import { TaskCenterPage } from "./pages/TaskCenterPage";
-import { canPersonaAccessLaunch, canPersonaLaunchDefinition } from "./state/rolePermissions";
+import { canPersonaAccessLaunch, canPersonaLaunchDefinition, hasPersonaPermission } from "./state/rolePermissions";
 import { getEffectiveVersion, useProcessDefinitionStore } from "./state/useProcessDefinitionStore";
-import { isSuperAdminPersona, usePrototypeStore } from "./state/usePrototypeStore";
+import { usePrototypeStore } from "./state/usePrototypeStore";
+import { canUserViewInstance } from "./state/workflowAccess";
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const authenticated = usePrototypeStore((state) => state.authenticated);
@@ -43,7 +43,7 @@ function LoginRoute() {
   return authenticated ? <Navigate to="/tasks" replace /> : <LoginPage />;
 }
 
-function PersonaGate({ scope, definitionId, children }: { scope: "initiator" | "admin"; definitionId?: string; children: ReactNode }) {
+function PersonaGate({ scope, definitionId, permission, children }: { scope: "initiator" | "permission"; definitionId?: string; permission?: string; children: ReactNode }) {
   const personaId = usePrototypeStore((state) => state.personaId);
   const params = useParams<{ definitionId?: string }>();
   const targetDefinitionId = definitionId ?? params.definitionId;
@@ -51,18 +51,14 @@ function PersonaGate({ scope, definitionId, children }: { scope: "initiator" | "
     state.definitions.find((item) => item.id === targetDefinitionId),
   );
   const targetEffectiveVersion = getEffectiveVersion(targetDefinition);
-  const allowed = scope === "admin"
-    ? personaId === "admin" || isSuperAdminPersona(personaId)
+  const allowed = scope === "permission"
+    ? Boolean(permission && hasPersonaPermission(personaId, permission))
     : targetDefinitionId
       ? Boolean(
         targetDefinition
         && !targetDefinition.disabled
         && targetEffectiveVersion
-        && (
-          isSuperAdminPersona(personaId)
-          || canPersonaLaunchDefinition(personaId, targetDefinitionId)
-          || (targetEffectiveVersion.basic.starterGroups.length && canPersonaAccessLaunch(personaId))
-        ),
+        && canPersonaLaunchDefinition(personaId, targetDefinitionId),
       )
       : canPersonaAccessLaunch(personaId);
 
@@ -71,7 +67,7 @@ function PersonaGate({ scope, definitionId, children }: { scope: "initiator" | "
     <Result
       status="403"
       title="当前身份无权访问"
-      subTitle={scope === "admin" ? "请切换为系统管理员或超级管理员身份后查看此管理页面。" : "发起流程需要同时拥有角色中的流程发起权限，并属于该流程的发起流程权限组。"}
+      subTitle={scope === "permission" ? "当前角色未获得此页面的查看权限。" : "发起流程需要同时拥有角色中的流程发起权限，并属于该流程的发起流程权限组。"}
       extra={<AppBackButton onClick={() => window.history.back()} />}
     />
   );
@@ -79,16 +75,29 @@ function PersonaGate({ scope, definitionId, children }: { scope: "initiator" | "
 
 function ProcessDetailRoute() {
   const { id } = useParams();
+  const personaId = usePrototypeStore((state) => state.personaId);
   const instance = usePrototypeStore((state) => state.instances.find((item) => item.id === id));
+  if (!instance || !canUserViewInstance(personaId, instance)) {
+    return <Result status="403" title="无权查看此流程" subTitle="流程数据范围会在每次打开详情时重新校验。" extra={<AppBackButton onClick={() => window.history.back()} />} />;
+  }
   return instance?.workflowType === "free"
     ? <FreeFlowDetailPage instanceOverride={instance} />
     : <ProcessDetailPage />;
 }
 
+function ProcessPrintRoute() {
+  const { id } = useParams();
+  const personaId = usePrototypeStore((state) => state.personaId);
+  const instance = usePrototypeStore((state) => state.instances.find((item) => item.id === id));
+  return instance && hasPersonaPermission(personaId, "work-list:打印") && canUserViewInstance(personaId, instance)
+    ? <ProcessPrintPage />
+    : <Result status="403" title="无权打印此流程" />;
+}
+
 const router = createBrowserRouter(createRoutesFromElements(
   <>
     <Route path="/login" element={<LoginRoute />} />
-    <Route path="/processes/:id/print" element={<ProtectedRoute><ProcessPrintPage /></ProtectedRoute>} />
+    <Route path="/processes/:id/print" element={<ProtectedRoute><ProcessPrintRoute /></ProtectedRoute>} />
     <Route
       element={
         <ProtectedRoute>
@@ -99,23 +108,23 @@ const router = createBrowserRouter(createRoutesFromElements(
       <Route index element={<Navigate to="/tasks" replace />} />
       <Route path="/launch" element={<PersonaGate scope="initiator"><ProcessLaunchCenterPage /></PersonaGate>} />
       <Route path="/launch/:definitionId" element={<PersonaGate scope="initiator"><ProcessStartPage /></PersonaGate>} />
-      <Route path="/tasks" element={<TaskCenterPage />} />
-      <Route path="/processes" element={<ProcessListPage />} />
+      <Route path="/tasks" element={<PersonaGate scope="permission" permission="work-task:查看"><TaskCenterPage /></PersonaGate>} />
+      <Route path="/processes" element={<PersonaGate scope="permission" permission="work-list:查看"><ProcessListPage /></PersonaGate>} />
       <Route path="/processes/:id" element={<ProcessDetailRoute />} />
-      <Route path="/free-flow/new" element={<PersonaGate scope="initiator" definitionId="free-collaboration"><FreeFlowCreatePage /></PersonaGate>} />
-      <Route path="/admin/processes" element={<PersonaGate scope="admin"><ProcessManagementPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/basic" element={<PersonaGate scope="admin"><ProcessBasicConfigPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/form" element={<PersonaGate scope="admin"><FormDesignerPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/flow" element={<PersonaGate scope="admin"><FlowDesignerPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/publish" element={<PersonaGate scope="admin"><ProcessPublishPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/versions" element={<PersonaGate scope="admin"><ProcessVersionsPage /></PersonaGate>} />
-      <Route path="/admin/users" element={<PersonaGate scope="admin"><UserManagementPage /></PersonaGate>} />
-      <Route path="/admin/departments" element={<PersonaGate scope="admin"><DepartmentManagementPage /></PersonaGate>} />
-      <Route path="/admin/roles" element={<PersonaGate scope="admin"><RoleManagementPage /></PersonaGate>} />
-      <Route path="/admin/permissions" element={<PersonaGate scope="admin"><PermissionManagementPage /></PersonaGate>} />
-      <Route path="/admin/workflow-groups" element={<PersonaGate scope="admin"><WorkflowPermissionGroupsPage /></PersonaGate>} />
-      <Route path="/ops/instances" element={<PersonaGate scope="admin"><InstanceMonitorPage /></PersonaGate>} />
-      <Route path="/ops/audit-logs" element={<PersonaGate scope="admin"><AuditLogPage /></PersonaGate>} />
+      <Route path="/free-flow/new" element={<Navigate to="/launch/free-collaboration" replace />} />
+      <Route path="/admin/processes" element={<PersonaGate scope="permission" permission="config-definition:查看"><ProcessManagementPage /></PersonaGate>} />
+      <Route path="/admin/processes/:definitionId/basic" element={<PersonaGate scope="permission" permission="config-definition:编辑"><ProcessBasicConfigPage /></PersonaGate>} />
+      <Route path="/admin/processes/:definitionId/form" element={<PersonaGate scope="permission" permission="config-form:编辑"><FormDesignerPage /></PersonaGate>} />
+      <Route path="/admin/processes/:definitionId/flow" element={<PersonaGate scope="permission" permission="config-definition:编辑"><FlowDesignerPage /></PersonaGate>} />
+      <Route path="/admin/processes/:definitionId/publish" element={<PersonaGate scope="permission" permission="config-definition:发布"><ProcessPublishPage /></PersonaGate>} />
+      <Route path="/admin/processes/:definitionId/versions" element={<PersonaGate scope="permission" permission="config-definition:查看"><ProcessVersionsPage /></PersonaGate>} />
+      <Route path="/admin/users" element={<PersonaGate scope="permission" permission="org-user:查看"><UserManagementPage /></PersonaGate>} />
+      <Route path="/admin/departments" element={<PersonaGate scope="permission" permission="org-department:查看"><DepartmentManagementPage /></PersonaGate>} />
+      <Route path="/admin/roles" element={<PersonaGate scope="permission" permission="org-role:查看"><RoleManagementPage /></PersonaGate>} />
+      <Route path="/admin/permissions" element={<PersonaGate scope="permission" permission="org-role:授权"><PermissionManagementPage /></PersonaGate>} />
+      <Route path="/admin/workflow-groups" element={<PersonaGate scope="permission" permission="org-group:查看"><WorkflowPermissionGroupsPage /></PersonaGate>} />
+      <Route path="/ops/instances" element={<PersonaGate scope="permission" permission="system-monitor:查看"><InstanceMonitorPage /></PersonaGate>} />
+      <Route path="/ops/audit-logs" element={<PersonaGate scope="permission" permission="system-audit:查看"><AuditLogPage /></PersonaGate>} />
       <Route path="/designer/form" element={<Navigate to="/admin/processes" replace />} />
       <Route path="/designer/flow" element={<Navigate to="/admin/processes" replace />} />
     </Route>

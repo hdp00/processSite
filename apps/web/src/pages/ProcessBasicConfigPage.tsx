@@ -27,7 +27,7 @@ import { AppBackButton } from "../components/AppBackButton";
 import { ProcessWizardNextButton } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
-import { workflowPermissionGroupOptions } from "../data/workflowPermissionGroups";
+import { useIdentityStore } from "../state/useIdentityStore";
 import {
   definitionStatus,
   getEffectiveVersion,
@@ -69,6 +69,13 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     ?? searchParams.get("definitionId")
     ?? "";
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === resolvedId));
+  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
+  const starterGroupOptions = workflowGroups
+    .filter((group) => group.status === "启用" && group.purposes.includes("发起"))
+    .map((group) => ({ value: group.id, label: group.name }));
+  const assigneeGroupOptions = workflowGroups
+    .filter((group) => group.status === "启用" && group.purposes.includes("自由流程受理"))
+    .map((group) => ({ value: group.id, label: group.name }));
   const ensureDraft = useProcessDefinitionStore((state) => state.ensureDraft);
   const updateDraftBasic = useProcessDefinitionStore((state) => state.updateDraftBasic);
   const effectiveVersion = getEffectiveVersion(definition);
@@ -248,7 +255,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                       optionFilterProp="label"
                       maxTagCount="responsive"
                       placeholder="搜索并选择一个或多个流程权限组"
-                      options={workflowPermissionGroupOptions}
+                      options={starterGroupOptions}
                     />
                   </Form.Item>
                 </Col>
@@ -266,7 +273,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                         optionFilterProp="label"
                         maxTagCount="responsive"
                         placeholder="搜索并选择一个或多个流程权限组"
-                        options={workflowPermissionGroupOptions}
+                        options={assigneeGroupOptions}
                       />
                     </Form.Item>
                   </Col>

@@ -34,10 +34,11 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { getProcessDefinition } from "../data/processDefinitions";
-import { ROLE_PERMISSIONS_CHANGED_EVENT, canPersonaAccessLaunch } from "../state/rolePermissions";
+import { ROLE_PERMISSIONS_CHANGED_EVENT, canPersonaAccessLaunch, hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { isSuperAdminPersona, personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
+import { personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
+import { useIdentityStore } from "../state/useIdentityStore";
+import { canUserViewDefinition } from "../state/workflowAccess";
 
 const { Header, Sider, Content } = Layout;
 
@@ -69,19 +70,22 @@ export function AppShell() {
     resetDemo,
   } = usePrototypeStore();
 
-  const persona = personas.find((item) => item.id === personaId) ?? personas[2];
+  const identityUser = useIdentityStore((state) => state.users.find((user) => user.id === personaId));
+  const resetIdentity = useIdentityStore((state) => state.resetIdentity);
+  const persona = identityUser
+    ? { id: identityUser.id, name: identityUser.name, role: identityUser.roles.join("、") || identityUser.jobTitle }
+    : personas.find((item) => item.id === personaId) ?? personas[2];
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
   const resetProcessDefinitions = useProcessDefinitionStore((state) => state.resetDefinitions);
   const unreadCount = notices.filter((item) => !item.read).length;
-  const isAdmin = personaId === "admin" || isSuperAdminPersona(personaId);
   const canInitiate = canPersonaAccessLaunch(personaId);
+  const can = (permission: string) => hasPersonaPermission(personaId, permission);
   useEffect(() => {
     const refreshPermissions = () => setPermissionRevision((value) => value + 1);
     window.addEventListener(ROLE_PERMISSIONS_CHANGED_EVENT, refreshPermissions);
     return () => window.removeEventListener(ROLE_PERMISSIONS_CHANGED_EVENT, refreshPermissions);
   }, []);
   const selectedDefinitionId = new URLSearchParams(location.search).get("definitionId");
-  const processDefinition = getProcessDefinition(selectedDefinitionId);
   const managedProcessDefinition = managedDefinitions.find((item) => item.id === selectedDefinitionId);
   const selectedProcessDefinitionId = selectedDefinitionId
     ?? managedDefinitions.find((definition) => Boolean(definition.effectiveVersionId || definition.draft?.withdrawnVersionId))?.id
@@ -109,7 +113,7 @@ export function AppShell() {
       : location.pathname.startsWith("/processes/")
     ? { title: "流程详情", eyebrow: "流程清单" }
     : location.pathname === "/processes"
-      ? { title: managedProcessDefinition?.name ?? processDefinition?.label ?? "流程清单", eyebrow: "流程清单" }
+      ? { title: managedProcessDefinition?.name ?? "流程清单", eyebrow: "流程清单" }
       : pageMeta[location.pathname] ?? pageMeta["/tasks"];
 
   const menuItems: MenuProps["items"] = useMemo(
@@ -119,48 +123,49 @@ export function AppShell() {
         label: "员工工作区",
         children: [
           ...(canInitiate ? [{ key: "/launch", icon: <RocketOutlined />, label: "流程发起" }] : []),
-          { key: "/tasks", icon: <CheckSquareOutlined />, label: "任务中心" },
-          {
+          ...(can("work-task:查看") ? [{ key: "/tasks", icon: <CheckSquareOutlined />, label: "任务中心" }] : []),
+          ...(can("work-list:查看") ? [{
             key: "/processes-menu",
             icon: <FileSearchOutlined />,
             label: "流程清单",
             children: managedDefinitions.filter((definition) => Boolean(
-              definition.effectiveVersionId || definition.draft?.withdrawnVersionId,
+              (definition.effectiveVersionId || definition.draft?.withdrawnVersionId)
+              && canUserViewDefinition(personaId, definition.id),
             )).map((definition) => ({
               key: `/processes?definitionId=${definition.id}`,
               label: definition.name,
             })),
-          },
+          }] : []),
         ],
       },
-      ...(isAdmin ? [{
+      ...(can("config-definition:查看") ? [{
         type: "group",
         label: "流程配置",
         children: [
           { key: "/admin/processes", icon: <ControlOutlined />, label: "流程管理" },
         ],
-      },
-      {
+      }] : []),
+      ...(["org-user:查看", "org-department:查看", "org-role:查看", "org-group:查看"].some(can) ? [{
         type: "group",
         label: "用户与权限",
         children: [
-          { key: "/admin/users", icon: <UserOutlined />, label: "用户管理" },
-          { key: "/admin/departments", icon: <DeploymentUnitOutlined />, label: "部门管理" },
-          { key: "/admin/roles", icon: <SafetyCertificateOutlined />, label: "角色管理" },
-          { key: "/admin/permissions", icon: <KeyOutlined />, label: "权限管理" },
-          { key: "/admin/workflow-groups", icon: <TeamOutlined />, label: "流程权限组" },
+          ...(can("org-user:查看") ? [{ key: "/admin/users", icon: <UserOutlined />, label: "用户管理" }] : []),
+          ...(can("org-department:查看") ? [{ key: "/admin/departments", icon: <DeploymentUnitOutlined />, label: "部门管理" }] : []),
+          ...(can("org-role:查看") ? [{ key: "/admin/roles", icon: <SafetyCertificateOutlined />, label: "角色管理" }] : []),
+          ...(can("org-role:授权") ? [{ key: "/admin/permissions", icon: <KeyOutlined />, label: "权限管理" }] : []),
+          ...(can("org-group:查看") ? [{ key: "/admin/workflow-groups", icon: <TeamOutlined />, label: "流程权限组" }] : []),
         ],
-      },
-      {
+      }] : []),
+      ...(["system-monitor:查看", "system-audit:查看"].some(can) ? [{
         type: "group",
         label: "系统运维",
         children: [
-          { key: "/ops/instances", icon: <MonitorOutlined />, label: "实例监控" },
-          { key: "/ops/audit-logs", icon: <AuditOutlined />, label: "审计日志" },
+          ...(can("system-monitor:查看") ? [{ key: "/ops/instances", icon: <MonitorOutlined />, label: "实例监控" }] : []),
+          ...(can("system-audit:查看") ? [{ key: "/ops/audit-logs", icon: <AuditOutlined />, label: "审计日志" }] : []),
         ],
       }] : []),
     ] as MenuProps["items"]),
-    [canInitiate, isAdmin, managedDefinitions, permissionRevision],
+    [canInitiate, managedDefinitions, permissionRevision, personaId],
   );
 
   const userMenu: MenuProps["items"] = [
@@ -171,6 +176,7 @@ export function AppShell() {
       onClick: () => {
         resetDemo();
         resetProcessDefinitions();
+        resetIdentity();
       },
     },
     { type: "divider" },

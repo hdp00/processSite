@@ -73,7 +73,7 @@ import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { StatusPill } from "../components/StatusPill";
 import {
-  loadSystemListFields,
+  cloneDefaultSystemListFields,
   saveSystemListFields,
   type SystemListFieldConfig,
 } from "../data/listFieldConfig";
@@ -659,19 +659,28 @@ const SortableField = ({ field, selected, onSelect, onDelete }: SortableFieldPro
   );
 };
 
-const FormDesignerPage = () => {
+const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
   const navigate = useNavigate();
-  const { definitionId = "" } = useParams<{ definitionId: string }>();
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const markFormConfigured = useProcessDefinitionStore((state) => state.markFormConfigured);
+  const updateDraftFormSnapshot = useProcessDefinitionStore((state) => state.updateDraftFormSnapshot);
   const draftKey = `${FORM_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`;
   const defaultFormName = `${definition?.name ?? "流程"}发起表单`;
   const workflowName = definition?.draft?.basic.name ?? definition?.name ?? "流程";
   const [messageApi, messageHolder] = message.useMessage();
-  const fallbackFields = useMemo(() => definitionId === "pdf-review" ? cloneInitialFields() : [], [definitionId]);
+  const fallbackFields = useMemo(
+    () => definition?.draft?.snapshot.form.fields.length
+      ? structuredClone(definition.draft.snapshot.form.fields) as DesignerField[]
+      : [],
+    [definition?.draft?.id, definition?.draft?.snapshot.form.fields],
+  );
   const initialDraft = useMemo(
-    () => loadDraft(draftKey, defaultFormName, fallbackFields),
-    [defaultFormName, draftKey, fallbackFields],
+    () => ({
+      formName: definition?.draft?.snapshot.form.formName ?? defaultFormName,
+      fields: fallbackFields,
+      savedAt: definition?.draft?.snapshot.form.savedAt,
+    }),
+    [defaultFormName, definition?.draft?.snapshot.form.formName, definition?.draft?.snapshot.form.savedAt, fallbackFields],
   );
   const [formName, setFormName] = useState(initialDraft.formName);
   const [fields, setFields] = useState<DesignerField[]>(initialDraft.fields);
@@ -679,7 +688,7 @@ const FormDesignerPage = () => {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [propertyMode, setPropertyMode] = useState<"field" | "system">("field");
   const [systemListFields, setSystemListFields] = useState<SystemListFieldConfig[]>(() =>
-    loadSystemListFields(definitionId),
+    structuredClone(definition?.draft?.snapshot.systemFields ?? cloneDefaultSystemListFields()),
   );
   const [saveState, setSaveState] = useState<"saving" | "saved">("saved");
   const [savedAt, setSavedAt] = useState(initialDraft.savedAt ?? "刚刚");
@@ -695,10 +704,11 @@ const FormDesignerPage = () => {
     setSaveState("saving");
     const timer = window.setTimeout(() => {
       window.localStorage.setItem(draftKey, JSON.stringify({ formName, fields, savedAt } satisfies SavedDraft));
+      updateDraftFormSnapshot(definitionId, { formName, fields, savedAt }, systemListFields);
       setSaveState("saved");
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [draftKey, fields, formName, savedAt]);
+  }, [definitionId, draftKey, fields, formName, savedAt, systemListFields, updateDraftFormSnapshot]);
 
   useEffect(() => {
     saveSystemListFields(definitionId, systemListFields);
@@ -773,6 +783,7 @@ const FormDesignerPage = () => {
     const time = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
     setSavedAt(time);
     window.localStorage.setItem(draftKey, JSON.stringify({ formName, fields, savedAt: time } satisfies SavedDraft));
+    updateDraftFormSnapshot(definitionId, { formName, fields, savedAt: time }, systemListFields);
     markFormConfigured(definitionId, fields.length);
     setSaveState("saved");
     messageApi.success("草稿已保存，本机刷新后仍可继续编辑");
@@ -1321,6 +1332,12 @@ const FormDesignerPage = () => {
       </Modal>
     </div>
   );
+};
+
+const FormDesignerPage = () => {
+  const { definitionId = "" } = useParams<{ definitionId: string }>();
+  const draftId = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId)?.draft?.id);
+  return <FormDesignerWorkspace key={`${definitionId}-${draftId ?? "no-draft"}`} definitionId={definitionId} />;
 };
 
 export default FormDesignerPage;

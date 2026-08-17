@@ -22,21 +22,25 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatusPill } from "../components/StatusPill";
-import { processDefinitions, type TaskListFieldDefinition } from "../data/processDefinitions";
 import {
   cloneDefaultSystemListFields,
   isSystemFieldVisible,
-  loadSystemListFields,
 } from "../data/listFieldConfig";
 import type { ProcessInstance } from "../data/types";
-import { isSuperAdminPersona, personas, usePrototypeStore } from "../state/usePrototypeStore";
+import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
+import { useIdentityStore } from "../state/useIdentityStore";
+import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { canUserProcessTask } from "../state/workflowAccess";
+import type { StoredDesignerField } from "../utils/designerStorage";
 
 const ALL_FLOWS = "__all__";
 const TASK_FLOW_STORAGE_PREFIX = "flowpilot-task-center-flow-v1";
 
 export function TaskCenterPage() {
   const navigate = useNavigate();
-  const { instances, personaId } = usePrototypeStore();
+  const { instances, tasks, personaId } = usePrototypeStore();
+  const definitions = useProcessDefinitionStore((state) => state.definitions);
+  const identityUser = useIdentityStore((state) => state.users.find((user) => user.id === personaId));
   const [tab, setTab] = useState<"mine" | "substitute">("mine");
   const [keyword, setKeyword] = useState("");
   const [flowKeyword, setFlowKeyword] = useState("");
@@ -44,7 +48,6 @@ export function TaskCenterPage() {
     window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
   );
   const [expandedInfoIds, setExpandedInfoIds] = useState<string[]>([]);
-  const persona = personas.find((item) => item.id === personaId) ?? personas[2];
   const isSuperAdmin = isSuperAdminPersona(personaId);
 
   useEffect(() => {
@@ -54,42 +57,39 @@ export function TaskCenterPage() {
     setFlowKeyword("");
   }, [personaId]);
 
-  const actionable = useMemo(
-    () =>
-      instances.filter((item) => {
-        if (item.workflowType === "free") {
-          return item.status === "进行中" && (isSuperAdmin || item.currentAssignee === persona.name);
-        }
-        return Boolean(
-          item.status === "审核中" &&
-          (isSuperAdmin
-            ? item.reviewers.some((reviewer) => reviewer.status === "待审核")
-            : persona.reviewerKey && item.reviewers.some(
-                (reviewer) => reviewer.key === persona.reviewerKey && reviewer.status === "待审核",
-              )),
-        );
-      }),
-    [instances, isSuperAdmin, persona.name, persona.reviewerKey],
-  );
+  const actionableTaskByInstance = useMemo(() => new Map(
+    tasks
+      .filter((task) => task.status === "待处理" && canUserProcessTask(personaId, task))
+      .map((task) => [task.instanceId, task]),
+  ), [personaId, tasks]);
+  const actionable = useMemo(() => instances.filter((instance) =>
+    instance.workflowType === "free"
+      ? instance.status === "进行中" && Boolean(isSuperAdmin || identityUser?.name === instance.currentAssignee)
+      : instance.status === "审核中" && actionableTaskByInstance.has(instance.id),
+  ), [actionableTaskByInstance, identityUser?.name, instances, isSuperAdmin]);
 
-  const myTasks = actionable.filter(
-    (item) => isSuperAdmin || item.workflowType === "free" || !item.designatedReviewer || item.designatedReviewer === persona.name,
-  );
-  const substituteTasks = actionable.filter(
-    (item) => !isSuperAdmin && item.workflowType !== "free" && Boolean(item.designatedReviewer && item.designatedReviewer !== persona.name),
-  );
+  const myTasks = actionable.filter((instance) => {
+    if (isSuperAdmin || instance.workflowType === "free") return true;
+    const task = actionableTaskByInstance.get(instance.id);
+    return !task?.defaultAssigneeId || task.defaultAssigneeId === personaId;
+  });
+  const substituteTasks = actionable.filter((instance) => {
+    if (isSuperAdmin || instance.workflowType === "free") return false;
+    const task = actionableTaskByInstance.get(instance.id);
+    return Boolean(task?.defaultAssigneeId && task.defaultAssigneeId !== personaId);
+  });
 
   const source = tab === "mine" ? myTasks : substituteTasks;
   const flowCategories = useMemo(() => {
     const counts = new Map<string, number>();
-    source.forEach((item) => counts.set(item.template, (counts.get(item.template) ?? 0) + 1));
-    return Array.from(counts, ([template, count]) => ({
-      template,
+    source.forEach((item) => item.definitionId && counts.set(item.definitionId, (counts.get(item.definitionId) ?? 0) + 1));
+    return Array.from(counts, ([definitionId, count]) => ({
+      template: definitionId,
       count,
-      label: processDefinitions.find((definition) => definition.template === template)?.label ?? template,
-      workflowType: source.find((item) => item.template === template)?.workflowType,
+      label: definitions.find((definition) => definition.id === definitionId)?.name ?? definitionId,
+      workflowType: source.find((item) => item.definitionId === definitionId)?.workflowType,
     })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"));
-  }, [source]);
+  }, [definitions, source]);
   const activeTemplate = selectedTemplate !== ALL_FLOWS
     && flowCategories.some((category) => category.template === selectedTemplate)
       ? selectedTemplate
@@ -97,7 +97,8 @@ export function TaskCenterPage() {
   const visibleFlowCategories = flowCategories.filter((category) =>
     category.label.toLowerCase().includes(flowKeyword.trim().toLowerCase()),
   );
-  const selectedDefinition = processDefinitions.find((item) => item.template === activeTemplate);
+  const selectedDefinition = definitions.find((item) => item.id === activeTemplate);
+  const selectedVersion = getEffectiveVersion(selectedDefinition);
   const activeCategoryLabel = activeTemplate
     ? flowCategories.find((category) => category.template === activeTemplate)?.label ?? activeTemplate
     : "全部待办";
@@ -105,8 +106,8 @@ export function TaskCenterPage() {
     setSelectedTemplate(template);
     window.localStorage.setItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`, template);
   };
-  const systemListFields = selectedDefinition
-    ? loadSystemListFields(selectedDefinition.id)
+  const systemListFields = selectedVersion
+    ? selectedVersion.snapshot.systemFields
     : cloneDefaultSystemListFields();
   const showSystemField = (key: Parameters<typeof isSystemFieldVisible>[1]) =>
     isSystemFieldVisible(systemListFields, key, "task");
@@ -116,22 +117,26 @@ export function TaskCenterPage() {
     const matchesKeyword = `${item.code}${item.title}${item.initiator}`
       .toLowerCase()
       .includes(keyword.trim().toLowerCase());
-    const matchesTemplate = !activeTemplate || item.template === activeTemplate;
+    const matchesTemplate = !activeTemplate || item.definitionId === activeTemplate;
     return matchesKeyword && matchesTemplate;
   });
 
-  const formatTaskFieldValue = (record: ProcessInstance, field: TaskListFieldDefinition) => {
-    const value = record[field.key];
+  const formatTaskFieldValue = (record: ProcessInstance, field: StoredDesignerField) => {
+    const value = record.formValues?.[field.id];
     if (Array.isArray(value)) return value.join("、") || "—";
+    if (typeof value === "object" && value !== null) return "已填写";
     if (value === undefined || value === null || value === "") return "—";
     return String(value);
   };
 
-  const dynamicColumns: TableProps<ProcessInstance>["columns"] = selectedDefinition
-    ? selectedDefinition.taskFields.slice(0, 6).map((field) => ({
-        title: field.label,
-        key: String(field.key),
-        width: field.width,
+  const selectedTaskFields = selectedVersion?.snapshot.form.fields
+    .filter((field) => field.taskVisible)
+    .sort((left, right) => (left.taskOrder ?? 999) - (right.taskOrder ?? 999)) ?? [];
+  const dynamicColumns: TableProps<ProcessInstance>["columns"] = selectedVersion
+    ? selectedTaskFields.slice(0, 6).map((field) => ({
+        title: field.taskDisplayName || field.label,
+        key: field.id,
+        width: field.taskWidth ?? 160,
         ellipsis: true,
         render: (_, record) => (
           <span className="task-dynamic-value">{formatTaskFieldValue(record, field)}</span>
@@ -140,8 +145,11 @@ export function TaskCenterPage() {
     : [];
 
   const renderTaskInformation = (record: ProcessInstance) => {
-    const definition = processDefinitions.find((item) => item.template === record.template);
-    const fields = definition?.taskFields ?? [];
+    const definition = definitions.find((item) => item.id === record.definitionId);
+    const currentVersion = getEffectiveVersion(definition);
+    const fields = currentVersion?.snapshot.form.fields
+      .filter((field) => field.taskVisible)
+      .sort((left, right) => (left.taskOrder ?? 999) - (right.taskOrder ?? 999)) ?? [];
     const isFullyExpanded = expandedInfoIds.includes(record.id);
     const visibleFields = isFullyExpanded ? fields : fields.slice(0, 6);
     const remainingCount = fields.length - visibleFields.length;
@@ -153,9 +161,9 @@ export function TaskCenterPage() {
           {visibleFields.map((field) => {
             const value = formatTaskFieldValue(record, field);
             return (
-              <Tooltip title={value} key={String(field.key)}>
+              <Tooltip title={value} key={field.id}>
                 <div className="task-detail-field">
-                  <small>{field.label}</small>
+                  <small>{field.taskDisplayName || field.label}</small>
                   <strong>{value}</strong>
                 </div>
               </Tooltip>
@@ -237,16 +245,20 @@ export function TaskCenterPage() {
       title: "任务归属",
       dataIndex: "designatedReviewer",
       width: 135,
-      render: (value?: string) =>
+      render: (_value?: string, record?: ProcessInstance) => {
+        const task = record ? actionableTaskByInstance.get(record.id) : undefined;
+        const defaultAssignee = useIdentityStore.getState().users.find((user) => user.id === task?.defaultAssigneeId)?.name;
+        return (
         isSuperAdmin ? (
           <Tag icon={<AuditOutlined />} color="gold">超级管理员可处理</Tag>
         ) : tab === "mine" ? (
-          <Tag icon={<UserOutlined />} color={value ? "blue" : "default"}>{value ? "当前由我受理" : "指定给我"}</Tag>
+          <Tag icon={<UserOutlined />} color="blue">{record?.workflowType === "free" ? "当前由我受理" : task?.defaultAssigneeId ? "指定给我" : "组内共享"}</Tag>
         ) : (
-          <Tooltip title={`默认责任人：${value ?? "未指定"}。同组成员可直接代为审核。`}>
-            <Tag icon={<TeamOutlined />} color="purple">可代办 · {value}</Tag>
+          <Tooltip title={`默认责任人：${defaultAssignee ?? "未指定"}。同组成员可直接代为审核。`}>
+            <Tag icon={<TeamOutlined />} color="purple">可代办 · {defaultAssignee}</Tag>
           </Tooltip>
-        ),
+        ));
+      },
     },
     {
       title: "操作",

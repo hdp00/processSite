@@ -35,16 +35,15 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { RichTextEditor } from "../components/RichTextEditor";
-import { personas, usePrototypeStore } from "../state/usePrototypeStore";
+import { usePrototypeStore } from "../state/usePrototypeStore";
+import { effectiveGroupMemberIds, useIdentityStore } from "../state/useIdentityStore";
 import type { ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
 import {
-  readFlowDesignerSnapshot,
-  readFormDesignerSnapshot,
   rejectionHandlingLabel,
   type StoredDesignerField,
   type StoredDesignerTableColumn,
 } from "../utils/designerStorage";
-import { issueNextInstanceNumber, previewNextInstanceNumber } from "../utils/instanceNumber";
+import { previewNextInstanceNumber } from "../utils/instanceNumber";
 
 type DynamicRow = Record<string, string | string[] | undefined> & { key: string };
 type DynamicFormValues = Record<string, unknown> & { firstAssignee?: string };
@@ -192,16 +191,23 @@ function DynamicFieldControl({
 export function ConfiguredProcessStartPage({ definition, version }: ConfiguredProcessStartPageProps) {
   const navigate = useNavigate();
   const existingInstances = usePrototypeStore((state) => state.instances);
-  const formSnapshot = useMemo(() => readFormDesignerSnapshot(definition.id), [definition.id]);
-  const flowSnapshot = useMemo(() => readFlowDesignerSnapshot(definition.id), [definition.id]);
-  const fields = formSnapshot?.fields ?? [];
+  const createProcessInstance = usePrototypeStore((state) => state.createProcessInstance);
+  const personaId = usePrototypeStore((state) => state.personaId);
+  const identityUsers = useIdentityStore((state) => state.users);
+  useIdentityStore((state) => state.workflowGroups);
+  const formSnapshot = version.snapshot.form;
+  const flowSnapshot = version.snapshot.flow;
+  const fields = formSnapshot.fields;
   const approvalNodes = useMemo(
-    () => flowSnapshot?.nodes.filter((node) => node.data?.kind === "approval" && node.data.label) ?? [],
+    () => flowSnapshot.nodes.filter((node) => node.data?.kind === "approval" && node.data.label),
     [flowSnapshot],
   );
-  const candidatePeople = personas
-    .filter((persona) => persona.id !== "superadmin")
-    .map((persona) => ({ value: persona.name, label: `${persona.name} · ${persona.role}` }));
+  const peopleOptions = (groupIds: string[]) => {
+    const memberIds = new Set(groupIds.flatMap(effectiveGroupMemberIds));
+    return identityUsers
+      .filter((user) => memberIds.has(user.id))
+      .map((user) => ({ value: user.id, label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}` }));
+  };
   const [form] = Form.useForm<DynamicFormValues>();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -209,16 +215,45 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
   const instancePrefix = version.basic.instancePrefix || "FLOW";
   const existingCodes = existingInstances.map((item) => item.code);
   const previewCode = previewNextInstanceNumber(instancePrefix, existingCodes);
-  const initialValues = useMemo(() => ({
-    ...Object.fromEntries(fields.map((field) => [
+  const draftKey = `flowpilot-start-draft-v1:${personaId}:${definition.id}`;
+  const initialValues = useMemo(() => {
+    const defaults = Object.fromEntries(fields.map((field) => [
       field.id,
       field.type === "attachment"
         ? []
         : field.type === "table"
           ? [createRow(field.columns ?? [])]
           : field.defaultValue ?? (field.type === "checkbox" ? [] : ""),
-    ])),
-  }), [fields]);
+    ]));
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(draftKey) ?? "{}") as Record<string, unknown>;
+      fields.filter((field) => field.type === "attachment").forEach((field) => {
+        const names = Array.isArray(stored[field.id]) ? stored[field.id] as string[] : [];
+        stored[field.id] = names.map((name, index) => ({ uid: `draft-${index}`, name, status: "done" }));
+      });
+      return { ...defaults, ...stored };
+    } catch {
+      return defaults;
+    }
+  }, [draftKey, fields]);
+
+  const runtimeValues = (values: DynamicFormValues) => Object.fromEntries(
+    Object.entries(values).map(([key, value]) => {
+      const field = fields.find((item) => item.id === key);
+      if (field?.type === "attachment") {
+        return [key, (value as Array<{ name?: string }> | undefined)?.map((file) => file.name).filter(Boolean) ?? []];
+      }
+      return [key, value && typeof value === "object" && "toJSON" in value
+        ? (value as { toJSON: () => unknown }).toJSON()
+        : value];
+    }),
+  );
+
+  const saveDraft = () => {
+    const values = runtimeValues(form.getFieldsValue(true));
+    window.localStorage.setItem(draftKey, JSON.stringify(values));
+    message.success("发起草稿已保存；正式提交前不会生成实例编号");
+  };
 
   const renderField = (field: StoredDesignerField) => {
     const wide = ["richtext", "attachment", "table"].includes(field.type);
@@ -257,13 +292,29 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
   const confirmSubmit = () => {
     setSubmitting(true);
     window.setTimeout(() => {
-      const issuedCode = issueNextInstanceNumber(instancePrefix, existingCodes);
+      const values = runtimeValues(submittedValues);
+      const assigneeByNode = Object.fromEntries(
+        approvalNodes.map((node) => [node.id, String(submittedValues[`reviewer-${node.id}`] ?? "") || undefined]),
+      );
+      const createdId = createProcessInstance({
+        definitionId: definition.id,
+        formValues: values,
+        assigneeByNode,
+        firstAssigneeId: submittedValues.firstAssignee,
+        attachmentNames,
+      });
       setSubmitting(false);
+      if (!createdId) {
+        message.error("流程未创建：当前账号、流程权限组或生效版本已发生变化");
+        setConfirmOpen(false);
+        return;
+      }
+      window.localStorage.removeItem(draftKey);
       setConfirmOpen(false);
       message.success(definition.type === "free"
-        ? `事项 ${issuedCode} 已创建并交给 ${String(submittedValues.firstAssignee ?? "首位受理人")}`
-        : `流程 ${issuedCode} 已发布，${approvalNodes.length} 个审批节点已按当前定义生成待办`);
-      navigate("/tasks");
+        ? "事项已创建并生成首位受理人的待办"
+        : `流程已发起，${approvalNodes.length} 个审批节点已按生效版本生成待办`);
+      navigate(`/processes/${createdId}`);
     }, 450);
   };
 
@@ -285,7 +336,7 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
           </div>
         </div>
         <Space>
-          <Button icon={<SaveOutlined />} onClick={() => message.success("草稿已保存，实例编号将在正式提交时生成")}>保存草稿</Button>
+          <Button icon={<SaveOutlined />} onClick={saveDraft}>保存草稿</Button>
           <Button type="primary" icon={<SendOutlined />} onClick={() => form.submit()}>{definition.type === "free" ? "创建事项" : "提交审核"}</Button>
         </Space>
       </div>
@@ -339,7 +390,7 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
                       </div>
                       {node.data?.specifyAssignee && (
                         <Form.Item name={`reviewer-${node.id}`} rules={[{ required: true, message: `请选择${node.data.label}默认责任人` }]}>
-                          <Select showSearch optionFilterProp="label" placeholder="搜索符合权限组的人员" options={candidatePeople} />
+                          <Select showSearch optionFilterProp="label" placeholder="搜索符合权限组的人员" options={peopleOptions(node.data?.permissionGroup ? [node.data.permissionGroup] : [])} />
                         </Form.Item>
                       )}
                       <span className="start-permission-name"><TeamOutlined /> {node.data?.permissionGroup || "尚未配置流程权限组"}</span>
@@ -351,7 +402,7 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
               <Card className="approval-card start-reviewer-card" title="首位受理人" extra={<TeamOutlined />}>
                 <Alert type="info" showIcon message="受理后可继续选择下一位受理人" description={`候选人来自：${version.basic.assigneeGroups?.join("、") || "尚未配置受理流程权限组"}`} />
                 <Form.Item name="firstAssignee" label="选择受理人" rules={[{ required: true, message: "请选择首位受理人" }]}>
-                  <Select showSearch optionFilterProp="label" placeholder="搜索并选择首位受理人" options={candidatePeople} />
+                  <Select showSearch optionFilterProp="label" placeholder="搜索并选择首位受理人" options={peopleOptions(version.basic.assigneeGroups ?? [])} />
                 </Form.Item>
               </Card>
             )}

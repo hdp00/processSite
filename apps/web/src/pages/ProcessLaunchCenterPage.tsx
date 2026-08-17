@@ -9,7 +9,7 @@ import {
 import { Button, Card, Empty, Space, Tag, Typography } from "antd";
 import { useMemo, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { canPersonaAccessLaunch, canPersonaLaunchDefinition } from "../state/rolePermissions";
+import { canPersonaLaunchDefinition } from "../state/rolePermissions";
 import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import "./launch-pages.css";
@@ -82,9 +82,7 @@ export function ProcessLaunchCenterPage() {
       const effective = getEffectiveVersion(managed);
       if (managed.disabled || !effective) return [];
       const preset = launchDefinitions.find((item) => item.id === managed.id);
-      const allowed = preset
-        ? canPersonaLaunchDefinition(personaId, managed.id)
-        : canPersonaAccessLaunch(personaId) && effective.basic.starterGroups.length > 0;
+      const allowed = canPersonaLaunchDefinition(personaId, managed.id);
       if (!allowed) return [];
       return [{
         id: managed.id,
@@ -95,7 +93,7 @@ export function ProcessLaunchCenterPage() {
         permissionGroups: effective.basic.starterGroups,
         icon: preset?.icon ?? (managed.type === "approval" ? <SafetyCertificateOutlined /> : <MessageOutlined />),
         tone: preset?.tone ?? (["blue", "cyan", "purple", "amber"] as const)[index % 4],
-        route: preset?.route ?? `/launch/${managed.id}`,
+        route: `/launch/${managed.id}`,
       }];
     }),
     [managedDefinitions, personaId],

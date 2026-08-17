@@ -1,4 +1,9 @@
-import { SYSTEM_LIST_FIELDS_STORAGE_KEY_PREFIX } from "../data/listFieldConfig";
+import {
+  SYSTEM_LIST_FIELDS_STORAGE_KEY_PREFIX,
+  cloneDefaultSystemListFields,
+  loadSystemListFields,
+  type SystemListFieldConfig,
+} from "../data/listFieldConfig";
 
 export const FORM_DESIGNER_STORAGE_KEY_PREFIX = "flowpilot-form-designer-draft-v2";
 export const FLOW_DESIGNER_STORAGE_KEY_PREFIX = "flowpilot-flow-designer-v2";
@@ -8,6 +13,12 @@ interface DesignerArtifacts {
   form: string | null;
   flow: string | null;
   systemFields: string | null;
+}
+
+export interface CompleteDesignerSnapshot {
+  form: StoredFormDesignerSnapshot;
+  flow: StoredFlowDesignerSnapshot;
+  systemFields: SystemListFieldConfig[];
 }
 
 const workingArtifactKeys = (definitionId: string) => ({
@@ -84,6 +95,10 @@ export interface StoredDesignerField {
   required?: boolean;
   defaultValue?: string | string[];
   listVisible?: boolean;
+  taskVisible?: boolean;
+  taskDisplayName?: string;
+  taskOrder?: number;
+  taskWidth?: number;
   queryable?: boolean;
   reviewEditable?: boolean;
   options?: string[];
@@ -161,6 +176,31 @@ export const readFlowDesignerSnapshot = (definitionId: string): StoredFlowDesign
     return undefined;
   }
 };
+
+export const captureWorkingDesignerSnapshot = (definitionId: string): CompleteDesignerSnapshot => ({
+  form: readFormDesignerSnapshot(definitionId) ?? { formName: "发起表单", fields: [] },
+  flow: readFlowDesignerSnapshot(definitionId) ?? { nodes: [], edges: [], meta: { rejectionHandling: "resubmit-or-close" } },
+  systemFields: loadSystemListFields(definitionId),
+});
+
+export const writeWorkingDesignerSnapshot = (definitionId: string, snapshot: CompleteDesignerSnapshot) => {
+  if (typeof window === "undefined") return false;
+  try {
+    const keys = workingArtifactKeys(definitionId);
+    window.localStorage.setItem(keys.form, JSON.stringify(snapshot.form));
+    window.localStorage.setItem(keys.flow, JSON.stringify(snapshot.flow));
+    window.localStorage.setItem(keys.systemFields, JSON.stringify(snapshot.systemFields));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapshot): CompleteDesignerSnapshot => ({
+  form: snapshot ? structuredClone(snapshot.form) : { formName: "发起表单", fields: [] },
+  flow: snapshot ? structuredClone(snapshot.flow) : { nodes: [], edges: [], meta: { rejectionHandling: "resubmit-or-close" } },
+  systemFields: snapshot ? structuredClone(snapshot.systemFields) : cloneDefaultSystemListFields(),
+});
 
 export const getReviewEditableFieldOptions = (definitionId: string): EditableFieldOption[] => {
   const snapshot = readFormDesignerSnapshot(definitionId);

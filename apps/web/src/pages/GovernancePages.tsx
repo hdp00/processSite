@@ -56,6 +56,12 @@ import {
   normalizeRolePermissionList,
   notifyRolePermissionsChanged,
 } from "../state/rolePermissions";
+import {
+  useIdentityStore,
+  type DomainRole,
+  type DomainUser,
+  type WorkflowPermissionGroup,
+} from "../state/useIdentityStore";
 import "./governance-pages.css";
 
 type EnableStatus = "启用" | "停用";
@@ -140,18 +146,7 @@ const departmentByIndex = [
   { value: ["document"], path: "文控" },
 ];
 
-interface UserRecord {
-  id: string;
-  account: string;
-  name: string;
-  department: string[];
-  departmentPath: string;
-  jobTitle: JobTitle;
-  roles: string[];
-  status: EnableStatus;
-  lastLogin: string;
-  builtIn?: boolean;
-}
+type UserRecord = DomainUser;
 
 function makeUsers(): UserRecord[] {
   const configuredJobTitles = readJobTitles();
@@ -166,6 +161,7 @@ function makeUsers(): UserRecord[] {
     return {
       id: `USR-${String(index + 1).padStart(4, "0")}`,
       account: `user${String(index + 1).padStart(3, "0")}`,
+      password: "1",
       name,
       department: department.value,
       departmentPath: department.path,
@@ -179,6 +175,7 @@ function makeUsers(): UserRecord[] {
     {
       id: "USR-0000",
       account: "superadmin",
+      password: "1",
       name: "超级管理员",
       department: ["system"],
       departmentPath: "系统内置",
@@ -227,7 +224,8 @@ function SummaryStrip({ items }: { items: Array<{ label: string; value: string |
 }
 
 export function UserManagementPage() {
-  const [users, setUsers] = useState(makeUsers);
+  const users = useIdentityStore((state) => state.users);
+  const setUsers = useIdentityStore((state) => state.setUsers);
   const [jobTitles, setJobTitles] = useState(readJobTitles);
   const [draftFilters, setDraftFilters] = useState({ keyword: "", department: [] as string[], jobTitle: "", role: "", status: "" });
   const [filters, setFilters] = useState(draftFilters);
@@ -288,7 +286,7 @@ export function UserManagementPage() {
               message.success(`账号已${record.status === "启用" ? "停用" : "启用"}`);
             }}><Button disabled={record.builtIn} type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}用户：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm>
           </Tooltip>
-          <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : "重置密码"}><Popconfirm disabled={record.builtIn} title="生成临时密码并立即生效？" onConfirm={() => message.success(`已为 ${record.name} 重置密码：a`)}><Button disabled={record.builtIn} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} /></Popconfirm></Tooltip>
+          <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : "重置密码"}><Popconfirm disabled={record.builtIn} title="生成临时密码并立即生效？" onConfirm={() => { setUsers((rows) => rows.map((item) => item.id === record.id ? { ...item, password: "a" } : item)); message.success(`已为 ${record.name} 重置密码：a`); }}><Button disabled={record.builtIn} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} /></Popconfirm></Tooltip>
         </Space>
       ),
     },
@@ -327,7 +325,7 @@ export function UserManagementPage() {
         <Form form={form} layout="vertical" requiredMark="optional" onFinish={(values) => {
           const path = values.department.length === 1 ? departmentOptions.find((item) => item.value === values.department[0])?.label : `${departmentOptions.find((item) => item.value === values.department[0])?.label} / ${departmentOptions.find((item) => item.value === values.department[0])?.children?.find((item) => item.value === values.department[1])?.label}`;
           if (drawerUser === "new") {
-            const created: UserRecord = { id: `USR-${String(users.length + 1).padStart(4, "0")}`, account: values.account, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用", lastLogin: "从未登录" };
+            const created: UserRecord = { id: `USR-${crypto.randomUUID()}`, account: values.account, password: values.password, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用", lastLogin: "从未登录" };
             setUsers((rows) => [created, ...rows]);
             message.success("用户已创建");
           } else if (drawerUser) {
@@ -523,7 +521,7 @@ export function DepartmentManagementPage() {
   );
 }
 
-interface RoleRecord { id: string; name: string; code: string; description: string; pagePermissions: number; actionPermissions: number; users: number; status: EnableStatus; members: string[]; builtIn?: boolean; }
+type RoleRecord = DomainRole;
 const ROLE_STORAGE_KEY = "flowpilot-governance-roles-v1";
 const superAdminRole: RoleRecord = {
   id: "ROLE-SUPER",
@@ -558,7 +556,9 @@ function nextRoleIdentity(roles: RoleRecord[]) {
 
 export function RoleManagementPage() {
   const navigate = useNavigate();
-  const [roles, setRoles] = useState(loadRolesWithPermissionStats);
+  const roles = useIdentityStore((state) => state.roles);
+  const setRoles = useIdentityStore((state) => state.setRoles);
+  const identityUsers = useIdentityStore((state) => state.users);
   const [keyword, setKeyword] = useState("");
   const [editor, setEditor] = useState<RoleRecord | "new" | null>(null);
   const [memberRole, setMemberRole] = useState<RoleRecord | null>(null);
@@ -572,10 +572,10 @@ export function RoleManagementPage() {
   }, [roles]);
   const filtered = roles.filter((role) => `${role.name}${role.description}`.toLowerCase().includes(keyword.toLowerCase()));
   const configuredRoleJobTitles = readJobTitles().filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
-  const roleMemberCandidates = peopleNames.map((name, index) => ({
-    name,
-    department: departmentByIndex[index % departmentByIndex.length].path,
-    jobTitle: configuredRoleJobTitles[index % Math.max(configuredRoleJobTitles.length, 1)]?.name ?? "未设置",
+  const roleMemberCandidates = identityUsers.filter((user) => !user.builtIn).map((user) => ({
+    name: user.name,
+    department: user.departmentPath,
+    jobTitle: user.jobTitle,
   }));
   const visibleRoleMembers = roleMemberCandidates.filter((member) => {
     const matchesView = roleMemberView === "all" || editingMembers.includes(member.name);
@@ -737,14 +737,8 @@ function writeRolePermissionMap(value: RolePermissionMap) {
 }
 
 function readStoredRoles(): RoleRecord[] {
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(ROLE_STORAGE_KEY) ?? "null") as RoleRecord[] | null;
-    return Array.isArray(saved) && saved.length
-      ? [superAdminRole, ...saved.filter((role) => role.id !== superAdminRole.id)]
-      : initialRoles;
-  } catch {
-    return initialRoles;
-  }
+  const roles = useIdentityStore.getState().roles;
+  return roles.length ? roles : initialRoles;
 }
 
 function summarizePermissions(grants: Iterable<string>) {
@@ -770,6 +764,7 @@ function permissionSetsEqual(left: Iterable<string>, right: Iterable<string>) {
 }
 
 export function PermissionManagementPage() {
+  const setIdentityRoles = useIdentityStore((state) => state.setRoles);
   const [searchParams, setSearchParams] = useSearchParams();
   const [availableRoles] = useState(loadRolesWithPermissionStats);
   const requestedRoleId = searchParams.get("roleId");
@@ -826,7 +821,9 @@ export function PermissionManagementPage() {
     const nextPermissionMap = { ...permissionsByRole, [roleId]: Array.from(granted) };
     setPermissionsByRole(nextPermissionMap);
     writeRolePermissionMap(nextPermissionMap);
-    window.localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(applyRolePermissionStats(readStoredRoles(), nextPermissionMap)));
+    const rolesWithStats = applyRolePermissionStats(readStoredRoles(), nextPermissionMap);
+    window.localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(rolesWithStats));
+    setIdentityRoles(rolesWithStats);
     notifyRolePermissionsChanged();
     return nextPermissionMap;
   };
@@ -884,28 +881,20 @@ export function PermissionManagementPage() {
 }
 
 type GroupPurpose = "发起" | "审批" | "自由流程受理";
-interface GroupRecord { id: string; name: string; processes: string[]; purposes: GroupPurpose[]; directMembers: string[]; linkedRoles: string[]; status: EnableStatus; referenced: boolean; openTasks: number; updatedAt: string; }
-const groupRoleMembers: Record<string, string[]> = {
-  "研发审核员": ["张伟", "林晓", "赵磊", "陈晨", "刘洋", "周宁"],
-  "质量审核员": ["王敏", "孙悦", "吴昊", "徐洁", "杨帆"],
-  "生产审核员": ["胡静", "高远", "许诺", "郑宇", "唐薇", "韩松"],
-  "文控专员": ["王敏", "曹颖", "冯浩"],
-};
-const initialGroups: GroupRecord[] = [
-  { id: "PG-0001", name: "PDF审核_发起权限组", processes: ["PDF审核"], purposes: ["发起"], directMembers: ["王敏", "曹颖"], linkedRoles: ["文控专员"], status: "启用", referenced: true, openTasks: 7, updatedAt: "2026-08-13 10:32" },
-  { id: "PG-0002", name: "PDF审核_研发_审核组", processes: ["PDF审核", "测试报告审核"], purposes: ["审批"], directMembers: ["赵磊", "林晓"], linkedRoles: ["研发审核员"], status: "启用", referenced: true, openTasks: 12, updatedAt: "2026-08-13 09:18" },
-  { id: "PG-0003", name: "PDF审核_质量_审核组", processes: ["PDF审核", "测试报告审核"], purposes: ["审批"], directMembers: ["王敏"], linkedRoles: ["质量审核员"], status: "启用", referenced: true, openTasks: 9, updatedAt: "2026-08-12 17:45" },
-  { id: "PG-0004", name: "PDF审核_生产_审核组", processes: ["PDF审核"], purposes: ["审批"], directMembers: ["韩松"], linkedRoles: ["生产审核员"], status: "启用", referenced: true, openTasks: 9, updatedAt: "2026-08-12 16:21" },
-  { id: "PG-0005", name: "测试报告_发起权限组", processes: ["测试报告审核"], purposes: ["发起"], directMembers: ["周宁", "许诺"], linkedRoles: [], status: "启用", referenced: true, openTasks: 3, updatedAt: "2026-08-11 14:05" },
-  { id: "PG-0006", name: "测试报告_复核组", processes: [], purposes: ["审批", "自由流程受理"], directMembers: ["林晓", "孙悦"], linkedRoles: ["质量审核员"], status: "启用", referenced: false, openTasks: 0, updatedAt: "2026-08-10 11:28" },
-];
-
+type GroupRecord = WorkflowPermissionGroup;
 function effectiveMembers(group: Pick<GroupRecord, "directMembers" | "linkedRoles">) {
-  return Array.from(new Set([...group.directMembers, ...group.linkedRoles.flatMap((role) => groupRoleMembers[role] ?? [])]));
+  const users = useIdentityStore.getState().users;
+  return users
+    .filter((user) => !user.builtIn && user.status === "启用")
+    .filter((user) => group.directMembers.includes(user.name) || user.roles.some((role) => group.linkedRoles.includes(role)))
+    .map((user) => user.name);
 }
 
 export function WorkflowPermissionGroupsPage() {
-  const [groups, setGroups] = useState(initialGroups);
+  const groups = useIdentityStore((state) => state.workflowGroups);
+  const setGroups = useIdentityStore((state) => state.setWorkflowGroups);
+  const identityUsers = useIdentityStore((state) => state.users);
+  const identityRoles = useIdentityStore((state) => state.roles);
   const [keyword, setKeyword] = useState("");
   const [process, setProcess] = useState<string>();
   const [status, setStatus] = useState<string>();
@@ -920,7 +909,7 @@ export function WorkflowPermissionGroupsPage() {
   const visibleDerived = derived.filter((name) => name.toLowerCase().includes(effectiveMemberKeyword.trim().toLowerCase()));
   const openEditor = (record: GroupRecord | "new") => { setEditor(record); setEffectiveMemberKeyword(""); const values = record === "new" ? { name: "", purposes: ["审批"] as GroupPurpose[], status: true, directMembers: [], linkedRoles: [] } : { ...record, status: record.status === "启用" }; setDirectMembers(values.directMembers); setLinkedRoles(values.linkedRoles); form.setFieldsValue(values); };
   const columns: TableProps<GroupRecord>["columns"] = [
-    { title: "流程权限组", dataIndex: "name", width: 260, fixed: "left", render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.id}</small></div> },
+    { title: "流程权限组", dataIndex: "name", width: 260, fixed: "left", render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.code}</small></div> },
     { title: "已引用流程", dataIndex: "processes", width: 240, render: (values: string[]) => values.length ? <Space size={[4, 4]} wrap>{values.map((value) => <Tag key={value} bordered={false}>{value}</Tag>)}</Space> : <Typography.Text type="secondary">暂未关联流程</Typography.Text> },
     { title: "允许用途", dataIndex: "purposes", width: 220, render: (values: GroupPurpose[]) => <Space size={[4, 4]} wrap>{values.map((value) => <Tag key={value} color={value === "发起" ? "cyan" : value === "审批" ? "blue" : "purple"}>{value}</Tag>)}</Space> },
     { title: "成员构成", key: "composition", width: 220, render: (_, record) => <div className="gov-composition"><span><UserOutlined /> 直接 {record.directMembers.length}</span><span><TeamOutlined /> 角色 {record.linkedRoles.length}</span></div> },
@@ -937,7 +926,7 @@ export function WorkflowPermissionGroupsPage() {
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程权限组" count={filtered.length} extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增权限组</Button>} /><Table<GroupRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 个权限组` }} /></Card>
       <Drawer width={720} open={editor !== null} onClose={() => setEditor(null)} title={editor === "new" ? "新增流程权限组" : "编辑流程权限组"} extra={<Space><Button onClick={() => setEditor(null)}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存并立即生效</Button></Space>}>
         {editor !== "new" && editor?.openTasks ? <Alert className="gov-drawer-alert" type="warning" showIcon message={`当前有 ${editor.openTasks} 项运行待办`} description="保存后，新增成员立即获得处理资格；被移除成员将立即失去尚未处理的待办资格。" /> : null}
-        <Form form={form} layout="vertical" onFinish={(values) => { const processes = editor === "new" ? [] : editor!.processes; const record: GroupRecord = { id: editor === "new" ? `PG-${String(groups.length + 1).padStart(4, "0")}` : editor!.id, name: values.name, processes, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用", referenced: processes.length > 0, openTasks: editor === "new" ? 0 : editor!.openTasks, updatedAt: "2026-08-13 14:20" }; setGroups((rows) => editor === "new" ? [...rows, record] : rows.map((item) => item.id === record.id ? record : item)); message.success("流程权限组已保存，成员资格已立即更新"); setEditor(null); }}>
+        <Form form={form} layout="vertical" onFinish={(values) => { const processes = editor === "new" ? [] : editor!.processes; const nextCode = `PG-${String(Math.max(0, ...groups.map((group) => Number(group.code.match(/\d+$/)?.[0] ?? 0))) + 1).padStart(4, "0")}`; const record: GroupRecord = { id: editor === "new" ? `workflow-group-${crypto.randomUUID()}` : editor!.id, code: editor === "new" ? nextCode : editor!.code, name: values.name, processes, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用", referenced: processes.length > 0, openTasks: editor === "new" ? 0 : editor!.openTasks, updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }) }; setGroups((rows) => editor === "new" ? [...rows, record] : rows.map((item) => item.id === record.id ? record : item)); message.success("流程权限组已保存，成员资格已立即更新"); setEditor(null); }}>
           <div className="gov-form-grid"><Form.Item name="name" label="权限组名称" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="status" label="状态" valuePropName="checked"><Switch checkedChildren="启用" unCheckedChildren="停用" /></Form.Item></div>
           <div className="gov-group-editor-section gov-group-reference-section">
             <div className="gov-section-title"><span><ApartmentOutlined />已引用流程</span><Tag>{editor !== "new" && editor ? editor.processes.length : 0} 个</Tag></div>
@@ -951,8 +940,8 @@ export function WorkflowPermissionGroupsPage() {
               <Checkbox.Group className="gov-purpose-checkboxes" options={["发起", "审批", "自由流程受理"].map((value) => ({ label: value, value }))} />
             </Form.Item>
           </div>
-          <div className="gov-group-editor-section"><div className="gov-section-title"><span><UserOutlined />直接成员</span><Tag>{directMembers.length} 人</Tag></div><Typography.Paragraph type="secondary">逐个加入的固定人员，不依赖其系统角色。</Typography.Paragraph><Form.Item name="directMembers"><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={peopleNames.map((value) => ({ value, label: value }))} onChange={setDirectMembers} /></Form.Item></div>
-          <div className="gov-group-editor-section"><div className="gov-section-title"><span><TeamOutlined />关联角色</span><Tag>{linkedRoles.length} 个</Tag></div><Typography.Paragraph type="secondary">角色下的全部用户动态加入；角色成员变化会立即同步到本权限组。</Typography.Paragraph><Form.Item name="linkedRoles"><Select mode="multiple" showSearch optionFilterProp="label" options={Object.keys(groupRoleMembers).map((value) => ({ value, label: value }))} onChange={setLinkedRoles} /></Form.Item></div>
+          <div className="gov-group-editor-section"><div className="gov-section-title"><span><UserOutlined />直接成员</span><Tag>{directMembers.length} 人</Tag></div><Typography.Paragraph type="secondary">逐个加入的固定人员，不依赖其系统角色。</Typography.Paragraph><Form.Item name="directMembers"><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={identityUsers.filter((user) => !user.builtIn && user.status === "启用").map((user) => ({ value: user.name, label: `${user.name} · ${user.departmentPath}` }))} onChange={setDirectMembers} /></Form.Item></div>
+          <div className="gov-group-editor-section"><div className="gov-section-title"><span><TeamOutlined />关联角色</span><Tag>{linkedRoles.length} 个</Tag></div><Typography.Paragraph type="secondary">角色下的全部用户动态加入；角色成员变化会立即同步到本权限组。</Typography.Paragraph><Form.Item name="linkedRoles"><Select mode="multiple" showSearch optionFilterProp="label" options={identityRoles.filter((role) => !role.builtIn && role.status === "启用").map((role) => ({ value: role.name, label: role.name }))} onChange={setLinkedRoles} /></Form.Item></div>
           <div className="gov-effective-preview">
             <div className="gov-effective-preview__head"><strong>有效成员预览</strong><Tag color="blue">去重后 {derived.length} 人</Tag></div>
             <Input
@@ -965,7 +954,8 @@ export function WorkflowPermissionGroupsPage() {
             <div className="gov-effective-member-grid">
               {visibleDerived.map((name) => {
                 const direct = directMembers.includes(name);
-                const roles = linkedRoles.filter((role) => (groupRoleMembers[role] ?? []).includes(name));
+                const user = identityUsers.find((item) => item.name === name);
+                const roles = linkedRoles.filter((role) => user?.roles.includes(role));
                 return (
                   <div className="gov-effective-member" key={name}>
                     <div><strong>{name}</strong><Tag color="success" bordered={false}>有效</Tag></div>
@@ -981,7 +971,7 @@ export function WorkflowPermissionGroupsPage() {
       </Drawer>
       <Drawer width={560} open={Boolean(preview)} onClose={() => setPreview(null)} title={`${preview?.name ?? ""} · 有效成员`}>
         <Alert className="gov-drawer-alert" type="info" showIcon message="相同人员仅计一次" description="来源标签用于说明人员是被直接添加、通过角色加入，或同时来自两种方式。" />
-        <div className="gov-member-list">{preview ? effectiveMembers(preview).map((name, index) => { const direct = preview.directMembers.includes(name); const roles = preview.linkedRoles.filter((role) => (groupRoleMembers[role] ?? []).includes(name)); return <div className="gov-member-row" key={name}><PersonChip name={name} detail={departmentByIndex[index % departmentByIndex.length].path} /><Space size={[4, 4]} wrap>{direct ? <Tag color="cyan">直接加入</Tag> : null}{roles.map((role) => <Tag color="purple" key={role}>角色带入：{role}</Tag>)}</Space></div>; }) : null}</div>
+        <div className="gov-member-list">{preview ? effectiveMembers(preview).map((name) => { const user = identityUsers.find((item) => item.name === name); const direct = preview.directMembers.includes(name); const roles = preview.linkedRoles.filter((role) => user?.roles.includes(role)); return <div className="gov-member-row" key={name}><PersonChip name={name} detail={user?.departmentPath} /><Space size={[4, 4]} wrap>{direct ? <Tag color="cyan">直接加入</Tag> : null}{roles.map((role) => <Tag color="purple" key={role}>角色带入：{role}</Tag>)}</Space></div>; }) : null}</div>
       </Drawer>
     </div>
   );

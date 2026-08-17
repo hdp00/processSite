@@ -10,22 +10,13 @@ import { Button, Checkbox, Form, Input, message, Select, Space, Tag, Typography 
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
+import { authenticateLocalAccount } from "../state/useIdentityStore";
 
 interface LoginValues {
   username: string;
   password: string;
   remember?: boolean;
 }
-
-const usernameMap: Record<string, PersonaId> = {
-  superadmin: "superadmin",
-  wangmin: "wangmin",
-  zhangwei: "zhangwei",
-  lina: "lina",
-  zhaolei: "zhaolei",
-  admin: "admin",
-  hejing: "hejing",
-};
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -37,13 +28,13 @@ export function LoginPage() {
   const submit = async (values: LoginValues) => {
     setSubmitting(true);
     await new Promise((resolve) => window.setTimeout(resolve, 420));
-    if (values.username.trim().toLowerCase() === "disabled") {
-      message.error("该账号已停用，请联系管理员");
+    const result = authenticateLocalAccount(values.username, values.password);
+    if (!result.ok) {
+      message.error(result.reason);
       setSubmitting(false);
       return;
     }
-    const personaId = usernameMap[values.username.trim().toLowerCase()] ?? demoPersona;
-    login(personaId);
+    login(result.user.id);
     message.success("登录成功");
     navigate("/tasks", { replace: true });
   };

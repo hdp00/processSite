@@ -32,14 +32,13 @@ import { AppBackButton } from "../components/AppBackButton";
 import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
 import { StatusPill } from "../components/StatusPill";
 import type { FreeFlowEntry, ProcessInstance } from "../data/types";
-import { isSuperAdminPersona, personas, usePrototypeStore } from "../state/usePrototypeStore";
+import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
+import { effectiveGroupMemberIds, findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { canUserCloseInstance } from "../state/workflowAccess";
 import "./free-flow.css";
 
 const { Text, Title } = Typography;
-const userOptions = personas
-  .filter((persona) => persona.id !== "hejing" && persona.id !== "superadmin")
-  .map((persona) => ({ value: persona.name, label: `${persona.name} · ${persona.role}` }));
-
 const hasRichContent = (html: string) =>
   html.replace(/<[^>]+>/g, "").replaceAll("&nbsp;", " ").trim().length > 0 || /<(img|video)\b/i.test(html);
 
@@ -71,7 +70,16 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     reopenFreeFlow,
   } = usePrototypeStore();
   const instance = instanceOverride ?? instances.find((item) => item.id === id);
-  const persona = personas.find((item) => item.id === personaId) ?? personas[0];
+  const persona = findIdentityUser(personaId);
+  const identityUsers = useIdentityStore((state) => state.users);
+  useIdentityStore((state) => state.workflowGroups);
+  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === instance?.definitionId));
+  const lockedVersion = definition?.versions.find((version) => version.id === instance?.versionId);
+  const assigneeIds = new Set((lockedVersion?.basic.assigneeGroups ?? []).flatMap(effectiveGroupMemberIds));
+  const userOptions = identityUsers.filter((user) => assigneeIds.has(user.id)).map((user) => ({
+    value: user.name,
+    label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}`,
+  }));
   const isSuperAdmin = isSuperAdminPersona(personaId);
   const [replyContent, setReplyContent] = useState("");
   const [nextAssignee, setNextAssignee] = useState<string>();
@@ -96,15 +104,16 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
   const participants = instance?.participants ?? [];
   const isOpen = instance?.status === "进行中";
-  const isCurrentAssignee = isOpen && instance?.currentAssignee === persona.name;
-  const canReply = Boolean(isOpen && (participants.includes(persona.name) || personaId === "admin" || isSuperAdmin));
-  const canClose = Boolean(isCurrentAssignee || (isOpen && (["wangmin", "admin"].includes(personaId) || isSuperAdmin)));
+  const isCurrentAssignee = isOpen && instance?.currentAssignee === persona?.name;
+  const isStarter = Boolean(instance && canUserCloseInstance(personaId, instance));
+  const canReply = Boolean(isOpen && (participants.includes(persona?.name ?? "") || isSuperAdmin));
+  const canClose = Boolean(isCurrentAssignee || (isOpen && isStarter));
   const canReopen = Boolean(
     instance?.status === "已关闭" &&
-    (participants.includes(persona.name) || ["wangmin", "admin"].includes(personaId) || isSuperAdmin),
+    (participants.includes(persona?.name ?? "") || isStarter),
   );
-  const canEditInitial = Boolean(isOpen && instance?.initiator === persona.name);
-  const canForceReassign = Boolean(isOpen && (["wangmin", "admin"].includes(personaId) || isSuperAdmin));
+  const canEditInitial = Boolean(isOpen && (instance?.initiatorId === persona?.id || instance?.initiator === persona?.name));
+  const canForceReassign = Boolean(isOpen && isStarter);
   const initialEntry = instance?.freeTimeline?.find((entry) => entry.type === "created");
 
   const timeline = useMemo(() => instance?.freeTimeline ?? [], [instance?.freeTimeline]);
@@ -212,7 +221,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
                     <Space>
                       {entry.editedAt && <Tooltip title={`最后编辑：${entry.editedAt}；后台保留 ${entry.revisions?.length ?? 0} 个历史版本`}><Tag bordered={false}>已编辑</Tag></Tooltip>}
                       <Text type="secondary">{entry.time}</Text>
-                      {isOpen && entry.actor === persona.name && (
+                      {isOpen && entry.actor === persona?.name && (
                         <Button type="text" size="small" icon={<EditOutlined />} onClick={() => { setEditEntry(entry); setEditContent(entry.content ?? ""); }}>编辑</Button>
                       )}
                     </Space>

@@ -24,7 +24,6 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-// @ts-ignore -- Vite resolves package CSS side-effect imports at build time.
 import "@xyflow/react/dist/style.css";
 import {
   ApartmentOutlined,
@@ -66,15 +65,14 @@ import {
 } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
-import { workflowPermissionGroupOptions } from "../data/workflowPermissionGroups";
+import { useIdentityStore } from "../state/useIdentityStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import {
   FLOW_DESIGNER_STORAGE_KEY_PREFIX,
   buildFlowLevels,
-  getReviewEditableFieldOptions,
   type EditableFieldOption,
+  type StoredFlowDesignerSnapshot,
 } from "../utils/designerStorage";
-// @ts-ignore -- Vite resolves local CSS side-effect imports at build time.
 import "./flow-designer.css";
 
 const { Text, Title } = Typography;
@@ -581,11 +579,19 @@ interface DesignerWorkspaceProps {
 
 const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, starterGroups }: DesignerWorkspaceProps) => {
   const navigate = useNavigate();
+  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
+  const starterGroupOptions = workflowGroups
+    .filter((group) => group.status === "启用" && group.purposes.includes("发起"))
+    .map((group) => ({ value: group.id, label: group.name }));
+  const approvalGroupOptions = workflowGroups
+    .filter((group) => group.status === "启用" && group.purposes.includes("审批"))
+    .map((group) => ({ value: group.id, label: group.name }));
   const markFlowConfigured = useProcessDefinitionStore((state) => state.markFlowConfigured);
   const draftBasic = useProcessDefinitionStore((state) =>
     state.definitions.find((item) => item.id === definitionId)?.draft?.basic,
   );
   const updateDraftBasic = useProcessDefinitionStore((state) => state.updateDraftBasic);
+  const updateDraftFlowSnapshot = useProcessDefinitionStore((state) => state.updateDraftFlowSnapshot);
   const storageKey = `${FLOW_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`;
   const [nodes, setNodes, onNodesChange] = useNodesState<DesignerNode>(initialDraft.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<DesignerEdge>(initialDraft.edges);
@@ -619,10 +625,15 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
     setAutoSaved(false);
     const timer = window.setTimeout(() => {
       window.localStorage.setItem(storageKey, JSON.stringify({ nodes, edges, meta }));
+      updateDraftFlowSnapshot(definitionId, {
+        nodes,
+        edges,
+        meta: { rejectionHandling: meta.rejectionHandling },
+      } as StoredFlowDesignerSnapshot);
       setAutoSaved(true);
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [edges, meta, nodes, storageKey]);
+  }, [definitionId, edges, meta, nodes, storageKey, updateDraftFlowSnapshot]);
 
   useEffect(() => {
     const allowed = new Set(editableFieldOptions.map((option) => option.value));
@@ -752,6 +763,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
       storageKey,
       JSON.stringify({ nodes, edges, meta: nextMeta }),
     );
+    updateDraftFlowSnapshot(definitionId, { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot);
     markFlowConfigured(definitionId, nodes.length);
     setAutoSaved(true);
     message.success("草稿已保存，刷新页面后仍会保留");
@@ -769,6 +781,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
       storageKey,
       JSON.stringify({ nodes, edges, meta: nextMeta }),
     );
+    updateDraftFlowSnapshot(definitionId, { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot);
     markFlowConfigured(definitionId, nodes.length);
     navigate(`/admin/processes/${definitionId}/publish`);
   };
@@ -992,7 +1005,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
                       showSearch
                       allowClear
                       maxTagCount="responsive"
-                      options={workflowPermissionGroupOptions}
+                      options={starterGroupOptions}
                       onChange={updateStarterGroups}
                     />
                   ) : (
@@ -1001,7 +1014,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
                       placeholder="请选择审核流程权限组"
                       showSearch
                       allowClear
-                      options={workflowPermissionGroupOptions}
+                      options={approvalGroupOptions}
                       onChange={(permissionGroup) => updateSelectedNode({ permissionGroup })}
                     />
                   )}
@@ -1194,7 +1207,12 @@ export const FlowDesignerPage = () => {
   const definition = useProcessDefinitionStore((state) =>
     state.definitions.find((item) => item.id === definitionId),
   );
-  const editableFieldOptions = useMemo(() => getReviewEditableFieldOptions(definitionId), [definitionId]);
+  const editableFieldOptions = useMemo<EditableFieldOption[]>(() => {
+    const fields = definition?.draft?.snapshot.form.fields ?? [];
+    return fields.flatMap((field) => field.type === "table"
+      ? (field.columns ?? []).filter((column) => column.reviewEditable).map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }))
+      : field.reviewEditable ? [{ value: field.id, label: field.label }] : []);
+  }, [definition?.draft?.snapshot.form.fields]);
   const starterGroups = definition?.draft?.basic.starterGroups ?? [];
   const fallbackMeta = useMemo<FlowMeta>(
     () => ({
@@ -1208,16 +1226,29 @@ export const FlowDesignerPage = () => {
   );
   const initialDraft = useMemo(
     () => {
-      const fallbackTopology = definitionId === "pdf-review"
-        ? { nodes: initialNodes, edges: initialEdges }
-        : createGenericDraft(starterGroups);
-      return readStoredDraft(
-        `${FLOW_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`,
-        fallbackMeta,
-        fallbackTopology,
-      );
+      const stored = definition?.draft?.snapshot.flow;
+      const fallbackTopology = createGenericDraft(starterGroups);
+      if (!stored?.nodes.length) return { ...fallbackTopology, meta: fallbackMeta };
+      return {
+        nodes: stored.nodes.map((node, index) => ({
+          id: node.id,
+          type: "processNode" as const,
+          position: node.position ?? { x: 80 + (index % 3) * 300, y: 120 + Math.floor(index / 3) * 190 },
+          data: {
+            kind: node.data?.kind ?? "approval",
+            label: node.data?.label ?? "未命名节点",
+            description: node.data?.description ?? "",
+            permissionGroup: node.data?.permissionGroup,
+            permissionGroups: node.data?.permissionGroups,
+            specifyAssignee: node.data?.specifyAssignee,
+            editableFields: node.data?.editableFields ?? [],
+          },
+        })),
+        edges: stored.edges.map((edge, index) => ({ id: edge.id ?? `edge-${index}`, source: edge.source, target: edge.target, ...edgeDefaults })),
+        meta: { ...fallbackMeta, rejectionHandling: stored.meta?.rejectionHandling ?? "resubmit-or-close" },
+      };
     },
-    [definitionId, fallbackMeta, starterGroups],
+    [definition?.draft?.snapshot.flow, fallbackMeta, starterGroups],
   );
 
   if (!definition) {

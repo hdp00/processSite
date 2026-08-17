@@ -4,6 +4,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import type { ReviewerProgress } from "../data/types";
 import { usePrototypeStore } from "../state/usePrototypeStore";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { findIdentityUser } from "../state/useIdentityStore";
 
 const reviewStatusClass: Record<ReviewerProgress["status"], string> = {
   待审核: "pending",
@@ -12,15 +14,20 @@ const reviewStatusClass: Record<ReviewerProgress["status"], string> = {
   已取消: "cancelled",
 };
 
-const detailRows = [
-  { clause: "3.2", change: "装配扭矩复检由抽检调整为全检", type: "工艺要求", department: "生产 / 质量", risk: "低" },
-  { clause: "5.1", change: "新增关键尺寸记录与签名栏", type: "记录要求", department: "研发 / 质量", risk: "中" },
-];
+const printableValue = (value: unknown): string => {
+  if (Array.isArray(value)) return value.map(printableValue).filter(Boolean).join("、") || "—";
+  if (typeof value === "string") return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "—";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return value && typeof value === "object" ? "已填写" : "—";
+};
 
 export function ProcessPrintPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const instance = usePrototypeStore((state) => state.instances.find((item) => item.id === id));
+  const tasks = usePrototypeStore((state) => state.tasks);
+  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === instance?.definitionId));
+  const version = definition?.versions.find((item) => item.id === instance?.versionId);
 
   if (!instance || instance.workflowType === "free") {
     return (
@@ -32,6 +39,9 @@ export function ProcessPrintPage() {
   }
 
   const completedReviews = instance.reviewers.filter((reviewer) => reviewer.actionAt);
+  const printableFields = version?.snapshot.form.fields.filter((field) => !["attachment", "table"].includes(field.type)) ?? [];
+  const tableFields = version?.snapshot.form.fields.filter((field) => field.type === "table") ?? [];
+  const attachmentNames = instance.attachmentNames?.length ? instance.attachmentNames : instance.pdfName !== "无附件" ? [instance.pdfName] : [];
 
   return (
     <main className="print-preview-page">
@@ -80,35 +90,22 @@ export function ProcessPrintPage() {
           <h2>二、流程表单</h2>
           <table className="print-form-table">
             <tbody>
-              <tr><th>文件标题</th><td colSpan={3}>{instance.title}</td></tr>
-              <tr><th>文件编号</th><td>{instance.documentCode}</td><th>文件类型</th><td>{instance.documentType}</td></tr>
-              <tr><th>文件密级</th><td>{instance.documentLevel}</td><th>修订版本</th><td>{instance.revision}</td></tr>
-              {instance.productModel && (
-                <tr><th>产品型号</th><td>{instance.productModel}</td><th>测试类型</th><td>{instance.testType ?? "—"}</td></tr>
+              {printableFields.length ? printableFields.map((field) => (
+                <tr key={field.id}><th>{field.label}</th><td colSpan={3} className="print-multiline">{printableValue(instance.formValues?.[field.id])}</td></tr>
+              )) : (
+                <><tr><th>标题</th><td colSpan={3}>{instance.title}</td></tr><tr><th>说明</th><td colSpan={3}>{instance.description}</td></tr></>
               )}
-              {instance.testConclusion && <tr><th>测试结论</th><td colSpan={3}>{instance.testConclusion}</td></tr>}
-              <tr><th>产品线</th><td colSpan={3}>工业控制 / 驱动器 / {instance.productModel ?? "MTR-320"}</td></tr>
-              <tr><th>变更说明</th><td colSpan={3} className="print-multiline">{instance.description}</td></tr>
             </tbody>
           </table>
-
-          <h3>变更明细</h3>
-          <table className="print-data-table">
-            <thead><tr><th>条款</th><th>变更内容</th><th>变更类型</th><th>涉及部门</th><th>质量风险</th></tr></thead>
-            <tbody>
-              {detailRows.map((row) => (
-                <tr key={row.clause}><td>{row.clause}</td><td>{row.change}</td><td>{row.type}</td><td>{row.department}</td><td>{row.risk}</td></tr>
-              ))}
-            </tbody>
-          </table>
+          {tableFields.map((field) => {
+            const rows = Array.isArray(instance.formValues?.[field.id]) ? instance.formValues?.[field.id] as Array<Record<string, unknown>> : [];
+            return <div key={field.id}><h3>{field.label}</h3><table className="print-data-table"><thead><tr>{field.columns?.map((column) => <th key={column.id}>{column.label}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row, index) => <tr key={String(row.key ?? index)}>{field.columns?.map((column) => <td key={column.id}>{printableValue(row[column.id])}</td>)}</tr>) : <tr><td colSpan={Math.max(field.columns?.length ?? 1, 1)}>—</td></tr>}</tbody></table></div>;
+          })}
         </section>
 
         <section className="print-section">
           <h2>三、附件清单</h2>
-          <div className="print-file-row">
-            <FilePdfOutlined />
-            <div><strong>{instance.pdfName}</strong><span>{instance.pdfSize} · 仅列出附件名称，附件正文不随流程打印</span></div>
-          </div>
+          {attachmentNames.length ? attachmentNames.map((name) => <div className="print-file-row" key={name}><FilePdfOutlined /><div><strong>{name}</strong><span>仅列出附件名称，附件正文不随流程打印</span></div></div>) : <p className="print-empty-text">无附件</p>}
         </section>
 
         <section className="print-section">
@@ -118,45 +115,31 @@ export function ProcessPrintPage() {
               <tr><th>审批节点</th><th>流程权限组</th><th>默认责任人</th><th>实际处理人</th><th>审核结果</th><th>审核时间</th><th>审核意见</th></tr>
             </thead>
             <tbody>
-              {instance.reviewers.map((reviewer) => (
-                <tr key={reviewer.key}>
+              {instance.reviewers.map((reviewer) => {
+                const task = tasks.find((item) => item.instanceId === instance.id && item.nodeId === reviewer.key && item.round === instance.round);
+                return <tr key={reviewer.key}>
                   <td>{reviewer.shortGroup}</td>
                   <td>{reviewer.group}</td>
-                  <td>{instance.designatedReviewer ?? reviewer.name}</td>
+                  <td>{findIdentityUser(task?.defaultAssigneeId ?? "")?.name ?? "组内共享"}</td>
                   <td>{reviewer.actionAt ? <>{reviewer.name}{reviewer.substitute ? "（代办）" : ""}</> : "—"}</td>
                   <td><span className={`print-review-status ${reviewStatusClass[reviewer.status]}`}>{reviewer.status}</span></td>
                   <td>{reviewer.actionAt ?? "—"}</td>
                   <td className="print-multiline">{reviewer.comment ?? "—"}</td>
-                </tr>
-              ))}
+                </tr>;
+              })}
             </tbody>
           </table>
         </section>
 
         <section className="print-section">
           <h2>五、审核修改记录</h2>
-          {completedReviews.length ? (
-            <table className="print-data-table">
-              <thead><tr><th>轮次</th><th>审批节点</th><th>修改人</th><th>修改字段</th><th>修改前</th><th>修改后</th><th>提交结果</th></tr></thead>
-              <tbody>
-                {completedReviews.map((reviewer) => (
-                  <tr key={`change-${reviewer.key}`}>
-                    <td>第 {instance.round} 轮</td><td>{reviewer.shortGroup}</td><td>{reviewer.name}</td>
-                    <td>{reviewer.key === "qa" ? "文件密级 / 质量风险" : "—"}</td>
-                    <td>{reviewer.key === "qa" ? "内部文件 / 中" : "—"}</td>
-                    <td>{reviewer.key === "qa" ? `${instance.documentLevel} / 低` : "—"}</td>
-                    <td>{reviewer.status}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : <p className="print-empty-text">本轮尚无审核修改记录。</p>}
+          <p className="print-empty-text">本轮没有提交字段修改；审核结果与意见见上表。</p>
         </section>
 
         <section className="print-section">
           <h2>六、流程流转记录</h2>
           <ol className="print-history-list">
-            <li><time>{instance.createdAt}</time><div><strong>第 {instance.round} 轮发布</strong><p>{instance.initiator} 发布流程，附件：{instance.pdfName}</p></div></li>
+            <li><time>{instance.createdAt}</time><div><strong>第 {instance.round} 轮发起</strong><p>{instance.initiator} 发起流程，附件：{attachmentNames.join("、") || "无"}</p></div></li>
             {completedReviews.map((reviewer) => (
               <li key={`history-${reviewer.key}`}><time>{reviewer.actionAt}</time><div><strong>{reviewer.shortGroup} · {reviewer.status}</strong><p>{reviewer.name}{reviewer.substitute ? "（代办）" : ""}：{reviewer.comment ?? "未填写审核意见"}</p></div></li>
             ))}
