@@ -772,6 +772,12 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     description: "可以先保存表单和列表字段配置再离开，也可以放弃本次修改。",
   });
 
+  const goPrevious = () => {
+    if (saveState === "dirty" && !saveVersion()) return;
+    allowNextNavigation();
+    navigate(`/admin/processes/${definitionId}/basic?versionId=${versionId}`);
+  };
+
   const goNext = () => {
     const invalidField = fields.find((field) => !field.label.trim());
     if (invalidField) {
@@ -780,14 +786,11 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
       messageApi.error("存在未命名字段，请补充后继续");
       return;
     }
-    if (!saveVersion()) return;
-    messageApi.success(definition?.type === "free" ? "表单校验通过，正在进入发布页面" : "表单校验通过，正在进入流程设计");
-    window.setTimeout(() => {
-      allowNextNavigation();
-      navigate(definition?.type === "free"
-        ? `/admin/processes/${definitionId}/publish?versionId=${versionId}`
-        : `/admin/processes/${definitionId}/flow?versionId=${versionId}`);
-    }, 350);
+    if (saveState === "dirty" && !saveVersion()) return;
+    allowNextNavigation();
+    navigate(definition?.type === "free"
+      ? `/admin/processes/${definitionId}/publish?versionId=${versionId}`
+      : `/admin/processes/${definitionId}/flow?versionId=${versionId}`);
   };
 
   const renderDefaultValueEditor = (field: DesignerField) => {
@@ -863,7 +866,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
             <CheckCircleFilled />
             <span>{saveState === "dirty" ? "有未保存修改" : `版本已保存 · ${savedAt}`}</span>
           </div>
-          <ProcessWizardPreviousButton step="基本信息" onClick={() => navigate(`/admin/processes/${definitionId}/basic?versionId=${versionId}`)} />
+          <ProcessWizardPreviousButton step="基本信息" onClick={goPrevious} />
           <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>预览</Button>
           <Button icon={<SaveOutlined />} onClick={saveVersion}>保存</Button>
           <ProcessWizardNextButton step={definition?.type === "free" ? "发布" : "流程设计"} onClick={goNext} />

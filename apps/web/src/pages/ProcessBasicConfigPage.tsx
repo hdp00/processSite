@@ -136,7 +136,9 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
   });
 
   const goNext = async () => {
-    const saved = await saveVersion(false);
+    const saved = isNew || dirty
+      ? await saveVersion(false)
+      : { definitionId: resolvedId, versionId };
     if (saved) {
       allowNextNavigation();
       navigate(`/admin/processes/${saved.definitionId}/form?versionId=${saved.versionId}`);

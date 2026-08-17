@@ -761,9 +761,12 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     const startGroups = nodes.find((node) => node.data.kind === "start")?.data.permissionGroups ?? starterGroups;
     if (versionBasic) updateVersionBasic(definitionId, versionId, { ...versionBasic, name: nextMeta.name, starterGroups: startGroups });
     const saved = updateVersionFlowSnapshot(definitionId, versionId, { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot);
-    setAutoSaved(true);
-    if (saved) message.success("版本已保存，并已自动更新校验结果");
-    else message.error("该版本当前不可编辑，请返回版本记录确认状态");
+    if (saved) {
+      setAutoSaved(true);
+      message.success("版本已保存，并已自动更新校验结果");
+    } else {
+      message.error("该版本当前不可编辑，请返回版本记录确认状态");
+    }
     return saved;
   };
 
@@ -774,13 +777,16 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     description: "可以先保存节点、连线和流程规则再离开，也可以放弃本次修改。",
   });
 
+  const goPrevious = () => {
+    if (!autoSaved && !saveVersion()) return;
+    allowNextNavigation();
+    navigate(`/admin/processes/${definitionId}/form?versionId=${versionId}`);
+  };
+
   const goNext = () => {
-    const saved = saveVersion();
-    if (!saved) return;
+    if (!autoSaved && !saveVersion()) return;
     if (!allValidationPassed) {
-      setValidationOpen(true);
-      message.warning("版本已保存，但流程结构校验未通过");
-      return;
+      message.warning("流程结构校验未通过，版本已保留，可在发布页面查看问题并返回修改");
     }
     allowNextNavigation();
     navigate(`/admin/processes/${definitionId}/publish?versionId=${versionId}`);
@@ -811,7 +817,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
             <span className="flow-designer-save-state__dot" />
             {autoSaved ? `版本已保存 · ${meta.lastSavedAt}` : "有未保存修改"}
           </span>
-          <ProcessWizardPreviousButton step="初始表单" onClick={() => navigate(`/admin/processes/${definitionId}/form?versionId=${versionId}`)} />
+          <ProcessWizardPreviousButton step="初始表单" onClick={goPrevious} />
           <Button icon={<ApartmentOutlined />} onClick={autoLayout}>
             自动布局
           </Button>
