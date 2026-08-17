@@ -61,7 +61,7 @@ const roleSeed: DomainRole[] = [
   { id: "ROLE-SUPER", name: "超级管理员", code: "super_admin", description: "系统内置最高权限角色", pagePermissions: 11, actionPermissions: 37, users: 1, status: "启用", members: [], builtIn: true },
   { id: "ROLE-001", name: "系统管理员", code: "system_admin", description: "维护用户、角色、权限及系统参数", pagePermissions: 11, actionPermissions: 37, users: 1, status: "启用", members: ["周杰"] },
   { id: "ROLE-002", name: "流程管理员", code: "workflow_admin", description: "创建、配置、发布和停用流程", pagePermissions: 5, actionPermissions: 10, users: 2, status: "启用", members: ["周杰", "王敏"] },
-  { id: "ROLE-003", name: "文控专员", code: "document_controller", description: "发起、重新发布与关闭受控流程", pagePermissions: 3, actionPermissions: 6, users: 2, status: "启用", members: ["王敏", "刘芳"] },
+  { id: "ROLE-003", name: "文控专员", code: "document_controller", description: "发起、重新提交与关闭受控流程", pagePermissions: 3, actionPermissions: 6, users: 2, status: "启用", members: ["王敏", "刘芳"] },
   { id: "ROLE-004", name: "研发审核员", code: "rd_reviewer", description: "研发审核页面和动作权限", pagePermissions: 2, actionPermissions: 4, users: 2, status: "启用", members: ["张伟", "陈晨"] },
   { id: "ROLE-005", name: "质量审核员", code: "quality_reviewer", description: "质量审核页面和动作权限", pagePermissions: 2, actionPermissions: 4, users: 1, status: "启用", members: ["林晓"] },
   { id: "ROLE-006", name: "生产审核员", code: "production_reviewer", description: "生产审核页面和动作权限", pagePermissions: 2, actionPermissions: 4, users: 2, status: "启用", members: ["赵磊", "孙悦"] },
@@ -202,4 +202,3 @@ export const workflowPermissionGroupOptions = (purpose?: WorkflowGroupPurpose) =
   useIdentityStore.getState().workflowGroups
     .filter((group) => group.status === "启用" && (!purpose || group.purposes.includes(purpose)))
     .map((group) => ({ value: group.id, label: group.name }));
-

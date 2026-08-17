@@ -89,12 +89,3 @@ export interface WorkflowTask {
   completedAt?: string;
   round: number;
 }
-
-export interface NoticeItem {
-  id: string;
-  title: string;
-  detail: string;
-  time: string;
-  read: boolean;
-  instanceId?: string;
-}

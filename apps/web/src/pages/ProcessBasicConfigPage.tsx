@@ -21,16 +21,17 @@ import {
   Typography,
   message,
 } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { ProcessWizardNextButton } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
+import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import { useIdentityStore } from "../state/useIdentityStore";
 import {
-  definitionStatus,
-  getEffectiveVersion,
+  canEditVersion,
+  getVersionStatus,
   useProcessDefinitionStore,
   type DefinitionType,
   type ProcessBasicConfig,
@@ -47,18 +48,6 @@ type BasicConfigValues = ProcessBasicConfig;
 const roleOptions = ["系统管理员", "文控专员", "研发经理", "质量经理", "生产经理", "部门查看员"]
   .map((value) => ({ value, label: value }));
 
-const userOptions = [
-  ["wangmin", "王敏", "研发 / 软件", "经理"],
-  ["zhangwei", "张伟", "研发 / 软件", "员工"],
-  ["linxiao", "林晓", "质量", "经理"],
-  ["zhaolei", "赵磊", "生产 / 装配", "员工"],
-  ["liuyan", "刘燕", "文控", "员工"],
-  ["chenjie", "陈杰", "研发 / 硬件", "员工"],
-].map(([value, name, department, position]) => ({
-  value,
-  label: `${name} · ${department} · ${position}`,
-}));
-
 export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageProps) {
   const navigate = useNavigate();
   const params = useParams<{ definitionId?: string; id?: string }>();
@@ -69,56 +58,98 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     ?? searchParams.get("definitionId")
     ?? "";
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === resolvedId));
+  const isNew = resolvedId === "new";
+  const identityUsers = useIdentityStore((state) => state.users);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
+  const userOptions = useMemo(() => identityUsers
+    .filter((user) => user.status === "启用" && !user.builtIn)
+    .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
+    .map((user) => ({
+      value: user.id,
+      label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}`,
+    })), [identityUsers]);
   const starterGroupOptions = workflowGroups
     .filter((group) => group.status === "启用" && group.purposes.includes("发起"))
     .map((group) => ({ value: group.id, label: group.name }));
   const assigneeGroupOptions = workflowGroups
     .filter((group) => group.status === "启用" && group.purposes.includes("自由流程受理"))
     .map((group) => ({ value: group.id, label: group.name }));
-  const ensureDraft = useProcessDefinitionStore((state) => state.ensureDraft);
-  const updateDraftBasic = useProcessDefinitionStore((state) => state.updateDraftBasic);
-  const effectiveVersion = getEffectiveVersion(definition);
-  const publishedBasic = effectiveVersion?.basic;
-  const initialConfig = definition?.draft?.basic ?? publishedBasic ?? {
-    name: definition?.name ?? "流程不存在",
-    code: definition?.code ?? "—",
+  const versionId = searchParams.get("versionId") ?? definition?.versions[0]?.id ?? "";
+  const version = definition?.versions.find((item) => item.id === versionId);
+  const createDefinition = useProcessDefinitionStore((state) => state.createDefinition);
+  const updateVersionBasic = useProcessDefinitionStore((state) => state.updateVersionBasic);
+  const initialConfig = useMemo<BasicConfigValues>(() => version?.basic ?? ({
+    name: definition?.name ?? searchParams.get("name") ?? "",
+    code: definition?.code ?? "保存后自动生成",
     instancePrefix: "",
-    type: definition?.type ?? "approval",
-    description: definition?.description ?? "",
+    type: definition?.type ?? (searchParams.get("type") === "free" ? "free" : "approval"),
+    description: definition?.description ?? searchParams.get("description") ?? "",
     starterGroups: [],
     visibleRoles: [],
     visibleUsers: [],
-  };
+  }), [definition?.code, definition?.description, definition?.name, definition?.type, searchParams, version?.basic]);
   const [form] = Form.useForm<BasicConfigValues>();
   const [lastSavedAt, setLastSavedAt] = useState("2026-08-13 10:32");
   const [dirty, setDirty] = useState(false);
   const workflowType = Form.useWatch("type", form) ?? initialConfig.type;
   const instancePrefix = Form.useWatch("instancePrefix", form) ?? initialConfig.instancePrefix;
-  const currentStatus = definition ? definitionStatus(definition) : "草稿";
-  const isPublishedSource = Boolean(definition?.draft?.basedOn);
-  const isWithdrawnDraft = Boolean(definition?.draft?.withdrawnVersionId);
+  const currentStatus = definition && version ? getVersionStatus(definition, version.id) : "校验未通过";
 
   useEffect(() => {
-    if (definition && !definition.draft) ensureDraft(resolvedId);
-  }, [definition, ensureDraft, resolvedId]);
+    form.setFieldsValue(initialConfig);
+  }, [form, initialConfig]);
 
-  const saveDraft = async () => {
+  const saveVersion = async (navigateToCreated = true) => {
     const values = await form.validateFields();
-    updateDraftBasic(resolvedId, values);
+    if (isNew) {
+      const createdId = createDefinition({ name: values.name, type: values.type, description: values.description });
+      const createdVersion = useProcessDefinitionStore.getState().definitions.find((item) => item.id === createdId)?.versions[0];
+      if (!createdVersion || !updateVersionBasic(createdId, createdVersion.id, { ...values, code: createdVersion.basic.code })) {
+        message.error("流程定义创建失败");
+        return null;
+      }
+      setDirty(false);
+      setLastSavedAt("刚刚");
+      message.success("流程定义已保存，并生成正式 V1");
+      if (navigateToCreated) {
+        allowNextNavigation();
+        navigate(`/admin/processes/${createdId}/basic?versionId=${createdVersion.id}`, { replace: true });
+      }
+      return { definitionId: createdId, versionId: createdVersion.id };
+    }
+    const saved = updateVersionBasic(resolvedId, versionId, values);
+    if (!saved) {
+      message.error("该版本当前不可编辑，请返回版本记录确认状态");
+      return null;
+    }
     setDirty(false);
     setLastSavedAt("刚刚");
-    message.success(isWithdrawnDraft
-      ? `已保存到 ${definition?.draft?.version} 撤回草稿，重新发布后版本号保持不变`
-      : isPublishedSource
-        ? "已基于已发布版本保存为新草稿"
-        : "流程基本信息已保存");
+    message.success("版本基本信息已保存，并已自动更新校验结果");
+    return { definitionId: resolvedId, versionId };
   };
 
+  const { guard, allowNextNavigation } = useUnsavedChangesGuard({
+    dirty,
+    onSave: async () => Boolean(await saveVersion(false)),
+    title: "基本信息尚未保存",
+    description: "可以先保存当前版本再离开，也可以放弃本次修改。",
+  });
+
   const goNext = async () => {
-    await saveDraft();
-    navigate(`/admin/processes/${resolvedId}/form`);
+    const saved = await saveVersion(false);
+    if (saved) {
+      allowNextNavigation();
+      navigate(`/admin/processes/${saved.definitionId}/form?versionId=${saved.versionId}`);
+    }
   };
+
+  if ((!definition || !version) && !isNew) {
+    return <Alert type="error" showIcon message="流程版本不存在" description="请返回流程管理重新选择。" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
+  }
+
+  if (definition && version && !canEditVersion(definition, version)) {
+    return <Alert type="info" showIcon message={`${version.version} 为只读版本`} description={definition.publishedVersionId === version.id ? "已发布版本不能直接修改。没有实例时可先取消发布；已有实例时请复制新建版本。" : "该版本已有流程实例，只能查看或复制新建版本。"} action={<AppBackButton onClick={() => navigate(`/admin/processes/${resolvedId}/versions`)} />} />;
+  }
 
   return (
     <div className="page-stack pa-page pa-config-page">
@@ -129,8 +160,8 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
             <Space size={10} wrap>
               <Typography.Title level={3}>{initialConfig.name}</Typography.Title>
               <StatusPill status={currentStatus} />
-              {isPublishedSource && <Tag color="blue">{isWithdrawnDraft ? `${definition?.draft?.version} 撤回编辑` : `基于 ${definition?.draft?.basedOn} 修改`}</Tag>}
-              {definition?.effectiveVersionId && definition.draft && <StatusPill status="草稿" label={`${definition.draft.version} 草稿`} />}
+              <Tag color="blue">{isNew ? "首次保存后生成 V1" : `正式版本 ${version?.version}`}</Tag>
+              {version?.basedOn && <Tag bordered={false}>来源 {version.basedOn}</Tag>}
             </Space>
             <Typography.Text type="secondary">配置流程身份、实例编号前缀、发起范围和额外查看范围。</Typography.Text>
           </div>
@@ -138,9 +169,9 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
         <div className="pa-config-head__actions">
           <div className="pa-save-state">
             <CheckCircleFilled />
-            <span>{dirty ? "有未保存修改" : `已保存 · ${lastSavedAt}`}</span>
+            <span>{isNew ? "尚未保存 · 保存后创建 V1" : dirty ? "有未保存修改" : `已保存 · ${lastSavedAt}`}</span>
           </div>
-          <Button icon={<SaveOutlined />} onClick={() => void saveDraft()}>保存草稿</Button>
+          <Button icon={<SaveOutlined />} onClick={() => void saveVersion()}>保存</Button>
           <ProcessWizardNextButton step="初始表单" onClick={() => void goNext()} />
         </div>
       </Card>
@@ -149,20 +180,8 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
         <ProcessWizardSteps workflowType={workflowType} current={0} />
       </Card>
 
-      {isPublishedSource && (
-        <Alert
-          className="pa-page-alert"
-          type="info"
-          showIcon
-          message={isWithdrawnDraft ? `${definition?.draft?.version} 已撤回发布` : "已发布版本保持只读"}
-          description={isWithdrawnDraft
-            ? "该版本没有关联实例，已按原版本号恢复为草稿。编辑期间流程暂停发起，重新发布后版本号保持不变。"
-            : "本次修改会保存为独立草稿；只有再次发布后才会影响新发起的流程，运行中实例继续使用原版本。"}
-        />
-      )}
-
       <Form<BasicConfigValues>
-        key={definition?.draft?.id ?? resolvedId}
+        key={version?.id ?? "new-definition"}
         form={form}
         layout="vertical"
         requiredMark={false}
@@ -325,7 +344,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                 <ul>
                   <li>表单字段和列表字段在下一步配置。</li>
                   <li>审批人、可修改字段和并行关系在流程设计器配置。</li>
-                  <li>{isWithdrawnDraft ? "当前版本已撤回，重新发布后版本号保持不变。" : "已有实例的已发布版本修改时会生成下一版本草稿。"}</li>
+                  <li>未发布且没有实例的版本可直接编辑；已有实例后只能复制新建版本。</li>
                 </ul>
               ) : (
                 <ul>
@@ -344,7 +363,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
           </aside>
         </div>
       </Form>
-
+      {guard}
     </div>
   );
 }

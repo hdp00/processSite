@@ -265,15 +265,6 @@ button {
   font-weight: 600;
 }
 
-.header-icon-button {
-  width: 40px !important;
-  height: 40px !important;
-  border: 1px solid #e6e9f0 !important;
-  border-radius: 10px !important;
-  color: #33415e !important;
-  background: #fff !important;
-}
-
 .user-button {
   display: flex;
   align-items: center;
@@ -322,50 +313,6 @@ button {
   min-height: 0;
   padding: 0;
   overflow: hidden;
-}
-
-.drawer-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.notice-list .ant-list-item {
-  margin-bottom: 8px;
-  padding: 15px 12px;
-  border: 1px solid #edf0f4;
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-.notice-list .ant-list-item:hover {
-  border-color: #d5dcf7;
-  background: #f8f9ff;
-}
-
-.notice-list .is-unread {
-  border-color: #dce3ff;
-  background: #f7f8ff;
-}
-
-.notice-dot {
-  display: block;
-  width: 8px;
-  height: 8px;
-  margin-top: 8px;
-  border-radius: 50%;
-  background: #c9ced8;
-}
-
-.is-unread .notice-dot {
-  background: #3157d5;
-  box-shadow: 0 0 0 4px rgba(49, 87, 213, 0.12);
-}
-
-.notice-list small {
-  display: block;
-  margin-top: 6px;
-  color: #9aa1b0;
 }
 
 /* Login */
@@ -1600,6 +1547,10 @@ button {
   gap: 18px;
 }
 
+.detail-workspace.is-form-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .pdf-card .ant-card-head-title {
   max-width: 65%;
   overflow: hidden;
@@ -1782,6 +1733,36 @@ button {
 
 .field-wide {
   grid-column: 1 / -1;
+}
+
+.attachment-field-control {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.attachment-field-list {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.attachment-field-list > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: #566279;
+}
+
+.attachment-field-list strong {
+  overflow: hidden;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editable-field {
@@ -2368,15 +2349,13 @@ button {
     letter-spacing: -0.35px;
   }
 
-  .persona-switcher,
-  .header-icon-button {
+  .persona-switcher {
     border-color: #dce2ec !important;
     background: rgba(248, 250, 253, 0.9) !important;
     box-shadow: var(--ui-shadow-sm);
   }
 
-  .persona-switcher:hover,
-  .header-icon-button:hover {
+  .persona-switcher:hover {
     border-color: #bac5ee !important;
     background: #fff !important;
   }
@@ -2602,12 +2581,6 @@ button {
   .ant-drawer-content {
     border: 1px solid rgba(218, 224, 234, 0.9);
     box-shadow: 0 22px 65px rgba(20, 32, 57, 0.18) !important;
-  }
-
-  .notice-list .ant-list-item {
-    border-color: #e5eaf1;
-    border-radius: 12px;
-    box-shadow: var(--ui-shadow-sm);
   }
 
   .login-panel {

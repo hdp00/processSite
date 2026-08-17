@@ -144,7 +144,7 @@ export function ProcessPrintPage() {
               <li key={`history-${reviewer.key}`}><time>{reviewer.actionAt}</time><div><strong>{reviewer.shortGroup} · {reviewer.status}</strong><p>{reviewer.name}{reviewer.substitute ? "（代办）" : ""}：{reviewer.comment ?? "未填写审核意见"}</p></div></li>
             ))}
             {instance.status === "已完成" && <li><time>{instance.updatedAt}</time><div><strong>流程完成</strong><p>全部审批节点已通过。</p></div></li>}
-            {instance.status === "已关闭" && <li><time>{instance.updatedAt}</time><div><strong>流程关闭</strong><p>发布方关闭流程，未完成待办已取消。</p></div></li>}
+            {instance.status === "已关闭" && <li><time>{instance.updatedAt}</time><div><strong>流程关闭</strong><p>发起方关闭流程，未完成待办已取消。</p></div></li>}
           </ol>
         </section>
 

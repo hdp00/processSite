@@ -110,8 +110,38 @@ export interface StoredDesignerField {
   columns?: StoredDesignerTableColumn[];
 }
 
+export const PROCESS_TITLE_FIELD_ID = "title";
+
+export const createProcessTitleField = (): StoredDesignerField => ({
+  id: PROCESS_TITLE_FIELD_ID,
+  type: "text",
+  label: "标题",
+  description: "用于任务中心、流程清单和流程详情统一显示此流程实例",
+  placeholder: "请输入标题",
+  required: true,
+  defaultValue: "",
+  listVisible: true,
+  taskVisible: true,
+  queryable: true,
+  reviewEditable: false,
+});
+
+export const ensureProcessTitleField = (fields?: StoredDesignerField[]): StoredDesignerField[] => {
+  const source = structuredClone(fields ?? []);
+  const titleIndex = source.findIndex((field) => field.id === PROCESS_TITLE_FIELD_ID);
+  if (titleIndex < 0) return [createProcessTitleField(), ...source];
+  source[titleIndex] = {
+    ...source[titleIndex],
+    id: PROCESS_TITLE_FIELD_ID,
+    type: "text",
+    required: true,
+    listVisible: source[titleIndex].listVisible ?? true,
+    taskVisible: source[titleIndex].taskVisible ?? true,
+  };
+  return source;
+};
+
 export interface StoredFormDesignerSnapshot {
-  formName?: string;
   fields: StoredDesignerField[];
   savedAt?: string;
 }
@@ -156,7 +186,7 @@ export const readFormDesignerSnapshot = (definitionId: string): StoredFormDesign
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as Partial<StoredFormDesignerSnapshot>;
     return Array.isArray(parsed.fields)
-      ? { formName: parsed.formName, fields: parsed.fields, savedAt: parsed.savedAt }
+      ? { fields: ensureProcessTitleField(parsed.fields), savedAt: parsed.savedAt }
       : undefined;
   } catch {
     return undefined;
@@ -178,7 +208,7 @@ export const readFlowDesignerSnapshot = (definitionId: string): StoredFlowDesign
 };
 
 export const captureWorkingDesignerSnapshot = (definitionId: string): CompleteDesignerSnapshot => ({
-  form: readFormDesignerSnapshot(definitionId) ?? { formName: "发起表单", fields: [] },
+  form: readFormDesignerSnapshot(definitionId) ?? { fields: [createProcessTitleField()] },
   flow: readFlowDesignerSnapshot(definitionId) ?? { nodes: [], edges: [], meta: { rejectionHandling: "resubmit-or-close" } },
   systemFields: loadSystemListFields(definitionId),
 });
@@ -196,11 +226,24 @@ export const writeWorkingDesignerSnapshot = (definitionId: string, snapshot: Com
   }
 };
 
-export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapshot): CompleteDesignerSnapshot => ({
-  form: snapshot ? structuredClone(snapshot.form) : { formName: "发起表单", fields: [] },
-  flow: snapshot ? structuredClone(snapshot.flow) : { nodes: [], edges: [], meta: { rejectionHandling: "resubmit-or-close" } },
-  systemFields: snapshot ? structuredClone(snapshot.systemFields) : cloneDefaultSystemListFields(),
-});
+export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapshot): CompleteDesignerSnapshot => {
+  if (!snapshot) return {
+    form: { fields: [createProcessTitleField()] },
+    flow: { nodes: [], edges: [], meta: { rejectionHandling: "resubmit-or-close" } },
+    systemFields: cloneDefaultSystemListFields(),
+  };
+  const legacyTitleConfig = snapshot.systemFields.find((field) => String(field.key) === "title");
+  const fields = ensureProcessTitleField(snapshot.form.fields).map((field) =>
+    field.id === PROCESS_TITLE_FIELD_ID && legacyTitleConfig
+      ? { ...field, taskVisible: legacyTitleConfig.taskVisible, listVisible: legacyTitleConfig.processListVisible }
+      : field,
+  );
+  return {
+    form: { ...structuredClone(snapshot.form), fields },
+    flow: structuredClone(snapshot.flow),
+    systemFields: structuredClone(snapshot.systemFields.filter((field) => String(field.key) !== "title")),
+  };
+};
 
 export const getReviewEditableFieldOptions = (definitionId: string): EditableFieldOption[] => {
   const snapshot = readFormDesignerSnapshot(definitionId);
@@ -216,10 +259,10 @@ export const getReviewEditableFieldOptions = (definitionId: string): EditableFie
 };
 
 export const rejectionHandlingLabel = (value?: string) => ({
-  "resubmit-or-close": "重新发布或关闭",
-  "resubmit-only": "仅允许重新发布",
+  "resubmit-or-close": "重新提交或关闭",
+  "resubmit-only": "仅允许重新提交",
   "auto-close": "自动关闭流程",
-}[value ?? ""] ?? "重新发布或关闭");
+}[value ?? ""] ?? "重新提交或关闭");
 
 export const buildFlowLevels = (
   nodes: Array<{ id: string }>,

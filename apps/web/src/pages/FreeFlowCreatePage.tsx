@@ -18,7 +18,6 @@ export function FreeFlowCreatePage() {
   const instancePrefix = useProcessDefinitionStore((state) => {
     const definition = state.definitions.find((item) => item.id === "free-collaboration");
     return getEffectiveVersion(definition)?.basic.instancePrefix
-      ?? definition?.draft?.basic.instancePrefix
       ?? "ISSUE";
   });
   const [title, setTitle] = useState("");

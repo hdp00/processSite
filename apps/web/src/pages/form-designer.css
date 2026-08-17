@@ -272,17 +272,6 @@
   background: #fff;
 }
 
-.fd-form-name {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.fd-form-name .ant-input {
-  width: 260px;
-  font-weight: 600;
-}
-
 .fd-canvas-scroll,
 .fd-property-scroll {
   min-height: 0;

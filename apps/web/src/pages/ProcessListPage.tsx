@@ -36,14 +36,14 @@ import { usePrototypeStore } from "../state/usePrototypeStore";
 import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canPersonaLaunchDefinition, hasPersonaPermission } from "../state/rolePermissions";
 import { canUserViewInstance } from "../state/workflowAccess";
-import type { StoredDesignerField } from "../utils/designerStorage";
+import { PROCESS_TITLE_FIELD_ID, type StoredDesignerField } from "../utils/designerStorage";
 
 export function ProcessListPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
   const definitionId = searchParams.get("definitionId")
-    ?? managedDefinitions.find((item) => Boolean(item.effectiveVersionId || item.draft?.withdrawnVersionId))?.id
+    ?? managedDefinitions.find((item) => Boolean(item.publishedVersionId))?.id
     ?? "";
   const managedDefinition = managedDefinitions.find((item) => item.id === definitionId);
   const currentVersion = getEffectiveVersion(managedDefinition);
@@ -61,11 +61,15 @@ export function ProcessListPage() {
   const canPrint = hasPersonaPermission(personaId, "work-list:打印");
   const isFreeFlow = managedDefinition?.type === "free";
   const systemListFields = currentVersion?.snapshot.systemFields ?? cloneDefaultSystemListFields();
-  const listFields = currentVersion?.snapshot.form.fields.filter((field) => field.listVisible && field.type !== "richtext") ?? [];
+  const titleField = currentVersion?.snapshot.form.fields.find((field) => field.id === PROCESS_TITLE_FIELD_ID);
+  const showTitle = titleField?.listVisible ?? true;
+  const listFields = currentVersion?.snapshot.form.fields.filter((field) =>
+    field.id !== PROCESS_TITLE_FIELD_ID && field.listVisible && field.type !== "richtext",
+  ) ?? [];
   const queryFields = currentVersion?.snapshot.form.fields.filter((field) => field.queryable && field.type !== "attachment" && field.type !== "table" && field.type !== "richtext") ?? [];
   const showSystemField = (key: Parameters<typeof isSystemFieldVisible>[1]) =>
     isSystemFieldVisible(systemListFields, key, "processList");
-  const showTitleCell = showSystemField("title") || showSystemField("template");
+  const showTitleCell = showTitle || showSystemField("template");
   const showNodeCell = showSystemField("currentNode") || showSystemField("round");
 
   useEffect(() => {
@@ -121,10 +125,10 @@ export function ProcessListPage() {
       ),
     }] : []),
     ...(showTitleCell ? [{
-      title: showSystemField("title") ? "标题" : "流程名称", dataIndex: "title", width: 310,
+      title: showTitle ? "标题" : "流程名称", dataIndex: "title", width: 310,
       render: (value: string, record: ProcessInstance) => (
         <div className="title-cell">
-          {showSystemField("title") ? <strong>{value}</strong> : null}
+          {showTitle ? <strong>{value}</strong> : null}
           {showSystemField("template") ? <span>{record.template}</span> : null}
         </div>
       ),
@@ -294,7 +298,7 @@ export function ProcessListPage() {
                     />
                   )}
                 </Col>
-              )) : <Col span={24}><Typography.Text type="secondary">当前生效版本没有配置可查询字段</Typography.Text></Col>}
+              )) : <Col span={24}><Typography.Text type="secondary">当前发布版本没有配置可查询字段</Typography.Text></Col>}
             </Row>
           </div>
         )}
@@ -344,7 +348,7 @@ export function ProcessListPage() {
             type="info"
             showIcon
             message="复制最终表单内容，创建新的流程实例"
-            description="新实例会按目标流程当前版本的编号前缀，从该前缀的共享月序列取得新编号并从第1轮开始；原附件、审批记录、审核结果、通知和流转历史均不会复制。"
+            description="新实例会按目标流程当前版本的编号前缀，从该前缀的共享月序列取得新编号并从第1轮开始；原附件、审批记录、审核结果和流转历史均不会复制。"
           />
           <label className="field-block">
             <span>新流程标题</span>

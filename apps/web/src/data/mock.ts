@@ -1,4 +1,4 @@
-import type { NoticeItem, ProcessInstance } from "./types";
+import type { ProcessInstance } from "./types";
 
 const parallelReviewers = (
   overrides: Partial<Record<"rd" | "qa" | "production", ProcessInstance["reviewers"][number]>> = {},
@@ -119,7 +119,7 @@ export const initialInstances: ProcessInstance[] = [
     createdAt: "2026-08-09 13:20",
     updatedAt: "2026-08-10 16:34",
     round: 1,
-    currentNode: "等待发布方重新发布",
+    currentNode: "等待发起方重新提交",
     priority: "普通",
     description: "变更标定工装与校验频次。",
     pdfName: "ECN-ENC-026_编码器标定工艺.pdf",
@@ -136,7 +136,7 @@ export const initialInstances: ProcessInstance[] = [
         shortGroup: "研发审核",
         status: "已驳回",
         actionAt: "2026-08-10 16:34",
-        comment: "第 3 页工装编号与现行清单不一致，请修正后重新发布。",
+        comment: "第 3 页工装编号与现行清单不一致，请修正后重新提交。",
       },
       qa: {
         key: "qa",
@@ -447,32 +447,5 @@ export const initialInstances: ProcessInstance[] = [
       { id: "free-entry-12-reply-2", type: "reply", actor: "赵磊", time: "2026-08-11 16:18", content: "<p>已根据设备缓存记录补齐 15:30 数据，并完成二次核对。</p>" },
       { id: "free-entry-12-closed-2", type: "closed", actor: "赵磊", time: "2026-08-11 16:40", content: "数据完整，事项关闭。" },
     ],
-  },
-];
-
-export const initialNotices: NoticeItem[] = [
-  {
-    id: "notice-1",
-    title: "你有一项紧急审核待处理",
-    detail: "MTR-320 步进电机装配作业指导书",
-    time: "12 分钟前",
-    read: false,
-    instanceId: "proc-42",
-  },
-  {
-    id: "notice-2",
-    title: "可代办任务进入第二轮审核",
-    detail: "驱动器来料检验规范（2026版）",
-    time: "1 小时前",
-    read: false,
-    instanceId: "proc-40",
-  },
-  {
-    id: "notice-3",
-    title: "流程已完成",
-    detail: "伺服电机包装规范已通过全部审核",
-    time: "3 天前",
-    read: true,
-    instanceId: "proc-31",
   },
 ];

@@ -31,6 +31,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
 import { StatusPill } from "../components/StatusPill";
+import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { FreeFlowEntry, ProcessInstance } from "../data/types";
 import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
 import { effectiveGroupMemberIds, findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
@@ -75,6 +76,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   useIdentityStore((state) => state.workflowGroups);
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === instance?.definitionId));
   const lockedVersion = definition?.versions.find((version) => version.id === instance?.versionId);
+  const hasConfiguredAttachmentField = Boolean(lockedVersion?.snapshot.form.fields.some((field) => field.type === "attachment"));
   const assigneeIds = new Set((lockedVersion?.basic.assigneeGroups ?? []).flatMap(effectiveGroupMemberIds));
   const userOptions = identityUsers.filter((user) => assigneeIds.has(user.id)).map((user) => ({
     value: user.name,
@@ -115,6 +117,28 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const canEditInitial = Boolean(isOpen && (instance?.initiatorId === persona?.id || instance?.initiator === persona?.name));
   const canForceReassign = Boolean(isOpen && isStarter);
   const initialEntry = instance?.freeTimeline?.find((entry) => entry.type === "created");
+  const initialFormDirty = Boolean(initialEditOpen && instance && (
+    draftInitial.title !== instance.title
+    || draftInitial.category !== instance.category
+    || draftInitial.priority !== instance.priority
+    || draftInitial.description !== instance.description
+    || draftInitial.initialContent !== (initialEntry?.content ?? "")
+  ));
+  const { guard } = useUnsavedChangesGuard({
+    dirty: Boolean(
+      hasRichContent(replyContent)
+      || nextAssignee
+      || (editEntry && editContent !== editEntry.content)
+      || closeReason.trim()
+      || reopenReason.trim()
+      || reopenAssignee
+      || reassignReason.trim()
+      || reassignAssignee
+      || initialFormDirty
+    ),
+    title: "协作内容尚未提交",
+    description: "离开后，当前回复、表单修改或操作理由将丢失。",
+  });
 
   const timeline = useMemo(() => instance?.freeTimeline ?? [], [instance?.freeTimeline]);
 
@@ -167,6 +191,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
   return (
     <div className="free-flow-page">
+      {guard}
       <div className="free-detail-topbar">
         <AppBackButton onClick={() => navigate("/processes?definitionId=free-collaboration")} />
       </div>
@@ -202,7 +227,11 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
               <Descriptions.Item label="事项分类">{instance.category}</Descriptions.Item>
               <Descriptions.Item label="优先级"><Tag color={instance.priority === "紧急" ? "red" : "default"}>{instance.priority}</Tag></Descriptions.Item>
               <Descriptions.Item label="发起人">{instance.initiator}</Descriptions.Item>
-              <Descriptions.Item label="附件">{instance.pdfName}</Descriptions.Item>
+              {hasConfiguredAttachmentField && (instance.attachmentNames?.length || (instance.pdfName && !["无附件", "—"].includes(instance.pdfName))) ? (
+                <Descriptions.Item label="附件">
+                  {instance.attachmentNames?.length ? instance.attachmentNames.join("、") : instance.pdfName}
+                </Descriptions.Item>
+              ) : null}
               <Descriptions.Item label="事项摘要" span={2}>{instance.description}</Descriptions.Item>
             </Descriptions>
             <Divider />

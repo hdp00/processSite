@@ -4,7 +4,6 @@ import {
   DeleteOutlined,
   InboxOutlined,
   PlusOutlined,
-  SaveOutlined,
   SendOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
@@ -14,7 +13,6 @@ import {
   Card,
   Cascader,
   Checkbox,
-  Descriptions,
   Divider,
   Form,
   Input,
@@ -35,15 +33,16 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { RichTextEditor } from "../components/RichTextEditor";
+import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { effectiveGroupMemberIds, useIdentityStore } from "../state/useIdentityStore";
 import type { ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
 import {
+  ensureProcessTitleField,
   rejectionHandlingLabel,
   type StoredDesignerField,
   type StoredDesignerTableColumn,
 } from "../utils/designerStorage";
-import { previewNextInstanceNumber } from "../utils/instanceNumber";
 
 type DynamicRow = Record<string, string | string[] | undefined> & { key: string };
 type DynamicFormValues = Record<string, unknown> & { firstAssignee?: string };
@@ -190,14 +189,12 @@ function DynamicFieldControl({
 
 export function ConfiguredProcessStartPage({ definition, version }: ConfiguredProcessStartPageProps) {
   const navigate = useNavigate();
-  const existingInstances = usePrototypeStore((state) => state.instances);
   const createProcessInstance = usePrototypeStore((state) => state.createProcessInstance);
-  const personaId = usePrototypeStore((state) => state.personaId);
   const identityUsers = useIdentityStore((state) => state.users);
   useIdentityStore((state) => state.workflowGroups);
   const formSnapshot = version.snapshot.form;
   const flowSnapshot = version.snapshot.flow;
-  const fields = formSnapshot.fields;
+  const fields = ensureProcessTitleField(formSnapshot.fields);
   const approvalNodes = useMemo(
     () => flowSnapshot.nodes.filter((node) => node.data?.kind === "approval" && node.data.label),
     [flowSnapshot],
@@ -212,12 +209,14 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submittedValues, setSubmittedValues] = useState<DynamicFormValues>({});
-  const instancePrefix = version.basic.instancePrefix || "FLOW";
-  const existingCodes = existingInstances.map((item) => item.code);
-  const previewCode = previewNextInstanceNumber(instancePrefix, existingCodes);
-  const draftKey = `flowpilot-start-draft-v1:${personaId}:${definition.id}`;
+  const [dirty, setDirty] = useState(false);
+  const { guard, allowNextNavigation } = useUnsavedChangesGuard({
+    dirty,
+    title: "发起内容尚未提交",
+    description: "离开后，当前填写的表单、附件和人员选择将丢失。",
+  });
   const initialValues = useMemo(() => {
-    const defaults = Object.fromEntries(fields.map((field) => [
+    return Object.fromEntries(fields.map((field) => [
       field.id,
       field.type === "attachment"
         ? []
@@ -225,17 +224,7 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
           ? [createRow(field.columns ?? [])]
           : field.defaultValue ?? (field.type === "checkbox" ? [] : ""),
     ]));
-    try {
-      const stored = JSON.parse(window.localStorage.getItem(draftKey) ?? "{}") as Record<string, unknown>;
-      fields.filter((field) => field.type === "attachment").forEach((field) => {
-        const names = Array.isArray(stored[field.id]) ? stored[field.id] as string[] : [];
-        stored[field.id] = names.map((name, index) => ({ uid: `draft-${index}`, name, status: "done" }));
-      });
-      return { ...defaults, ...stored };
-    } catch {
-      return defaults;
-    }
-  }, [draftKey, fields]);
+  }, [fields]);
 
   const runtimeValues = (values: DynamicFormValues) => Object.fromEntries(
     Object.entries(values).map(([key, value]) => {
@@ -248,12 +237,6 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
         : value];
     }),
   );
-
-  const saveDraft = () => {
-    const values = runtimeValues(form.getFieldsValue(true));
-    window.localStorage.setItem(draftKey, JSON.stringify(values));
-    message.success("发起草稿已保存；正式提交前不会生成实例编号");
-  };
 
   const renderField = (field: StoredDesignerField) => {
     const wide = ["richtext", "attachment", "table"].includes(field.type);
@@ -305,16 +288,17 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
       });
       setSubmitting(false);
       if (!createdId) {
-        message.error("流程未创建：当前账号、流程权限组或生效版本已发生变化");
+        message.error("流程未创建：当前账号、流程权限组或发布版本已发生变化");
         setConfirmOpen(false);
         return;
       }
-      window.localStorage.removeItem(draftKey);
       setConfirmOpen(false);
+      setDirty(false);
+      allowNextNavigation();
       message.success(definition.type === "free"
         ? "事项已创建并生成首位受理人的待办"
-        : `流程已发起，${approvalNodes.length} 个审批节点已按生效版本生成待办`);
-      navigate(`/processes/${createdId}`);
+        : `流程已发起，${approvalNodes.length} 个审批节点已按发布版本生成待办`);
+      navigate("/launch");
     }, 450);
   };
 
@@ -335,15 +319,12 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
             <span>{version.version} · {version.basic.starterGroups.join("、")}</span>
           </div>
         </div>
-        <Space>
-          <Button icon={<SaveOutlined />} onClick={saveDraft}>保存草稿</Button>
-          <Button type="primary" icon={<SendOutlined />} onClick={() => form.submit()}>{definition.type === "free" ? "创建事项" : "提交审核"}</Button>
-        </Space>
+        <Button type="primary" icon={<SendOutlined />} onClick={() => form.submit()}>提交</Button>
       </div>
 
       <Card className="start-progress-card">
         <div className="start-progress-copy">
-          <Tag color="processing">{version.version} 生效版本</Tag>
+          <Tag color="processing">发布版本 {version.version}</Tag>
           <Typography.Text>{version.basic.description}</Typography.Text>
         </div>
         <Steps
@@ -356,7 +337,7 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
                 { title: "手动关闭", description: "允许填写理由后重开" },
               ]
             : [
-                { title: "填写并发布", description: version.basic.starterGroups.join("、") },
+                { title: "填写并提交", description: version.basic.starterGroups.join("、") },
                 { title: "流程审批", description: approvalNodes.map((node) => node.data?.label).join(" / ") || "按当前拓扑" },
                 { title: "流程结束", description: "全部前置节点通过" },
               ]}
@@ -368,12 +349,13 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
         layout="vertical"
         requiredMark="optional"
         initialValues={initialValues}
+        onValuesChange={() => setDirty(true)}
         onFinish={prepareSubmit}
       >
         <div className="process-start-layout">
           <main className="process-start-main">
-            <Card className="form-card" title={formSnapshot?.formName || "初始表单"} extra={<Typography.Text type="secondary">实例编号提交后由系统生成</Typography.Text>}>
-              {fields.length ? <div className="start-form-grid">{fields.map(renderField)}</div> : <Alert type="warning" showIcon message="当前生效版本没有可用的初始表单字段" />}
+            <Card className="form-card" title="初始表单" extra={<Typography.Text type="secondary">实例编号提交后由系统生成</Typography.Text>}>
+              {fields.length ? <div className="start-form-grid">{fields.map(renderField)}</div> : <Alert type="warning" showIcon message="当前发布版本没有可用的初始表单字段" />}
             </Card>
           </main>
 
@@ -430,29 +412,16 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
 
       <Modal
         open={confirmOpen}
-        title={definition.type === "free" ? "确认创建事项" : "确认提交审核"}
-        okText={definition.type === "free" ? "确认创建" : "确认提交"}
-        cancelText="返回检查"
+        title="确认提交"
+        okText="确认提交"
+        cancelText="取消"
         confirmLoading={submitting}
         onOk={confirmSubmit}
         onCancel={() => setConfirmOpen(false)}
       >
-        <Alert
-          type="warning"
-          showIcon
-          message={definition.type === "free" ? "创建后将通知首位受理人" : "提交后将按当前流程拓扑生成待办"}
-          description="本次操作只使用当前生效版本保存的表单、权限组、节点和规则。"
-        />
-        <Descriptions className="start-confirm-descriptions" column={1} size="small" bordered>
-          <Descriptions.Item label="流程">{version.basic.name} {version.version}</Descriptions.Item>
-          <Descriptions.Item label="预计实例编号">{previewCode}</Descriptions.Item>
-          <Descriptions.Item label="表单字段">{fields.length} 个</Descriptions.Item>
-          <Descriptions.Item label="附件">{attachmentNames.join("、") || "无"}</Descriptions.Item>
-          <Descriptions.Item label={definition.type === "free" ? "首位受理人" : "审批节点"}>
-            {definition.type === "free" ? String(submittedValues.firstAssignee ?? "—") : `${approvalNodes.length} 个`}
-          </Descriptions.Item>
-        </Descriptions>
+        <Typography.Paragraph style={{ marginBottom: 0 }}>确定提交当前填写内容吗？</Typography.Paragraph>
       </Modal>
+      {guard}
     </div>
   );
 }

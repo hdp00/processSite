@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { initialInstances, initialNotices } from "../data/mock";
-import type { FreeFlowEntry, NoticeItem, ProcessInstance, WorkflowTask } from "../data/types";
+import { initialInstances } from "../data/mock";
+import type { FreeFlowEntry, ProcessInstance, WorkflowTask } from "../data/types";
 import { getEffectiveVersion, useProcessDefinitionStore, type ProcessVersion } from "./useProcessDefinitionStore";
 import {
   effectiveGroupMemberIds,
@@ -15,6 +15,7 @@ import {
   normalizeLegacyInstanceNumber,
   resetInstanceNumberSequences,
 } from "../utils/instanceNumber";
+import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { hasUserPermission } from "./permissionEngine";
 
 type ReviewAction = "pass" | "reject";
@@ -71,11 +72,9 @@ interface PrototypeState {
   personaId: PersonaId;
   instances: ProcessInstance[];
   tasks: WorkflowTask[];
-  notices: NoticeItem[];
   login: (personaId?: PersonaId) => void;
   logout: () => void;
   switchPersona: (personaId: PersonaId) => void;
-  markAllNoticesRead: () => void;
   createProcessInstance: (input: CreateProcessInstanceInput) => string | null;
   reviewInstance: (id: string, action: ReviewAction, comment: string, documentLevel?: string, fieldChanges?: Record<string, unknown>) => void;
   closeInstance: (id: string, reason: string) => void;
@@ -243,7 +242,7 @@ const findFormValue = (version: ProcessVersion, values: Record<string, unknown>,
 };
 
 const synchronizedInstanceFields = (version: ProcessVersion, values: Record<string, unknown>) => {
-  const title = findFormValue(version, values, ["title", "标题"]);
+  const title = displayValue(values[PROCESS_TITLE_FIELD_ID]);
   const documentCode = findFormValue(version, values, ["documentCode", "文件编号", "报告编号"]);
   const documentType = findFormValue(version, values, ["documentType", "文件类型", "分类"]);
   const description = findFormValue(version, values, ["description", "摘要", "说明"]);
@@ -252,6 +251,19 @@ const synchronizedInstanceFields = (version: ProcessVersion, values: Record<stri
     ...(documentCode ? { documentCode } : {}),
     ...(documentType ? { documentType } : {}),
     ...(description ? { description } : {}),
+  };
+};
+
+const synchronizedAttachmentFields = (version: ProcessVersion, values: Record<string, unknown>) => {
+  const attachmentFields = version.snapshot.form.fields.filter((field) => field.type === "attachment");
+  if (!attachmentFields.length) return {};
+  const attachmentNames = attachmentFields.flatMap((field) => {
+    const value = values[field.id];
+    return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+  });
+  return {
+    attachmentNames,
+    pdfName: attachmentNames[0] ?? "无附件",
   };
 };
 
@@ -341,12 +353,9 @@ export const usePrototypeStore = create<PrototypeState>()(
       personaId: "lina",
       instances: initialRuntimeInstances,
       tasks: initialTasks,
-      notices: initialNotices,
       login: (personaId = "lina") => set({ authenticated: true, personaId }),
       logout: () => set({ authenticated: false }),
       switchPersona: (personaId) => set({ personaId }),
-      markAllNoticesRead: () =>
-        set((state) => ({ notices: state.notices.map((notice) => ({ ...notice, read: true })) })),
       createProcessInstance: (input) => {
         const state = get();
         const actor = findIdentityUser(state.personaId);
@@ -375,7 +384,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           );
           if (!firstAssignee || !allowed) return null;
         }
-        const title = findFormValue(version, input.formValues, ["title", "标题"])
+        const title = displayValue(input.formValues[PROCESS_TITLE_FIELD_ID])
           || `${version.basic.name}申请`;
         const description = findFormValue(version, input.formValues, ["description", "摘要", "说明", "内容"]);
         const attachmentNames = [...(input.attachmentNames ?? [])];
@@ -416,18 +425,9 @@ export const usePrototypeStore = create<PrototypeState>()(
           formValues: structuredClone(input.formValues),
           attachmentNames,
         };
-        const notice: NoticeItem = {
-          id: `notice-${Date.now()}`,
-          title: definition.type === "free" ? `新事项已指派给${firstAssignee?.name}` : "流程已成功发起",
-          detail: title,
-          time: "刚刚",
-          read: false,
-          instanceId: createdId,
-        };
         set({
           instances: [created, ...state.instances],
           tasks: [...(approvalRuntime?.tasks ?? []), ...state.tasks],
-          notices: [notice, ...state.notices],
         });
         useProcessDefinitionStore.getState().recordInstanceCreated(definition.id, version.id);
         return createdId;
@@ -472,7 +472,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                   ...reviewer,
                   status: action === "pass" ? ("已通过" as const) : ("已驳回" as const),
                   actionAt,
-                  comment: comment || (action === "pass" ? "同意，按修订内容执行。" : "请修正后重新发布。"),
+                  comment: comment || (action === "pass" ? "同意，按修订内容执行。" : "请修正后重新提交。"),
                   substitute: Boolean(task.defaultAssigneeId && task.defaultAssigneeId !== actor.id),
                   name: actor.name,
                 };
@@ -490,29 +490,21 @@ export const usePrototypeStore = create<PrototypeState>()(
             return {
               ...instance,
               ...(targetVersion && mergedFormValues ? synchronizedInstanceFields(targetVersion, mergedFormValues) : {}),
+              ...(targetVersion && mergedFormValues ? synchronizedAttachmentFields(targetVersion, mergedFormValues) : {}),
               documentLevel: documentLevel ?? instance.documentLevel,
               formValues: mergedFormValues,
               reviewers,
               updatedAt: actionAt,
               status: action === "reject" ? (autoCloseOnReject ? ("已关闭" as const) : ("驳回待处理" as const)) : allPassed ? ("已完成" as const) : instance.status,
               currentNode: action === "reject"
-                ? autoCloseOnReject ? "流程已关闭" : "等待发布方重新发布"
+                ? autoCloseOnReject ? "流程已关闭" : "等待发起方重新提交"
                 : allPassed
                   ? "流程结束"
                   : tasks.filter((item) => item.instanceId === id && item.round === instance.round && item.status === "待处理").map((item) => item.nodeName).join(" / "),
             };
           });
 
-          const target = state.instances.find((instance) => instance.id === id);
-          const notice: NoticeItem = {
-            id: `notice-${Date.now()}`,
-            title: action === "pass" ? "审核意见已提交" : "流程已驳回文控处理",
-            detail: target?.title ?? "流程状态已更新",
-            time: "刚刚",
-            read: false,
-            instanceId: id,
-          };
-          return { instances, tasks, notices: [notice, ...state.notices] };
+          return { instances, tasks };
         }),
       closeInstance: (id, reason) =>
         set((state) => {
@@ -621,9 +613,7 @@ export const usePrototypeStore = create<PrototypeState>()(
         if (!version) return null;
         const copiedValues = structuredClone(source.formValues ?? {});
         version.snapshot.form.fields.filter((field) => field.type === "attachment").forEach((field) => delete copiedValues[field.id]);
-        const titleField = version.snapshot.form.fields.find((field) => field.id.toLowerCase().includes("title") || field.label.includes("标题"));
-        if (titleField) copiedValues[titleField.id] = title.trim() || `${source.title}（复制）`;
-        else copiedValues.title = title.trim() || `${source.title}（复制）`;
+        copiedValues[PROCESS_TITLE_FIELD_ID] = title.trim() || `${source.title}（复制）`;
         return get().createProcessInstance({ definitionId: source.definitionId, formValues: copiedValues, attachmentNames: [] });
       },
       createFreeFlow: (input) => {
@@ -697,17 +687,6 @@ export const usePrototypeStore = create<PrototypeState>()(
                   }
                 : instance,
             ),
-            notices: [
-              {
-                id: `notice-${Date.now()}`,
-                title: `${persona.name}向你转交了一项事项`,
-                detail: target.title,
-                time: "刚刚",
-                read: false,
-                instanceId: id,
-              },
-              ...state.notices,
-            ],
           };
         }),
       editFreeFlowReply: (id, entryId, content) =>
@@ -875,7 +854,6 @@ export const usePrototypeStore = create<PrototypeState>()(
         set((state) => ({
           instances: initialRuntimeInstances,
           tasks: initialTasks,
-          notices: initialNotices,
           authenticated: true,
           personaId: state.personaId,
         }));
@@ -883,9 +861,10 @@ export const usePrototypeStore = create<PrototypeState>()(
     }),
     {
       name: "flowpilot-prototype-v5",
-      version: 10,
+      version: 11,
       migrate: (persisted) => {
-        const state = persisted as PrototypeState;
+        const { notices: legacyNotices, ...state } = persisted as PrototypeState & { notices?: unknown };
+        void legacyNotices;
         const existing = (state.instances ?? []).map((instance) => hydrateLegacyInstance({
           ...instance,
           code: normalizeLegacyInstanceNumber(instance.code),

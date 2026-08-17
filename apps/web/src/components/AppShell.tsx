@@ -1,6 +1,5 @@
 import {
   AuditOutlined,
-  BellOutlined,
   CheckSquareOutlined,
   ControlOutlined,
   DeploymentUnitOutlined,
@@ -18,13 +17,10 @@ import {
 } from "@ant-design/icons";
 import {
   Avatar,
-  Badge,
   Button,
   Divider,
-  Drawer,
   Dropdown,
   Layout,
-  List,
   Menu,
   Select,
   Space,
@@ -59,13 +55,10 @@ const pageMeta: Record<string, { title: string; eyebrow: string }> = {
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [noticeOpen, setNoticeOpen] = useState(false);
   const [permissionRevision, setPermissionRevision] = useState(0);
   const {
-    notices,
     personaId,
     switchPersona,
-    markAllNoticesRead,
     logout,
     resetDemo,
   } = usePrototypeStore();
@@ -77,7 +70,6 @@ export function AppShell() {
     : personas.find((item) => item.id === personaId) ?? personas[2];
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
   const resetProcessDefinitions = useProcessDefinitionStore((state) => state.resetDefinitions);
-  const unreadCount = notices.filter((item) => !item.read).length;
   const canInitiate = canPersonaAccessLaunch(personaId);
   const can = (permission: string) => hasPersonaPermission(personaId, permission);
   useEffect(() => {
@@ -88,7 +80,7 @@ export function AppShell() {
   const selectedDefinitionId = new URLSearchParams(location.search).get("definitionId");
   const managedProcessDefinition = managedDefinitions.find((item) => item.id === selectedDefinitionId);
   const selectedProcessDefinitionId = selectedDefinitionId
-    ?? managedDefinitions.find((definition) => Boolean(definition.effectiveVersionId || definition.draft?.withdrawnVersionId))?.id
+    ?? managedDefinitions.find((definition) => Boolean(definition.publishedVersionId))?.id
     ?? "";
   const isDesignerRoute = /^\/admin\/processes\/[^/]+\/(form|flow)$/.test(location.pathname);
   const selectedKey = location.pathname.startsWith("/launch/")
@@ -129,7 +121,7 @@ export function AppShell() {
             icon: <FileSearchOutlined />,
             label: "流程清单",
             children: managedDefinitions.filter((definition) => Boolean(
-              (definition.effectiveVersionId || definition.draft?.withdrawnVersionId)
+              definition.publishedVersionId
               && canUserViewDefinition(personaId, definition.id),
             )).map((definition) => ({
               key: `/processes?definitionId=${definition.id}`,
@@ -222,7 +214,7 @@ export function AppShell() {
 
         <div className="sider-footnote">
           <SettingOutlined />
-          <span>配置草稿会自动保存在本机</span>
+          <span>流程版本保存后自动校验</span>
         </div>
       </Sider>
 
@@ -247,15 +239,6 @@ export function AppShell() {
                 }))}
               />
             </div>
-            <Badge count={unreadCount} size="small">
-              <Button
-                aria-label="打开通知"
-                className="header-icon-button"
-                type="text"
-                icon={<BellOutlined />}
-                onClick={() => setNoticeOpen(true)}
-              />
-            </Badge>
             <Divider type="vertical" />
             <Dropdown menu={{ items: userMenu }} trigger={["click"]}>
               <button className="user-button" type="button">
@@ -274,48 +257,6 @@ export function AppShell() {
         </Content>
       </Layout>
 
-      <Drawer
-        title={
-          <div className="drawer-title">
-            <span>站内通知</span>
-            <Badge count={unreadCount} />
-          </div>
-        }
-        width={420}
-        open={noticeOpen}
-        onClose={() => setNoticeOpen(false)}
-        extra={
-          <Button type="link" disabled={!unreadCount} onClick={markAllNoticesRead}>
-            全部已读
-          </Button>
-        }
-      >
-        <List
-          className="notice-list"
-          dataSource={notices}
-          locale={{ emptyText: "暂无通知" }}
-          renderItem={(item) => (
-            <List.Item
-              className={item.read ? "notice-item" : "notice-item is-unread"}
-              onClick={() => {
-                if (item.instanceId) navigate(`/processes/${item.instanceId}`);
-                setNoticeOpen(false);
-              }}
-            >
-              <List.Item.Meta
-                avatar={<span className="notice-dot" />}
-                title={item.title}
-                description={
-                  <>
-                    <div>{item.detail}</div>
-                    <small>{item.time}</small>
-                  </>
-                }
-              />
-            </List.Item>
-          )}
-        />
-      </Drawer>
     </Layout>
   );
 }

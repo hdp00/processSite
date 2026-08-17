@@ -6,9 +6,10 @@ import {
   DownloadOutlined,
   EditOutlined,
   EyeOutlined,
-  FilePdfOutlined,
+  FileTextOutlined,
   HistoryOutlined,
   LockOutlined,
+  PaperClipOutlined,
   PrinterOutlined,
   ReloadOutlined,
   SendOutlined,
@@ -41,6 +42,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { StatusPill } from "../components/StatusPill";
+import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { ReviewerProgress } from "../data/types";
 import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
 import { findIdentityUser } from "../state/useIdentityStore";
@@ -55,6 +57,17 @@ const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> 
   已驳回: { icon: <CloseCircleFilled /> },
   已取消: { icon: <StopOutlined /> },
 };
+
+const configuredAttachmentNames = (
+  fields: StoredDesignerField[],
+  values: Record<string, unknown>,
+) => fields
+  .filter((field) => field.type === "attachment")
+  .flatMap((field) => {
+    const value = values[field.id];
+    return Array.isArray(value) ? value.map(String) : [];
+  })
+  .filter((name) => name.trim() && !["无附件", "—"].includes(name));
 
 type PendingAction = "pass" | "reject" | null;
 
@@ -121,6 +134,20 @@ export function ProcessDetailPage() {
   const canEditBeforeReview = Boolean(isDcc && instance?.status === "审核中" && !hasReviewAction);
   const canRepublish = isDcc && instance?.status === "驳回待处理";
   const canEditPublishedContent = canEditBeforeReview || canRepublish;
+  const editableContentDirty = Boolean(instance && (
+    documentLevel !== instance.documentLevel
+    || draftTitle !== instance.title
+    || draftDocumentCode !== instance.documentCode
+    || draftDocumentType !== instance.documentType
+    || draftDescription !== instance.description
+    || draftPdfName !== instance.pdfName
+    || JSON.stringify(dynamicValues) !== JSON.stringify(instance.formValues ?? {})
+  ));
+  const { guard, allowNextNavigation } = useUnsavedChangesGuard({
+    dirty: Boolean(comment.trim() || closeReason.trim() || (canEditPublishedContent && editableContentDirty)),
+    title: "当前流程有未提交修改",
+    description: "离开后，尚未保存的表单修改、审核意见或关闭说明将丢失。",
+  });
   const dynamicText = (keywords: string[], fallback: string) => {
     const field = lockedVersion?.snapshot.form.fields.find((item) => keywords.some((keyword) =>
       item.id.toLowerCase().includes(keyword.toLowerCase()) || item.label.includes(keyword),
@@ -139,6 +166,15 @@ export function ProcessDetailPage() {
     );
   }
 
+  const attachmentFields = (lockedVersion?.snapshot.form.fields ?? []).filter((field) => field.type === "attachment");
+  const hasConfiguredAttachmentField = attachmentFields.length > 0;
+  const attachmentNames = hasConfiguredAttachmentField ? Array.from(new Set([
+    ...(instance.attachmentNames ?? []),
+    ...configuredAttachmentNames(attachmentFields, dynamicValues),
+    ...(!instance.attachmentNames?.length && draftPdfName && !["无附件", "—"].includes(draftPdfName) ? [draftPdfName] : []),
+  ].filter(Boolean))) : [];
+  const hasAttachments = attachmentNames.length > 0;
+
   const openReviewConfirm = (action: Exclude<PendingAction, null>) => {
     if (action === "reject" && !comment.trim()) {
       message.warning("驳回时必须填写审核意见");
@@ -150,9 +186,11 @@ export function ProcessDetailPage() {
   const confirmReview = () => {
     if (!pendingAction) return;
     reviewInstance(instance.id, pendingAction, comment.trim(), documentLevel, dynamicValues);
-    message.success(pendingAction === "pass" ? "审核已通过" : "已驳回并通知文控处理");
+    message.success(pendingAction === "pass" ? "审核已通过" : "已驳回，等待发起方处理");
     setPendingAction(null);
     setComment("");
+    allowNextNavigation();
+    navigate("/tasks");
   };
 
   const confirmClose = () => {
@@ -168,13 +206,15 @@ export function ProcessDetailPage() {
 
   const republish = () => {
     if (!draftTitle.trim()) {
-      message.warning("请完善必填表单内容后再重新发布");
+      message.warning("请完善必填表单内容后再重新提交");
       return;
     }
     Modal.confirm({
-      title: `确认重新发布并开启第 ${instance.round + 1} 轮审核？`,
-      content: "当前表单修改和可选附件变更将一起发布，全部审批分支都会重新生成待办。",
-      okText: "确认重新发布",
+      title: `确认重新提交并开启第 ${instance.round + 1} 轮审核？`,
+      content: hasAttachments
+        ? "当前表单修改和附件变更将一起提交，全部审批分支都会重新生成待办。"
+        : "当前表单修改将一起提交，全部审批分支都会重新生成待办。",
+      okText: "确认重新提交",
       cancelText: "取消",
       icon: <ReloadOutlined />,
       onOk: () => {
@@ -186,9 +226,9 @@ export function ProcessDetailPage() {
           description: draftDescription.trim(),
           pdfName: draftPdfName,
           formValues: dynamicValues,
-          attachmentNames: instance.attachmentNames,
+          attachmentNames,
         });
-        message.success("流程已重新发布，全部分支待办已重新生成");
+        message.success("流程已重新提交，全部分支待办已重新生成");
       },
     });
   };
@@ -206,7 +246,7 @@ export function ProcessDetailPage() {
       description: draftDescription.trim(),
       pdfName: draftPdfName,
       formValues: dynamicValues,
-      attachmentNames: instance.attachmentNames,
+      attachmentNames,
     });
     message.success("修改已保存，本轮待办保持不变");
   };
@@ -224,12 +264,36 @@ export function ProcessDetailPage() {
   };
   const updateDynamicValue = (fieldId: string, value: unknown) =>
     setDynamicValues((current) => ({ ...current, [fieldId]: value }));
+  const stageAttachment = (fieldId: string, fileName: string) => {
+    setDraftPdfName(fileName);
+    setDynamicValues((current) => {
+      const currentValue = current[fieldId];
+      const existing = Array.isArray(currentValue) ? currentValue.map(String) : [];
+      return { ...current, [fieldId]: Array.from(new Set([...existing, fileName])) };
+    });
+    message.success(canRepublish ? "附件已暂存，将在重新提交时一并提交" : canReview ? "附件已暂存，将随审核结果一起提交" : "附件已暂存，请保存修改");
+  };
   const renderDynamicField = (field: StoredDesignerField) => {
     const value = dynamicValues[field.id];
     const editable = canEditPublishedContent || (canReview && editableFieldIds.has(field.id));
     if (field.type === "attachment") {
-      const names = Array.isArray(value) ? value.map(String) : instance.attachmentNames ?? [];
-      return <div className="field-block field-wide" key={field.id}><span>{field.label}</span><Space wrap>{names.length ? names.map((name) => <Tag key={name}>{name}</Tag>) : <Typography.Text type="secondary">无附件</Typography.Text>}</Space></div>;
+      const names = Array.isArray(value)
+        ? value.map(String)
+        : field.id === attachmentFields[0]?.id
+          ? attachmentNames
+          : [];
+      return <div className={`field-block field-wide${editable ? " editable-field" : ""}`} key={field.id}>
+        <span>{field.label} {canReview && editable ? <em>本节点可修改</em> : null}</span>
+        {field.description ? <Typography.Text type="secondary">{field.description}</Typography.Text> : null}
+        <div className="attachment-field-control">
+          {names.length ? <div className="attachment-field-list">
+            {names.map((name) => <div key={name}><PaperClipOutlined /><strong>{name}</strong><Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => message.info("原型：已触发受控下载")}>下载</Button></div>)}
+          </div> : <Typography.Text type="secondary">—</Typography.Text>}
+          {editable ? <Upload showUploadList={false} beforeUpload={(file) => { stageAttachment(field.id, file.name); return false; }}>
+            <Button icon={<UploadOutlined />}>{names.length ? "继续上传" : "上传附件"}</Button>
+          </Upload> : null}
+        </div>
+      </div>;
     }
     if (field.type === "table") {
       const rows = Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
@@ -245,6 +309,7 @@ export function ProcessDetailPage() {
 
   return (
     <div className="page-stack detail-page">
+      {guard}
       <div className="detail-topbar">
         <AppBackButton onClick={() => navigate(-1)} />
         <div className="detail-topbar-actions">
@@ -253,7 +318,7 @@ export function ProcessDetailPage() {
             <Button type="primary" icon={<EditOutlined />} onClick={saveBeforeReview}>保存修改</Button>
           )}
           {isDcc && instance.status === "驳回待处理" && (
-            <Button type="primary" icon={<ReloadOutlined />} onClick={republish}>重新发布</Button>
+            <Button type="primary" icon={<ReloadOutlined />} onClick={republish}>重新提交</Button>
           )}
           {isDcc && instance.status !== "已关闭" && (
             <Button danger icon={<CloseOutlined />} onClick={() => setCloseOpen(true)}>关闭流程</Button>
@@ -263,7 +328,7 @@ export function ProcessDetailPage() {
 
       <Card className="detail-hero">
         <div className="detail-hero-main">
-          <div className="document-icon"><FilePdfOutlined /></div>
+          <div className="document-icon"><FileTextOutlined /></div>
           <div>
             <div className="detail-title-row">
               <Typography.Title level={2}>{instance.title}</Typography.Title>
@@ -292,7 +357,7 @@ export function ProcessDetailPage() {
           showIcon
           icon={<TeamOutlined />}
           message={isSuperAdmin ? `超级管理员正在处理“${currentReviewer?.shortGroup ?? "审批"}”待办` : `这是 ${findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name ?? "其他成员"} 的默认任务，你可以作为同组成员直接代办`}
-          description={isSuperAdmin ? "这是系统级处理权限，不会把超级管理员加入该节点的流程权限组或人员名单；提交后仍记录实际处理人。" : "无需转交或填写代办原因；提交后系统会记录实际处理人为你，并通知默认责任人。"}
+          description={isSuperAdmin ? "这是系统级处理权限，不会把超级管理员加入该节点的流程权限组或人员名单；提交后仍记录实际处理人。" : "无需转交或填写代办原因；提交后系统会记录实际处理人为你。"}
         />
       )}
 
@@ -300,8 +365,8 @@ export function ProcessDetailPage() {
         <Alert
           type="warning"
           showIcon
-          message="流程已驳回，发布内容现已解锁"
-          description="你可以修改表单，并按需更换附件；确认重新发布后将开启新一轮，全部审批分支重新审核。"
+          message="流程已驳回，发起内容现已解锁"
+          description={hasConfiguredAttachmentField ? "你可以修改表单，并按需上传或更换附件；确认重新提交后将开启新一轮，全部审批分支重新审核。" : "你可以修改表单；确认重新提交后将开启新一轮，全部审批分支重新审核。"}
         />
       )}
 
@@ -310,7 +375,7 @@ export function ProcessDetailPage() {
           type="success"
           showIcon
           icon={<EditOutlined />}
-          message="本轮尚无人提交审核，发布内容可以修改"
+          message="本轮尚无人提交审核，发起内容可以修改"
           description="保存修改不会创建新轮次，也不会重新生成待办；任一审批人提交结果后，内容将立即锁定。"
         />
       )}
@@ -320,8 +385,8 @@ export function ProcessDetailPage() {
           type="info"
           showIcon
           icon={<LockOutlined />}
-          message="本轮已有审核结果，发布内容已锁定"
-          description="发布方不能再修改表单或附件；如果本轮被驳回，内容会重新开放编辑。"
+          message="本轮已有审核结果，发起内容已锁定"
+          description={hasConfiguredAttachmentField ? "发起方不能再修改表单或附件；如果本轮被驳回，内容会重新开放编辑。" : "发起方不能再修改表单；如果本轮被驳回，内容会重新开放编辑。"}
         />
       )}
 
@@ -351,30 +416,9 @@ export function ProcessDetailPage() {
         </div>
       </Card>
 
-      <div className="detail-workspace">
-        <Card
-          className="pdf-card"
-          title={<Space><FilePdfOutlined className="pdf-red" />流程附件<Tag>{instance.attachmentNames?.length ?? (instance.pdfName === "无附件" ? 0 : 1)} 个</Tag></Space>}
-          extra={canEditPublishedContent ? <Upload showUploadList={false} beforeUpload={(file) => { setDraftPdfName(file.name); message.success(canRepublish ? "附件已暂存，将在重新发布时一并提交" : "附件已暂存，请保存修改"); return false; }}><Button type="text" icon={<UploadOutlined />}>更换附件（可选）</Button></Upload> : null}
-        >
-          <Alert type="info" showIcon message="附件内容不属于动态表单数据" description="原型仅展示受控附件名称；下载和 PDF 页面预览在正式后端接入文件服务后按同一实例权限校验。" />
-          <div className="detail-attachment-list">
-            {(instance.attachmentNames?.length ? instance.attachmentNames : instance.pdfName === "无附件" ? [] : [draftPdfName]).map((name) => <div key={name}><FilePdfOutlined /><strong>{name}</strong><Button type="link" icon={<DownloadOutlined />} onClick={() => message.info("原型：已触发受控下载")}>下载</Button></div>)}
-          </div>
-        </Card>
-
+      <div className="detail-workspace is-form-only">
         <div className="form-review-column">
-          <Card
-            className="form-card"
-            title={<span>流程表单 <Tag bordered={false}>动态表单</Tag></span>}
-            extra={canRepublish
-              ? <Tag color="orange" icon={<EditOutlined />}>驳回后可修改</Tag>
-              : canEditBeforeReview
-                ? <Tag color="green" icon={<EditOutlined />}>首人审核前可修改</Tag>
-              : canReview
-                ? <Tag color="gold" icon={<EditOutlined />}>2 项本节点可修改</Tag>
-                : <Tag icon={<LockOutlined />}>只读</Tag>}
-          >
+          <Card className="form-card" title="流程表单">
             {configuredFields.length ? <div className="form-field-grid">{configuredFields.map(renderDynamicField)}</div> : <Descriptions bordered size="small" column={1} items={[{ key: "title", label: "标题", children: instance.title }, { key: "description", label: "说明", children: instance.description }]} />}
           </Card>
 
@@ -409,7 +453,7 @@ export function ProcessDetailPage() {
           items={[
             {
               color: "blue",
-              children: <HistoryItem title={`第 ${instance.round} 轮发起`} person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} detail={`上传 ${instance.pdfName}`} />,
+              children: <HistoryItem title={`第 ${instance.round} 轮发起`} person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} detail={hasAttachments ? `提交附件：${attachmentNames.join("、")}` : "提交初始表单"} />,
             },
             ...instance.reviewers
               .filter((reviewer) => reviewer.actionAt)
@@ -431,7 +475,7 @@ export function ProcessDetailPage() {
         onCancel={() => setPendingAction(null)}
       >
         <div className="confirm-summary">
-          <p>{pendingAction === "pass" ? "审核结果和表单修改将一次性提交。" : "其他未完成的并行任务会立即取消，并通知文控重新处理。"}</p>
+          <p>{pendingAction === "pass" ? "审核结果和表单修改将一次性提交。" : "其他未完成的并行任务会立即取消，流程转为等待发起方处理。"}</p>
           {changedLevel && <div><span>文件密级</span><del>{instance.documentLevel}</del><b>→</b><ins>{documentLevel}</ins></div>}
           <div><span>审核意见</span><strong>{comment.trim() || "未填写（通过时允许）"}</strong></div>
           {isSubstitute && <Tag color="purple">将记录为代办：默认 {findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name} / 实际 {persona?.name}</Tag>}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   DndContext,
@@ -22,7 +22,6 @@ import {
   BarsOutlined,
   CheckCircleOutlined,
   CheckSquareOutlined,
-  CloudSyncOutlined,
   CheckCircleFilled,
   DeleteOutlined,
   DragOutlined,
@@ -64,7 +63,8 @@ import {
   message,
 } from "antd";
 import type { TableColumnsType } from "antd";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { AppBackButton } from "../components/AppBackButton";
 import {
   ProcessWizardNextButton,
   ProcessWizardPreviousButton,
@@ -72,13 +72,13 @@ import {
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { StatusPill } from "../components/StatusPill";
+import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import {
   cloneDefaultSystemListFields,
-  saveSystemListFields,
   type SystemListFieldConfig,
 } from "../data/listFieldConfig";
-import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { FORM_DESIGNER_STORAGE_KEY_PREFIX } from "../utils/designerStorage";
+import { canEditVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { ensureProcessTitleField, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import "./form-designer.css";
 
 const { Text, Title, Paragraph } = Typography;
@@ -123,12 +123,6 @@ interface DesignerField {
   options?: string[];
   attachment?: AttachmentConfig;
   columns?: TableColumnConfig[];
-}
-
-interface SavedDraft {
-  formName: string;
-  fields: DesignerField[];
-  savedAt?: string;
 }
 
 const typeLabel: Record<FieldType, string> = {
@@ -334,34 +328,6 @@ const INITIAL_FIELDS: DesignerField[] = [
     attachment: { maxSizeMb: 100, maxCount: 20, inlinePdf: true },
   },
 ];
-
-const cloneInitialFields = () => JSON.parse(JSON.stringify(INITIAL_FIELDS)) as DesignerField[];
-
-const loadDraft = (storageKey: string, defaultName: string, fallbackFields: DesignerField[]): SavedDraft => {
-  if (typeof window === "undefined") return { formName: defaultName, fields: fallbackFields };
-  try {
-    const saved = window.localStorage.getItem(storageKey);
-    if (!saved) return { formName: defaultName, fields: fallbackFields };
-    const parsed = JSON.parse(saved) as SavedDraft;
-    if (!Array.isArray(parsed.fields)) throw new Error("invalid draft");
-    const initialById = new Map(INITIAL_FIELDS.map((field) => [field.id, field]));
-    return {
-      ...parsed,
-      fields: parsed.fields.map((field) => {
-        const initial = initialById.get(field.id);
-        return {
-          taskVisible: initial?.taskVisible ?? false,
-          taskDisplayName: initial?.taskDisplayName ?? field.label,
-          taskOrder: initial?.taskOrder ?? 1,
-          taskWidth: initial?.taskWidth ?? 150,
-          ...field,
-        };
-      }),
-    };
-  } catch {
-    return { formName: defaultName, fields: fallbackFields };
-  }
-};
 
 const createField = (type: FieldType): DesignerField => {
   const base: DesignerField = {
@@ -606,11 +572,12 @@ const FieldControl = ({ field, interactive = false }: { field: DesignerField; in
 interface SortableFieldProps {
   field: DesignerField;
   selected: boolean;
+  locked?: boolean;
   onSelect: () => void;
   onDelete: () => void;
 }
 
-const SortableField = ({ field, selected, onSelect, onDelete }: SortableFieldProps) => {
+const SortableField = ({ field, selected, locked, onSelect, onDelete }: SortableFieldProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: field.id });
   return (
     <div
@@ -634,18 +601,25 @@ const SortableField = ({ field, selected, onSelect, onDelete }: SortableFieldPro
             </button>
           </Tooltip>
           <Tag bordered={false} icon={typeIcon[field.type]}>{typeLabel[field.type]}</Tag>
+          {locked ? <Tag bordered={false} color="gold">固定字段</Tag> : null}
           {field.reviewEditable ? <Tag bordered={false} color="blue">审核可改</Tag> : null}
         </Space>
-        <Popconfirm title="删除这个字段？" description="删除后可从左侧组件库重新添加。" onConfirm={onDelete}>
-          <Button
-            aria-label={`删除${field.label}`}
-            danger
-            icon={<DeleteOutlined />}
-            size="small"
-            type="text"
-            onClick={(event) => event.stopPropagation()}
-          />
-        </Popconfirm>
+        {locked ? (
+          <Tooltip title="标题是所有流程必备字段，不能删除">
+            <Button aria-label="标题字段不可删除" disabled icon={<DeleteOutlined />} size="small" type="text" />
+          </Tooltip>
+        ) : (
+          <Popconfirm title="删除这个字段？" description="删除后可从左侧组件库重新添加。" onConfirm={onDelete}>
+            <Button
+              aria-label={`删除${field.label}`}
+              danger
+              icon={<DeleteOutlined />}
+              size="small"
+              type="text"
+              onClick={(event) => event.stopPropagation()}
+            />
+          </Popconfirm>
+        )}
       </div>
       <div className="fd-field-card__content">
         <div className="fd-field-label">
@@ -659,38 +633,34 @@ const SortableField = ({ field, selected, onSelect, onDelete }: SortableFieldPro
   );
 };
 
-const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
+const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: string; versionId: string }) => {
   const navigate = useNavigate();
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
-  const markFormConfigured = useProcessDefinitionStore((state) => state.markFormConfigured);
-  const updateDraftFormSnapshot = useProcessDefinitionStore((state) => state.updateDraftFormSnapshot);
-  const draftKey = `${FORM_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`;
-  const defaultFormName = `${definition?.name ?? "流程"}发起表单`;
-  const workflowName = definition?.draft?.basic.name ?? definition?.name ?? "流程";
+  const version = definition?.versions.find((item) => item.id === versionId);
+  const updateVersionFormSnapshot = useProcessDefinitionStore((state) => state.updateVersionFormSnapshot);
+  const workflowName = version?.basic.name ?? definition?.name ?? "流程";
   const [messageApi, messageHolder] = message.useMessage();
   const fallbackFields = useMemo(
-    () => definition?.draft?.snapshot.form.fields.length
-      ? structuredClone(definition.draft.snapshot.form.fields) as DesignerField[]
-      : [],
-    [definition?.draft?.id, definition?.draft?.snapshot.form.fields],
+    () => ensureProcessTitleField(version?.snapshot.form.fields) as DesignerField[],
+    [version],
   );
   const initialDraft = useMemo(
     () => ({
-      formName: definition?.draft?.snapshot.form.formName ?? defaultFormName,
       fields: fallbackFields,
-      savedAt: definition?.draft?.snapshot.form.savedAt,
+      savedAt: version?.snapshot.form.savedAt,
     }),
-    [defaultFormName, definition?.draft?.snapshot.form.formName, definition?.draft?.snapshot.form.savedAt, fallbackFields],
+    [version, fallbackFields],
   );
-  const [formName, setFormName] = useState(initialDraft.formName);
   const [fields, setFields] = useState<DesignerField[]>(initialDraft.fields);
   const [selectedId, setSelectedId] = useState(initialDraft.fields[0]?.id ?? "");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [propertyMode, setPropertyMode] = useState<"field" | "system">("field");
   const [systemListFields, setSystemListFields] = useState<SystemListFieldConfig[]>(() =>
-    structuredClone(definition?.draft?.snapshot.systemFields ?? cloneDefaultSystemListFields()),
+    structuredClone(version?.snapshot.systemFields ?? cloneDefaultSystemListFields())
+      .filter((field) => String(field.key) !== "title"),
   );
-  const [saveState, setSaveState] = useState<"saving" | "saved">("saved");
+  const [saveState, setSaveState] = useState<"dirty" | "saved">("saved");
+  const skipDirtyEffect = useRef(true);
   const [savedAt, setSavedAt] = useState(initialDraft.savedAt ?? "刚刚");
 
   const sensors = useSensors(
@@ -699,20 +669,15 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
   );
 
   const selectedField = fields.find((field) => field.id === selectedId);
+  const isTitleField = selectedField?.id === PROCESS_TITLE_FIELD_ID;
 
   useEffect(() => {
-    setSaveState("saving");
-    const timer = window.setTimeout(() => {
-      window.localStorage.setItem(draftKey, JSON.stringify({ formName, fields, savedAt } satisfies SavedDraft));
-      updateDraftFormSnapshot(definitionId, { formName, fields, savedAt }, systemListFields);
-      setSaveState("saved");
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [definitionId, draftKey, fields, formName, savedAt, systemListFields, updateDraftFormSnapshot]);
-
-  useEffect(() => {
-    saveSystemListFields(definitionId, systemListFields);
-  }, [definitionId, systemListFields]);
+    if (skipDirtyEffect.current) {
+      skipDirtyEffect.current = false;
+      return;
+    }
+    setSaveState("dirty");
+  }, [fields, systemListFields]);
 
   const updateSystemListField = (
     key: SystemListFieldConfig["key"],
@@ -732,6 +697,10 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
   };
 
   const deleteField = (id: string) => {
+    if (id === PROCESS_TITLE_FIELD_ID) {
+      messageApi.warning("标题是所有流程必备字段，不能删除");
+      return;
+    }
     setFields((current) => {
       const next = current.filter((field) => field.id !== id);
       if (selectedId === id) setSelectedId(next[0]?.id ?? "");
@@ -779,15 +748,29 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
     });
   };
 
-  const saveDraft = () => {
+  const saveVersion = () => {
     const time = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
+    skipDirtyEffect.current = true;
     setSavedAt(time);
-    window.localStorage.setItem(draftKey, JSON.stringify({ formName, fields, savedAt: time } satisfies SavedDraft));
-    updateDraftFormSnapshot(definitionId, { formName, fields, savedAt: time }, systemListFields);
-    markFormConfigured(definitionId, fields.length);
+    const saved = updateVersionFormSnapshot(definitionId, versionId, {
+      fields: ensureProcessTitleField(fields),
+      savedAt: time,
+    }, systemListFields);
+    if (!saved) {
+      messageApi.error("当前版本不可编辑，请返回版本记录确认发布状态和实例数量");
+      return false;
+    }
     setSaveState("saved");
-    messageApi.success("草稿已保存，本机刷新后仍可继续编辑");
+    messageApi.success("版本已保存并自动完成校验");
+    return true;
   };
+
+  const { guard, allowNextNavigation } = useUnsavedChangesGuard({
+    dirty: saveState === "dirty",
+    onSave: saveVersion,
+    title: "初始表单尚未保存",
+    description: "可以先保存表单和列表字段配置再离开，也可以放弃本次修改。",
+  });
 
   const goNext = () => {
     const invalidField = fields.find((field) => !field.label.trim());
@@ -797,11 +780,14 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
       messageApi.error("存在未命名字段，请补充后继续");
       return;
     }
-    saveDraft();
+    if (!saveVersion()) return;
     messageApi.success(definition?.type === "free" ? "表单校验通过，正在进入发布页面" : "表单校验通过，正在进入流程设计");
-    window.setTimeout(() => navigate(definition?.type === "free"
-      ? `/admin/processes/${definitionId}/publish`
-      : `/admin/processes/${definitionId}/flow`), 350);
+    window.setTimeout(() => {
+      allowNextNavigation();
+      navigate(definition?.type === "free"
+        ? `/admin/processes/${definitionId}/publish?versionId=${versionId}`
+        : `/admin/processes/${definitionId}/flow?versionId=${versionId}`);
+    }, 350);
   };
 
   const renderDefaultValueEditor = (field: DesignerField) => {
@@ -859,25 +845,27 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
   return (
     <div className="form-designer-page">
       {messageHolder}
+      {guard}
       <div className="fd-page-header">
         <div className="fd-page-header__identity">
           <div className="fd-page-header__icon">{definitionId === "pdf-review" ? <FilePdfOutlined /> : <FileTextOutlined />}</div>
           <div>
             <Space align="center" size={10}>
-              <Title level={4}>{definition?.name ?? "流程配置"}</Title>
-              <StatusPill status="草稿" label={`${definition?.draft?.version ?? "V1"} 草稿`} />
+              <Title level={4}>{version?.basic.name ?? definition?.name ?? "流程配置"}</Title>
+              <Tag color="blue">正式版本 {version?.version ?? "未指定"}</Tag>
+              <StatusPill status={version?.validation.status === "通过" ? "可发布" : "校验未通过"} />
             </Space>
             <Text type="secondary">初始表单 · 单列布局 · 配置发起时需要填写的内容</Text>
           </div>
         </div>
         <Space wrap>
           <div className="fd-save-status">
-            {saveState === "saving" ? <CloudSyncOutlined spin /> : <CheckCircleFilled />}
-            <span>{saveState === "saving" ? "正在保存" : `本地已保存 · ${savedAt}`}</span>
+            <CheckCircleFilled />
+            <span>{saveState === "dirty" ? "有未保存修改" : `版本已保存 · ${savedAt}`}</span>
           </div>
-          <ProcessWizardPreviousButton step="基本信息" onClick={() => navigate(`/admin/processes/${definitionId}/basic`)} />
+          <ProcessWizardPreviousButton step="基本信息" onClick={() => navigate(`/admin/processes/${definitionId}/basic?versionId=${versionId}`)} />
           <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>预览</Button>
-          <Button icon={<SaveOutlined />} onClick={saveDraft}>保存草稿</Button>
+          <Button icon={<SaveOutlined />} onClick={saveVersion}>保存</Button>
           <ProcessWizardNextButton step={definition?.type === "free" ? "发布" : "流程设计"} onClick={goNext} />
         </Space>
       </div>
@@ -925,10 +913,7 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
 
         <main className="fd-panel fd-canvas-panel">
           <div className="fd-canvas-toolbar">
-            <div className="fd-form-name">
-              <Text type="secondary">表单名称</Text>
-              <Input value={formName} onChange={(event) => setFormName(event.target.value)} />
-            </div>
+            <Text type="secondary">{workflowName} · 初始表单</Text>
             <Space size={8}>
               <Tag bordered={false}>{fields.length} 个字段</Tag>
               <Tag bordered={false} color="blue">单列布局</Tag>
@@ -939,8 +924,8 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
               <div className="fd-form-sheet__header">
                 <div className="fd-form-mark">{definitionId === "pdf-review" ? <FilePdfOutlined /> : <FileTextOutlined />}</div>
                 <div>
-                  <Title level={4}>{formName || "未命名表单"}</Title>
-                  <Text type="secondary">{workflowName} · 发起表单</Text>
+                  <Title level={4}>{workflowName}</Title>
+                  <Text type="secondary">初始表单 · 发起时填写</Text>
                 </div>
               </div>
               {fields.length ? (
@@ -952,6 +937,7 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
                           key={field.id}
                           field={field}
                           selected={selectedId === field.id}
+                          locked={field.id === PROCESS_TITLE_FIELD_ID}
                           onSelect={() => {
                             setSelectedId(field.id);
                             setPropertyMode("field");
@@ -990,6 +976,14 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
               <Form layout="vertical" size="middle">
                 <div className="fd-property-section">
                   <div className="fd-property-section__title">基础信息</div>
+                  {isTitleField ? (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="流程标题字段"
+                      description="字段标识、文本框类型和必填规则由系统固定；字段名称、说明、提示以及任务中心和流程清单的展示位置可在此配置。"
+                    />
+                  ) : null}
                   <Form.Item label="字段名称" required>
                     <Input value={selectedField.label} onChange={(event) => updateField({ label: event.target.value })} />
                   </Form.Item>
@@ -1188,10 +1182,10 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
                   <div className="fd-property-section__title">权限与展示</div>
                   <div className="fd-switch-row">
                     <div><Text strong>必填项</Text><Text type="secondary">发起时必须填写</Text></div>
-                    <Switch checked={selectedField.required} onChange={(checked) => updateField({ required: checked })} />
+                    <Switch disabled={isTitleField} checked={isTitleField || selectedField.required} onChange={(checked) => updateField({ required: checked })} />
                   </div>
                   <div className="fd-switch-row">
-                    <div><Text strong>在列表显示</Text><Text type="secondary">作为“流程清单”的表格列</Text></div>
+                    <div><Text strong>在流程清单显示</Text><Text type="secondary">作为“流程清单”的表格列</Text></div>
                     <Switch disabled={selectedField.type === "richtext"} checked={selectedField.listVisible} onChange={(checked) => updateField({ listVisible: checked })} />
                   </div>
                   <div className="fd-switch-row">
@@ -1202,7 +1196,7 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
                     <div><Text strong>在任务中心显示</Text><Text type="secondary">作为待办的流程关键信息</Text></div>
                     <Switch disabled={selectedField.type === "richtext"} checked={Boolean(selectedField.taskVisible)} onChange={(checked) => updateField({ taskVisible: checked })} />
                   </div>
-                  {selectedField.taskVisible && (
+                  {selectedField.taskVisible && !isTitleField && (
                     <div className="fd-task-display-config">
                       <Form.Item label="任务列表显示名称">
                         <Input
@@ -1310,7 +1304,7 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
         <div className="fd-preview-sheet">
           <div className="fd-preview-heading">
             <div>
-              <Title level={3}>{formName || "未命名表单"}</Title>
+              <Title level={3}>{workflowName}</Title>
               <Text type="secondary">流程编号将在提交后由系统自动生成</Text>
             </div>
             <Tag color="processing">{workflowName}</Tag>
@@ -1335,9 +1329,19 @@ const FormDesignerWorkspace = ({ definitionId }: { definitionId: string }) => {
 };
 
 const FormDesignerPage = () => {
+  const navigate = useNavigate();
   const { definitionId = "" } = useParams<{ definitionId: string }>();
-  const draftId = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId)?.draft?.id);
-  return <FormDesignerWorkspace key={`${definitionId}-${draftId ?? "no-draft"}`} definitionId={definitionId} />;
+  const [searchParams] = useSearchParams();
+  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
+  const versionId = searchParams.get("versionId") ?? definition?.versions[0]?.id ?? "";
+  const version = definition?.versions.find((item) => item.id === versionId);
+  if (!definition || !version) {
+    return <Alert type="error" showIcon message="流程版本不存在" description="表单设计必须绑定到一个明确的正式版本。" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
+  }
+  if (!canEditVersion(definition, version)) {
+    return <Alert type="info" showIcon message={`${version.version} 为只读版本`} description={definition.publishedVersionId === version.id ? "已发布版本不能直接修改。没有实例时可先取消发布；已有实例时请复制新建版本。" : "该版本已经创建过流程实例，只能查看或复制新建版本。"} action={<AppBackButton onClick={() => navigate(`/admin/processes/${definitionId}/versions`)} />} />;
+  }
+  return <FormDesignerWorkspace key={`${definitionId}-${versionId}`} definitionId={definitionId} versionId={versionId} />;
 };
 
 export default FormDesignerPage;

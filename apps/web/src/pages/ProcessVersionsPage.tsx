@@ -1,720 +1,231 @@
-import {
-  BranchesOutlined,
-  CheckCircleFilled,
-  CopyOutlined,
-  DeleteOutlined,
-  EditOutlined,
-  EyeOutlined,
-  FileTextOutlined,
-  HistoryOutlined,
-  InfoCircleOutlined,
-  MessageOutlined,
-  RollbackOutlined,
-  SafetyCertificateOutlined,
-  SelectOutlined,
-  StopOutlined,
-  UserOutlined,
-} from "@ant-design/icons";
-import {
-  Alert,
-  Button,
-  Card,
-  Descriptions,
-  Divider,
-  Drawer,
-  Modal,
-  Select,
-  Space,
-  Table,
-  Tag,
-  Timeline,
-  Tooltip,
-  Typography,
-  message,
-  type TableProps,
-} from "antd";
+import { ApartmentOutlined, ArrowDownOutlined, CheckCircleOutlined, CopyOutlined, DeleteOutlined, EditOutlined, EyeOutlined, FormOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, RocketOutlined, SafetyCertificateOutlined, TableOutlined, TeamOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Descriptions, Drawer, Input, Modal, Space, Table, Tabs, Tag, Timeline, Tooltip, Typography, message, type TableProps } from "antd";
 import { useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { StatusPill } from "../components/StatusPill";
-import {
-  getEffectiveVersion,
-  getVersionStatus,
-  useProcessDefinitionStore,
-  type DeleteVersionResult,
-  type VersionStatus,
-} from "../state/useProcessDefinitionStore";
+import { canEditVersion, definitionStatus, getPublishedVersion, getVersionStatus, useProcessDefinitionStore, type ProcessVersion } from "../state/useProcessDefinitionStore";
+import { buildFlowLevels, rejectionHandlingLabel, type StoredDesignerField } from "../utils/designerStorage";
 import "./process-admin-pages.css";
 
-type DefinitionType = "approval" | "free";
-
-interface ProcessVersionsPageProps {
-  definitionId?: string;
-}
-
-interface ProcessVersionRow {
-  id: string;
-  version: string;
-  status: VersionStatus;
-  firstPublishedAt?: string;
-  firstPublishedBy?: string;
-  publishedAt: string;
-  lastWithdrawnAt?: string;
-  lastWithdrawnBy?: string;
-  createdBy: string;
-  changeNote: string;
-  instanceCount: number;
-  formFieldCount: number;
-  nodeCount: number;
-  starterGroups: string[];
-  checksum: string;
-  instancePrefix?: string;
-  processName?: string;
-}
-
-interface DefinitionVersionMeta {
-  name: string;
-  code: string;
-  type: DefinitionType;
-  currentVersion: string;
-  instancePrefix: string;
-  versions: ProcessVersionRow[];
-}
-
-const versionDataById: Record<string, DefinitionVersionMeta> = {
-  "pdf-review": {
-    name: "PDF 文件审核",
-    code: "PROC-PDF-001",
-    type: "approval",
-    currentVersion: "V3",
-    instancePrefix: "DOC",
-    versions: [
-      {
-        id: "pdf-v3", version: "V3", status: "生效", publishedAt: "2026-08-02 14:30", createdBy: "王敏",
-        changeNote: "增加质量节点可修改的文件等级字段；优化并行分支待办提醒。", instanceCount: 42,
-        formFieldCount: 9, nodeCount: 5, starterGroups: ["PDF审核_文控_流程权限组"], checksum: "9D7A-4F21-C8B0",
-      },
-      {
-        id: "pdf-v2", version: "V2", status: "失效", publishedAt: "2026-05-16 10:05", createdBy: "刘燕",
-        changeNote: "研发、质量和生产改为同起点并行审核。", instanceCount: 71,
-        formFieldCount: 8, nodeCount: 5, starterGroups: ["PDF审核_文控_流程权限组"], checksum: "3B16-A94D-78C2",
-      },
-      {
-        id: "pdf-v1", version: "V1", status: "失效", publishedAt: "2026-02-12 09:20", createdBy: "系统管理员",
-        changeNote: "首次发布，包含文控发起及研发、质量、生产顺序审核。", instanceCount: 15,
-        formFieldCount: 7, nodeCount: 5, starterGroups: ["PDF审核_文控_流程权限组"], checksum: "1A44-ED90-6F31",
-      },
-    ],
-  },
-  "test-report-review": {
-    name: "测试报告审核",
-    code: "PROC-TR-002",
-    type: "approval",
-    currentVersion: "尚未发布",
-    instancePrefix: "DOC",
-    versions: [
-      {
-        id: "tr-draft", version: "草稿", status: "草稿", publishedAt: "—", createdBy: "林晓",
-        changeNote: "初始草稿，正在配置生产确认节点。", instanceCount: 0,
-        formFieldCount: 5, nodeCount: 4, starterGroups: ["测试报告_发起_流程权限组"], checksum: "草稿未生成",
-      },
-    ],
-  },
-  "free-collaboration": {
-    name: "异常协作事项",
-    code: "PROC-FREE-003",
-    type: "free",
-    currentVersion: "V2",
-    instancePrefix: "ISSUE",
-    versions: [
-      {
-        id: "free-v2", version: "V2", status: "生效", publishedAt: "2026-07-30 16:18", createdBy: "王敏",
-        changeNote: "增加异常改派；重新打开时恢复发起表单编辑。", instanceCount: 39,
-        formFieldCount: 5, nodeCount: 0, starterGroups: ["自由协作_发起_流程权限组"], checksum: "7C89-21EF-55A0",
-      },
-      {
-        id: "free-v1", version: "V1", status: "失效", publishedAt: "2026-04-08 11:42", createdBy: "系统管理员",
-        changeNote: "首次发布自由协作流程。", instanceCount: 28,
-        formFieldCount: 4, nodeCount: 0, starterGroups: ["自由协作_发起_流程权限组"], checksum: "2A07-BD33-CE18",
-      },
-    ],
-  },
+const fieldTypeLabels: Record<string, string> = {
+  text: "文本框",
+  richtext: "富文本编辑框",
+  select: "下拉框",
+  cascader: "多级下拉框",
+  radio: "单选框",
+  checkbox: "复选框",
+  attachment: "附件上传",
+  table: "表格",
 };
 
-const emptyVersionMeta: DefinitionVersionMeta = {
-  name: "流程不存在",
-  code: "—",
-  type: "approval",
-  currentVersion: "尚未发布",
-  instancePrefix: "",
-  versions: [],
-};
+const valueText = (value?: string | string[]) => Array.isArray(value) ? value.join("、") : value || "—";
 
-export function ProcessVersionsPage({ definitionId }: ProcessVersionsPageProps) {
+function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
+  const fields = version.snapshot.form.fields;
+  return <div className="pa-snapshot-stack">
+    <div className="pa-snapshot-heading"><div><FormOutlined /><span><strong>初始表单</strong><small>以下内容来自该版本保存的表单完整快照</small></span></div><Tag>{fields.length} 个字段</Tag></div>
+    {fields.length ? fields.map((field, index) => <article className="pa-snapshot-field" key={field.id}>
+      <header><span className="pa-snapshot-index">{index + 1}</span><div><strong>{field.label || "未命名字段"}</strong><small>{field.id}</small></div><Space size={5} wrap><Tag color="blue">{fieldTypeLabels[field.type] ?? field.type}</Tag>{field.required && <Tag color="red">必填</Tag>}</Space></header>
+      {field.description && <p>{field.description}</p>}
+      <div className="pa-snapshot-properties">
+        <span><small>提示文字</small><strong>{field.placeholder || "—"}</strong></span>
+        <span><small>默认值</small><strong>{valueText(field.defaultValue)}</strong></span>
+        <span><small>列表与查询</small><strong>{[field.taskVisible && "任务中心", field.listVisible && "流程清单", field.queryable && "可查询"].filter(Boolean).join("、") || "不展示"}</strong></span>
+        <span><small>审核权限</small><strong>{field.reviewEditable ? "允许授权节点修改" : "不可修改"}</strong></span>
+      </div>
+      {field.options?.length ? <div className="pa-snapshot-options"><small>选项</small><Space size={[5, 5]} wrap>{field.options.map((option) => <Tag key={option}>{option}</Tag>)}</Space></div> : null}
+      {field.type === "attachment" ? <div className="pa-snapshot-options"><small>附件规则</small><span>最多 {field.attachment?.maxCount ?? 20} 个，单文件不超过 {field.attachment?.maxSizeMb ?? 100} MB；PDF {field.attachment?.inlinePdf ? "在页面内展示" : "仅提供下载"}</span></div> : null}
+      {field.type === "table" ? <VersionTableColumns field={field} /> : null}
+    </article>) : <Alert type="warning" showIcon message="该版本尚未配置初始表单字段" />}
+    <section className="pa-snapshot-list-fields">
+      <div className="pa-snapshot-subtitle"><TableOutlined /><strong>系统列表字段</strong></div>
+      <div>{version.snapshot.systemFields.map((field) => <span key={field.key}><strong>{field.label}</strong><small>{[field.taskVisible && "任务中心", field.processListVisible && "流程清单"].filter(Boolean).join("、") || "不展示"}</small></span>)}</div>
+    </section>
+  </div>;
+}
+
+function VersionTableColumns({ field }: { field: StoredDesignerField }) {
+  return <div className="pa-snapshot-table-columns">
+    <div><strong>表格列</strong><span>类型</span><span>必填</span><span>审核可改</span></div>
+    {(field.columns ?? []).map((column) => <div key={column.id}><strong>{column.label}<small>{column.id}</small></strong><span>{fieldTypeLabels[column.type ?? "text"] ?? column.type}</span><span>{column.required ? "是" : "否"}</span><span>{column.reviewEditable ? "是" : "否"}</span></div>)}
+  </div>;
+}
+
+function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type: "approval" | "free" }) {
+  if (type === "free") {
+    const rules = [
+      ["连续流转", "当前受理人处理后选择下一位受理人"],
+      ["手动关闭", "处理人可关闭流程，关闭动作进入时间线"],
+      ["重新打开", "填写理由后恢复流转与初始表单编辑"],
+      ["异常改派", "有权限的管理员可更换当前受理人"],
+      ["本人可编辑", "参与者可编辑自己发布的历史内容并保留版本"],
+      ["不支持打印", "自由协作流程不生成流程 PDF"],
+    ];
+    return <div className="pa-snapshot-stack">
+      <div className="pa-snapshot-heading"><div><TeamOutlined /><span><strong>自由协作规则</strong><small>该流程类型无需设计审批拓扑</small></span></div></div>
+      <div className="pa-snapshot-group"><small>受理流程权限组</small><Space wrap>{version.basic.assigneeGroups?.length ? version.basic.assigneeGroups.map((group) => <Tag color="purple" key={group}>{group}</Tag>) : <Typography.Text type="danger">未配置</Typography.Text>}</Space></div>
+      <div className="pa-snapshot-rule-grid">{rules.map(([title, detail]) => <div key={title}><CheckCircleOutlined /><span><strong>{title}</strong><small>{detail}</small></span></div>)}</div>
+    </div>;
+  }
+
+  const nodes = version.snapshot.flow.nodes;
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const levels = buildFlowLevels(nodes, version.snapshot.flow.edges).map((level) => level.flatMap((id) => {
+    const node = nodeById.get(id);
+    return node ? [node] : [];
+  }));
+  const fieldLabels = new Map(version.snapshot.form.fields.flatMap((field) => field.type === "table"
+    ? (field.columns ?? []).map((column) => [`${field.id}.${column.id}`, `${field.label} / ${column.label}`] as const)
+    : [[field.id, field.label] as const]));
+
+  return <div className="pa-snapshot-stack">
+    <div className="pa-snapshot-heading"><div><ApartmentOutlined /><span><strong>审批流程</strong><small>按该版本保存的节点和连线生成，只读展示</small></span></div><Tag>{nodes.length} 个节点</Tag></div>
+    {levels.length && levels.some((level) => level.length) ? <div className="pa-version-flow">
+      {levels.map((level, index) => {
+        const approvalCount = level.filter((node) => node.data?.kind === "approval").length;
+        return <div key={`flow-level-${index}`}>
+          <section className="pa-version-flow-stage">
+            <header><span>步骤 {index + 1}</span><Tag color={approvalCount > 1 ? "blue" : "default"}>{approvalCount > 1 ? `并行 · ${approvalCount} 个节点` : level[0]?.data?.kind === "start" ? "开始" : level[0]?.data?.kind === "end" ? "结束" : "顺序审批"}</Tag></header>
+            <div className={approvalCount > 1 ? "is-parallel" : ""}>{level.map((node) => {
+              const kind = node.data?.kind ?? "approval";
+              const editableFields = (node.data?.editableFields ?? []).map((id) => fieldLabels.get(id) ?? id);
+              return <article className={`pa-version-flow-node is-${kind}`} key={node.id}>
+                <div className="pa-version-flow-node__title"><span>{kind === "start" ? <PlayCircleOutlined /> : kind === "end" ? <CheckCircleOutlined /> : <ApartmentOutlined />}</span><strong>{node.data?.label || "未命名节点"}</strong></div>
+                {kind === "start" && <p><small>发起权限组</small><span>{node.data?.permissionGroups?.join("、") || "未配置"}</span></p>}
+                {kind === "approval" && <><p><small>执行权限组</small><span>{node.data?.permissionGroup || "未配置"}</span></p><p><small>处理方式</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></p><p><small>可修改字段</small><span>{editableFields.join("、") || "不可修改表单内容"}</span></p></>}
+                {kind === "end" && <p><small>完成条件</small><span>全部前序审批通过</span></p>}
+              </article>;
+            })}</div>
+          </section>
+          {index < levels.length - 1 && <div className="pa-version-flow-arrow"><ArrowDownOutlined /><small>{level.length > 1 ? "全部通过后继续" : "继续"}</small></div>}
+        </div>;
+      })}
+    </div> : <Alert type="warning" showIcon message="该版本尚未形成可展示的审批拓扑" />}
+    <Alert type="info" showIcon message={`驳回处理：${rejectionHandlingLabel(version.snapshot.flow.meta?.rejectionHandling)}`} description={version.snapshot.flow.meta?.rejectionHandling === "auto-close" ? "任一节点驳回后流程自动关闭。" : version.snapshot.flow.meta?.rejectionHandling === "resubmit-only" ? "发起方修改后重新提交，所有审批节点重新开始。" : "发起方可修改后重新提交并重新开始全部审批，也可以直接关闭流程。"} />
+  </div>;
+}
+
+export function ProcessVersionsPage() {
   const navigate = useNavigate();
-  const params = useParams<{ definitionId?: string; id?: string }>();
-  const [searchParams] = useSearchParams();
-  const resolvedId = definitionId
-    ?? params.definitionId
-    ?? params.id
-    ?? searchParams.get("definitionId")
-    ?? "";
-  const definition = useProcessDefinitionStore((state) =>
-    state.definitions.find((item) => item.id === resolvedId),
-  );
-  const ensureDraft = useProcessDefinitionStore((state) => state.ensureDraft);
-  const resetDraftFromVersion = useProcessDefinitionStore((state) => state.resetDraftFromVersion);
-  const withdrawEffectiveVersion = useProcessDefinitionStore((state) => state.withdrawEffectiveVersion);
-  const activateVersion = useProcessDefinitionStore((state) => state.activateVersion);
+  const { definitionId = "" } = useParams<{ definitionId: string }>();
+  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
+  const createVersion = useProcessDefinitionStore((state) => state.createVersion);
+  const publishVersion = useProcessDefinitionStore((state) => state.publishVersion);
+  const unpublishVersion = useProcessDefinitionStore((state) => state.unpublishVersion);
   const deleteVersion = useProcessDefinitionStore((state) => state.deleteVersion);
-  const fallbackMeta = versionDataById[resolvedId] ?? emptyVersionMeta;
-  const effectiveVersion = getEffectiveVersion(definition);
-  const definitionMeta = {
-    name: definition?.name ?? fallbackMeta.name,
-    code: definition?.code ?? fallbackMeta.code,
-    type: definition?.type ?? fallbackMeta.type,
-    currentVersion: effectiveVersion?.version
-      ?? (definition?.draft?.withdrawnVersionId ? `${definition.draft.version}（已撤回）` : "尚未发布"),
+  const [selected, setSelected] = useState<ProcessVersion>();
+  const [unpublishTarget, setUnpublishTarget] = useState<ProcessVersion>();
+  const [unpublishReason, setUnpublishReason] = useState("");
+
+  const versions = useMemo(() => definition ? [...definition.versions].sort((a, b) => Number(b.version.slice(1)) - Number(a.version.slice(1))) : [], [definition]);
+  if (!definition) return <Alert type="error" showIcon message="流程定义不存在" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
+
+  const edit = (version: ProcessVersion) => navigate(`/admin/processes/${definition.id}/basic?versionId=${version.id}`);
+  const copy = (version: ProcessVersion) => {
+    const id = createVersion(definition.id, version.id);
+    const created = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definition.id)?.versions.find((item) => item.id === id);
+    if (!created) return message.error("新版本创建失败");
+    message.success(`已从 ${version.version} 的完整快照创建 ${created.version}`);
+    edit(created);
   };
-  const versions = useMemo<ProcessVersionRow[]>(() => {
-    if (!definition) return fallbackMeta.versions;
-    const withdrawnSource = definition.draft?.withdrawnVersionId
-      ? definition.versions.find((item) => item.id === definition.draft?.withdrawnVersionId)
-      : undefined;
-    const draftRow: ProcessVersionRow[] = definition.draft ? [{
-      id: definition.draft.id,
-      version: definition.draft.version,
-      status: "草稿",
-      firstPublishedAt: withdrawnSource?.firstPublishedAt ?? withdrawnSource?.publishedAt,
-      firstPublishedBy: withdrawnSource?.firstPublishedBy ?? withdrawnSource?.createdBy,
-      publishedAt: withdrawnSource?.publishedAt ?? "—",
-      lastWithdrawnAt: definition.draft.withdrawnAt,
-      lastWithdrawnBy: definition.draft.withdrawnBy,
-      createdBy: "当前用户",
-      changeNote: definition.draft.withdrawnVersionId
-        ? `${definition.draft.version} 已撤回发布，正在同一版本号下修改。`
-        : definition.draft.basedOn
-        ? `基于 ${definition.draft.basedOn} 创建，等待完成配置与发布。`
-        : "初始草稿，等待完成配置与发布。",
-      instanceCount: 0,
-      formFieldCount: definition.draft.formFieldCount,
-      nodeCount: definition.draft.nodeCount,
-      starterGroups: definition.draft.basic.starterGroups,
-      checksum: "草稿未生成",
-      instancePrefix: definition.draft.basic.instancePrefix,
-    }] : [];
-    const releasedRows = definition.versions
-      .filter((item) => item.id !== definition.draft?.withdrawnVersionId)
-      .map((item) => ({
-        ...item,
-        status: getVersionStatus(definition, item.id),
-        instancePrefix: item.basic.instancePrefix,
-        processName: item.basic.name,
-      }));
-    return [...draftRow, ...releasedRows];
-  }, [definition, fallbackMeta.versions]);
-  const [selectedVersion, setSelectedVersion] = useState<ProcessVersionRow>();
-  const [copySource, setCopySource] = useState<ProcessVersionRow>();
-  const [activationTarget, setActivationTarget] = useState<ProcessVersionRow>();
-  const [withdrawTarget, setWithdrawTarget] = useState<ProcessVersionRow>();
-  const [deleteTarget, setDeleteTarget] = useState<ProcessVersionRow>();
-  const [replacementVersionId, setReplacementVersionId] = useState<string>();
-
-  const publishedInstances = useMemo(
-    () => versions.reduce((total, version) => total + version.instanceCount, 0),
-    [versions],
-  );
-  const hasDraft = versions.some((version) => version.status === "草稿");
-
-  const createDraft = () => {
-    if (!copySource) return;
-    if (definition?.draft) {
-      const reset = resetDraftFromVersion(resolvedId, copySource.version);
-      setCopySource(undefined);
-      if (!reset) {
-        message.error("无法基于所选版本重建草稿");
-        return;
-      }
-      message.success(`已在 ${definition.draft.version} 中载入 ${copySource.version} 的完整快照`);
-      navigate(`/admin/processes/${resolvedId}/basic`);
-      return;
-    }
-    const created = ensureDraft(resolvedId, copySource.version);
-    setCopySource(undefined);
-    if (!created && definition?.draft) {
-      message.info("该流程已有待发布草稿，已进入现有草稿");
-    } else if (!created) {
-      message.error("无法从所选版本创建草稿");
-      return;
-    } else {
-      message.success(`已基于 ${copySource.version} 创建新版本草稿`);
-    }
-    navigate(`/admin/processes/${resolvedId}/basic`);
+  const publish = (version: ProcessVersion) => {
+    if (version.validation.status !== "通过") return message.error("该版本校验未通过，不能发布");
+    const current = getPublishedVersion(definition);
+    Modal.confirm({
+      title: current ? `将发布版本从 ${current.version} 切换为 ${version.version}？` : `发布 ${version.version}？`,
+      content: current ? "切换会原子完成：原版本退出发布，新发起实例立即使用目标版本；运行中实例仍锁定原版本。" : "发布后符合权限的员工可发起该流程。",
+      okText: current ? "确认切换" : "确认发布",
+      cancelText: "取消",
+      onOk: () => {
+        if (!publishVersion(definition.id, version.id, current ? `从 ${current.version} 切换发布` : "首次发布")) return message.error("发布失败，请重新检查版本校验结果");
+        message.success(`${version.version} 已发布`);
+      },
+    });
+  };
+  const unpublish = (version: ProcessVersion) => {
+    setUnpublishTarget(version);
+    setUnpublishReason("");
+  };
+  const remove = (version: ProcessVersion) => {
+    Modal.confirm({
+      title: `删除版本 ${version.version}？`,
+      content: `将删除该版本保存的基本信息、表单、流程图和列表字段完整快照。版本号不会复用，下一个版本仍为 V${definition.nextVersionNumber}。`,
+      okText: "确认删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: () => {
+        const result = deleteVersion(definition.id, version.id);
+        if (result === "published") return message.error("发布版本必须先取消发布");
+        if (result === "has-instances") return message.error("该版本已有实例，不能删除");
+        if (result === "definition-deleted") { message.success("最后一个版本和流程定义已删除"); navigate("/admin/processes"); return; }
+        if (result !== "deleted") return message.error("版本状态已经变化");
+        message.success(`${version.version} 已删除，版本号不会复用`);
+      },
+    });
   };
 
-  const continueExistingDraft = () => {
-    setCopySource(undefined);
-    navigate(`/admin/processes/${resolvedId}/basic`);
-  };
-
-  const confirmActivation = () => {
-    if (!activationTarget) return;
-    if (!activateVersion(resolvedId, activationTarget.id)) {
-      message.error("版本生效失败，请刷新后重试");
-      return;
-    }
-    message.success(`${activationTarget.version} 已设为唯一生效版本，菜单名称已同步为“${activationTarget.processName ?? definitionMeta.name}”`);
-    setActivationTarget(undefined);
-  };
-
-  const confirmWithdrawal = () => {
-    if (!withdrawTarget) return;
-    const result = withdrawEffectiveVersion(resolvedId, withdrawTarget.id);
-    setWithdrawTarget(undefined);
-    if (result === "withdrawn") {
-      message.success(`${withdrawTarget.version} 已撤回为同版本草稿，流程已暂停发起`);
-      navigate(`/admin/processes/${resolvedId}/basic`);
-    } else if (result === "has-instances") message.error("该版本已经创建流程实例，不能撤回，请创建新版本");
-    else if (result === "has-draft") message.warning("当前已有其他草稿，请先处理现有草稿");
-    else message.error("版本状态已经变化，请刷新后重试");
-  };
-
-  const handleDeleteResult = (result: DeleteVersionResult, target: ProcessVersionRow) => {
-    if (result === "has-instances") message.error(`${target.version} 已关联实例，不能删除`);
-    else if (result === "needs-replacement") message.warning("请先选择替代生效版本");
-    else if (result === "definition-deleted") {
-      message.success(target.status === "草稿" ? "草稿流程及其设计数据已删除" : "最后一个无实例版本及空流程定义已删除");
-      navigate("/admin/processes");
-    } else if (result === "deleted") {
-      if (target.status === "草稿" && definition?.draft?.withdrawnVersionId) {
-        message.success(`已放弃撤回后的修改，${target.version} 已恢复为生效版本`);
-        return;
-      }
-      if (target.status === "草稿") {
-        message.success(`${target.version} 草稿已删除，当前生效版本保持不变；下次草稿将使用 V${definition?.nextVersionNumber ?? "—"}`);
-        return;
-      }
-      const returnedToDraft = target.status === "生效" && definition?.versions.length === 1 && Boolean(definition.draft);
-      message.success(returnedToDraft ? "生效版本已删除，流程已退回草稿状态" : `${target.version} 已删除，剩余版本号保持不变`);
-    } else message.error("版本不存在或已被其他人删除");
-  };
-
-  const confirmDelete = () => {
-    if (!deleteTarget) return;
-    const result = deleteVersion(resolvedId, deleteTarget.id, replacementVersionId);
-    if (result === "needs-replacement") return;
-    handleDeleteResult(result, deleteTarget);
-    setDeleteTarget(undefined);
-    setReplacementVersionId(undefined);
-  };
-
-  const columns: TableProps<ProcessVersionRow>["columns"] = [
+  const columns: TableProps<ProcessVersion>["columns"] = [
+    { title: "版本", dataIndex: "version", width: 92, render: (value: string, record) => <button type="button" className="pa-version-button" onClick={() => setSelected(record)}><span className="pa-version">{value}</span></button> },
+    { title: "版本状态", key: "status", width: 130, render: (_, record) => <StatusPill status={getVersionStatus(definition, record.id)} /> },
+    { title: "来源版本", dataIndex: "basedOn", width: 110, render: (value?: string) => value ?? "首次创建" },
+    { title: "完整快照", key: "snapshot", width: 190, render: (_, record) => <Space size={6} wrap><Tag bordered={false}>{record.formFieldCount} 个字段</Tag>{definition.type === "approval" && <Tag bordered={false}>{record.nodeCount} 个节点</Tag>}</Space> },
+    { title: "编号前缀", key: "prefix", width: 120, render: (_, record) => record.basic.instancePrefix ? <Tag color="blue" bordered={false}>{record.basic.instancePrefix}</Tag> : "—" },
+    { title: "实例数", dataIndex: "instanceCount", width: 88, align: "right" },
+    { title: "最近更新", dataIndex: "updatedAt", width: 190, render: (value: string, record) => <span className="pa-two-line-cell"><span>{value}</span><small>{record.updatedBy}</small></span> },
     {
-      title: "版本",
-      dataIndex: "version",
-      width: 116,
-      render: (value: string, record) => (
-        <button type="button" className="pa-version-button" onClick={() => setSelectedVersion(record)}>
-          <strong>{value}</strong>{record.status === "生效" && <Tag color="blue" bordered={false}>当前</Tag>}
-        </button>
-      ),
-    },
-    {
-      title: "状态",
-      dataIndex: "status",
-      width: 112,
-      render: (value: VersionStatus) => <StatusPill status={value} />,
-    },
-    {
-      title: "发布时间",
-      dataIndex: "publishedAt",
-      width: 168,
-      render: (value: string) => <span className={value === "—" ? "pa-muted" : undefined}>{value}</span>,
-    },
-    {
-      title: "创建人",
-      dataIndex: "createdBy",
-      width: 116,
-      render: (value: string) => <Space size={7}><span className="pa-user-dot"><UserOutlined /></span>{value}</Space>,
-    },
-    {
-      title: "变更说明",
-      dataIndex: "changeNote",
-      width: 390,
-      ellipsis: true,
-      render: (value: string) => <Typography.Text ellipsis={{ tooltip: value }}>{value}</Typography.Text>,
-    },
-    {
-      title: "实例数",
-      dataIndex: "instanceCount",
-      width: 94,
-      align: "right",
-      render: (value: number) => value.toLocaleString("zh-CN"),
-    },
-    {
-      title: "操作",
-      key: "actions",
-      fixed: "right",
-      align: "center",
-      width: 202,
-      render: (_, record) => (
-        <Space size={4}>
-          <Tooltip title="查看版本详情">
-            <Button
-              type="text"
-              className="pa-icon-button"
-              icon={<EyeOutlined />}
-              aria-label={`查看${record.version}`}
-              onClick={() => setSelectedVersion(record)}
-            />
-          </Tooltip>
-          {record.status === "草稿" ? (
-            <Tooltip title="编辑草稿">
-              <Button
-                type="text"
-                className="pa-icon-button is-primary"
-                icon={<EditOutlined />}
-                aria-label={`编辑${record.version}`}
-                onClick={() => navigate(`/admin/processes/${resolvedId}/basic`)}
-              />
-            </Tooltip>
-          ) : (
-            <Tooltip title={hasDraft ? "选择如何处理现有草稿" : "基于此完整快照新建草稿"}>
-              <Button
-                type="text"
-                className="pa-icon-button is-copy"
-                icon={<CopyOutlined />}
-                aria-label={`基于${record.version}新建草稿`}
-                onClick={() => setCopySource(record)}
-              />
-            </Tooltip>
-          )}
-          {record.status === "失效" && (
-            <Tooltip title={definition?.draft?.withdrawnVersionId ? "当前版本处于撤回编辑中，重新发布或放弃修改后才能切换生效版本" : "设为唯一生效版本"}>
-              <Button
-                type="text"
-                className="pa-icon-button is-primary"
-                icon={<SelectOutlined />}
-                disabled={Boolean(definition?.draft?.withdrawnVersionId)}
-                aria-label={`将${record.version}设为生效版本`}
-                onClick={() => setActivationTarget(record)}
-              />
-            </Tooltip>
-          )}
-          {record.status === "生效" && record.instanceCount === 0 && !hasDraft && (
-            <Tooltip title={`撤回 ${record.version} 并继续编辑，版本号保持不变`}>
-              <Button
-                type="text"
-                className="pa-icon-button is-primary"
-                icon={<RollbackOutlined />}
-                aria-label={`撤回${record.version}并编辑`}
-                onClick={() => setWithdrawTarget(record)}
-              />
-            </Tooltip>
-          )}
-          <Tooltip title={record.instanceCount > 0 ? `已有 ${record.instanceCount} 个实例，不能删除` : record.status === "草稿" ? "删除这个未发布草稿" : "删除这个完整版本快照"}>
-            <span>
-              <Button
-                type="text"
-                danger
-                disabled={record.instanceCount > 0}
-                className="pa-icon-button"
-                icon={<DeleteOutlined />}
-                aria-label={`删除${record.version}`}
-                onClick={() => { setDeleteTarget(record); setReplacementVersionId(undefined); }}
-              />
-            </span>
-          </Tooltip>
-        </Space>
-      ),
+      title: "操作", key: "actions", fixed: "right", width: 220, align: "center",
+      render: (_, record) => {
+        const status = getVersionStatus(definition, record.id);
+        return <Space size={3}>
+          <Tooltip title="查看完整快照"><Button type="text" className="pa-icon-button" icon={<EyeOutlined />} onClick={() => setSelected(record)} /></Tooltip>
+          {canEditVersion(definition, record) && <Tooltip title="编辑这个正式版本"><Button type="text" className="pa-icon-button is-primary" icon={<EditOutlined />} onClick={() => edit(record)} /></Tooltip>}
+          <Tooltip title="从此版本复制新建下一版本"><Button type="text" className="pa-icon-button is-copy" icon={<CopyOutlined />} onClick={() => copy(record)} /></Tooltip>
+          {status === "已发布" ? <Tooltip title="取消发布"><Button type="text" className="pa-icon-button" icon={<PauseCircleOutlined />} onClick={() => unpublish(record)} /></Tooltip> : <Tooltip title={status === "可发布" ? "发布此版本" : "校验通过后才可发布"}><Button type="text" className="pa-icon-button" icon={<RocketOutlined />} disabled={status !== "可发布"} onClick={() => publish(record)} /></Tooltip>}
+          <Tooltip title={record.instanceCount ? "已有实例，不可删除" : status === "已发布" ? "先取消发布才能删除" : "删除版本"}><Button type="text" danger icon={<DeleteOutlined />} disabled={Boolean(record.instanceCount || status === "已发布")} onClick={() => remove(record)} /></Tooltip>
+        </Space>;
+      },
     },
   ];
 
-  return (
-    <div className="page-stack pa-page pa-versions-page">
-      <Card className="pa-config-head" bordered={false}>
-        <div className="pa-config-head__main">
-          <AppBackButton onClick={() => navigate("/admin/processes")} />
-          <div>
-            <Space size={10} wrap>
-              <Typography.Title level={3}>{definitionMeta.name}</Typography.Title>
-              <Tag color={definitionMeta.type === "approval" ? "blue" : "purple"}>
-                {definitionMeta.type === "approval" ? <BranchesOutlined /> : <MessageOutlined />} {definitionMeta.type === "approval" ? "固定审批" : "自由协作"}
-              </Tag>
-            </Space>
-            <Typography.Text type="secondary">{definitionMeta.code} · 各版本定义、发布状态与生效范围</Typography.Text>
-          </div>
-        </div>
-        {!hasDraft && (
-          <Button
-            type="primary"
-            icon={<CopyOutlined />}
-            onClick={() => setCopySource(versions.find((item) => item.status === "生效") ?? versions[0])}
-          >
-            基于生效版本新建草稿
-          </Button>
-        )}
-      </Card>
-
-      <div className="pa-version-stats">
-        <Card bordered={false}><span className="pa-stat-icon is-blue"><HistoryOutlined /></span><span><small>累计版本</small><strong>{versions.length}</strong></span></Card>
-        <Card bordered={false}><span className="pa-stat-icon is-green"><CheckCircleFilled /></span><span><small>唯一生效版本</small><strong>{definitionMeta.currentVersion}</strong></span></Card>
-        <Card bordered={false}><span className="pa-stat-icon is-purple"><FileTextOutlined /></span><span><small>累计流程实例</small><strong>{publishedInstances}</strong></span></Card>
-        <Card bordered={false}><span className="pa-stat-icon is-orange"><SafetyCertificateOutlined /></span><span><small>配置状态</small><strong>{hasDraft ? "有待发布草稿" : definition?.effectiveVersionId ? "快照完整" : "等待首次发布"}</strong></span></Card>
-      </div>
-
-      <Alert
-        className="pa-page-alert"
-        type="info"
-        showIcon
-        message={definition?.draft?.withdrawnVersionId ? `${definition.draft.version} 已撤回为草稿` : "每个版本都是完整、独立的配置快照"}
-        description={definition?.draft?.withdrawnVersionId
-          ? "版本号保持不变，编辑期间流程暂停发起；重新发布后恢复生效。放弃该草稿会恢复撤回前的发布快照。"
-          : "已发布版本通常不可直接修改；当前生效版本实例数为 0 时可以先撤回为同版本草稿。历史版本可以创建下一草稿，无实例版本可删除，已有实例永久锁定其发起时版本。"}
-      />
-
-      <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}>
-        <div className="table-result-head pa-table-head">
-          <div><strong>全部版本</strong><Tag bordered={false}>{versions.length} 条</Tag></div>
-          <Typography.Text type="secondary">按创建时间倒序排列</Typography.Text>
-        </div>
-        <Table<ProcessVersionRow>
-          rowKey="id"
-          columns={columns}
-          dataSource={versions}
-          scroll={{ x: 1120 }}
-          pagination={false}
-          rowClassName={(record) => record.status === "草稿" ? "pa-draft-row" : record.status === "生效" ? "pa-effective-row" : ""}
-        />
-      </Card>
-
-      <Drawer
-        title={<Space><HistoryOutlined /> 版本详情</Space>}
-        open={Boolean(selectedVersion)}
-        width={560}
-        onClose={() => setSelectedVersion(undefined)}
-        extra={selectedVersion?.status === "草稿"
-          ? <Button type="primary" icon={<EditOutlined />} onClick={() => navigate(`/admin/processes/${resolvedId}/basic`)}>编辑草稿</Button>
-          : null}
-      >
-        {selectedVersion && (
-          <div className="pa-version-drawer">
-            <div className="pa-version-drawer__hero">
-              <span className={`pa-version-emblem ${selectedVersion.status === "生效" ? "is-current" : ""}`}>{selectedVersion.version}</span>
-              <span>
-                <Space size={8}>
-                  <Typography.Title level={4}>{selectedVersion.processName ?? definitionMeta.name}</Typography.Title>
-                  <StatusPill status={selectedVersion.status} />
-                </Space>
-                <Typography.Text type="secondary">配置快照校验码：{selectedVersion.checksum}</Typography.Text>
-              </span>
-            </div>
-
-            {selectedVersion.status !== "草稿" && (
-              <Alert type="info" showIcon message="该版本为只读快照" description="表单、节点、权限和规则均按发布时间固化，不能在此直接修改。" />
-            )}
-            {selectedVersion.status === "草稿" && definition?.draft?.withdrawnVersionId && (
-              <Alert type="warning" showIcon message="该版本正在撤回编辑" description="重新发布后版本号保持不变；删除这个草稿将放弃修改并恢复撤回前的发布快照。" />
-            )}
-
-            <Descriptions
-              className="pa-drawer-descriptions"
-              bordered
-              size="small"
-              column={1}
-              items={[
-                { key: "firstPublishedAt", label: "首次发布时间", children: selectedVersion.firstPublishedAt ?? selectedVersion.publishedAt },
-                { key: "firstPublishedBy", label: "首次发布人", children: selectedVersion.firstPublishedBy ?? selectedVersion.createdBy },
-                { key: "publishedAt", label: "最近发布时间", children: selectedVersion.publishedAt },
-                { key: "createdBy", label: "创建人", children: selectedVersion.createdBy },
-                { key: "instances", label: "关联实例", children: `${selectedVersion.instanceCount} 个` },
-                { key: "instancePrefix", label: "实例编号前缀", children: selectedVersion.instancePrefix ?? fallbackMeta.instancePrefix },
-                { key: "fields", label: "表单字段", children: `${selectedVersion.formFieldCount} 个` },
-                { key: "nodes", label: definitionMeta.type === "approval" ? "流程节点" : "节点设计", children: definitionMeta.type === "approval" ? `${selectedVersion.nodeCount} 个` : "自由协作不使用节点设计器" },
-                { key: "group", label: "发起权限组", children: selectedVersion.starterGroups.length ? selectedVersion.starterGroups.join("、") : "尚未选择" },
-              ]}
-            />
-
-            <Card size="small" className="pa-change-note-card" title="变更说明">
-              {selectedVersion.changeNote}
-            </Card>
-
-            <Divider>版本生命周期</Divider>
-            <Timeline
-              items={selectedVersion.status === "草稿" ? [
-                { color: "blue", children: <><strong>{definition?.draft?.withdrawnVersionId ? "版本撤回" : "草稿创建"}</strong><small>{definition?.draft?.withdrawnVersionId ? "实例数为 0，版本号保持不变并暂停发起" : "当前用户基于历史版本创建"}</small></> },
-                { color: "gray", dot: <InfoCircleOutlined />, children: <><strong>等待发布</strong><small>完成配置和校验后形成正式版本</small></> },
-              ] : [
-                { color: "green", children: <><strong>首次发布</strong><small>{selectedVersion.firstPublishedAt ?? selectedVersion.publishedAt} · {selectedVersion.firstPublishedBy ?? selectedVersion.createdBy}</small></> },
-                ...(selectedVersion.lastWithdrawnAt ? [{ color: "orange", dot: <RollbackOutlined />, children: <><strong>撤回发布</strong><small>{selectedVersion.lastWithdrawnAt} · {selectedVersion.lastWithdrawnBy ?? "当前用户"}</small></> }] : []),
-                ...(selectedVersion.firstPublishedAt && selectedVersion.firstPublishedAt !== selectedVersion.publishedAt ? [{ color: "green", children: <><strong>重新发布</strong><small>{selectedVersion.publishedAt} · {selectedVersion.createdBy}</small></> }] : []),
-                ...(selectedVersion.status === "失效" ? [{ color: "gray", dot: <StopOutlined />, children: <><strong>版本失效</strong><small>被其他版本替代，历史实例仍锁定此完整快照</small></> }] : []),
-                { color: "blue", children: <><strong>已关联 {selectedVersion.instanceCount} 个实例</strong><small>实例继续按此版本规则运行</small></> },
-              ]}
-            />
-          </div>
-        )}
-      </Drawer>
-
-      <Modal
-        title="基于历史版本新建草稿"
-        open={Boolean(copySource)}
-        width={540}
-        okText={definition?.draft ? `放弃并重建 ${definition.draft.version}` : "新建草稿"}
-        cancelText="取消"
-        onCancel={() => setCopySource(undefined)}
-        onOk={createDraft}
-        okButtonProps={definition?.draft ? { danger: true } : undefined}
-        footer={definition?.draft ? [
-          <Button key="cancel" onClick={() => setCopySource(undefined)}>取消</Button>,
-          <Button key="continue" onClick={continueExistingDraft}>继续编辑现有草稿</Button>,
-          <Button key="replace" danger type="primary" onClick={createDraft}>放弃并基于 {copySource?.version} 重建</Button>,
-        ] : undefined}
-      >
-        {copySource && (
-          <div className="pa-copy-version-modal">
-            {definition?.draft && (
-              <Alert
-                type="warning"
-                showIcon
-                message={`当前已有 ${definition.draft.version} 草稿`}
-                description="可以继续编辑现有草稿，或放弃草稿中的未发布修改并在同一版本号下重新载入所选完整快照。"
-              />
-            )}
-            <Alert
-              type="info"
-              showIcon
-              message={`将复制 ${copySource.version} 的完整配置`}
-              description="复制范围包括流程名称与编号前缀、完整表单、列表配置、节点、流程规则和权限引用；新草稿运行时不再依赖来源版本。"
-            />
-            <div className="pa-copy-source">
-              <span><small>源版本</small><strong>{copySource.version}</strong></span>
-              <span><small>表单字段</small><strong>{copySource.formFieldCount}</strong></span>
-              <span><small>{definitionMeta.type === "approval" ? "流程节点" : "流程类型"}</small><strong>{definitionMeta.type === "approval" ? copySource.nodeCount : "自由协作"}</strong></span>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      <Modal
-        title={`撤回 ${withdrawTarget?.version ?? ""} 并继续编辑？`}
-        open={Boolean(withdrawTarget)}
-        width={560}
-        okText="撤回并编辑"
-        cancelText="取消"
-        onCancel={() => setWithdrawTarget(undefined)}
-        onOk={confirmWithdrawal}
-      >
-        {withdrawTarget && (
-          <div className="pa-copy-version-modal">
-            <Alert
-              type="warning"
-              showIcon
-              message="编辑期间流程将暂停发起"
-              description={`${withdrawTarget.version} 尚未创建流程实例，可以安全撤回为草稿。版本号保持 ${withdrawTarget.version} 不变，重新发布时不会生成下一版本。`}
-            />
-            <Descriptions
-              bordered
-              size="small"
-              column={1}
-              items={[
-                { key: "version", label: "草稿版本", children: withdrawTarget.version },
-                { key: "firstPublishedAt", label: "首次发布时间", children: withdrawTarget.firstPublishedAt ?? withdrawTarget.publishedAt },
-                { key: "firstPublishedBy", label: "首次发布人", children: withdrawTarget.firstPublishedBy ?? withdrawTarget.createdBy },
-                { key: "publishedAt", label: "最近发布时间", children: withdrawTarget.publishedAt },
-                { key: "instances", label: "关联实例", children: "0 个" },
-              ]}
-            />
-          </div>
-        )}
-      </Modal>
-
-      <Modal
-        title={`将 ${activationTarget?.version ?? ""} 设为生效版本？`}
-        open={Boolean(activationTarget)}
-        width={560}
-        okText="确认切换生效版本"
-        cancelText="取消"
-        onCancel={() => setActivationTarget(undefined)}
-        onOk={confirmActivation}
-      >
-        {activationTarget && (
-          <div className="pa-copy-version-modal">
-            <Alert
-              type="warning"
-              showIcon
-              message="流程只允许一个生效版本"
-              description={`切换后 ${activationTarget.version} 成为唯一生效版本，当前版本自动失效；新实例和流程清单使用该快照，已有实例保持原版本。`}
-            />
-            <Descriptions
-              bordered
-              size="small"
-              column={1}
-              items={[
-                { key: "name", label: "菜单名称同步为", children: activationTarget.processName ?? definitionMeta.name },
-                { key: "prefix", label: "实例编号前缀", children: activationTarget.instancePrefix ?? "—" },
-                { key: "snapshot", label: "完整快照", children: `${activationTarget.formFieldCount} 个表单字段 · ${definitionMeta.type === "approval" ? `${activationTarget.nodeCount} 个节点` : "自由协作规则"}` },
-              ]}
-            />
-          </div>
-        )}
-      </Modal>
-
-      <Modal
-        title={deleteTarget?.status === "草稿" && definition?.versions.length === 0
-          ? `删除草稿流程“${definitionMeta.name}”？`
-          : `${deleteTarget?.status === "草稿" ? "删除草稿" : "删除版本"} ${deleteTarget?.version ?? ""}？`}
-        open={Boolean(deleteTarget)}
-        width={570}
-        okText={deleteTarget?.status === "草稿" && definition?.versions.length === 0 ? "删除草稿流程" : deleteTarget?.status === "草稿" ? "删除草稿" : "确认删除"}
-        okButtonProps={{ danger: true, disabled: deleteTarget?.status === "生效" && (definition?.versions.length ?? 0) > 1 && !replacementVersionId }}
-        cancelText="取消"
-        onCancel={() => { setDeleteTarget(undefined); setReplacementVersionId(undefined); }}
-        onOk={confirmDelete}
-      >
-        {deleteTarget && (
-          <div className="pa-copy-version-modal">
-            <Alert
-              type={deleteTarget.status === "生效" ? "warning" : "error"}
-              showIcon
-              message={deleteTarget.status === "草稿" && definition?.versions.length === 0
-                ? "未发布的流程定义和设计数据将一并删除"
-                : deleteTarget.status === "草稿" && definition?.draft?.withdrawnVersionId
-                  ? "将放弃撤回后的全部修改"
-                  : deleteTarget.status === "草稿"
-                    ? "草稿中的未发布配置将丢失"
-                    : "完整版本快照删除后不可恢复"}
-              description={deleteTarget.status === "草稿" && definition?.versions.length === 0
-                ? "该流程从未发布。确认后会删除流程定义、初始表单、流程图和列表字段设计，并从流程管理中移除。"
-                : deleteTarget.status === "草稿" && definition?.draft?.withdrawnVersionId
-                  ? `删除后恢复 ${deleteTarget.version} 撤回前的完整发布快照及原启停状态，版本号保持不变。`
-                  : deleteTarget.status === "草稿"
-                    ? `只删除未发布的 ${deleteTarget.version} 草稿；当前生效版本和已有实例不受影响。该版本号不会复用，下次草稿使用 V${definition?.nextVersionNumber ?? "—"}。`
-                    : deleteTarget.status === "生效" && definition?.versions.length === 1 && definition.draft
-                ? "这是唯一生效版本。删除后流程保留现有草稿并自动退回草稿状态，员工侧菜单和发起入口会移除。"
-                : deleteTarget.status === "生效" && (definition?.versions.length ?? 0) > 1
-                  ? "请明确选择替代生效版本；替代生效和删除将在同一操作中完成。"
-                  : deleteTarget.status === "生效" && definition?.versions.length === 1
-                    ? "这是流程唯一的版本且没有关联实例。确认后会同时删除该版本和空流程定义，员工侧菜单随即移除。"
-                  : "该版本没有关联实例，可以独立删除；剩余版本号不会重排或复用。"}
-            />
-            {deleteTarget.status === "生效" && (definition?.versions.length ?? 0) > 1 && (
-              <div>
-                <Typography.Text strong>替代生效版本</Typography.Text>
-                <Select
-                  className="pa-replacement-select"
-                  value={replacementVersionId}
-                  placeholder="请选择一个失效版本"
-                  onChange={setReplacementVersionId}
-                  options={versions.filter((item) => item.status === "失效").map((item) => ({ value: item.id, label: `${item.version} · ${item.processName ?? definitionMeta.name} · ${item.instanceCount} 个实例` }))}
-                />
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
-    </div>
-  );
+  const published = getPublishedVersion(definition);
+  return <div className="page-stack pa-page">
+    <Card className="pa-config-head" bordered={false}>
+      <div className="pa-config-head__main"><AppBackButton onClick={() => navigate("/admin/processes")} /><div><Space size={10} wrap><Typography.Title level={3}>{definition.name}</Typography.Title><StatusPill status={definitionStatus(definition)} /></Space><Typography.Text type="secondary">{definition.code} · 流程定义与版本记录</Typography.Text></div></div>
+      <Space><Button icon={<CheckCircleOutlined />} onClick={() => published ? setSelected(published) : message.info("当前没有发布版本")}>查看发布版本</Button></Space>
+    </Card>
+    <div className="pa-version-stats"><Card bordered={false}><span className="pa-stat-icon"><HistoryOutlined /></span><span><small>正式版本</small><strong>{versions.length}</strong></span></Card><Card bordered={false}><span className="pa-stat-icon is-green"><RocketOutlined /></span><span><small>当前发布</small><strong>{published?.version ?? "无"}</strong></span></Card><Card bordered={false}><span className="pa-stat-icon is-orange"><SafetyCertificateOutlined /></span><span><small>校验通过</small><strong>{versions.filter((item) => item.validation.status === "通过").length}</strong></span></Card></div>
+    <Alert type="info" showIcon message="流程定义负责入口，版本保存完整配置" description="名称相同的各版本共用一个员工侧菜单。每个版本独立保存基本信息、表单、列表字段、流程图和规则；发布只是把流程定义的发布指针切换到一个校验通过版本。" />
+    <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}><div className="table-result-head pa-table-head"><div><strong>版本记录</strong><Tag bordered={false}>{versions.length} 个</Tag></div><Typography.Text type="secondary">任何版本都可复制新建；已有实例的版本永久只读</Typography.Text></div><Table<ProcessVersion> rowKey="id" columns={columns} dataSource={versions} scroll={{ x: 1210 }} pagination={false} rowClassName={(record) => definition.publishedVersionId === record.id ? "pa-effective-row" : ""} /></Card>
+    <Drawer title={selected ? `${definition.name} · ${selected.version} 完整快照` : "版本详情"} size="large" open={Boolean(selected)} onClose={() => setSelected(undefined)} extra={selected && canEditVersion(definition, selected) ? <Button type="primary" icon={<EditOutlined />} onClick={() => edit(selected)}>编辑版本</Button> : null}>
+      {selected && <Tabs className="pa-version-snapshot-tabs" defaultActiveKey="overview" items={[
+        { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: selected.basic.starterGroups.join("、") || "—", span: 2 }, { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles, ...selected.basic.visibleUsers].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${selected.updatedAt} · ${selected.updatedBy}`, span: 2 }]} />
+          <Alert type={selected.validation.status === "通过" ? "success" : "error"} showIcon message={selected.validation.status === "通过" ? "版本校验通过，可以发布" : "版本校验未通过"} description={selected.validation.issues.length ? selected.validation.issues.join("；") : `自动校验于 ${selected.validation.checkedAt} 完成`} />
+          <Timeline items={[{ color: "blue", children: <><strong>创建 {selected.version}</strong><br /><Typography.Text type="secondary">{selected.createdAt} · {selected.createdBy}</Typography.Text></> }, ...(selected.firstPublishedAt ? [{ color: "green", children: <><strong>首次发布</strong><br /><Typography.Text type="secondary">{selected.firstPublishedAt} · {selected.firstPublishedBy}</Typography.Text></> }] : []), ...(selected.lastUnpublishedAt ? [{ color: "gray", children: <><strong>最近取消发布</strong><br /><Typography.Text type="secondary">{selected.lastUnpublishedAt} · {selected.lastUnpublishedBy}<br />原因：{selected.lastUnpublishReason ?? "—"}</Typography.Text></> }] : [])]} />
+        </Space> },
+        { key: "form", label: <span><FormOutlined /> 初始表单</span>, children: <VersionFormSnapshot version={selected} /> },
+        { key: "flow", label: <span><ApartmentOutlined /> {definition.type === "approval" ? "审批流程" : "协作规则"}</span>, children: <VersionFlowSnapshot version={selected} type={definition.type} /> },
+      ]} />}
+    </Drawer>
+    <Modal
+      title={`取消发布 ${unpublishTarget?.version ?? ""}`}
+      open={Boolean(unpublishTarget)}
+      okText="确认取消发布"
+      cancelText="返回"
+      okButtonProps={{ disabled: !unpublishReason.trim() }}
+      onCancel={() => setUnpublishTarget(undefined)}
+      onOk={() => {
+        if (!unpublishTarget || !unpublishReason.trim()) return;
+        if (unpublishVersion(definition.id, unpublishTarget.id, unpublishReason) !== "unpublished") return message.error("发布状态已经变化");
+        message.success(`${unpublishTarget.version} 已取消发布`);
+        setUnpublishTarget(undefined);
+      }}
+    >
+      <Alert type="warning" showIcon message="取消后流程将没有发布版本" description={unpublishTarget?.instanceCount ? "员工不能发起新实例，已有实例继续按原版本运行；由于已有实例，该版本仍不可编辑。" : "员工不能发起新实例；版本号和完整配置保留，取消后可直接编辑。"} />
+      <Typography.Text strong style={{ display: "block", marginTop: 18, marginBottom: 8 }}>取消发布原因</Typography.Text>
+      <Input.TextArea value={unpublishReason} onChange={(event) => setUnpublishReason(event.target.value)} rows={3} maxLength={200} showCount placeholder="请说明取消发布原因" />
+    </Modal>
+  </div>;
 }
 
 export default ProcessVersionsPage;

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type DragEvent,
 } from "react";
@@ -57,7 +58,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import {
   ProcessWizardNextButton,
@@ -65,10 +66,15 @@ import {
 } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
+import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import { useIdentityStore } from "../state/useIdentityStore";
-import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import {
-  FLOW_DESIGNER_STORAGE_KEY_PREFIX,
+  canEditVersion,
+  getVersionStatus,
+  useProcessDefinitionStore,
+  type VersionStatus,
+} from "../state/useProcessDefinitionStore";
+import {
   buildFlowLevels,
   type EditableFieldOption,
   type StoredFlowDesignerSnapshot,
@@ -97,7 +103,7 @@ interface FlowMeta {
   code: string;
   version: string;
   basedOn: string;
-  status: "草稿" | "已发布";
+  status: VersionStatus;
   rejectionHandling: "resubmit-or-close" | "resubmit-only" | "auto-close";
   lastSavedAt: string;
 }
@@ -122,18 +128,18 @@ const rejectionHandlingOptions: Array<{
 }> = [
   {
     value: "resubmit-or-close",
-    label: "重新发布或关闭",
-    description: "进入驳回待处理，由发布方修改后重新发布，或直接关闭流程。",
+    label: "重新提交或关闭",
+    description: "进入驳回待处理，由发起方修改后重新提交，或直接关闭流程。",
   },
   {
     value: "resubmit-only",
-    label: "仅允许重新发布",
-    description: "进入驳回待处理，发布方修改后必须重新发布，不能在此状态关闭。",
+    label: "仅允许重新提交",
+    description: "进入驳回待处理，发起方修改后必须重新提交，不能在此状态关闭。",
   },
   {
     value: "auto-close",
     label: "自动关闭流程",
-    description: "驳回结果提交后立即关闭流程，不再等待发布方处理。",
+    description: "驳回结果提交后立即关闭流程，不再等待发起方处理。",
   },
 ];
 
@@ -266,7 +272,7 @@ const genericInitialMeta: FlowMeta = {
   code: "—",
   version: "V1",
   basedOn: "全新流程",
-  status: "草稿",
+  status: "校验未通过",
   rejectionHandling: "resubmit-or-close",
   lastSavedAt: "尚未保存",
 };
@@ -573,11 +579,12 @@ const runValidation = (
 interface DesignerWorkspaceProps {
   initialDraft: StoredDraft;
   definitionId: string;
+  versionId: string;
   editableFieldOptions: EditableFieldOption[];
   starterGroups: string[];
 }
 
-const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, starterGroups }: DesignerWorkspaceProps) => {
+const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFieldOptions, starterGroups }: DesignerWorkspaceProps) => {
   const navigate = useNavigate();
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const starterGroupOptions = workflowGroups
@@ -586,13 +593,11 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
   const approvalGroupOptions = workflowGroups
     .filter((group) => group.status === "启用" && group.purposes.includes("审批"))
     .map((group) => ({ value: group.id, label: group.name }));
-  const markFlowConfigured = useProcessDefinitionStore((state) => state.markFlowConfigured);
-  const draftBasic = useProcessDefinitionStore((state) =>
-    state.definitions.find((item) => item.id === definitionId)?.draft?.basic,
+  const versionBasic = useProcessDefinitionStore((state) =>
+    state.definitions.find((item) => item.id === definitionId)?.versions.find((item) => item.id === versionId)?.basic,
   );
-  const updateDraftBasic = useProcessDefinitionStore((state) => state.updateDraftBasic);
-  const updateDraftFlowSnapshot = useProcessDefinitionStore((state) => state.updateDraftFlowSnapshot);
-  const storageKey = `${FLOW_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`;
+  const updateVersionBasic = useProcessDefinitionStore((state) => state.updateVersionBasic);
+  const updateVersionFlowSnapshot = useProcessDefinitionStore((state) => state.updateVersionFlowSnapshot);
   const [nodes, setNodes, onNodesChange] = useNodesState<DesignerNode>(initialDraft.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<DesignerEdge>(initialDraft.edges);
   const [meta, setMeta] = useState<FlowMeta>(initialDraft.meta);
@@ -602,6 +607,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
   const [propertyMode, setPropertyMode] = useState<"flow" | "node">("node");
   const [validationOpen, setValidationOpen] = useState(false);
   const [autoSaved, setAutoSaved] = useState(true);
+  const skipDirtyEffect = useRef(true);
   const { fitView, screenToFlowPosition } = useReactFlow<DesignerNode, DesignerEdge>();
 
   const selectedNode = useMemo(
@@ -622,18 +628,12 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
   const allValidationPassed = validationResults.every((result) => result.pass);
 
   useEffect(() => {
+    if (skipDirtyEffect.current) {
+      skipDirtyEffect.current = false;
+      return;
+    }
     setAutoSaved(false);
-    const timer = window.setTimeout(() => {
-      window.localStorage.setItem(storageKey, JSON.stringify({ nodes, edges, meta }));
-      updateDraftFlowSnapshot(definitionId, {
-        nodes,
-        edges,
-        meta: { rejectionHandling: meta.rejectionHandling },
-      } as StoredFlowDesignerSnapshot);
-      setAutoSaved(true);
-    }, 450);
-    return () => window.clearTimeout(timer);
-  }, [definitionId, edges, meta, nodes, storageKey, updateDraftFlowSnapshot]);
+  }, [edges, meta, nodes]);
 
   useEffect(() => {
     const allowed = new Set(editableFieldOptions.map((option) => option.value));
@@ -718,12 +718,10 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
 
   const updateStarterGroups = (permissionGroups: string[]) => {
     updateSelectedNode({ permissionGroups });
-    if (draftBasic) updateDraftBasic(definitionId, { ...draftBasic, starterGroups: permissionGroups });
   };
 
   const updateFlowName = (name: string) => {
     setMeta((current) => ({ ...current, name }));
-    if (draftBasic) updateDraftBasic(definitionId, { ...draftBasic, name });
   };
 
   const deleteSelectedNode = () => {
@@ -756,38 +754,41 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
     message.success("已按连线层级自动整理节点");
   };
 
-  const saveDraft = () => {
-    const nextMeta = { ...meta, status: "草稿" as const, lastSavedAt: formatTime() };
+  const saveVersion = () => {
+    const nextMeta = { ...meta, lastSavedAt: formatTime() };
+    skipDirtyEffect.current = true;
     setMeta(nextMeta);
-    window.localStorage.setItem(
-      storageKey,
-      JSON.stringify({ nodes, edges, meta: nextMeta }),
-    );
-    updateDraftFlowSnapshot(definitionId, { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot);
-    markFlowConfigured(definitionId, nodes.length);
+    const startGroups = nodes.find((node) => node.data.kind === "start")?.data.permissionGroups ?? starterGroups;
+    if (versionBasic) updateVersionBasic(definitionId, versionId, { ...versionBasic, name: nextMeta.name, starterGroups: startGroups });
+    const saved = updateVersionFlowSnapshot(definitionId, versionId, { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot);
     setAutoSaved(true);
-    message.success("草稿已保存，刷新页面后仍会保留");
+    if (saved) message.success("版本已保存，并已自动更新校验结果");
+    else message.error("该版本当前不可编辑，请返回版本记录确认状态");
+    return saved;
   };
 
+  const { guard, allowNextNavigation } = useUnsavedChangesGuard({
+    dirty: !autoSaved,
+    onSave: saveVersion,
+    title: "审批流程尚未保存",
+    description: "可以先保存节点、连线和流程规则再离开，也可以放弃本次修改。",
+  });
+
   const goNext = () => {
+    const saved = saveVersion();
+    if (!saved) return;
     if (!allValidationPassed) {
       setValidationOpen(true);
-      message.warning("进入发布页面前还有流程结构问题需要处理");
+      message.warning("版本已保存，但流程结构校验未通过");
       return;
     }
-    const nextMeta = { ...meta, status: "草稿" as const, lastSavedAt: formatTime() };
-    setMeta(nextMeta);
-    window.localStorage.setItem(
-      storageKey,
-      JSON.stringify({ nodes, edges, meta: nextMeta }),
-    );
-    updateDraftFlowSnapshot(definitionId, { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot);
-    markFlowConfigured(definitionId, nodes.length);
-    navigate(`/admin/processes/${definitionId}/publish`);
+    allowNextNavigation();
+    navigate(`/admin/processes/${definitionId}/publish?versionId=${versionId}`);
   };
 
   return (
     <div className="flow-designer-page">
+      {guard}
       <header className="flow-designer-toolbar">
         <div className="flow-designer-toolbar__identity">
           <div className="flow-designer-toolbar__icon">
@@ -800,25 +801,25 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
             </div>
             <Space size={8} split={<span className="flow-designer-toolbar__dot">·</span>}>
               <Text type="secondary">{meta.code}</Text>
-              <Text type="secondary">草稿版本 {meta.version}</Text>
-              <Text type="secondary">{meta.version === meta.basedOn ? `撤回后编辑 ${meta.version}` : `基于已发布 ${meta.basedOn}`}</Text>
+              <Text type="secondary">正式版本 {meta.version}</Text>
+              <Text type="secondary">{meta.basedOn === "全新流程" ? "首次创建" : `来源 ${meta.basedOn}`}</Text>
             </Space>
           </div>
         </div>
         <div className="flow-designer-toolbar__actions">
           <span className={`flow-designer-save-state ${autoSaved ? "is-saved" : ""}`}>
             <span className="flow-designer-save-state__dot" />
-            {autoSaved ? `已保存 ${meta.lastSavedAt}` : "正在保存…"}
+            {autoSaved ? `版本已保存 · ${meta.lastSavedAt}` : "有未保存修改"}
           </span>
-          <ProcessWizardPreviousButton step="初始表单" onClick={() => navigate(`/admin/processes/${definitionId}/form`)} />
+          <ProcessWizardPreviousButton step="初始表单" onClick={() => navigate(`/admin/processes/${definitionId}/form?versionId=${versionId}`)} />
           <Button icon={<ApartmentOutlined />} onClick={autoLayout}>
             自动布局
           </Button>
-          <Button icon={<SaveOutlined />} onClick={saveDraft}>
-            保存草稿
+          <Button icon={<SaveOutlined />} onClick={saveVersion}>
+            保存
           </Button>
           <Button icon={<SafetyCertificateOutlined />} onClick={() => setValidationOpen(true)}>
-            检查流程
+            查看校验结果
           </Button>
           <ProcessWizardNextButton step="发布" onClick={goNext} />
         </div>
@@ -1125,21 +1126,19 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
               </div>
               <div className="property-version-card">
                 <span>
-                  <Text type="secondary">当前草稿</Text>
+                  <Text type="secondary">当前版本</Text>
                   <Text strong>{meta.version}</Text>
                 </span>
                 <span>
-                  <Text type="secondary">{meta.version === meta.basedOn ? "编辑方式" : "来源版本"}</Text>
-                  <Text strong>{meta.version === meta.basedOn ? "原版本号保持不变" : meta.basedOn}</Text>
+                  <Text type="secondary">来源版本</Text>
+                  <Text strong>{meta.basedOn}</Text>
                 </span>
               </div>
               <Alert
-                type="warning"
+                type="info"
                 showIcon
-                message={meta.version === meta.basedOn ? "当前版本已撤回发布" : "发布后版本不可修改"}
-                description={meta.version === meta.basedOn
-                  ? "该版本尚无流程实例，重新发布后继续使用当前版本号；编辑期间流程暂停发起。"
-                  : "已有实例的版本再次编辑时会基于当前已发布版本创建新草稿；新版本仅影响新发起的实例。"}
+                message="正在编辑完整版本快照"
+                description="未发布且没有流程实例的版本可以直接保存；发布后需先取消发布，已有实例后则只能复制新建版本。"
               />
             </div>
           )}
@@ -1203,30 +1202,34 @@ const DesignerWorkspace = ({ initialDraft, definitionId, editableFieldOptions, s
 
 export const FlowDesignerPage = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { definitionId = "" } = useParams<{ definitionId: string }>();
   const definition = useProcessDefinitionStore((state) =>
     state.definitions.find((item) => item.id === definitionId),
   );
+  const versionId = searchParams.get("versionId") ?? definition?.versions[0]?.id ?? "";
+  const version = definition?.versions.find((item) => item.id === versionId);
   const editableFieldOptions = useMemo<EditableFieldOption[]>(() => {
-    const fields = definition?.draft?.snapshot.form.fields ?? [];
+    const fields = version?.snapshot.form.fields ?? [];
     return fields.flatMap((field) => field.type === "table"
       ? (field.columns ?? []).filter((column) => column.reviewEditable).map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }))
       : field.reviewEditable ? [{ value: field.id, label: field.label }] : []);
-  }, [definition?.draft?.snapshot.form.fields]);
-  const starterGroups = definition?.draft?.basic.starterGroups ?? [];
+  }, [version?.snapshot.form.fields]);
+  const starterGroups = version?.basic.starterGroups ?? [];
   const fallbackMeta = useMemo<FlowMeta>(
     () => ({
       ...genericInitialMeta,
-      name: definition?.draft?.basic.name ?? definition?.name ?? genericInitialMeta.name,
+      name: version?.basic.name ?? definition?.name ?? genericInitialMeta.name,
       code: definition?.code ?? genericInitialMeta.code,
-      version: definition?.draft?.version ?? genericInitialMeta.version,
-      basedOn: definition?.draft?.basedOn ?? "全新流程",
+      version: version?.version ?? genericInitialMeta.version,
+      basedOn: version?.basedOn ?? "全新流程",
+      status: definition && version ? getVersionStatus(definition, version.id) : "校验未通过",
     }),
-    [definition],
+    [definition, version],
   );
   const initialDraft = useMemo(
     () => {
-      const stored = definition?.draft?.snapshot.flow;
+      const stored = version?.snapshot.flow;
       const fallbackTopology = createGenericDraft(starterGroups);
       if (!stored?.nodes.length) return { ...fallbackTopology, meta: fallbackMeta };
       return {
@@ -1248,7 +1251,7 @@ export const FlowDesignerPage = () => {
         meta: { ...fallbackMeta, rejectionHandling: stored.meta?.rejectionHandling ?? "resubmit-or-close" },
       };
     },
-    [definition?.draft?.snapshot.flow, fallbackMeta, starterGroups],
+    [fallbackMeta, starterGroups, version?.snapshot.flow],
   );
 
   if (!definition) {
@@ -1265,12 +1268,43 @@ export const FlowDesignerPage = () => {
     );
   }
 
+  if (!version) {
+    return (
+      <div className="flow-designer-page flow-designer-page--empty">
+        <Alert
+          type="error"
+          showIcon
+          message="版本不存在"
+          description="流程设计必须绑定到一个明确的正式版本。"
+          action={<AppBackButton onClick={() => navigate(`/admin/processes/${definitionId}/versions`)} />}
+        />
+      </div>
+    );
+  }
+
+  if (!canEditVersion(definition, version)) {
+    return (
+      <div className="flow-designer-page flow-designer-page--empty">
+        <Alert
+          type="info"
+          showIcon
+          message={`${version.version} 为只读版本`}
+          description={definition.publishedVersionId === version.id
+            ? "已发布版本不能直接修改。没有实例时可先在版本记录中取消发布；已有实例时请复制新建版本。"
+            : "该版本已经创建过流程实例，只能查看或复制新建版本。"}
+          action={<AppBackButton onClick={() => navigate(`/admin/processes/${definitionId}/versions`)} />}
+        />
+      </div>
+    );
+  }
+
   return (
     <ReactFlowProvider>
       <DesignerWorkspace
-        key={`${definitionId}-${definition.draft?.id ?? "no-draft"}`}
+        key={`${definitionId}-${versionId}`}
         initialDraft={initialDraft}
         definitionId={definitionId}
+        versionId={versionId}
         editableFieldOptions={editableFieldOptions}
         starterGroups={starterGroups}
       />

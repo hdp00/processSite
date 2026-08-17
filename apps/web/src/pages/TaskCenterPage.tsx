@@ -31,7 +31,7 @@ import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeSto
 import { useIdentityStore } from "../state/useIdentityStore";
 import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserProcessTask } from "../state/workflowAccess";
-import type { StoredDesignerField } from "../utils/designerStorage";
+import { PROCESS_TITLE_FIELD_ID, type StoredDesignerField } from "../utils/designerStorage";
 
 const ALL_FLOWS = "__all__";
 const TASK_FLOW_STORAGE_PREFIX = "flowpilot-task-center-flow-v1";
@@ -111,7 +111,15 @@ export function TaskCenterPage() {
     : cloneDefaultSystemListFields();
   const showSystemField = (key: Parameters<typeof isSystemFieldVisible>[1]) =>
     isSystemFieldVisible(systemListFields, key, "task");
-  const showTitleCell = showSystemField("title") || showSystemField("template") || showSystemField("templateVersion");
+  const titleVisibleForVersion = (version: ReturnType<typeof getEffectiveVersion>) =>
+    version?.snapshot.form.fields.find((field) => field.id === PROCESS_TITLE_FIELD_ID)?.taskVisible ?? true;
+  const recordShowsTitle = (record: ProcessInstance) => activeTemplate
+    ? titleVisibleForVersion(selectedVersion)
+    : titleVisibleForVersion(getEffectiveVersion(definitions.find((definition) => definition.id === record.definitionId)));
+  const showTitle = activeTemplate
+    ? titleVisibleForVersion(selectedVersion)
+    : source.some((record) => recordShowsTitle(record));
+  const showTitleCell = showTitle || showSystemField("template") || showSystemField("templateVersion");
   const showNodeCell = showSystemField("currentNode") || showSystemField("round");
   const filtered = source.filter((item) => {
     const matchesKeyword = `${item.code}${item.title}${item.initiator}`
@@ -130,7 +138,7 @@ export function TaskCenterPage() {
   };
 
   const selectedTaskFields = selectedVersion?.snapshot.form.fields
-    .filter((field) => field.taskVisible)
+    .filter((field) => field.id !== PROCESS_TITLE_FIELD_ID && field.taskVisible)
     .sort((left, right) => (left.taskOrder ?? 999) - (right.taskOrder ?? 999)) ?? [];
   const dynamicColumns: TableProps<ProcessInstance>["columns"] = selectedVersion
     ? selectedTaskFields.slice(0, 6).map((field) => ({
@@ -144,12 +152,17 @@ export function TaskCenterPage() {
       }))
     : [];
 
-  const renderTaskInformation = (record: ProcessInstance) => {
+  const getTaskInformationFields = (record: ProcessInstance) => {
     const definition = definitions.find((item) => item.id === record.definitionId);
     const currentVersion = getEffectiveVersion(definition);
-    const fields = currentVersion?.snapshot.form.fields
-      .filter((field) => field.taskVisible)
+    return currentVersion?.snapshot.form.fields
+      .filter((field) => field.id !== PROCESS_TITLE_FIELD_ID && field.taskVisible)
       .sort((left, right) => (left.taskOrder ?? 999) - (right.taskOrder ?? 999)) ?? [];
+  };
+
+  const renderTaskInformation = (record: ProcessInstance) => {
+    const fields = getTaskInformationFields(record);
+    if (!fields.length) return null;
     const isFullyExpanded = expandedInfoIds.includes(record.id);
     const visibleFields = isFullyExpanded ? fields : fields.slice(0, 6);
     const remainingCount = fields.length - visibleFields.length;
@@ -195,12 +208,12 @@ export function TaskCenterPage() {
       ),
     }] : []),
     ...(showTitleCell ? [{
-      title: showSystemField("title") ? "流程与标题" : "流程信息",
+      title: showTitle ? "流程与标题" : "流程信息",
       dataIndex: "title",
       width: 350,
       render: (value: string, record: ProcessInstance) => (
         <div className="title-cell">
-          {showSystemField("title") ? <strong>{value}</strong> : null}
+          {recordShowsTitle(record) ? <strong>{value}</strong> : null}
           {(showSystemField("template") || showSystemField("templateVersion")) ? (
             <span>
               {[
@@ -372,7 +385,8 @@ export function TaskCenterPage() {
                 ? undefined
                 : {
                     expandedRowRender: renderTaskInformation,
-                    expandedRowKeys: filtered.map((record) => record.id),
+                    expandedRowKeys: filtered.filter((record) => getTaskInformationFields(record).length > 0).map((record) => record.id),
+                    rowExpandable: (record) => getTaskInformationFields(record).length > 0,
                     showExpandColumn: false,
                     expandRowByClick: false,
                   }
