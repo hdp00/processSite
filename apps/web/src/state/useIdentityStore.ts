@@ -7,6 +7,7 @@ export type WorkflowGroupPurpose = "发起" | "审批" | "自由流程受理";
 export interface DomainUser {
   id: string;
   account: string;
+  email: string;
   name: string;
   password: string;
   department: string[];
@@ -17,6 +18,8 @@ export interface DomainUser {
   lastLogin: string;
   builtIn?: boolean;
 }
+
+const companyEmail = (account: string) => `${account.trim().toLowerCase()}@company.local`;
 
 export interface DomainRole {
   id: string;
@@ -69,16 +72,16 @@ const roleSeed: DomainRole[] = [
 ];
 
 const primaryUsers: DomainUser[] = [
-  { id: "superadmin", account: "superadmin", name: "超级管理员", password: "1", department: ["system"], departmentPath: "系统内置", jobTitle: "系统内置", roles: ["超级管理员"], status: "启用", lastLogin: "从未登录", builtIn: true },
-  { id: "admin", account: "admin", name: "周杰", password: "1", department: ["document"], departmentPath: "文控", jobTitle: "经理", roles: ["系统管理员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 09:18" },
-  { id: "wangmin", account: "wangmin", name: "王敏", password: "1", department: ["document"], departmentPath: "文控", jobTitle: "员工", roles: ["文控专员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 10:32" },
-  { id: "zhangwei", account: "zhangwei", name: "张伟", password: "1", department: ["rd", "rd-software"], departmentPath: "研发 / 软件", jobTitle: "员工", roles: ["研发审核员"], status: "启用", lastLogin: "2026-08-13 09:26" },
-  { id: "lina", account: "lina", name: "林晓", password: "1", department: ["quality", "quality-system"], departmentPath: "质量 / 体系", jobTitle: "员工", roles: ["质量审核员"], status: "启用", lastLogin: "2026-08-13 08:46" },
-  { id: "zhaolei", account: "zhaolei", name: "赵磊", password: "1", department: ["production", "production-line1"], departmentPath: "生产 / 一车间", jobTitle: "员工", roles: ["生产审核员"], status: "启用", lastLogin: "2026-08-12 16:21" },
-  { id: "hejing", account: "hejing", name: "何静", password: "1", department: ["quality"], departmentPath: "质量", jobTitle: "员工", roles: ["只读观察员"], status: "启用", lastLogin: "2026-08-12 15:04" },
-  { id: "chenchen", account: "chenchen", name: "陈晨", password: "1", department: ["rd", "rd-hardware"], departmentPath: "研发 / 硬件", jobTitle: "员工", roles: ["研发审核员"], status: "启用", lastLogin: "2026-08-12 13:20" },
-  { id: "liufang", account: "liufang", name: "刘芳", password: "1", department: ["document"], departmentPath: "文控", jobTitle: "员工", roles: ["文控专员"], status: "启用", lastLogin: "2026-08-11 14:05" },
-  { id: "sunyue", account: "sunyue", name: "孙悦", password: "1", department: ["production", "production-line2"], departmentPath: "生产 / 二车间", jobTitle: "员工", roles: ["生产审核员"], status: "启用", lastLogin: "2026-08-11 11:28" },
+  { id: "superadmin", account: "superadmin", email: companyEmail("superadmin"), name: "超级管理员", password: "1", department: ["system"], departmentPath: "系统内置", jobTitle: "系统内置", roles: ["超级管理员"], status: "启用", lastLogin: "从未登录", builtIn: true },
+  { id: "admin", account: "admin", email: companyEmail("admin"), name: "周杰", password: "1", department: ["document"], departmentPath: "文控", jobTitle: "经理", roles: ["系统管理员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 09:18" },
+  { id: "wangmin", account: "wangmin", email: companyEmail("wangmin"), name: "王敏", password: "1", department: ["document"], departmentPath: "文控", jobTitle: "员工", roles: ["文控专员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 10:32" },
+  { id: "zhangwei", account: "zhangwei", email: companyEmail("zhangwei"), name: "张伟", password: "1", department: ["rd", "rd-software"], departmentPath: "研发 / 软件", jobTitle: "员工", roles: ["研发审核员"], status: "启用", lastLogin: "2026-08-13 09:26" },
+  { id: "lina", account: "lina", email: companyEmail("lina"), name: "林晓", password: "1", department: ["quality", "quality-system"], departmentPath: "质量 / 体系", jobTitle: "员工", roles: ["质量审核员"], status: "启用", lastLogin: "2026-08-13 08:46" },
+  { id: "zhaolei", account: "zhaolei", email: companyEmail("zhaolei"), name: "赵磊", password: "1", department: ["production", "production-line1"], departmentPath: "生产 / 一车间", jobTitle: "员工", roles: ["生产审核员"], status: "启用", lastLogin: "2026-08-12 16:21" },
+  { id: "hejing", account: "hejing", email: companyEmail("hejing"), name: "何静", password: "1", department: ["quality"], departmentPath: "质量", jobTitle: "员工", roles: ["只读观察员"], status: "启用", lastLogin: "2026-08-12 15:04" },
+  { id: "chenchen", account: "chenchen", email: companyEmail("chenchen"), name: "陈晨", password: "1", department: ["rd", "rd-hardware"], departmentPath: "研发 / 硬件", jobTitle: "员工", roles: ["研发审核员"], status: "启用", lastLogin: "2026-08-12 13:20" },
+  { id: "liufang", account: "liufang", email: companyEmail("liufang"), name: "刘芳", password: "1", department: ["document"], departmentPath: "文控", jobTitle: "员工", roles: ["文控专员"], status: "启用", lastLogin: "2026-08-11 14:05" },
+  { id: "sunyue", account: "sunyue", email: companyEmail("sunyue"), name: "孙悦", password: "1", department: ["production", "production-line2"], departmentPath: "生产 / 二车间", jobTitle: "员工", roles: ["生产审核员"], status: "启用", lastLogin: "2026-08-11 11:28" },
 ];
 
 const departments = [
@@ -93,11 +96,13 @@ const departments = [
 
 const generatedUsers: DomainUser[] = Array.from({ length: 228 }, (_, index) => {
   const number = index + 11;
+  const account = `user${String(number).padStart(3, "0")}`;
   const department = departments[index % departments.length];
   const role = index % 5 === 0 ? "质量审核员" : index % 3 === 0 ? "研发审核员" : index % 7 === 0 ? "生产审核员" : "只读观察员";
   return {
     id: `USR-${String(number).padStart(4, "0")}`,
-    account: `user${String(number).padStart(3, "0")}`,
+    account,
+    email: companyEmail(account),
     name: `演示员工${String(number).padStart(3, "0")}`,
     password: "1",
     department: department.value,
@@ -156,12 +161,17 @@ export const useIdentityStore = create<IdentityState>()(
     }),
     {
       name: "flowpilot-identity-domain-v1",
-      version: 1,
+      version: 2,
       migrate: (persisted) => {
         const state = persisted as Partial<IdentityState>;
         return {
           ...state,
-          users: Array.isArray(state.users) ? state.users.map((user) => ({ ...user, password: user.password || "1", roles: [...(user.roles ?? [])] })) : userSeed,
+          users: Array.isArray(state.users) ? state.users.map((user) => ({
+            ...user,
+            email: user.email?.trim() || companyEmail(user.account),
+            password: user.password || "1",
+            roles: [...(user.roles ?? [])],
+          })) : userSeed,
           roles: Array.isArray(state.roles) ? state.roles : roleSeed,
           workflowGroups: Array.isArray(state.workflowGroups) ? state.workflowGroups : groupSeed,
         };

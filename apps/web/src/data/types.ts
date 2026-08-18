@@ -1,6 +1,22 @@
 export type InstanceStatus = "审核中" | "驳回待处理" | "已完成" | "进行中" | "已关闭";
-export type ReviewStatus = "待审核" | "已通过" | "已驳回" | "已取消";
-export type WorkflowTaskStatus = "未激活" | "待处理" | "已完成" | "已取消";
+export type ReviewStatus = "待审核" | "已通过" | "已确认" | "已驳回" | "已取消" | "已跳过";
+export type WorkflowTaskStatus = "未激活" | "待处理" | "已完成" | "已取消" | "已跳过";
+
+export interface WorkflowFieldChange {
+  fieldId: string;
+  label: string;
+  before: string;
+  after: string;
+}
+
+export interface WorkflowFieldRevision {
+  id: string;
+  editedById: string;
+  editedByName: string;
+  editedAt: string;
+  comment?: string;
+  changes: WorkflowFieldChange[];
+}
 
 export interface FreeFlowRevision {
   content: string;
@@ -29,6 +45,7 @@ export interface ReviewerProgress {
   actionAt?: string;
   comment?: string;
   substitute?: boolean;
+  conditionSummary?: string;
 }
 
 export interface ProcessInstance {
@@ -83,9 +100,13 @@ export interface WorkflowTask {
   defaultAssigneeId?: string;
   completedById?: string;
   completedByName?: string;
-  action?: "通过" | "驳回";
+  action?: "通过" | "确认" | "驳回";
   comment?: string;
   createdAt: string;
   completedAt?: string;
   round: number;
+  conditionSummary?: string;
+  conditionEvaluatedAt?: string;
+  submittedFieldChanges?: WorkflowFieldChange[];
+  fieldRevisions?: WorkflowFieldRevision[];
 }

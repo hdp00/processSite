@@ -124,6 +124,7 @@ const validateSnapshot = (type: DefinitionType, basic: ProcessBasicConfig, snaps
   if (!basic.starterGroups.length) issues.push("至少选择一个发起流程权限组");
   const titleField = snapshot.form.fields.find((field) => field.id === PROCESS_TITLE_FIELD_ID);
   if (!titleField || titleField.type !== "text") issues.push("初始表单必须包含系统固定的标题文本框");
+  if (titleField?.inputStage === "reviewer") issues.push("标题必须由发起人填写");
   if (type === "free") {
     if (!basic.assigneeGroups?.length) issues.push("至少选择一个受理流程权限组");
   } else {
@@ -131,7 +132,26 @@ const validateSnapshot = (type: DefinitionType, basic: ProcessBasicConfig, snaps
     const approvals = nodes.filter((node) => node.data?.kind === "approval");
     if (nodes.filter((node) => node.data?.kind === "start").length !== 1 || nodes.filter((node) => node.data?.kind === "end").length !== 1 || !approvals.length) issues.push("审批流程必须包含一个开始、至少一个审批和一个结束节点");
     if (approvals.some((node) => !node.data?.permissionGroup)) issues.push("所有审批节点都必须选择流程权限组");
+    if (approvals.some((node) => node.data?.allowRepeatedEditing && !node.data.editableFields?.length)) issues.push("允许重复修改的审批节点必须至少配置一个可修改字段");
     if (!snapshot.flow.edges.length) issues.push("审批流程节点尚未完成连线");
+    const fieldById = new Map(snapshot.form.fields.map((field) => [field.id, field]));
+    if (approvals.some((node) => {
+      const condition = node.data?.activationCondition;
+      return condition ? !condition.rules.length || condition.rules.some((rule) => {
+        const field = fieldById.get(rule.fieldId);
+        const supported = field?.type === "checkbox"
+          ? ["contains", "not-contains", "empty", "not-empty"]
+          : field?.type === "text"
+            ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
+            : ["eq", "neq", "empty", "not-empty"];
+        return !field || !supported.includes(rule.operator) || (!["empty", "not-empty"].includes(rule.operator) && (rule.value === undefined || rule.value === ""));
+      }) : false;
+    })) issues.push("审批节点存在无效或未填写完整的执行条件");
+    const assignedFields = new Set(approvals.flatMap((node) => node.data?.editableFields ?? []));
+    const missingRequiredReviewerFields = snapshot.form.fields.filter((field) =>
+      field.inputStage === "reviewer" && field.required && !assignedFields.has(field.id),
+    );
+    if (missingRequiredReviewerFields.length) issues.push(`审核人必填字段尚未分配审批节点：${missingRequiredReviewerFields.map((field) => field.label).join("、")}`);
   }
   return { status: issues.length ? "未通过" : "通过", checkedAt: nowText(), issues };
 };
@@ -364,7 +384,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
     }),
     {
       name: "flowpilot-process-definitions-v1",
-      version: 10,
+      version: 12,
       migrate: (persisted) => {
         const legacyState = persisted as { definitions?: Array<Record<string, unknown>> };
         if (!legacyState.definitions) return { definitions: initialDefinitions };

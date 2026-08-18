@@ -576,6 +576,48 @@
   line-height: 1.5;
 }
 
+.handling-mode-options {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.handling-mode-options .ant-radio-wrapper {
+  align-items: flex-start;
+  margin: 0;
+  padding: 10px 11px;
+  border: 1px solid #e2e7ef;
+  border-radius: 10px;
+  background: #fafbfc;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.handling-mode-options .ant-radio-wrapper:hover {
+  border-color: #aebcf7;
+}
+
+.handling-mode-options .ant-radio-wrapper-checked {
+  border-color: #8095f5;
+  background: #f3f6ff;
+  box-shadow: 0 0 0 2px rgba(75, 107, 251, 0.08);
+}
+
+.handling-mode-options .ant-radio {
+  margin-top: 2px;
+}
+
+.handling-mode-option__content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 2px;
+}
+
+.handling-mode-option__content .ant-typography:last-child {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .editable-field-options {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -586,9 +628,67 @@
   border-radius: 10px;
 }
 
+.condition-editor .property-switch-row {
+  margin-bottom: 12px;
+}
+
+.condition-rule-list {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.condition-rule {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(92px, 0.8fr) minmax(0, 1fr) 32px;
+  gap: 8px;
+  align-items: center;
+}
+
 .editable-field-options .ant-checkbox-wrapper {
   margin-inline-start: 0;
   font-size: 12px;
+}
+
+.repeated-editing-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e9edf2;
+}
+
+.email-notification-editor .property-switch-row {
+  margin-bottom: 0;
+}
+
+.email-notification-editor .property-switch-row .ant-typography-strong .anticon {
+  margin-right: 5px;
+  color: #4564de;
+}
+
+.email-recipient-settings {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #e3e8f1;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.email-recipient-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.email-extra-users {
+  gap: 6px;
+}
+
+.process-node__mail {
+  flex: 0 0 auto;
+  color: #4564de;
+  font-size: 13px;
 }
 
 .property-form__footer {

@@ -9,8 +9,9 @@ import {
 import { Button, Checkbox, Form, Input, message, Select, Space, Tag, Typography } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
-import { authenticateLocalAccount } from "../state/useIdentityStore";
+import { ApiError } from "../api/client";
+import { flowPilotApi } from "../api/flowPilotApi";
+import { personas, type PersonaId } from "../state/usePrototypeStore";
 
 interface LoginValues {
   username: string;
@@ -20,23 +21,21 @@ interface LoginValues {
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const login = usePrototypeStore((state) => state.login);
   const [form] = Form.useForm<LoginValues>();
   const [submitting, setSubmitting] = useState(false);
   const [demoPersona, setDemoPersona] = useState<PersonaId>("lina");
 
   const submit = async (values: LoginValues) => {
     setSubmitting(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 420));
-    const result = authenticateLocalAccount(values.username, values.password);
-    if (!result.ok) {
-      message.error(result.reason);
+    try {
+      await flowPilotApi.auth.login(values.username, values.password);
+      message.success("登录成功");
+      navigate("/tasks", { replace: true });
+    } catch (error) {
+      message.error(error instanceof ApiError ? error.message : "登录失败，请稍后重试");
+    } finally {
       setSubmitting(false);
-      return;
     }
-    login(result.user.id);
-    message.success("登录成功");
-    navigate("/tasks", { replace: true });
   };
 
   const fillDemo = (personaId: PersonaId) => {

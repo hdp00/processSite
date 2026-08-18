@@ -100,7 +100,9 @@ export interface StoredDesignerField {
   taskOrder?: number;
   taskWidth?: number;
   queryable?: boolean;
+  exportVisible?: boolean;
   reviewEditable?: boolean;
+  inputStage?: "initiator" | "reviewer";
   options?: string[];
   attachment?: {
     maxSizeMb?: number;
@@ -108,6 +110,29 @@ export interface StoredDesignerField {
     inlinePdf?: boolean;
   };
   columns?: StoredDesignerTableColumn[];
+}
+
+export type ConditionOperator = "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "contains" | "not-contains" | "empty" | "not-empty";
+
+export interface StoredNodeConditionRule {
+  id: string;
+  fieldId: string;
+  operator: ConditionOperator;
+  value?: string | string[];
+}
+
+export interface StoredNodeCondition {
+  mode: "all" | "any";
+  rules: StoredNodeConditionRule[];
+}
+
+export type ApprovalHandlingMode = "approval" | "confirmation";
+
+export interface StoredNodeEmailNotification {
+  enabled: boolean;
+  notifyReviewers?: boolean;
+  notifyInitiator?: boolean;
+  extraUserIds: string[];
 }
 
 export const PROCESS_TITLE_FIELD_ID = "title";
@@ -123,7 +148,9 @@ export const createProcessTitleField = (): StoredDesignerField => ({
   listVisible: true,
   taskVisible: true,
   queryable: true,
+  exportVisible: true,
   reviewEditable: false,
+  inputStage: "initiator",
 });
 
 export const ensureProcessTitleField = (fields?: StoredDesignerField[]): StoredDesignerField[] => {
@@ -137,6 +164,8 @@ export const ensureProcessTitleField = (fields?: StoredDesignerField[]): StoredD
     required: true,
     listVisible: source[titleIndex].listVisible ?? true,
     taskVisible: source[titleIndex].taskVisible ?? true,
+    exportVisible: source[titleIndex].exportVisible ?? source[titleIndex].listVisible ?? true,
+    inputStage: "initiator",
   };
   return source;
 };
@@ -162,6 +191,10 @@ export interface StoredFlowNodeSnapshot {
     permissionGroups?: string[];
     specifyAssignee?: boolean;
     editableFields?: string[];
+    handlingMode?: ApprovalHandlingMode;
+    allowRepeatedEditing?: boolean;
+    activationCondition?: StoredNodeCondition;
+    emailNotification?: StoredNodeEmailNotification;
   };
 }
 
@@ -200,7 +233,20 @@ export const readFlowDesignerSnapshot = (definitionId: string): StoredFlowDesign
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as Partial<StoredFlowDesignerSnapshot>;
     return Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)
-      ? { nodes: parsed.nodes, edges: parsed.edges, meta: parsed.meta }
+      ? {
+          nodes: parsed.nodes.map((node) => ({
+            ...node,
+            data: node.data?.kind === "approval"
+              ? {
+                  ...node.data,
+                  handlingMode: node.data.handlingMode ?? "approval",
+                  allowRepeatedEditing: Boolean(node.data.allowRepeatedEditing && node.data.editableFields?.length),
+                }
+              : node.data,
+          })),
+          edges: parsed.edges,
+          meta: parsed.meta,
+        }
       : undefined;
   } catch {
     return undefined;
@@ -233,15 +279,42 @@ export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapsho
     systemFields: cloneDefaultSystemListFields(),
   };
   const legacyTitleConfig = snapshot.systemFields.find((field) => String(field.key) === "title");
-  const fields = ensureProcessTitleField(snapshot.form.fields).map((field) =>
-    field.id === PROCESS_TITLE_FIELD_ID && legacyTitleConfig
-      ? { ...field, taskVisible: legacyTitleConfig.taskVisible, listVisible: legacyTitleConfig.processListVisible }
-      : field,
-  );
+  const fields = ensureProcessTitleField(snapshot.form.fields).map((field) => ({
+    ...field,
+    exportVisible: field.exportVisible ?? field.listVisible ?? false,
+    inputStage: field.id === PROCESS_TITLE_FIELD_ID ? "initiator" : field.inputStage ?? "initiator",
+    ...(field.id === PROCESS_TITLE_FIELD_ID && legacyTitleConfig
+      ? { taskVisible: legacyTitleConfig.taskVisible, listVisible: legacyTitleConfig.processListVisible }
+      : {}),
+  }));
+  const flow = structuredClone(snapshot.flow);
+  flow.nodes = flow.nodes.map((node) => ({
+    ...node,
+    data: node.data ? {
+      ...node.data,
+      ...(node.data.kind === "approval" ? {
+        handlingMode: node.data.handlingMode ?? "approval",
+        allowRepeatedEditing: Boolean(node.data.allowRepeatedEditing && node.data.editableFields?.length),
+      } : {}),
+      ...(node.data.kind === "approval" || node.data.kind === "end" ? {
+        emailNotification: node.data.emailNotification
+          ? {
+              enabled: Boolean(node.data.emailNotification.enabled),
+              notifyReviewers: node.data.kind === "approval" && Boolean(node.data.emailNotification.notifyReviewers),
+              notifyInitiator: node.data.kind === "end" && Boolean(node.data.emailNotification.notifyInitiator),
+              extraUserIds: [...(node.data.emailNotification.extraUserIds ?? [])],
+            }
+          : undefined,
+      } : {}),
+    } : node.data,
+  }));
   return {
     form: { ...structuredClone(snapshot.form), fields },
-    flow: structuredClone(snapshot.flow),
-    systemFields: structuredClone(snapshot.systemFields.filter((field) => String(field.key) !== "title")),
+    flow,
+    systemFields: structuredClone(snapshot.systemFields.filter((field) => String(field.key) !== "title").map((field) => ({
+      ...field,
+      exportVisible: field.exportVisible ?? field.processListVisible,
+    }))),
   };
 };
 
@@ -250,12 +323,59 @@ export const getReviewEditableFieldOptions = (definitionId: string): EditableFie
   if (!snapshot) return [];
   return snapshot.fields.flatMap((field) => {
     if (field.type === "table") {
+      if (field.inputStage === "reviewer") return [{ value: field.id, label: `${field.label}（整表）` }];
       return (field.columns ?? [])
         .filter((column) => column.reviewEditable)
         .map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }));
     }
     return field.reviewEditable ? [{ value: field.id, label: field.label }] : [];
   });
+};
+
+const emptyValue = (value: unknown) => value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
+
+export const conditionOperatorLabel = (operator: ConditionOperator) => ({
+  eq: "等于",
+  neq: "不等于",
+  gt: "大于",
+  gte: "大于等于",
+  lt: "小于",
+  lte: "小于等于",
+  contains: "包含",
+  "not-contains": "不包含",
+  empty: "为空",
+  "not-empty": "不为空",
+}[operator]);
+
+export const evaluateNodeCondition = (
+  condition: StoredNodeCondition | undefined,
+  values: Record<string, unknown>,
+) => {
+  if (!condition?.rules.length) return { matches: true, results: [] as Array<{ rule: StoredNodeConditionRule; actual: unknown; matches: boolean }> };
+  const results = condition.rules.map((rule) => {
+    const actual = values[rule.fieldId];
+    const expected = rule.value;
+    let matches = false;
+    if (rule.operator === "empty") matches = emptyValue(actual);
+    else if (rule.operator === "not-empty") matches = !emptyValue(actual);
+    else if (rule.operator === "contains" || rule.operator === "not-contains") {
+      const contains = Array.isArray(actual) ? actual.map(String).includes(String(expected ?? "")) : String(actual ?? "").includes(String(expected ?? ""));
+      matches = rule.operator === "contains" ? contains : !contains;
+    } else if (["gt", "gte", "lt", "lte"].includes(rule.operator)) {
+      const left = Number(actual);
+      const right = Number(expected);
+      if (Number.isFinite(left) && Number.isFinite(right)) {
+        matches = rule.operator === "gt" ? left > right : rule.operator === "gte" ? left >= right : rule.operator === "lt" ? left < right : left <= right;
+      }
+    } else {
+      const equal = Array.isArray(actual)
+        ? actual.map(String).includes(String(expected ?? "")) || actual.map(String).join("/") === String(expected ?? "")
+        : String(actual ?? "") === String(expected ?? "");
+      matches = rule.operator === "eq" ? equal : !equal;
+    }
+    return { rule, actual, matches };
+  });
+  return { matches: condition.mode === "any" ? results.some((item) => item.matches) : results.every((item) => item.matches), results };
 };
 
 export const rejectionHandlingLabel = (value?: string) => ({

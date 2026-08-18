@@ -4,8 +4,9 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { StatusPill } from "../components/StatusPill";
+import { useIdentityStore } from "../state/useIdentityStore";
 import { canEditVersion, definitionStatus, getPublishedVersion, getVersionStatus, useProcessDefinitionStore, type ProcessVersion } from "../state/useProcessDefinitionStore";
-import { buildFlowLevels, rejectionHandlingLabel, type StoredDesignerField } from "../utils/designerStorage";
+import { buildFlowLevels, conditionOperatorLabel, rejectionHandlingLabel, type StoredDesignerField, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import "./process-admin-pages.css";
 
 const fieldTypeLabels: Record<string, string> = {
@@ -31,8 +32,9 @@ function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
       <div className="pa-snapshot-properties">
         <span><small>提示文字</small><strong>{field.placeholder || "—"}</strong></span>
         <span><small>默认值</small><strong>{valueText(field.defaultValue)}</strong></span>
-        <span><small>列表与查询</small><strong>{[field.taskVisible && "任务中心", field.listVisible && "流程清单", field.queryable && "可查询"].filter(Boolean).join("、") || "不展示"}</strong></span>
+        <span><small>列表、查询与导出</small><strong>{[field.taskVisible && "任务中心", field.listVisible && "流程清单", field.queryable && "可查询", field.exportVisible && "Excel 导出"].filter(Boolean).join("、") || "不展示"}</strong></span>
         <span><small>审核权限</small><strong>{field.reviewEditable ? "允许授权节点修改" : "不可修改"}</strong></span>
+        <span><small>填写阶段</small><strong>{field.inputStage === "reviewer" ? "审核人填写" : "发起人填写"}</strong></span>
       </div>
       {field.options?.length ? <div className="pa-snapshot-options"><small>选项</small><Space size={[5, 5]} wrap>{field.options.map((option) => <Tag key={option}>{option}</Tag>)}</Space></div> : null}
       {field.type === "attachment" ? <div className="pa-snapshot-options"><small>附件规则</small><span>最多 {field.attachment?.maxCount ?? 20} 个，单文件不超过 {field.attachment?.maxSizeMb ?? 100} MB；PDF {field.attachment?.inlinePdf ? "在页面内展示" : "仅提供下载"}</span></div> : null}
@@ -40,7 +42,7 @@ function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
     </article>) : <Alert type="warning" showIcon message="该版本尚未配置初始表单字段" />}
     <section className="pa-snapshot-list-fields">
       <div className="pa-snapshot-subtitle"><TableOutlined /><strong>系统列表字段</strong></div>
-      <div>{version.snapshot.systemFields.map((field) => <span key={field.key}><strong>{field.label}</strong><small>{[field.taskVisible && "任务中心", field.processListVisible && "流程清单"].filter(Boolean).join("、") || "不展示"}</small></span>)}</div>
+      <div>{version.snapshot.systemFields.map((field) => <span key={field.key}><strong>{field.label}</strong><small>{[field.taskVisible && "任务中心", field.processListVisible && "流程清单", field.exportVisible && "Excel 导出"].filter(Boolean).join("、") || "不展示"}</small></span>)}</div>
     </section>
   </div>;
 }
@@ -53,6 +55,20 @@ function VersionTableColumns({ field }: { field: StoredDesignerField }) {
 }
 
 function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type: "approval" | "free" }) {
+  const users = useIdentityStore((state) => state.users);
+  const emailNotificationText = (notification?: StoredNodeEmailNotification) => {
+    if (!notification?.enabled) return "不发送";
+    const recipients = [
+      notification.notifyReviewers ? "审核人" : "",
+      notification.notifyInitiator ? "发起人" : "",
+      ...(notification.extraUserIds ?? []).map((userId) => {
+        const user = users.find((item) => item.id === userId);
+        const email = user && "email" in user ? String(user.email ?? "").trim() : "";
+        return user ? `${user.name}${email ? ` <${email}>` : "（未维护邮箱）"}` : userId;
+      }),
+    ].filter(Boolean);
+    return recipients.length ? recipients.join("、") : "已启用，未配置收件人";
+  };
   if (type === "free") {
     const rules = [
       ["连续流转", "当前受理人处理后选择下一位受理人"],
@@ -86,19 +102,19 @@ function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type:
         const approvalCount = level.filter((node) => node.data?.kind === "approval").length;
         return <div key={`flow-level-${index}`}>
           <section className="pa-version-flow-stage">
-            <header><span>步骤 {index + 1}</span><Tag color={approvalCount > 1 ? "blue" : "default"}>{approvalCount > 1 ? `并行 · ${approvalCount} 个节点` : level[0]?.data?.kind === "start" ? "开始" : level[0]?.data?.kind === "end" ? "结束" : "顺序审批"}</Tag></header>
+            <header><span>步骤 {index + 1}</span><Tag color={approvalCount > 1 ? "blue" : "default"}>{approvalCount > 1 ? `并行 · ${approvalCount} 个节点` : level[0]?.data?.kind === "start" ? "开始" : level[0]?.data?.kind === "end" ? "结束" : "顺序处理"}</Tag></header>
             <div className={approvalCount > 1 ? "is-parallel" : ""}>{level.map((node) => {
               const kind = node.data?.kind ?? "approval";
               const editableFields = (node.data?.editableFields ?? []).map((id) => fieldLabels.get(id) ?? id);
               return <article className={`pa-version-flow-node is-${kind}`} key={node.id}>
                 <div className="pa-version-flow-node__title"><span>{kind === "start" ? <PlayCircleOutlined /> : kind === "end" ? <CheckCircleOutlined /> : <ApartmentOutlined />}</span><strong>{node.data?.label || "未命名节点"}</strong></div>
                 {kind === "start" && <p><small>发起权限组</small><span>{node.data?.permissionGroups?.join("、") || "未配置"}</span></p>}
-                {kind === "approval" && <><p><small>执行权限组</small><span>{node.data?.permissionGroup || "未配置"}</span></p><p><small>处理方式</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></p><p><small>可修改字段</small><span>{editableFields.join("、") || "不可修改表单内容"}</span></p></>}
-                {kind === "end" && <p><small>完成条件</small><span>全部前序审批通过</span></p>}
+                {kind === "approval" && <><p><small>执行权限组</small><span>{node.data?.permissionGroup || "未配置"}</span></p><p><small>处理方式</small><span>{node.data?.handlingMode === "confirmation" ? "确认（只能确认，不能驳回）" : "审批（可通过或驳回）"}</span></p><p><small>人员分配</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></p><p><small>可修改字段</small><span>{editableFields.join("、") || "不可修改表单内容"}</span></p><p><small>重复修改</small><span>{node.data?.allowRepeatedEditing ? "允许处理结果提交后继续修改授权字段" : "不允许"}</span></p><p><small>执行条件</small><span>{node.data?.activationCondition?.rules.length ? node.data.activationCondition.rules.map((rule) => `${fieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${["empty", "not-empty"].includes(rule.operator) ? "" : String(rule.value ?? "")}`).join(node.data.activationCondition.mode === "all" ? " 且 " : " 或 ") : "始终执行"}</span></p><p><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></p></>}
+                {kind === "end" && <><p><small>完成条件</small><span>全部前序节点通过、确认或因条件不满足而跳过</span></p><p><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></p></>}
               </article>;
             })}</div>
           </section>
-          {index < levels.length - 1 && <div className="pa-version-flow-arrow"><ArrowDownOutlined /><small>{level.length > 1 ? "全部通过后继续" : "继续"}</small></div>}
+          {index < levels.length - 1 && <div className="pa-version-flow-arrow"><ArrowDownOutlined /><small>{level.length > 1 ? "全部通过或确认后继续" : "继续"}</small></div>}
         </div>;
       })}
     </div> : <Alert type="warning" showIcon message="该版本尚未形成可展示的审批拓扑" />}

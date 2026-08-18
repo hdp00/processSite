@@ -1,0 +1,5073 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: FlowPilot REST API
+  version: 1.0.0
+  description: |
+    FlowPilot 内网流程平台首版 REST API 契约。
+
+    所有写操作由后端重新执行权限、状态与版本校验。可变资源使用整数
+    `revision` 生成强 ETag；要求 `If-Match` 的接口在缺少请求头时返回 428，
+    在版本过期时返回 412。创建及领域命令要求 `Idempotency-Key`，同一用户、
+    路由作用域和键的相同请求会重放首次结果，不同请求体会返回 409。
+
+    日期时间均为 ISO-8601 UTC。业务实体 ID 均由后端生成。审批、确认、字段
+    修改、任务激活、流程状态、审计与邮件 Outbox 必须在同一业务事务中提交；
+    SMTP 发送和 Excel 文件生成在事务提交后异步执行。
+
+    浏览器原型的 MSW 适配层可使用 `Authorization: Bearer mock:<userId>`；
+    正式后端应使用 HttpOnly 会话 Cookie，并移除该演示认证方案。
+servers:
+  - url: /api/v1
+    description: 与前端同源部署的内网 API
+security:
+  - cookieAuth: []
+  - mockBearerAuth: []
+x-flowpilot-concurrency-policy:
+  storage: SQLite 单后端实例，写命令使用短事务；发布、实例创建、任务决策和编号分配使用 BEGIN IMMEDIATE 或等价仓储事务
+  optimisticLocking: 可变聚合以 revision 生成强 ETag；If-Match 缺失返回 428，过期返回 412
+  taskFirstWriterWins: 待办以 status=pending 且 revision 匹配的条件更新实现，未更新到行时返回 TASK_ALREADY_COMPLETED
+  fieldLevelConcurrency: 审批和重复修改只 patch 授权字段，并比较 touched field 的 baseFieldRevisions
+  idempotency: 按 actorId、routeScope、Idempotency-Key 和请求摘要持久化；相同请求重放，不同请求返回 IDEMPOTENCY_KEY_REUSED
+  outbox: 业务事务只写待发送事件；SMTP 与 Excel 生成均在提交后异步处理
+tags:
+  - name: Authentication
+    description: 登录会话与当前身份
+  - name: Users
+    description: 用户账号治理
+  - name: Organization
+    description: 部门与职务字典
+  - name: Roles
+    description: 系统角色及权限矩阵
+  - name: WorkflowPermissionGroups
+    description: 流程权限组及动态有效成员
+  - name: ProcessDefinitions
+    description: 稳定流程定义与版本家族
+  - name: ProcessVersions
+    description: 完整版本快照、校验与发布指针
+  - name: ProcessInstances
+    description: 流程实例创建、查询与发起方命令
+  - name: WorkflowTasks
+    description: 审批、确认与重复字段修改
+  - name: FreeCollaboration
+    description: 自由协作回复、转交、改派和重开
+  - name: Attachments
+    description: 暂存文件、元数据与受控下载
+  - name: EmailOutbox
+    description: 邮件 Outbox 运维与失败重试
+  - name: Audit
+    description: 不可变操作审计
+  - name: Exports
+    description: 当前查询范围的异步 Excel 导出
+
+paths:
+  /auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: 登录并建立会话
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDto"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: 注销当前会话
+      responses:
+        "204":
+          description: 已注销
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentSession
+      summary: 获取当前用户、角色和有效权限
+      responses:
+        "200":
+          description: 当前会话
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: 分页查询用户
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/EnabledStatus"
+        - name: departmentId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: positionId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: roleId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: hasEmail
+          in: query
+          description: 收件人选择器可只查询已维护邮箱的用户
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: 用户分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: 创建用户
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: 用户已创建
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDto"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /users/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      tags: [Users]
+      operationId: getUser
+      summary: 获取用户详情
+      responses:
+        "200":
+          description: 用户详情
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Users]
+      operationId: updateUser
+      summary: 修改用户资料、部门、职务和角色
+      description: 超级管理员账号不可修改。账号状态和密码由专用命令修改。
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: 用户已更新
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDto"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /users/{userId}/status:
+    put:
+      tags: [Users]
+      operationId: setUserStatus
+      summary: 显式启用或停用用户
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetStatusRequest"
+      responses:
+        "200":
+          description: 状态已更新
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /users/{userId}/reset-password:
+    post:
+      tags: [Users]
+      operationId: resetUserPassword
+      summary: 管理员重置用户密码
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+      responses:
+        "204":
+          description: 密码已重置
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /departments:
+    get:
+      tags: [Organization]
+      operationId: listDepartments
+      summary: 获取最多两级的部门树
+      parameters:
+        - name: includeDisabled
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: 部门树
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DepartmentDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Organization]
+      operationId: createDepartment
+      summary: 创建部门
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertDepartmentRequest"
+      responses:
+        "201":
+          description: 部门已创建
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DepartmentDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /departments/{departmentId}:
+    parameters:
+      - $ref: "#/components/parameters/DepartmentId"
+    patch:
+      tags: [Organization]
+      operationId: updateDepartment
+      summary: 修改部门
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertDepartmentRequest"
+      responses:
+        "200":
+          description: 部门已更新
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DepartmentDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+    delete:
+      tags: [Organization]
+      operationId: deleteDepartment
+      summary: 删除未被用户引用且无子部门的部门
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: 部门已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /positions:
+    get:
+      tags: [Organization]
+      operationId: listPositions
+      summary: 分页查询全局职务字典
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/EnabledStatus"
+      responses:
+        "200":
+          description: 职务分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PositionPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Organization]
+      operationId: createPosition
+      summary: 创建职务
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertPositionRequest"
+      responses:
+        "201":
+          description: 职务已创建
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PositionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /positions/{positionId}:
+    parameters:
+      - $ref: "#/components/parameters/PositionId"
+    patch:
+      tags: [Organization]
+      operationId: updatePosition
+      summary: 修改、排序或启停职务
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertPositionRequest"
+      responses:
+        "200":
+          description: 职务已更新
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PositionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+    delete:
+      tags: [Organization]
+      operationId: deletePosition
+      summary: 删除未被用户引用的职务
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: 职务已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /roles:
+    get:
+      tags: [Roles]
+      operationId: listRoles
+      summary: 分页查询系统角色
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/EnabledStatus"
+      responses:
+        "200":
+          description: 角色分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RolePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Roles]
+      operationId: createRole
+      summary: 创建系统角色
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoleRequest"
+      responses:
+        "201":
+          description: 角色已创建，默认无权限
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /roles/{roleId}:
+    parameters:
+      - $ref: "#/components/parameters/RoleId"
+    get:
+      tags: [Roles]
+      operationId: getRole
+      summary: 获取角色及成员
+      responses:
+        "200":
+          description: 角色详情
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Roles]
+      operationId: updateRole
+      summary: 修改角色名称、说明、成员和状态
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoleRequest"
+      responses:
+        "200":
+          description: 角色已更新
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+    delete:
+      tags: [Roles]
+      operationId: deleteRole
+      summary: 删除非内置且未被流程权限组引用的角色
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: 角色已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /permissions:
+    get:
+      tags: [Roles]
+      operationId: listPermissions
+      summary: 获取页面与动作权限目录
+      responses:
+        "200":
+          description: 权限目录
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PermissionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /roles/{roleId}/permissions:
+    get:
+      tags: [Roles]
+      operationId: getRolePermissions
+      summary: 获取角色权限矩阵
+      parameters:
+        - $ref: "#/components/parameters/RoleId"
+      responses:
+        "200":
+          description: 角色权限
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RolePermissionsDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Roles]
+      operationId: replaceRolePermissions
+      summary: 原子替换角色权限集合
+      parameters:
+        - $ref: "#/components/parameters/RoleId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceRolePermissionsRequest"
+      responses:
+        "200":
+          description: 权限已保存
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RolePermissionsDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /roles/{roleId}/change-impact:
+    post:
+      tags: [Roles]
+      operationId: previewRoleChangeImpact
+      summary: 预览角色成员或状态变更对流程资格和运行待办的影响
+      description: 只读计算，不写入角色或流程权限组。
+      parameters:
+        - $ref: "#/components/parameters/RoleId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleChangeImpactRequest"
+      responses:
+        "200":
+          description: 变更影响
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowGroupChangeImpactDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /workflow-permission-groups:
+    get:
+      tags: [WorkflowPermissionGroups]
+      operationId: listWorkflowPermissionGroups
+      summary: 分页查询流程权限组
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: purpose
+          in: query
+          schema:
+            $ref: "#/components/schemas/WorkflowGroupPurpose"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/EnabledStatus"
+      responses:
+        "200":
+          description: 流程权限组分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowPermissionGroupPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [WorkflowPermissionGroups]
+      operationId: createWorkflowPermissionGroup
+      summary: 创建流程权限组
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertWorkflowPermissionGroupRequest"
+      responses:
+        "201":
+          description: 流程权限组已创建
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowPermissionGroupDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /workflow-permission-groups/{groupId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkflowGroupId"
+    get:
+      tags: [WorkflowPermissionGroups]
+      operationId: getWorkflowPermissionGroup
+      summary: 获取流程权限组详情
+      responses:
+        "200":
+          description: 流程权限组详情
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowPermissionGroupDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [WorkflowPermissionGroups]
+      operationId: updateWorkflowPermissionGroup
+      summary: 修改流程权限组、直接成员与角色关联
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertWorkflowPermissionGroupRequest"
+      responses:
+        "200":
+          description: 流程权限组已更新
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowPermissionGroupDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+    delete:
+      tags: [WorkflowPermissionGroups]
+      operationId: deleteWorkflowPermissionGroup
+      summary: 删除未被任何正式版本引用的流程权限组
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: 流程权限组已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /workflow-permission-groups/{groupId}/effective-members:
+    get:
+      tags: [WorkflowPermissionGroups]
+      operationId: listWorkflowPermissionGroupEffectiveMembers
+      summary: 查询直接成员与角色动态合并后的有效成员
+      parameters:
+        - $ref: "#/components/parameters/WorkflowGroupId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+      responses:
+        "200":
+          description: 有效成员及全部来源
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EffectiveWorkflowMemberPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /workflow-permission-groups/{groupId}/change-impact:
+    post:
+      tags: [WorkflowPermissionGroups]
+      operationId: previewWorkflowPermissionGroupChangeImpact
+      summary: 预览成员或角色关联变更影响
+      description: 只读计算将失去资格的用户数和受影响运行待办数，不写入数据。
+      parameters:
+        - $ref: "#/components/parameters/WorkflowGroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowGroupChangeImpactRequest"
+      responses:
+        "200":
+          description: 变更影响
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowGroupChangeImpactDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /process-definitions:
+    get:
+      tags: [ProcessDefinitions]
+      operationId: listProcessDefinitions
+      summary: 分页查询流程定义
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: type
+          in: query
+          schema:
+            $ref: "#/components/schemas/ProcessDefinitionType"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ProcessDefinitionStatus"
+      responses:
+        "200":
+          description: 流程定义分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessDefinitionPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [ProcessDefinitions]
+      operationId: createProcessDefinition
+      summary: 创建定义及正式 V1
+      description: 定义头、V1 基本信息和默认完整快照在同一事务中创建。
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProcessDefinitionRequest"
+      responses:
+        "201":
+          description: 定义与 V1 已创建
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateProcessDefinitionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /me/launchable-process-definitions:
+    get:
+      tags: [ProcessDefinitions]
+      operationId: listMyLaunchableProcessDefinitions
+      summary: 获取当前用户可发起的已发布流程
+      description: 无资格、停用、未发布或外部依赖失效的流程不返回。
+      responses:
+        "200":
+          description: 发起中心流程卡片
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LaunchableProcessDefinitionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /process-definitions/{definitionId}:
+    parameters:
+      - $ref: "#/components/parameters/DefinitionId"
+    get:
+      tags: [ProcessDefinitions]
+      operationId: getProcessDefinition
+      summary: 获取流程定义头和当前发布版本摘要
+      responses:
+        "200":
+          description: 流程定义详情
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessDefinitionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [ProcessDefinitions]
+      operationId: updateProcessDefinitionAvailability
+      summary: 显式启用或停用流程定义
+      description: 不提供 toggle 语义，避免请求重放时把状态反向切回。
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProcessDefinitionRequest"
+      responses:
+        "200":
+          description: 定义状态已更新
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessDefinitionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+    delete:
+      tags: [ProcessDefinitions]
+      operationId: deleteProcessDefinition
+      summary: 删除无发布版本且从未产生实例的流程定义
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: 定义及全部无实例版本已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-definitions/{definitionId}/copies:
+    post:
+      tags: [ProcessDefinitions]
+      operationId: copyProcessDefinition
+      summary: 从指定版本复制新建流程定义
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CopyProcessDefinitionRequest"
+      responses:
+        "201":
+          description: 副本定义和 V1 已创建
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateProcessDefinitionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /process-definitions/{definitionId}/launch-config:
+    get:
+      tags: [ProcessDefinitions]
+      operationId: getProcessLaunchConfig
+      summary: 获取当前用户可发起的发布快照
+      description: 后端校验定义启用、当前发布指针、外部依赖和发起资格。
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+      responses:
+        "200":
+          description: 锁定到当前发布版本的发起配置
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessLaunchConfigDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /process-definitions/{definitionId}/versions:
+    get:
+      tags: [ProcessVersions]
+      operationId: listProcessVersions
+      summary: 获取流程正式版本列表
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+      responses:
+        "200":
+          description: 版本摘要，按版本号倒序
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProcessVersionSummaryDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [ProcessVersions]
+      operationId: createProcessVersion
+      summary: 基于任意历史版本复制创建后续版本
+      description: 版本号由定义级单调计数器分配，不因删除回退。
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProcessVersionRequest"
+      responses:
+        "201":
+          description: 新版本已创建
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessVersionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-definitions/{definitionId}/versions/{versionId}:
+    parameters:
+      - $ref: "#/components/parameters/DefinitionId"
+      - $ref: "#/components/parameters/VersionId"
+    get:
+      tags: [ProcessVersions]
+      operationId: getProcessVersion
+      summary: 获取完整、自包含的版本快照
+      responses:
+        "200":
+          description: 版本快照
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessVersionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [ProcessVersions]
+      operationId: deleteProcessVersion
+      summary: 删除非发布且无实例引用的版本
+      description: 数据库外键对实例锁定版本采用 ON DELETE RESTRICT。
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: 版本已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-definitions/{definitionId}/versions/{versionId}/basic:
+    put:
+      tags: [ProcessVersions]
+      operationId: replaceProcessVersionBasic
+      summary: 保存版本基本信息
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+        - $ref: "#/components/parameters/VersionId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProcessBasicConfigInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/SavedProcessVersion"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-definitions/{definitionId}/versions/{versionId}/form-designer:
+    put:
+      tags: [ProcessVersions]
+      operationId: replaceProcessVersionFormDesigner
+      summary: 原子保存初始表单与系统列表字段配置
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+        - $ref: "#/components/parameters/VersionId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveFormDesignerRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SavedProcessVersion"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-definitions/{definitionId}/versions/{versionId}/flow-designer:
+    put:
+      tags: [ProcessVersions]
+      operationId: replaceProcessVersionFlowDesigner
+      summary: 原子保存流程图及其耦合的名称和发起权限组
+      description: 避免先保存基本信息、后保存拓扑造成部分成功。
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+        - $ref: "#/components/parameters/VersionId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveFlowDesignerRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SavedProcessVersion"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-definitions/{definitionId}/versions/{versionId}/validate:
+    post:
+      tags: [ProcessVersions]
+      operationId: validateProcessVersion
+      summary: 重新执行完整版本校验
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+        - $ref: "#/components/parameters/VersionId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: 校验已完成；业务校验不通过仍返回 200 和 issues
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionValidationDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-definitions/{definitionId}/versions/{versionId}/publish:
+    post:
+      tags: [ProcessVersions]
+      operationId: publishProcessVersion
+      summary: 首次发布或原子切换当前发布版本
+      description: |
+        事务内重新校验目标快照、当前指针和外部依赖，再以一次条件更新替换
+        publishedVersionId，并同步定义名称、菜单名称、审计和 Outbox。
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+        - $ref: "#/components/parameters/VersionId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishProcessVersionRequest"
+      responses:
+        "200":
+          description: 发布指针已更新
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishProcessVersionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-definitions/{definitionId}/versions/{versionId}/unpublish:
+    post:
+      tags: [ProcessVersions]
+      operationId: unpublishProcessVersion
+      summary: 取消当前版本发布
+      description: 清空定义发布指针，不修改版本快照，运行实例继续锁定原版本。
+      parameters:
+        - $ref: "#/components/parameters/DefinitionId"
+        - $ref: "#/components/parameters/VersionId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnpublishProcessVersionRequest"
+      responses:
+        "200":
+          description: 已取消发布
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessDefinitionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances:
+    get:
+      tags: [ProcessInstances]
+      operationId: listProcessInstances
+      summary: 按当前用户数据范围分页查询流程实例
+      description: dateFrom/dateTo 必填；前端默认今天至前 30 天且不可清空。
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+        - $ref: "#/components/parameters/Search"
+        - name: definitionId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ProcessInstanceStatus"
+        - name: initiatorId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: currentNode
+          in: query
+          schema:
+            type: string
+        - name: dynamicFilters
+          in: query
+          style: deepObject
+          explode: true
+          description: 仅允许目标版本中 queryable=true 的稳定字段 ID
+          schema:
+            type: object
+            additionalProperties: true
+      responses:
+        "200":
+          description: 流程实例分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstancePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [ProcessInstances]
+      operationId: createProcessInstance
+      summary: 提交表单并创建流程实例
+      description: |
+        单事务完成发布版本锁定、表单与附件引用保存、共享月度编号生成、首轮任务
+        展开、实例计数、时间线和节点激活邮件 Outbox。页面预览不占用编号。
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProcessInstanceRequest"
+      responses:
+        "201":
+          description: 实例已创建
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /process-instances/{instanceId}:
+    get:
+      tags: [ProcessInstances]
+      operationId: getProcessInstance
+      summary: 获取实例、版本快照引用、任务和时间线
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+      responses:
+        "200":
+          description: 流程实例详情
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /process-instances/{instanceId}/submission:
+    patch:
+      tags: [ProcessInstances]
+      operationId: updateProcessInstanceBeforeFirstDecision
+      summary: 首个审核结果产生前修改发起内容
+      description: 同事务再次检查当前轮不存在通过、确认或驳回结果，否则返回 INSTANCE_CONTENT_LOCKED。
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInstanceSubmissionRequest"
+      responses:
+        "200":
+          description: 发起内容及未处理任务已原子更新
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/resubmissions:
+    post:
+      tags: [ProcessInstances]
+      operationId: resubmitRejectedProcessInstance
+      summary: 驳回后重新提交并创建完整新审核轮次
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInstanceSubmissionRequest"
+      responses:
+        "200":
+          description: 新一轮任务已生成，实例编号与锁定版本保持不变
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/close:
+    post:
+      tags: [ProcessInstances]
+      operationId: closeProcessInstance
+      summary: 关闭流程实例
+      description: 后端重新校验当前发起流程权限组资格，并取消尚未处理的任务。
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloseInstanceRequest"
+      responses:
+        "200":
+          description: 实例已关闭
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/copies:
+    post:
+      tags: [ProcessInstances]
+      operationId: copyCompletedProcessInstance
+      summary: 从已完成实例的最终表单复制新建
+      description: 不复制附件、实例编号、审核字段、任务、结果、轮次或历史；按目标当前发布版本创建新实例。
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CopyCompletedInstanceRequest"
+      responses:
+        "201":
+          description: 新实例已创建
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /me/workflow-tasks:
+    get:
+      tags: [WorkflowTasks]
+      operationId: listMyWorkflowTasks
+      summary: 查询我的待办或可代办任务
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+        - $ref: "#/components/parameters/Search"
+        - name: view
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [pending, substitutable]
+        - name: definitionId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: 任务分页结果；每项包含服务端计算的 allowedActions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowTaskPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /workflow-tasks/{taskId}:
+    get:
+      tags: [WorkflowTasks]
+      operationId: getWorkflowTask
+      summary: 获取任务及可处理动作
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: 任务详情
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowTaskDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /workflow-tasks/{taskId}/decision:
+    post:
+      tags: [WorkflowTasks]
+      operationId: decideWorkflowTask
+      summary: 提交通过、确认或驳回结果
+      description: |
+        以条件更新保证默认责任人与代办人员并发时首个成功提交生效。确认节点只接受
+        confirm；审批节点接受 pass/reject。授权字段修改、结果、实际处理人、后续激活、
+        并行取消、实例状态、时间线和 Outbox 原子保存。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskDecisionRequest"
+      responses:
+        "200":
+          description: 任务处理成功
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskDecisionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /workflow-tasks/{taskId}/field-revisions:
+    post:
+      tags: [WorkflowTasks]
+      operationId: reviseCompletedWorkflowTaskFields
+      summary: 在不改变原审核结果的前提下继续修改授权字段
+      description: |
+        只允许原实际处理人或超级管理员；节点必须开启重复修改，原结果必须为通过或
+        确认，实例不得处于驳回待处理或已关闭。每次请求追加一条不可变差异记录，不
+        重复生成审核记录，也不反向重算已激活、跳过或完成的节点。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviseTaskFieldsRequest"
+      responses:
+        "201":
+          description: 字段已更新且差异已留痕
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviseTaskFieldsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/free-collaboration/initial-form:
+    patch:
+      tags: [FreeCollaboration]
+      operationId: updateFreeCollaborationInitialForm
+      summary: 实际发起人修改进行中自由协作初始表单
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateInstanceSubmissionRequest"
+      responses:
+        "200":
+          description: 初始表单已更新并记录差异时间线
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/free-collaboration/replies:
+    post:
+      tags: [FreeCollaboration]
+      operationId: addFreeCollaborationReply
+      summary: 向进行中的自由协作事项回复
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFreeReplyRequest"
+      responses:
+        "201":
+          description: 回复已追加
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FreeTimelineEntryDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/free-collaboration/replies/{entryId}:
+    patch:
+      tags: [FreeCollaboration]
+      operationId: editFreeCollaborationReply
+      summary: 回复作者编辑自己的历史回复
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/TimelineEntryId"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditFreeReplyRequest"
+      responses:
+        "200":
+          description: 回复已更新并保留修订历史
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FreeTimelineEntryDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/free-collaboration/transfers:
+    post:
+      tags: [FreeCollaboration]
+      operationId: transferFreeCollaboration
+      summary: 当前受理人处理并转交
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferFreeCollaborationRequest"
+      responses:
+        "200":
+          description: 已转交给下一位受理人
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/free-collaboration/reassignments:
+    post:
+      tags: [FreeCollaboration]
+      operationId: forceReassignFreeCollaboration
+      summary: 发起权限组异常改派当前受理人
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReassignFreeCollaborationRequest"
+      responses:
+        "200":
+          description: 改派完成，原待办取消且新待办已生成
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/free-collaboration/close:
+    post:
+      tags: [FreeCollaboration]
+      operationId: closeFreeCollaboration
+      summary: 关闭进行中的自由协作事项
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloseInstanceRequest"
+      responses:
+        "200":
+          description: 自由协作事项已关闭
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /process-instances/{instanceId}/free-collaboration/reopen:
+    post:
+      tags: [FreeCollaboration]
+      operationId: reopenFreeCollaboration
+      summary: 重新打开已关闭的自由协作事项
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReopenFreeCollaborationRequest"
+      responses:
+        "200":
+          description: 已重新打开并生成当前受理人待办
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /attachments:
+    post:
+      tags: [Attachments]
+      operationId: uploadAttachment
+      summary: 上传暂存附件
+      description: |
+        仅创建暂存文件与元数据，不直接修改流程表单。正式引用必须随实例创建、表单保存、
+        重新提交或任务决策原子提交。启用 PDF 展示的字段由服务端强制最多一个 attachmentId，
+        新引用替换旧引用；旧物理文件仅在确认无其他引用后异步清理。
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                purpose:
+                  type: string
+                  enum: [form-field, free-reply]
+      responses:
+        "201":
+          description: 附件已暂存
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentDto"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /attachments/{attachmentId}:
+    get:
+      tags: [Attachments]
+      operationId: getAttachment
+      summary: 获取附件元数据
+      parameters:
+        - $ref: "#/components/parameters/AttachmentId"
+      responses:
+        "200":
+          description: 附件元数据
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Attachments]
+      operationId: deleteStagedAttachment
+      summary: 删除尚未被业务记录引用的暂存附件
+      parameters:
+        - $ref: "#/components/parameters/AttachmentId"
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "204":
+          description: 暂存附件已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /attachments/{attachmentId}/content:
+    get:
+      tags: [Attachments]
+      operationId: downloadAttachment
+      summary: 按实例数据范围校验后下载或内联预览附件
+      parameters:
+        - $ref: "#/components/parameters/AttachmentId"
+        - name: disposition
+          in: query
+          schema:
+            type: string
+            enum: [inline, attachment]
+            default: attachment
+      responses:
+        "200":
+          description: 附件二进制内容
+          headers:
+            Content-Disposition:
+              description: 安全编码后的原始文件名
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /email-outbox:
+    get:
+      tags: [EmailOutbox]
+      operationId: listEmailOutboxMessages
+      summary: 管理员分页查询邮件投递状态
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/EmailOutboxStatus"
+        - name: instanceId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: taskId
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Outbox 分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailOutboxPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /email-outbox/{messageId}:
+    get:
+      tags: [EmailOutbox]
+      operationId: getEmailOutboxMessage
+      summary: 获取邮件投递详情和失败原因
+      parameters:
+        - $ref: "#/components/parameters/OutboxMessageId"
+      responses:
+        "200":
+          description: Outbox 消息详情
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailOutboxMessageDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /email-outbox/{messageId}/retry:
+    post:
+      tags: [EmailOutbox]
+      operationId: retryEmailOutboxMessage
+      summary: 对失败或死信邮件安排一次重试
+      parameters:
+        - $ref: "#/components/parameters/OutboxMessageId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: 已重新排队
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailOutboxMessageDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "428":
+          $ref: "#/components/responses/PreconditionRequired"
+
+  /audit-events:
+    get:
+      tags: [Audit]
+      operationId: listAuditEvents
+      summary: 分页查询不可变操作审计
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+        - name: actorId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: aggregateType
+          in: query
+          schema:
+            type: string
+        - name: aggregateId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: traceId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 审计分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /audit-events/{auditEventId}:
+    get:
+      tags: [Audit]
+      operationId: getAuditEvent
+      summary: 获取单条审计详情
+      parameters:
+        - $ref: "#/components/parameters/AuditEventId"
+      responses:
+        "200":
+          description: 审计事件
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /exports/process-instances:
+    post:
+      tags: [Exports]
+      operationId: createProcessInstanceExport
+      summary: 按当前查询范围创建异步 Excel 导出任务
+      description: |
+        请求保存查询快照和版本字段配置快照。导出包含当前数据范围内全部匹配记录，
+        不受页面分页限制；只输出各实例锁定版本中 exportVisible=true 的系统及业务字段。
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProcessInstanceExportRequest"
+      responses:
+        "202":
+          description: 导出任务已排队，前端显示等待提示并轮询状态
+          headers:
+            Location:
+              description: 导出任务查询地址
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJobDto"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /exports/{exportId}:
+    get:
+      tags: [Exports]
+      operationId: getExportJob
+      summary: 查询导出进度和结果
+      parameters:
+        - $ref: "#/components/parameters/ExportId"
+      responses:
+        "200":
+          description: 导出任务状态
+          headers:
+            Retry-After:
+              description: 未完成时建议下次轮询的秒数
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJobDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /exports/{exportId}/content:
+    get:
+      tags: [Exports]
+      operationId: downloadExport
+      summary: 下载已完成的 Excel 文件
+      parameters:
+        - $ref: "#/components/parameters/ExportId"
+      responses:
+        "200":
+          description: Excel 文件
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: flowpilot_session
+    mockBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: "mock:<userId>"
+      description: 仅供无后端浏览器原型和自动化测试使用，不能作为生产认证方案。
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 20
+    Search:
+      name: q
+      in: query
+      description: 去除首尾空格的关键词
+      schema:
+        type: string
+        maxLength: 100
+    DateFrom:
+      name: dateFrom
+      in: query
+      required: true
+      description: 查询起始日期，前端默认今天之前 30 天
+      schema:
+        type: string
+        format: date
+    DateTo:
+      name: dateTo
+      in: query
+      required: true
+      description: 查询结束日期，前端默认今天；不得早于 dateFrom
+      schema:
+        type: string
+        format: date
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: GET 返回的强 ETag，例如 `"12"`
+      schema:
+        type: string
+        pattern: '^"[0-9]+"$'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 客户端生成的 UUID；同作用域至少保留 24 小时
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 100
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DepartmentId:
+      name: departmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PositionId:
+      name: positionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RoleId:
+      name: roleId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    WorkflowGroupId:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DefinitionId:
+      name: definitionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    VersionId:
+      name: versionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    InstanceId:
+      name: instanceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TimelineEntryId:
+      name: entryId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AttachmentId:
+      name: attachmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    OutboxMessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AuditEventId:
+      name: auditEventId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ExportId:
+      name: exportId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  headers:
+    ETag:
+      description: 由资源 revision 生成的强 ETag
+      schema:
+        type: string
+        pattern: '^"[0-9]+"$'
+
+  responses:
+    BadRequest:
+      description: 请求语法、查询范围或媒体格式参数错误
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    Unauthorized:
+      description: 未登录或会话失效
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    Forbidden:
+      description: 缺少页面/动作权限、流程资格或数据范围
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    NotFound:
+      description: 资源不存在，或为避免越权信息泄露而按不存在处理
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    Conflict:
+      description: 当前领域状态不允许该动作、幂等键冲突或字段并发冲突
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    PreconditionFailed:
+      description: If-Match 已过期
+      headers:
+        ETag:
+          $ref: "#/components/headers/ETag"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    UnprocessableEntity:
+      description: 领域字段校验未通过
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    PreconditionRequired:
+      description: 缺少必需的 If-Match
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    TooManyRequests:
+      description: 请求过于频繁
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    PayloadTooLarge:
+      description: 文件超过字段或系统限制
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    UnsupportedMediaType:
+      description: 文件内容类型不受支持
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    SavedProcessVersion:
+      description: 版本分区已保存并自动重新校验
+      headers:
+        ETag:
+          $ref: "#/components/headers/ETag"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SaveProcessVersionResponse"
+
+  schemas:
+    ProblemDetails:
+      type: object
+      required: [type, title, status, code, traceId]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          example: /problems/task-already-completed
+        title:
+          type: string
+          example: 任务已处理
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          $ref: "#/components/schemas/ProblemCode"
+        traceId:
+          type: string
+        currentEtag:
+          type: string
+        retryAfterSeconds:
+          type: integer
+          minimum: 0
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationIssueDto"
+        currentResource:
+          description: 冲突处理所需的最小当前资源快照
+          type: object
+          additionalProperties: true
+    ProblemCode:
+      type: string
+      enum:
+        - BAD_REQUEST
+        - AUTHENTICATION_REQUIRED
+        - INVALID_CREDENTIALS
+        - PERMISSION_DENIED
+        - DATA_SCOPE_DENIED
+        - RESOURCE_NOT_FOUND
+        - REVISION_MISMATCH
+        - VALIDATION_FAILED
+        - IDEMPOTENCY_KEY_REUSED
+        - IDEMPOTENCY_REQUEST_IN_PROGRESS
+        - IMMUTABLE_BUILTIN_RESOURCE
+        - RESOURCE_IN_USE
+        - DELETE_BLOCKED
+        - VERSION_NOT_EDITABLE
+        - VERSION_PUBLISHED
+        - VERSION_HAS_INSTANCES
+        - VERSION_VALIDATION_FAILED
+        - PUBLISH_POINTER_CHANGED
+        - DEFINITION_DISABLED
+        - DEFINITION_NOT_PUBLISHED
+        - EXTERNAL_DEPENDENCY_INVALID
+        - TASK_ALREADY_COMPLETED
+        - ACTION_NOT_ALLOWED_FOR_NODE
+        - REVIEW_COMMENT_REQUIRED
+        - INSTANCE_CONTENT_LOCKED
+        - INSTANCE_NOT_REJECTED
+        - INSTANCE_ALREADY_CLOSED
+        - REPEAT_EDIT_FORBIDDEN
+        - NO_FIELD_CHANGES
+        - FIELD_REVISION_CONFLICT
+        - ATTACHMENT_NOT_STAGED
+        - ATTACHMENT_IN_USE
+        - ATTACHMENT_LIMIT_EXCEEDED
+        - INVALID_ATTACHMENT_TYPE
+        - OUTBOX_MESSAGE_NOT_RETRYABLE
+        - EXPORT_NOT_READY
+        - EXPORT_EXPIRED
+        - RATE_LIMITED
+    ValidationIssueDto:
+      type: object
+      required: [code, message]
+      properties:
+        path:
+          type: string
+          description: JSON Pointer 或稳定字段/节点路径
+        code:
+          type: string
+        message:
+          type: string
+        severity:
+          type: string
+          enum: [error, warning]
+          default: error
+    PageMeta:
+      type: object
+      required: [page, pageSize, total, totalPages]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+    EnabledStatus:
+      type: string
+      enum: [enabled, disabled]
+    UserRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        loginName:
+          type: string
+        email:
+          type: string
+          format: email
+        departmentPath:
+          type: string
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [loginName, password]
+      properties:
+        loginName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        password:
+          type: string
+          minLength: 1
+          maxLength: 200
+    SessionDto:
+      type: object
+      required: [user, roleIds, permissions, superAdmin]
+      properties:
+        user:
+          $ref: "#/components/schemas/UserDto"
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        permissions:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        superAdmin:
+          type: boolean
+        expiresAt:
+          type: string
+          format: date-time
+    CreateUserRequest:
+      type: object
+      additionalProperties: false
+      required: [loginName, name, email, departmentId, positionId, roleIds, initialPassword, status]
+      properties:
+        loginName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        email:
+          type: string
+          format: email
+        departmentId:
+          type: string
+          format: uuid
+        positionId:
+          type: string
+          format: uuid
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        initialPassword:
+          type: string
+          minLength: 1
+          maxLength: 200
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+    UpdateUserRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        email:
+          type: string
+          format: email
+        departmentId:
+          type: string
+          format: uuid
+        positionId:
+          type: string
+          format: uuid
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    SetStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+    ResetPasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [newPassword]
+      properties:
+        newPassword:
+          type: string
+          minLength: 1
+          maxLength: 200
+    UserDto:
+      type: object
+      required: [id, revision, loginName, name, email, status, department, position, roles, superAdmin, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        loginName:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        department:
+          $ref: "#/components/schemas/DepartmentRef"
+        position:
+          $ref: "#/components/schemas/PositionRef"
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleRef"
+        superAdmin:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    UserPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    DepartmentRef:
+      type: object
+      required: [id, name, path]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        path:
+          type: string
+    PositionRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    RoleRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    UpsertDepartmentRequest:
+      type: object
+      additionalProperties: false
+      required: [name, sortOrder, status]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        parentId:
+          type: string
+          format: uuid
+        sortOrder:
+          type: integer
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        description:
+          type: string
+          maxLength: 500
+    DepartmentDto:
+      type: object
+      required: [id, revision, code, name, path, level, sortOrder, status, userCount, children]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+        code:
+          type: string
+          readOnly: true
+        name:
+          type: string
+        parentId:
+          type: string
+          format: uuid
+        path:
+          type: string
+        level:
+          type: integer
+          minimum: 1
+          maximum: 2
+        sortOrder:
+          type: integer
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        description:
+          type: string
+        userCount:
+          type: integer
+          minimum: 0
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/DepartmentDto"
+    UpsertPositionRequest:
+      type: object
+      additionalProperties: false
+      required: [name, sortOrder, status]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        sortOrder:
+          type: integer
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        description:
+          type: string
+          maxLength: 500
+    PositionDto:
+      type: object
+      required: [id, revision, name, sortOrder, status, userCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+        name:
+          type: string
+        sortOrder:
+          type: integer
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        description:
+          type: string
+        userCount:
+          type: integer
+          minimum: 0
+    PositionPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PositionDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    CreateRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [name, status, memberIds]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        memberIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    UpdateRoleRequest:
+      allOf:
+        - $ref: "#/components/schemas/CreateRoleRequest"
+    RoleDto:
+      type: object
+      required: [id, revision, code, name, status, builtIn, memberCount, memberIds, permissionCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+        code:
+          type: string
+          readOnly: true
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        builtIn:
+          type: boolean
+        memberCount:
+          type: integer
+          minimum: 0
+        memberIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        permissionCount:
+          type: integer
+          minimum: 0
+    RolePage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    PermissionDto:
+      type: object
+      required: [code, name, category, kind]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        kind:
+          type: string
+          enum: [page, action]
+        description:
+          type: string
+    RolePermissionsDto:
+      type: object
+      required: [roleId, revision, permissionCodes]
+      properties:
+        roleId:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+        permissionCodes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    ReplaceRolePermissionsRequest:
+      type: object
+      additionalProperties: false
+      required: [permissionCodes]
+      properties:
+        permissionCodes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    RoleChangeImpactRequest:
+      type: object
+      additionalProperties: false
+      required: [nextMemberIds, nextStatus]
+      properties:
+        nextMemberIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        nextStatus:
+          $ref: "#/components/schemas/EnabledStatus"
+    WorkflowGroupPurpose:
+      type: string
+      enum: [start, review, free-accept]
+    UpsertWorkflowPermissionGroupRequest:
+      type: object
+      additionalProperties: false
+      required: [name, purposes, status, directUserIds, roleIds]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        purposes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/WorkflowGroupPurpose"
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        directUserIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    WorkflowPermissionGroupDto:
+      type: object
+      required: [id, revision, code, name, purposes, status, directUserIds, roleIds, effectiveMemberCount, referencedProcesses]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+        code:
+          type: string
+          readOnly: true
+        name:
+          type: string
+        description:
+          type: string
+        purposes:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/WorkflowGroupPurpose"
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        directUserIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        effectiveMemberCount:
+          type: integer
+          minimum: 0
+        referencedProcesses:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessDefinitionRef"
+    WorkflowPermissionGroupPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowPermissionGroupDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    EffectiveWorkflowMemberDto:
+      type: object
+      required: [user, sources]
+      properties:
+        user:
+          $ref: "#/components/schemas/UserRef"
+        sources:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [kind]
+            properties:
+              kind:
+                type: string
+                enum: [direct, role]
+              role:
+                $ref: "#/components/schemas/RoleRef"
+    EffectiveWorkflowMemberPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/EffectiveWorkflowMemberDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    WorkflowGroupChangeImpactRequest:
+      type: object
+      additionalProperties: false
+      required: [nextDirectUserIds, nextRoleIds, nextPurposes, nextStatus]
+      properties:
+        nextDirectUserIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        nextRoleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        nextPurposes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/WorkflowGroupPurpose"
+        nextStatus:
+          $ref: "#/components/schemas/EnabledStatus"
+    WorkflowGroupChangeImpactDto:
+      type: object
+      required: [losingEffectiveMemberCount, affectedPendingTaskCount]
+      properties:
+        losingEffectiveMemberCount:
+          type: integer
+          minimum: 0
+        affectedPendingTaskCount:
+          type: integer
+          minimum: 0
+        losingUsers:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserRef"
+    ProcessDefinitionType:
+      type: string
+      enum: [approval, free]
+    ProcessDefinitionStatus:
+      type: string
+      enum: [unpublished, published, disabled]
+    ProcessDefinitionRef:
+      type: object
+      required: [id, code, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+    ProcessBasicConfigInput:
+      type: object
+      additionalProperties: false
+      required: [name, instancePrefix, type, description, starterGroupIds, visibleRoleIds, visibleUserIds]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        instancePrefix:
+          type: string
+          minLength: 1
+          maxLength: 30
+          pattern: '^[A-Za-z0-9_-]+$'
+        type:
+          $ref: "#/components/schemas/ProcessDefinitionType"
+        description:
+          type: string
+          maxLength: 2000
+        starterGroupIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        assigneeGroupIds:
+          description: 自由协作流程至少一个可受理权限组
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        visibleRoleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        visibleUserIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    ProcessBasicConfigDto:
+      allOf:
+        - $ref: "#/components/schemas/ProcessBasicConfigInput"
+        - type: object
+          required: [code]
+          properties:
+            code:
+              type: string
+              readOnly: true
+              description: 定义级稳定业务编号，由后端生成
+    DesignerFieldType:
+      type: string
+      enum: [text, textarea, rich-text, radio, checkbox, select, table, attachment]
+    DesignerTableColumnDto:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        label:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          enum: [text, radio, checkbox, select]
+          default: text
+        required:
+          type: boolean
+          default: false
+        defaultValue:
+          $ref: "#/components/schemas/JsonValue"
+        width:
+          type: integer
+          minimum: 60
+        align:
+          type: string
+          enum: [left, center, right]
+        reviewEditable:
+          type: boolean
+          default: false
+        options:
+          type: array
+          items:
+            type: string
+    AttachmentFieldConfigDto:
+      type: object
+      additionalProperties: false
+      properties:
+        maxSizeMb:
+          type: integer
+          minimum: 1
+        maxCount:
+          type: integer
+          minimum: 1
+        inlinePdf:
+          type: boolean
+          default: false
+          description: 为 true 时服务端强制该字段只保留一个附件引用
+    DesignerFieldDto:
+      type: object
+      additionalProperties: false
+      required: [id, type, label, required, listVisible, taskVisible, queryable, exportVisible, reviewEditable, inputStage]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: 版本家族内稳定字段标识；title 为系统固定标题字段
+        type:
+          $ref: "#/components/schemas/DesignerFieldType"
+        label:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        placeholder:
+          type: string
+        required:
+          type: boolean
+        defaultValue:
+          $ref: "#/components/schemas/JsonValue"
+        listVisible:
+          type: boolean
+        taskVisible:
+          type: boolean
+        taskDisplayName:
+          type: string
+        taskOrder:
+          type: integer
+        taskWidth:
+          type: integer
+          minimum: 60
+        queryable:
+          type: boolean
+        exportVisible:
+          type: boolean
+        reviewEditable:
+          type: boolean
+        inputStage:
+          type: string
+          enum: [initiator, reviewer]
+        options:
+          type: array
+          items:
+            type: string
+        attachment:
+          $ref: "#/components/schemas/AttachmentFieldConfigDto"
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/DesignerTableColumnDto"
+    SystemListFieldDto:
+      type: object
+      additionalProperties: false
+      required: [key, label, taskVisible, processListVisible, exportVisible]
+      properties:
+        key:
+          type: string
+          enum: [instanceCode, processName, processVersion, status, currentNode, currentRound, initiator, createdAt, updatedAt]
+        label:
+          type: string
+        taskVisible:
+          type: boolean
+        processListVisible:
+          type: boolean
+        exportVisible:
+          type: boolean
+        order:
+          type: integer
+        width:
+          type: integer
+          minimum: 60
+    ConditionOperator:
+      type: string
+      enum: [eq, neq, gt, gte, lt, lte, contains, not-contains, empty, not-empty]
+    NodeConditionRuleDto:
+      type: object
+      additionalProperties: false
+      required: [id, fieldId, operator]
+      properties:
+        id:
+          type: string
+        fieldId:
+          type: string
+        operator:
+          $ref: "#/components/schemas/ConditionOperator"
+        value:
+          $ref: "#/components/schemas/JsonValue"
+    NodeConditionDto:
+      type: object
+      additionalProperties: false
+      required: [mode, rules]
+      properties:
+        mode:
+          type: string
+          enum: [all, any]
+        rules:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/NodeConditionRuleDto"
+    NodeEmailNotificationDto:
+      type: object
+      additionalProperties: false
+      required: [enabled, notifyReviewers, notifyInitiator, extraUserIds]
+      properties:
+        enabled:
+          type: boolean
+          default: false
+        notifyReviewers:
+          type: boolean
+          default: false
+          description: 仅审批节点有效
+        notifyInitiator:
+          type: boolean
+          default: false
+          description: 主要用于结束节点
+        extraUserIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    FlowNodeKind:
+      type: string
+      enum: [start, approval, end]
+    ApprovalHandlingMode:
+      type: string
+      enum: [approval, confirmation]
+      default: approval
+    FlowNodeDataDto:
+      type: object
+      additionalProperties: false
+      required: [kind, label]
+      properties:
+        kind:
+          $ref: "#/components/schemas/FlowNodeKind"
+        label:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        permissionGroupId:
+          type: string
+          format: uuid
+        permissionGroupIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        specifyAssignee:
+          type: boolean
+          default: false
+        editableFieldIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        handlingMode:
+          $ref: "#/components/schemas/ApprovalHandlingMode"
+        allowRepeatedEditing:
+          type: boolean
+          default: false
+          description: editableFieldIds 为空时必须为 false
+        activationCondition:
+          $ref: "#/components/schemas/NodeConditionDto"
+        emailNotification:
+          $ref: "#/components/schemas/NodeEmailNotificationDto"
+    FlowNodeDto:
+      type: object
+      additionalProperties: false
+      required: [id, position, data]
+      properties:
+        id:
+          type: string
+        position:
+          type: object
+          required: [x, y]
+          properties:
+            x:
+              type: number
+            y:
+              type: number
+        data:
+          $ref: "#/components/schemas/FlowNodeDataDto"
+    FlowEdgeDto:
+      type: object
+      additionalProperties: false
+      required: [id, source, target]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        target:
+          type: string
+    FlowDesignerSnapshotDto:
+      type: object
+      additionalProperties: false
+      required: [nodes, edges, meta]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowNodeDto"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowEdgeDto"
+        meta:
+          type: object
+          additionalProperties: false
+          required: [rejectionHandling]
+          properties:
+            rejectionHandling:
+              type: string
+              enum: [resubmit-or-close, resubmit-only, auto-close]
+    CompleteDesignerSnapshotDto:
+      type: object
+      additionalProperties: false
+      required: [form, systemFields, flow]
+      properties:
+        form:
+          type: object
+          additionalProperties: false
+          required: [fields]
+          properties:
+            fields:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/DesignerFieldDto"
+            savedAt:
+              type: string
+              format: date-time
+        systemFields:
+          type: array
+          items:
+            $ref: "#/components/schemas/SystemListFieldDto"
+        flow:
+          $ref: "#/components/schemas/FlowDesignerSnapshotDto"
+    VersionValidationStatus:
+      type: string
+      enum: [passed, failed]
+    VersionValidationDto:
+      type: object
+      required: [status, checkedAt, issues]
+      properties:
+        status:
+          $ref: "#/components/schemas/VersionValidationStatus"
+        checkedAt:
+          type: string
+          format: date-time
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationIssueDto"
+    ProcessVersionSummaryDto:
+      type: object
+      required: [id, definitionId, revision, versionNumber, versionLabel, instanceCount, editable, status, validation, checksum, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        definitionId:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        versionNumber:
+          type: integer
+          minimum: 1
+        versionLabel:
+          type: string
+          pattern: '^V[1-9][0-9]*$'
+        basedOn:
+          type: object
+          properties:
+            versionId:
+              type: string
+              format: uuid
+            versionLabel:
+              type: string
+        instanceCount:
+          type: integer
+          minimum: 0
+        editable:
+          type: boolean
+        status:
+          type: string
+          enum: [validation-failed, publishable, published]
+        validation:
+          $ref: "#/components/schemas/VersionValidationDto"
+        checksum:
+          type: string
+        changeNote:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          $ref: "#/components/schemas/UserRef"
+        updatedAt:
+          type: string
+          format: date-time
+        updatedBy:
+          $ref: "#/components/schemas/UserRef"
+        firstPublishedAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: string
+          format: date-time
+        lastUnpublishedAt:
+          type: string
+          format: date-time
+        lastUnpublishedBy:
+          $ref: "#/components/schemas/UserRef"
+        lastUnpublishReason:
+          type: string
+    ProcessVersionDto:
+      allOf:
+        - $ref: "#/components/schemas/ProcessVersionSummaryDto"
+        - type: object
+          required: [basic, snapshot]
+          properties:
+            basic:
+              $ref: "#/components/schemas/ProcessBasicConfigDto"
+            snapshot:
+              $ref: "#/components/schemas/CompleteDesignerSnapshotDto"
+    ProcessDefinitionDto:
+      type: object
+      required: [id, revision, code, name, description, type, disabled, nextVersionNumber, instanceCount, updatedAt, updatedBy]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          $ref: "#/components/schemas/ProcessDefinitionType"
+        disabled:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/ProcessDefinitionStatus"
+        publishedVersionId:
+          type: string
+          format: uuid
+        publishedVersion:
+          $ref: "#/components/schemas/ProcessVersionSummaryDto"
+        nextVersionNumber:
+          type: integer
+          minimum: 2
+        instanceCount:
+          type: integer
+          minimum: 0
+        updatedAt:
+          type: string
+          format: date-time
+        updatedBy:
+          $ref: "#/components/schemas/UserRef"
+    ProcessDefinitionPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessDefinitionDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    CreateProcessDefinitionRequest:
+      type: object
+      additionalProperties: false
+      required: [basic]
+      properties:
+        basic:
+          $ref: "#/components/schemas/ProcessBasicConfigInput"
+    CreateProcessDefinitionResponse:
+      type: object
+      required: [definition, version]
+      properties:
+        definition:
+          $ref: "#/components/schemas/ProcessDefinitionDto"
+        version:
+          $ref: "#/components/schemas/ProcessVersionDto"
+    UpdateProcessDefinitionRequest:
+      type: object
+      additionalProperties: false
+      required: [disabled]
+      properties:
+        disabled:
+          type: boolean
+    CopyProcessDefinitionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        sourceVersionId:
+          type: string
+          format: uuid
+          description: 省略时使用当前发布版本，否则使用最新版本
+        name:
+          type: string
+          maxLength: 100
+    CreateProcessVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [sourceVersionId]
+      properties:
+        sourceVersionId:
+          type: string
+          format: uuid
+    SaveFormDesignerRequest:
+      type: object
+      additionalProperties: false
+      required: [form, systemFields]
+      properties:
+        form:
+          type: object
+          additionalProperties: false
+          required: [fields]
+          properties:
+            fields:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/DesignerFieldDto"
+            savedAt:
+              type: string
+              format: date-time
+        systemFields:
+          type: array
+          items:
+            $ref: "#/components/schemas/SystemListFieldDto"
+    SaveFlowDesignerRequest:
+      type: object
+      additionalProperties: false
+      required: [basicPatch, flow]
+      properties:
+        basicPatch:
+          type: object
+          additionalProperties: false
+          required: [name, starterGroupIds]
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 100
+            starterGroupIds:
+              type: array
+              minItems: 1
+              uniqueItems: true
+              items:
+                type: string
+                format: uuid
+        flow:
+          $ref: "#/components/schemas/FlowDesignerSnapshotDto"
+    RemovedSnapshotReferenceDto:
+      type: object
+      required: [kind, ownerId, referencedId, reason]
+      properties:
+        kind:
+          type: string
+          enum: [editable-field, condition-field, visible-role, visible-user, email-user, permission-group]
+        ownerId:
+          type: string
+        referencedId:
+          type: string
+        reason:
+          type: string
+    SaveProcessVersionResponse:
+      type: object
+      required: [version, removedReferences]
+      properties:
+        version:
+          $ref: "#/components/schemas/ProcessVersionDto"
+        removedReferences:
+          type: array
+          items:
+            $ref: "#/components/schemas/RemovedSnapshotReferenceDto"
+    PublishProcessVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [changeNote]
+      properties:
+        changeNote:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    PublishProcessVersionResponse:
+      type: object
+      required: [definition, publishedVersion]
+      properties:
+        definition:
+          $ref: "#/components/schemas/ProcessDefinitionDto"
+        publishedVersion:
+          $ref: "#/components/schemas/ProcessVersionDto"
+        previousPublishedVersionId:
+          type: string
+          format: uuid
+    UnpublishProcessVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+    ProcessLaunchConfigDto:
+      type: object
+      required: [definition, version, assigneeCandidatesByNode]
+      properties:
+        definition:
+          $ref: "#/components/schemas/ProcessDefinitionDto"
+        version:
+          $ref: "#/components/schemas/ProcessVersionDto"
+        assigneeCandidatesByNode:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/UserRef"
+        firstAssigneeCandidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserRef"
+    LaunchableProcessDefinitionDto:
+      type: object
+      required: [definitionId, code, name, type, versionId, versionLabel, description, starterGroups]
+      properties:
+        definitionId:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: "#/components/schemas/ProcessDefinitionType"
+        versionId:
+          type: string
+          format: uuid
+        versionLabel:
+          type: string
+        description:
+          type: string
+        starterGroups:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+    JsonValue:
+      oneOf:
+        - type: "null"
+        - type: string
+        - type: number
+        - type: boolean
+        - type: array
+          items:
+            $ref: "#/components/schemas/JsonValue"
+        - type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+    ProcessInstanceStatus:
+      type: string
+      enum: [reviewing, rejected-pending, completed, in-progress, closed]
+    CreateProcessInstanceRequest:
+      type: object
+      additionalProperties: false
+      required: [definitionId, formValues]
+      properties:
+        definitionId:
+          type: string
+          format: uuid
+        formValues:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        assigneeByNode:
+          type: object
+          additionalProperties:
+            type: string
+            format: uuid
+        firstAssigneeId:
+          type: string
+          format: uuid
+          description: 自由协作流程的首位受理人
+        attachmentIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    UpdateInstanceSubmissionRequest:
+      type: object
+      additionalProperties: false
+      required: [formValues, attachmentIds]
+      properties:
+        formValues:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        attachmentIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        assigneeByNode:
+          type: object
+          additionalProperties:
+            type: string
+            format: uuid
+    CloseInstanceRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    CopyCompletedInstanceRequest:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        targetDefinitionId:
+          type: string
+          format: uuid
+          description: 省略时沿用源实例定义
+    ProcessInstanceSummaryDto:
+      type: object
+      required: [id, revision, definitionId, versionId, code, title, processName, versionLabel, workflowType, status, round, currentNodeNames, initiator, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        definitionId:
+          type: string
+          format: uuid
+        versionId:
+          type: string
+          format: uuid
+        code:
+          type: string
+        title:
+          type: string
+        processName:
+          type: string
+        versionLabel:
+          type: string
+        workflowType:
+          $ref: "#/components/schemas/ProcessDefinitionType"
+        status:
+          $ref: "#/components/schemas/ProcessInstanceStatus"
+        round:
+          type: integer
+          minimum: 1
+        currentNodeNames:
+          type: array
+          items:
+            type: string
+        currentAssignee:
+          $ref: "#/components/schemas/UserRef"
+        initiator:
+          $ref: "#/components/schemas/UserRef"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        listValues:
+          type: object
+          description: 已按锁定版本的流程清单显示配置和数据范围投影
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+    ProcessInstancePage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProcessInstanceSummaryDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    ReviewProgressDto:
+      type: object
+      required: [nodeId, nodeName, handlingMode, status, round]
+      properties:
+        nodeId:
+          type: string
+        nodeName:
+          type: string
+        handlingMode:
+          $ref: "#/components/schemas/ApprovalHandlingMode"
+        status:
+          type: string
+          enum: [pending, passed, confirmed, rejected, cancelled, skipped]
+        actor:
+          $ref: "#/components/schemas/UserRef"
+        actionAt:
+          type: string
+          format: date-time
+        comment:
+          type: string
+        substitute:
+          type: boolean
+        conditionSummary:
+          type: string
+        round:
+          type: integer
+          minimum: 1
+    TimelineEventDto:
+      type: object
+      required: [id, type, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        actor:
+          $ref: "#/components/schemas/UserRef"
+        summary:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+    ProcessInstanceDetailDto:
+      allOf:
+        - $ref: "#/components/schemas/ProcessInstanceSummaryDto"
+        - type: object
+          required: [formValues, fieldRevisions, attachments, reviewProgress, tasks, timeline]
+          properties:
+            formValues:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/JsonValue"
+            fieldRevisions:
+              type: object
+              description: 每个稳定字段 ID 的当前并发版本
+              additionalProperties:
+                type: integer
+                minimum: 0
+            attachments:
+              type: array
+              items:
+                $ref: "#/components/schemas/AttachmentDto"
+            reviewProgress:
+              type: array
+              items:
+                $ref: "#/components/schemas/ReviewProgressDto"
+            tasks:
+              type: array
+              items:
+                $ref: "#/components/schemas/WorkflowTaskDto"
+            timeline:
+              type: array
+              items:
+                $ref: "#/components/schemas/TimelineEventDto"
+            freeTimeline:
+              type: array
+              items:
+                $ref: "#/components/schemas/FreeTimelineEntryDto"
+    WorkflowTaskStatus:
+      type: string
+      enum: [inactive, pending, completed, cancelled, skipped]
+    TaskAction:
+      type: string
+      enum: [pass, confirm, reject]
+    TaskAllowedAction:
+      type: string
+      enum: [pass, confirm, reject, revise-fields]
+    FieldChangeDto:
+      type: object
+      required: [fieldId, labelSnapshot, beforeValue, afterValue]
+      properties:
+        fieldId:
+          type: string
+        labelSnapshot:
+          type: string
+        fieldTypeSnapshot:
+          type: string
+        optionLabelsSnapshot:
+          type: object
+          additionalProperties:
+            type: string
+        beforeValue:
+          $ref: "#/components/schemas/JsonValue"
+        afterValue:
+          $ref: "#/components/schemas/JsonValue"
+        beforeDisplay:
+          type: string
+        afterDisplay:
+          type: string
+    FieldRevisionDto:
+      type: object
+      required: [id, sequence, editedBy, editedAt, changes]
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          minimum: 1
+        editedBy:
+          $ref: "#/components/schemas/UserRef"
+        editedAt:
+          type: string
+          format: date-time
+        comment:
+          type: string
+        changes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/FieldChangeDto"
+    WorkflowTaskDto:
+      type: object
+      required: [id, revision, instanceId, definitionId, versionId, nodeId, nodeName, handlingMode, permissionGroupId, status, round, editableFieldIds, allowRepeatedEditing, allowedActions, submittedFieldChanges, fieldRevisions, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        instanceId:
+          type: string
+          format: uuid
+        definitionId:
+          type: string
+          format: uuid
+        versionId:
+          type: string
+          format: uuid
+        nodeId:
+          type: string
+        nodeName:
+          type: string
+        handlingMode:
+          $ref: "#/components/schemas/ApprovalHandlingMode"
+        permissionGroupId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/WorkflowTaskStatus"
+        defaultAssignee:
+          $ref: "#/components/schemas/UserRef"
+        completedBy:
+          $ref: "#/components/schemas/UserRef"
+        action:
+          $ref: "#/components/schemas/TaskAction"
+        resultStatus:
+          type: string
+          enum: [passed, confirmed, rejected]
+        comment:
+          type: string
+        round:
+          type: integer
+          minimum: 1
+        editableFieldIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        allowRepeatedEditing:
+          type: boolean
+        allowedActions:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/TaskAllowedAction"
+        conditionSummary:
+          type: string
+        conditionEvaluatedAt:
+          type: string
+          format: date-time
+        submittedFieldChanges:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldChangeDto"
+        fieldRevisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldRevisionDto"
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+    WorkflowTaskPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowTaskDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    BaseFieldRevisions:
+      type: object
+      description: 仅提交本次实际修改字段的当前版本，避免无关并行分支产生假冲突
+      additionalProperties:
+        type: integer
+        minimum: 0
+    TaskDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [action, fieldValues, baseFieldRevisions]
+      properties:
+        action:
+          $ref: "#/components/schemas/TaskAction"
+        comment:
+          type: string
+          maxLength: 2000
+          description: 驳回必填；通过意见和确认说明选填
+        fieldValues:
+          type: object
+          description: 只允许节点 editableFieldIds 中的字段；不接受整份表单覆盖
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        baseFieldRevisions:
+          $ref: "#/components/schemas/BaseFieldRevisions"
+    TaskDecisionResponse:
+      type: object
+      required: [instance, task, activatedTaskIds, cancelledTaskIds]
+      properties:
+        instance:
+          $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        task:
+          $ref: "#/components/schemas/WorkflowTaskDto"
+        activatedTaskIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        cancelledTaskIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+    ReviseTaskFieldsRequest:
+      type: object
+      additionalProperties: false
+      required: [fieldValues, baseFieldRevisions]
+      properties:
+        fieldValues:
+          type: object
+          minProperties: 1
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        baseFieldRevisions:
+          $ref: "#/components/schemas/BaseFieldRevisions"
+        comment:
+          type: string
+          maxLength: 2000
+    ReviseTaskFieldsResponse:
+      type: object
+      required: [instance, task, revision]
+      properties:
+        instance:
+          $ref: "#/components/schemas/ProcessInstanceDetailDto"
+        task:
+          $ref: "#/components/schemas/WorkflowTaskDto"
+        revision:
+          $ref: "#/components/schemas/FieldRevisionDto"
+    CreateFreeReplyRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        attachmentIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    EditFreeReplyRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 20000
+    TransferFreeCollaborationRequest:
+      type: object
+      additionalProperties: false
+      required: [content, nextAssigneeId]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        nextAssigneeId:
+          type: string
+          format: uuid
+    ReassignFreeCollaborationRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, assigneeId]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        assigneeId:
+          type: string
+          format: uuid
+    ReopenFreeCollaborationRequest:
+      type: object
+      additionalProperties: false
+      required: [reason, assigneeId]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        assigneeId:
+          type: string
+          format: uuid
+    FreeReplyRevisionDto:
+      type: object
+      required: [content, editedAt]
+      properties:
+        content:
+          type: string
+        editedAt:
+          type: string
+          format: date-time
+    FreeTimelineEntryDto:
+      type: object
+      required: [id, revision, type, actor, occurredAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        type:
+          type: string
+          enum: [created, reply, transferred, closed, reopened, form-edited, reassigned]
+        actor:
+          $ref: "#/components/schemas/UserRef"
+        occurredAt:
+          type: string
+          format: date-time
+        content:
+          type: string
+        assignee:
+          $ref: "#/components/schemas/UserRef"
+        previousAssignee:
+          $ref: "#/components/schemas/UserRef"
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/FreeReplyRevisionDto"
+        fieldChanges:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldChangeDto"
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttachmentDto"
+    AttachmentStatus:
+      type: string
+      enum: [staged, referenced, cleanup-pending]
+    AttachmentDto:
+      type: object
+      required: [id, revision, originalName, sizeBytes, contentType, status, uploadedBy, uploadedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        originalName:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        contentType:
+          type: string
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        status:
+          $ref: "#/components/schemas/AttachmentStatus"
+        uploadedBy:
+          $ref: "#/components/schemas/UserRef"
+        uploadedAt:
+          type: string
+          format: date-time
+        referencedBy:
+          type: array
+          readOnly: true
+          items:
+            type: object
+            required: [aggregateType, aggregateId]
+            properties:
+              aggregateType:
+                type: string
+                enum: [process-instance, free-timeline-entry]
+              aggregateId:
+                type: string
+                format: uuid
+              fieldId:
+                type: string
+        contentUrl:
+          type: string
+          format: uri-reference
+          readOnly: true
+    EmailOutboxStatus:
+      type: string
+      enum: [pending, processing, sent, retry-wait, dead-letter]
+    EmailOutboxEventType:
+      type: string
+      enum: [workflow-task-activated, workflow-ended]
+    EmailOutboxMessageDto:
+      type: object
+      required: [id, revision, idempotencyKey, eventType, aggregateId, recipient, status, attemptCount, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          minimum: 1
+        idempotencyKey:
+          type: string
+          description: 任务激活事件或结束事件、激活序号与收件人用户 ID 的唯一组合
+        eventType:
+          $ref: "#/components/schemas/EmailOutboxEventType"
+        aggregateId:
+          type: string
+          format: uuid
+          description: 审批任务 ID 或流程实例 ID
+        instanceId:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        activationSequence:
+          type: integer
+          minimum: 1
+        recipient:
+          $ref: "#/components/schemas/UserRef"
+        recipientEmailSnapshot:
+          type: string
+          format: email
+        subject:
+          type: string
+        templateData:
+          type: object
+          description: 不含完整表单、业务附件或敏感字段
+          additionalProperties: true
+        status:
+          $ref: "#/components/schemas/EmailOutboxStatus"
+        attemptCount:
+          type: integer
+          minimum: 0
+        nextAttemptAt:
+          type: string
+          format: date-time
+        lastAttemptAt:
+          type: string
+          format: date-time
+        lastError:
+          type: string
+        sentAt:
+          type: string
+          format: date-time
+        deadLetterAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    EmailOutboxPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/EmailOutboxMessageDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    AuditEventDto:
+      type: object
+      required: [id, action, aggregateType, aggregateId, actor, occurredAt, traceId]
+      properties:
+        id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          description: 稳定机器码，例如 process-version.published 或 workflow-task.confirmed
+        aggregateType:
+          type: string
+        aggregateId:
+          type: string
+          format: uuid
+        parentAggregateId:
+          type: string
+          format: uuid
+        actor:
+          $ref: "#/components/schemas/UserRef"
+        occurredAt:
+          type: string
+          format: date-time
+        traceId:
+          type: string
+        idempotencyKey:
+          type: string
+        ipAddress:
+          type: string
+        userAgent:
+          type: string
+        before:
+          type: object
+          additionalProperties: true
+        after:
+          type: object
+          additionalProperties: true
+        details:
+          type: object
+          additionalProperties: true
+    AuditEventPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEventDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+    ProcessInstanceExportFilterDto:
+      type: object
+      additionalProperties: false
+      required: [dateFrom, dateTo]
+      properties:
+        dateFrom:
+          type: string
+          format: date
+        dateTo:
+          type: string
+          format: date
+        q:
+          type: string
+          maxLength: 100
+        definitionId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ProcessInstanceStatus"
+        initiatorId:
+          type: string
+          format: uuid
+        currentNode:
+          type: string
+        dynamicFilters:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JsonValue"
+        sort:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, direction]
+            properties:
+              field:
+                type: string
+              direction:
+                type: string
+                enum: [asc, desc]
+    CreateProcessInstanceExportRequest:
+      type: object
+      additionalProperties: false
+      required: [filter]
+      properties:
+        filter:
+          $ref: "#/components/schemas/ProcessInstanceExportFilterDto"
+        locale:
+          type: string
+          default: zh-CN
+        timezone:
+          type: string
+          default: Asia/Shanghai
+    ExportJobStatus:
+      type: string
+      enum: [queued, running, completed, failed, expired]
+    ExportJobDto:
+      type: object
+      required: [id, status, requestedBy, requestedAt, filterSnapshot, processedRows]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/ExportJobStatus"
+        requestedBy:
+          $ref: "#/components/schemas/UserRef"
+        requestedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        filterSnapshot:
+          $ref: "#/components/schemas/ProcessInstanceExportFilterDto"
+        exportColumnsSnapshot:
+          type: array
+          description: 各锁定版本中 exportVisible=true 字段的稳定 ID、名称及类型快照
+          items:
+            type: object
+            required: [key, label, source]
+            properties:
+              key:
+                type: string
+              label:
+                type: string
+              source:
+                type: string
+                enum: [system, form]
+              versionId:
+                type: string
+                format: uuid
+        processedRows:
+          type: integer
+          minimum: 0
+        totalRows:
+          type: integer
+          minimum: 0
+        fileName:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        downloadUrl:
+          type: string
+          format: uri-reference
+        failureCode:
+          type: string
+        failureMessage:
+          type: string

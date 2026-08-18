@@ -63,6 +63,7 @@ import {
   type DomainUser,
   type WorkflowPermissionGroup,
 } from "../state/useIdentityStore";
+import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
 import "./governance-pages.css";
 
 type EnableStatus = "启用" | "停用";
@@ -162,6 +163,7 @@ function makeUsers(): UserRecord[] {
     return {
       id: `USR-${String(index + 1).padStart(4, "0")}`,
       account: `user${String(index + 1).padStart(3, "0")}`,
+      email: `user${String(index + 1).padStart(3, "0")}@company.local`,
       password: "1",
       name,
       department: department.value,
@@ -176,6 +178,7 @@ function makeUsers(): UserRecord[] {
     {
       id: "USR-0000",
       account: "superadmin",
+      email: "superadmin@company.local",
       password: "1",
       name: "超级管理员",
       department: ["system"],
@@ -275,7 +278,7 @@ export function UserManagementPage() {
 
   const filtered = useMemo(() => users.filter((user) => {
     const keyword = filters.keyword.trim().toLowerCase();
-    const matchesKeyword = !keyword || `${user.account}${user.name}`.toLowerCase().includes(keyword);
+    const matchesKeyword = !keyword || `${user.account}${user.name}${user.email}`.toLowerCase().includes(keyword);
     const matchesDepartment = !filters.department.length || filters.department.every((value, index) => user.department[index] === value);
     return matchesKeyword && matchesDepartment && (!filters.jobTitle || user.jobTitle === filters.jobTitle)
       && (!filters.role || user.roles.includes(filters.role)) && (!filters.status || user.status === filters.status);
@@ -291,12 +294,13 @@ export function UserManagementPage() {
     setEditorDirty(false);
     form.resetFields();
     form.setFieldsValue(user === "new" ? {
-      account: "", name: "", password: "", department: [], jobTitle: activeJobTitles.find((item) => item.id === "JOB-002")?.name ?? activeJobTitles[0]?.name, roles: [], status: true,
+      account: "", email: "", name: "", password: "", department: [], jobTitle: activeJobTitles.find((item) => item.id === "JOB-002")?.name ?? activeJobTitles[0]?.name, roles: [], status: true,
     } : { ...user });
   };
 
   const columns: TableProps<UserRecord>["columns"] = [
     { title: "用户", dataIndex: "name", width: 190, fixed: "left", render: (_, record) => <Space size={6}><PersonChip name={record.name} detail={record.account} />{record.builtIn ? <Tag color="gold" icon={<LockOutlined />}>内置</Tag> : null}</Space> },
+    { title: "邮箱", dataIndex: "email", width: 220, ellipsis: true },
     { title: "部门", dataIndex: "departmentPath", width: 160, ellipsis: true },
     { title: "职务", dataIndex: "jobTitle", width: 100, render: (value: JobTitle) => <Tag color={value === managerTitleName ? "purple" : "default"}>{value}</Tag> },
     { title: "角色（可多选）", dataIndex: "roles", width: 260, render: (roles: string[]) => <Space size={[4, 4]} wrap>{roles.map((role) => <Tag key={role} color={role === "超级管理员" ? "gold" : role === "流程管理员" ? "blue" : undefined}>{role}</Tag>)}</Space> },
@@ -330,7 +334,7 @@ export function UserManagementPage() {
       ]} />
       <Card className="query-card gov-query-card">
         <div className="gov-filter-grid gov-filter-grid--users">
-          <label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="登录账号或员工姓名" value={draftFilters.keyword} onChange={(event) => setDraftFilters({ ...draftFilters, keyword: event.target.value })} /></label>
+          <label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="登录账号、员工姓名或邮箱" value={draftFilters.keyword} onChange={(event) => setDraftFilters({ ...draftFilters, keyword: event.target.value })} /></label>
           <label><span>部门</span><Cascader changeOnSelect allowClear options={departmentOptions} placeholder="一级或二级部门" value={draftFilters.department} onChange={(value) => setDraftFilters({ ...draftFilters, department: value.map(String) })} /></label>
           <label><span>职务</span><Select allowClear placeholder="全部职务" value={draftFilters.jobTitle || undefined} options={[...jobTitles].sort((a, b) => a.sort - b.sort).map((item) => ({ value: item.name, label: item.status === "停用" ? `${item.name}（已停用）` : item.name }))} onChange={(value) => setDraftFilters({ ...draftFilters, jobTitle: value ?? "" })} /></label>
           <label><span>角色</span><Select showSearch allowClear placeholder="全部角色" value={draftFilters.role || undefined} options={roleOptions.map((value) => ({ value }))} onChange={(value) => setDraftFilters({ ...draftFilters, role: value ?? "" })} /></label>
@@ -340,7 +344,7 @@ export function UserManagementPage() {
       </Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}>
         <ResultHeader title="用户列表" count={filtered.length} extra={<><Typography.Text type="secondary">仅加载当前页数据</Typography.Text><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增用户</Button></>} />
-        <Table<UserRecord> rowKey="id" columns={columns} dataSource={pageRows} scroll={{ x: 1080 }} pagination={{ current: page, pageSize, total: filtered.length, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total) => `共 ${total} 名用户`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }} />
+        <Table<UserRecord> rowKey="id" columns={columns} dataSource={pageRows} scroll={{ x: 1300 }} pagination={{ current: page, pageSize, total: filtered.length, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total) => `共 ${total} 名用户`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }} />
       </Card>
       <Drawer width={600} open={drawerUser !== null} onClose={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })} title={drawerUser === "new" ? "新增用户" : "编辑用户"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
         <Alert
@@ -348,16 +352,16 @@ export function UserManagementPage() {
           type="info"
           showIcon
           message={drawerUser === "new" ? "部门、职务与角色相互独立" : "密码和账号状态使用列表操作维护"}
-          description={drawerUser === "new" ? "经理职务不会自动获得管理权限；一个用户可拥有多个角色，最终权限取角色权限并集。" : "编辑页只维护用户基本资料、部门、职务和角色；密码通过“重置密码”处理，账号状态通过启用/停用操作处理。"}
+          description={drawerUser === "new" ? "邮箱用于流程通知；经理职务不会自动获得管理权限，一个用户可拥有多个角色。" : "编辑页维护用户基本资料（含通知邮箱）、部门、职务和角色；密码及账号状态仍通过列表操作处理。"}
         />
         <Form form={form} layout="vertical" requiredMark="optional" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => {
           const path = values.department.length === 1 ? departmentOptions.find((item) => item.value === values.department[0])?.label : `${departmentOptions.find((item) => item.value === values.department[0])?.label} / ${departmentOptions.find((item) => item.value === values.department[0])?.children?.find((item) => item.value === values.department[1])?.label}`;
           if (drawerUser === "new") {
-            const created: UserRecord = { id: `USR-${crypto.randomUUID()}`, account: values.account, password: values.password, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用", lastLogin: "从未登录" };
+            const created: UserRecord = { id: `USR-${crypto.randomUUID()}`, account: values.account, email: String(values.email).trim(), password: values.password, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用", lastLogin: "从未登录" };
             setUsers((rows) => [created, ...rows]);
             message.success("用户已创建");
           } else if (drawerUser) {
-            setUsers((rows) => rows.map((item) => item.id === drawerUser.id ? { ...item, account: values.account, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles } : item));
+            setUsers((rows) => rows.map((item) => item.id === drawerUser.id ? { ...item, account: values.account, email: String(values.email).trim(), name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles } : item));
             message.success("用户信息已保存");
           }
           setEditorDirty(false);
@@ -367,6 +371,17 @@ export function UserManagementPage() {
             <Form.Item name="account" label="登录账号" rules={[{ required: true, message: "请输入登录账号" }, { validator: (_, value) => String(value ?? "").trim().toLowerCase() === "superadmin" ? Promise.reject(new Error("该账号由系统内置，不能创建或修改")) : Promise.resolve() }]}><Input maxLength={40} /></Form.Item>
             <Form.Item name="name" label="员工姓名" rules={[{ required: true, message: "请输入员工姓名" }]}><Input maxLength={40} /></Form.Item>
           </div>
+          <Form.Item
+            name="email"
+            label="邮箱"
+            rules={[
+              { required: true, message: "请输入邮箱" },
+              { type: "email", message: "请输入有效邮箱地址" },
+            ]}
+            extra="流程进入审核节点或结束时，将按此邮箱发送已配置的通知。"
+          >
+            <Input maxLength={120} placeholder="name@company.com" />
+          </Form.Item>
           {drawerUser === "new" && <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 1, message: "密码至少 1 个字符" }]} extra="首版采用最低密码强度，允许单个字符；无首次登录改密和连续失败锁定。"><Input.Password maxLength={64} /></Form.Item>}
           <Form.Item name="department" label="所属部门" rules={[{ required: true, message: "请选择部门" }]} extra="可选择一级节点（如研发）或二级节点（如研发 / 软件）。"><Cascader changeOnSelect showSearch options={departmentOptions} placeholder="请选择一级或二级部门" /></Form.Item>
           {drawerUser === "new" ? <div className="gov-form-grid">
@@ -1051,8 +1066,9 @@ export function InstanceMonitorPage() {
   const [keyword, setKeyword] = useState("");
   const [process, setProcess] = useState<string>();
   const [status, setStatus] = useState<InstanceMonitorStatus>();
+  const [dateRange, setDateRange] = useState(createDefaultDateRange);
   const [detail, setDetail] = useState<MonitorRecord | null>(null);
-  const filtered = monitorRows.filter((row) => `${row.code}${row.title}${row.initiator}`.toLowerCase().includes(keyword.toLowerCase()) && (!process || row.process === process) && (!status || row.status === status));
+  const filtered = monitorRows.filter((row) => `${row.code}${row.title}${row.initiator}`.toLowerCase().includes(keyword.toLowerCase()) && (!process || row.process === process) && (!status || row.status === status) && isDateTimeInRange(row.createdAt, dateRange));
   const columns: TableProps<MonitorRecord>["columns"] = [
     { title: "实例编号", dataIndex: "code", width: 170, fixed: "left", render: (value: string, record) => <Button className="gov-table-link" type="link" onClick={() => setDetail(record)}>{value}</Button> },
     { title: "标题", dataIndex: "title", width: 280, ellipsis: true },
@@ -1067,7 +1083,7 @@ export function InstanceMonitorPage() {
   return (
     <div className="page-stack gov-page">
       <Alert type="info" showIcon message="实例监控为只读页面" description="运维人员可以查询和查看流程、表单及流转信息，但不能强制关闭、改派、跳过节点或修改业务数据。" />
-      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--monitor"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="实例编号、标题或发起人" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={["PDF审核", "测试报告审核", "自由协作"].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={monitorStatuses.map((value) => ({ value }))} /></label><label><span>发起时间</span><DatePicker.RangePicker /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => message.success(`已查询到 ${filtered.length} 条实例`)}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); }}>重置</Button></div></div></Card>
+      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--monitor"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="实例编号、标题或发起人" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={["PDF审核", "测试报告审核", "自由协作"].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={monitorStatuses.map((value) => ({ value }))} /></label><label><span>发起时间</span><DatePicker.RangePicker allowClear={false} value={dateRange} onChange={(value) => { if (value?.[0] && value[1]) setDateRange(normalizeDayRange([value[0], value[1]])); }} /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => message.success(`已查询到 ${filtered.length} 条实例`)}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); setDateRange(createDefaultDateRange()); }}>重置</Button></div></div></Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程实例" count={filtered.length} extra={<Typography.Text type="secondary"><LockOutlined /> 全部操作只读</Typography.Text>} /><Table<MonitorRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1510 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条实例` }} /></Card>
       <Drawer width={660} open={Boolean(detail)} onClose={() => setDetail(null)} title="流程实例详情（只读）">
         {detail ? <><div className="gov-detail-hero-row"><span className="gov-detail-icon"><FileSearchOutlined /></span><div><Typography.Title level={4}>{detail.title}</Typography.Title><Typography.Text type="secondary">{detail.code} · {detail.process} {detail.version}</Typography.Text></div><StatusPill status={detail.status} /></div><Descriptions bordered column={2} size="small" items={[{ key: "initiator", label: "发起人", children: `${detail.initiator}（${detail.department}）` }, { key: "created", label: "发起时间", children: detail.createdAt }, { key: "node", label: "当前节点", children: detail.node || "—" }, { key: "updated", label: "更新时间", children: detail.updatedAt }]} /><div className="gov-detail-section"><div className="gov-section-title">流转概览</div><Timeline items={[{ color: "green", children: <><strong>{detail.initiator} 发起流程</strong><small>{detail.createdAt}</small></> }, { color: "blue", children: <><strong>进入 {detail.node || "结束"}</strong><small>{detail.updatedAt}</small></> }, { color: "gray", children: <Typography.Text type="secondary">后续流转记录将在这里按时间显示</Typography.Text> }]} /></div><Alert type="warning" showIcon message="只读限制" description="本页没有强制关闭、异常改派、跳过节点或修改表单的入口。" /></> : null}
@@ -1092,8 +1108,9 @@ export function AuditLogPage() {
   const [keyword, setKeyword] = useState("");
   const [module, setModule] = useState<string>();
   const [result, setResult] = useState<AuditResult>();
+  const [dateRange, setDateRange] = useState(createDefaultDateRange);
   const [detail, setDetail] = useState<AuditRecord | null>(null);
-  const filtered = auditRows.filter((row) => `${row.operator}${row.object}${row.objectId}${row.ip}`.toLowerCase().includes(keyword.toLowerCase()) && (!module || row.module === module) && (!result || row.result === result));
+  const filtered = auditRows.filter((row) => `${row.operator}${row.object}${row.objectId}${row.ip}`.toLowerCase().includes(keyword.toLowerCase()) && (!module || row.module === module) && (!result || row.result === result) && isDateTimeInRange(row.time, dateRange));
   const columns: TableProps<AuditRecord>["columns"] = [
     { title: "时间", dataIndex: "time", width: 170, fixed: "left" },
     { title: "操作人", dataIndex: "operator", width: 145, render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.department}</small></div> },
@@ -1106,7 +1123,7 @@ export function AuditLogPage() {
   ];
   return (
     <div className="page-stack gov-page">
-      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--audit"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="操作人、对象、编号或 IP" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>模块</span><Select allowClear placeholder="全部模块" value={module} onChange={setModule} options={Array.from(new Set(auditRows.map((row) => row.module))).map((value) => ({ value }))} /></label><label><span>结果</span><Select allowClear placeholder="全部结果" value={result} onChange={setResult} options={["成功", "失败"].map((value) => ({ value }))} /></label><label><span>操作时间</span><DatePicker.RangePicker showTime /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => message.success(`已查询到 ${filtered.length} 条日志`)}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setModule(undefined); setResult(undefined); }}>重置</Button></div></div></Card>
+      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--audit"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="操作人、对象、编号或 IP" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>模块</span><Select allowClear placeholder="全部模块" value={module} onChange={setModule} options={Array.from(new Set(auditRows.map((row) => row.module))).map((value) => ({ value }))} /></label><label><span>结果</span><Select allowClear placeholder="全部结果" value={result} onChange={setResult} options={["成功", "失败"].map((value) => ({ value }))} /></label><label><span>操作时间</span><DatePicker.RangePicker allowClear={false} showTime value={dateRange} onChange={(value) => { if (value?.[0] && value[1]) setDateRange([value[0], value[1]]); }} /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => message.success(`已查询到 ${filtered.length} 条日志`)}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setModule(undefined); setResult(undefined); setDateRange(createDefaultDateRange()); }}>重置</Button></div></div></Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="操作审计" count={filtered.length} extra={<Typography.Text type="secondary">审计记录只读且不可删除</Typography.Text>} /><Table<AuditRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1240 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条日志` }} /></Card>
       <Drawer width={680} open={Boolean(detail)} onClose={() => setDetail(null)} title="审计详情">
         {detail ? <><div className="gov-audit-detail-head"><span className={`gov-audit-result is-${detail.result === "成功" ? "success" : "error"}`}>{detail.result === "成功" ? <CheckCircleOutlined /> : <StopOutlined />}</span><div><Typography.Title level={4}>{detail.action}</Typography.Title><Typography.Text type="secondary">{detail.id} · {detail.time}</Typography.Text></div><StatusPill status={detail.result} /></div><Descriptions bordered column={2} size="small" items={[{ key: "operator", label: "操作人", children: `${detail.operator}（${detail.department}）` }, { key: "ip", label: "IP 地址", children: detail.ip }, { key: "module", label: "模块", children: detail.module }, { key: "objectId", label: "对象编号", children: detail.objectId }, { key: "object", label: "操作对象", span: 2, children: detail.object }]} /><div className="gov-audit-values"><div><span>变更前</span><pre>{detail.before}</pre></div><div><span>变更后</span><pre>{detail.after}</pre></div></div><Alert type="info" showIcon message="操作说明" description={detail.detail} /></> : null}

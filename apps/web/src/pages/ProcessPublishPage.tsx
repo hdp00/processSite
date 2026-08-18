@@ -6,8 +6,9 @@ import { AppBackButton } from "../components/AppBackButton";
 import { ProcessWizardPreviousButton } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
+import { useIdentityStore } from "../state/useIdentityStore";
 import { getPublishedVersion, getVersionStatus, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { buildFlowLevels, rejectionHandlingLabel } from "../utils/designerStorage";
+import { buildFlowLevels, conditionOperatorLabel, rejectionHandlingLabel, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import "./process-admin-pages.css";
 
 export function ProcessPublishPage() {
@@ -17,6 +18,7 @@ export function ProcessPublishPage() {
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const versionId = searchParams.get("versionId") ?? definition?.versions[0]?.id ?? "";
   const version = definition?.versions.find((item) => item.id === versionId);
+  const users = useIdentityStore((state) => state.users);
   const publishVersion = useProcessDefinitionStore((state) => state.publishVersion);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -42,6 +44,19 @@ export function ProcessPublishPage() {
     });
     return new Map(entries);
   }, [version]);
+  const emailNotificationText = (notification?: StoredNodeEmailNotification) => {
+    if (!notification?.enabled) return "不发送";
+    const recipients = [
+      notification.notifyReviewers ? "审核人" : "",
+      notification.notifyInitiator ? "发起人" : "",
+      ...(notification.extraUserIds ?? []).map((userId) => {
+        const user = users.find((item) => item.id === userId);
+        const email = user && "email" in user ? String(user.email ?? "").trim() : "";
+        return user ? `${user.name}${email ? ` <${email}>` : "（未维护邮箱）"}` : userId;
+      }),
+    ].filter(Boolean);
+    return recipients.length ? recipients.join("、") : "已启用，未配置收件人";
+  };
   if (!definition || !version) return <Alert type="error" showIcon message="流程版本不存在" description="发布必须绑定到一个明确的正式版本。" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
 
   const status = getVersionStatus(definition, version.id);
@@ -80,9 +95,10 @@ export function ProcessPublishPage() {
             { key: "form", label: "初始表单", children: "标题字段由系统固定，其余字段按版本配置", span: 2 },
             { key: "fields", label: "表单字段", children: `${version.snapshot.form.fields.length} 个` },
             { key: "system", label: "系统列表字段", children: `${version.snapshot.systemFields.length} 个配置` },
+            { key: "export", label: "Excel 导出字段", children: `${version.snapshot.systemFields.filter((field) => field.exportVisible).length + version.snapshot.form.fields.filter((field) => field.exportVisible).length} 个`, span: 2 },
           ]} />
           <Divider>初始表单字段</Divider>
-          <Space wrap>{version.snapshot.form.fields.length ? version.snapshot.form.fields.map((field) => <Tag key={field.id} bordered={false}>{field.label}</Tag>) : <Typography.Text type="danger">尚未配置字段</Typography.Text>}</Space>
+          <Space wrap>{version.snapshot.form.fields.length ? version.snapshot.form.fields.map((field) => <Tag key={field.id} color={field.exportVisible ? "green" : undefined} bordered={false}>{field.label}{field.exportVisible ? " · Excel 导出" : ""}</Tag>) : <Typography.Text type="danger">尚未配置字段</Typography.Text>}</Space>
         </Card>
 
         {definition.type === "approval" ? <Card className="pa-section-card" title={<span className="pa-card-title"><ApartmentOutlined /> 审批拓扑与规则</span>}>
@@ -95,7 +111,7 @@ export function ProcessPublishPage() {
                   <section className={`pa-publish-stage${isParallel ? " is-parallel" : ""}`}>
                     <header className="pa-publish-stage__head">
                       <span>步骤 {levelIndex + 1}</span>
-                      <Tag variant="filled" color={isParallel ? "blue" : "default"}>{isParallel ? `并行 · ${approvalCount} 个节点` : level[0]?.data?.kind === "start" ? "开始" : level[0]?.data?.kind === "end" ? "结束" : "顺序审批"}</Tag>
+                      <Tag variant="filled" color={isParallel ? "blue" : "default"}>{isParallel ? `并行 · ${approvalCount} 个节点` : level[0]?.data?.kind === "start" ? "开始" : level[0]?.data?.kind === "end" ? "结束" : "顺序处理"}</Tag>
                     </header>
                     <div className="pa-publish-stage__nodes">
                       {level.map((node) => {
@@ -109,20 +125,26 @@ export function ProcessPublishPage() {
                           {kind === "start" ? <div className="pa-publish-node__detail"><small>发起权限组</small><span>{(node.data?.permissionGroups ?? []).join("、") || "未配置"}</span></div> : null}
                           {kind === "approval" ? <>
                             <div className="pa-publish-node__detail"><small>执行权限组</small><span>{node.data?.permissionGroup || "未配置"}</span></div>
-                            <div className="pa-publish-node__detail"><small>处理方式</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></div>
+                            <div className="pa-publish-node__detail"><small>处理方式</small><span>{node.data?.handlingMode === "confirmation" ? "确认（只能确认，不能驳回）" : "审批（可通过或驳回）"}</span></div>
+                            <div className="pa-publish-node__detail"><small>人员分配</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></div>
                             <div className="pa-publish-node__detail"><small>可修改字段</small><span>{selectedFields.length ? selectedFields.join("、") : "不可修改表单内容"}</span></div>
+                            <div className="pa-publish-node__detail"><small>重复修改</small><span>{node.data?.allowRepeatedEditing ? "允许处理结果提交后继续修改授权字段" : "不允许"}</span></div>
+                            <div className="pa-publish-node__detail"><small>执行条件</small><span>{node.data?.activationCondition?.rules.length
+                              ? node.data.activationCondition.rules.map((rule) => `${editableFieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${["empty", "not-empty"].includes(rule.operator) ? "" : String(rule.value ?? "")}`).join(node.data.activationCondition.mode === "all" ? " 且 " : " 或 ")
+                              : "始终执行"}</span></div>
+                            <div className="pa-publish-node__detail"><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></div>
                           </> : null}
-                          {kind === "end" ? <div className="pa-publish-node__detail"><small>完成条件</small><span>前序审批全部通过</span></div> : null}
+                          {kind === "end" ? <><div className="pa-publish-node__detail"><small>完成条件</small><span>前序节点通过、确认或条件跳过</span></div><div className="pa-publish-node__detail"><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></div></> : null}
                         </article>;
                       })}
                     </div>
                   </section>
-                  {levelIndex < topologyLevels.length - 1 ? <div className="pa-publish-stage__arrow" aria-hidden="true"><ArrowRightOutlined /><small>{level.length > 1 ? "全部通过" : "继续"}</small></div> : null}
+                  {levelIndex < topologyLevels.length - 1 ? <div className="pa-publish-stage__arrow" aria-hidden="true"><ArrowRightOutlined /><small>{level.length > 1 ? "全部完成" : "继续"}</small></div> : null}
                 </Fragment>;
               })}
             </div>
             <div className="pa-publish-rules">
-              <div><strong>流转规则</strong><span>{topologyLevels.some((level) => level.filter((node) => node.data?.kind === "approval").length > 1) ? "同层审批同时开始，全部通过后进入下一步；任一驳回时取消本轮其他待办。" : "按连线顺序逐节点审核，当前节点通过后进入下一步。"}</span></div>
+              <div><strong>流转规则</strong><span>{topologyLevels.some((level) => level.filter((node) => node.data?.kind === "approval").length > 1) ? "同层节点同时开始，全部通过或确认后进入下一步；审批节点任一驳回时取消本轮其他待办。" : "按连线顺序逐节点处理，当前节点通过或确认后进入下一步。"}</span></div>
               <div><strong>驳回处理</strong><span>{rejectionHandlingLabel(version.snapshot.flow.meta?.rejectionHandling)}：{version.snapshot.flow.meta?.rejectionHandling === "auto-close" ? "流程立即关闭。" : version.snapshot.flow.meta?.rejectionHandling === "resubmit-only" ? "发起方修改后可重新提交，所有审批重新开始。" : "发起方可修改后重新提交，也可直接关闭流程。"}</span></div>
               <div><strong>内容锁定</strong><span>首个审核结果提交前，发起方可修改；提交后锁定，驳回后重新开放修改。</span></div>
             </div>

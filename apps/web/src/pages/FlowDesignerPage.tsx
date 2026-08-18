@@ -34,6 +34,7 @@ import {
   DeleteOutlined,
   FilePdfOutlined,
   InfoCircleOutlined,
+  MailOutlined,
   PlayCircleFilled,
   PlusOutlined,
   SafetyCertificateOutlined,
@@ -76,8 +77,14 @@ import {
 } from "../state/useProcessDefinitionStore";
 import {
   buildFlowLevels,
+  conditionOperatorLabel,
   type EditableFieldOption,
+  type ApprovalHandlingMode,
+  type ConditionOperator,
+  type StoredDesignerField,
   type StoredFlowDesignerSnapshot,
+  type StoredNodeCondition,
+  type StoredNodeEmailNotification,
 } from "../utils/designerStorage";
 import "./flow-designer.css";
 
@@ -93,6 +100,17 @@ interface FlowNodeData extends Record<string, unknown> {
   permissionGroups?: string[];
   specifyAssignee?: boolean;
   editableFields: string[];
+  handlingMode?: ApprovalHandlingMode;
+  allowRepeatedEditing?: boolean;
+  activationCondition?: StoredNodeCondition;
+  emailNotification?: StoredNodeEmailNotification;
+}
+
+interface ConditionFieldOption extends EditableFieldOption {
+  type: string;
+  options?: string[];
+  inputStage?: "initiator" | "reviewer";
+  required?: boolean;
 }
 
 type DesignerNode = Node<FlowNodeData, "processNode">;
@@ -143,6 +161,42 @@ const rejectionHandlingOptions: Array<{
   },
 ];
 
+const handlingModeOptions: Array<{
+  value: ApprovalHandlingMode;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "approval",
+    label: "审批",
+    description: "审核人可以通过或驳回本节点。",
+  },
+  {
+    value: "confirmation",
+    label: "确认",
+    description: "审核人只能确认完成，没有驳回入口。",
+  },
+];
+
+const defaultEmailNotification = (kind: NodeKind): StoredNodeEmailNotification => ({
+  enabled: false,
+  notifyReviewers: kind === "approval",
+  notifyInitiator: kind === "end",
+  extraUserIds: [],
+});
+
+const normalizeEmailNotification = (
+  kind: NodeKind,
+  notification?: StoredNodeEmailNotification,
+): StoredNodeEmailNotification => notification
+  ? {
+      enabled: Boolean(notification.enabled),
+      notifyReviewers: kind === "approval" && Boolean(notification.notifyReviewers),
+      notifyInitiator: kind === "end" && Boolean(notification.notifyInitiator),
+      extraUserIds: [...(notification.extraUserIds ?? [])],
+    }
+  : defaultEmailNotification(kind);
+
 const kindMeta: Record<
   NodeKind,
   { label: string; description: string; color: string; icon: React.ReactNode }
@@ -191,6 +245,9 @@ const initialNodes: DesignerNode[] = [
       permissionGroup: "PDF审核_研发_流程权限组",
       specifyAssignee: true,
       editableFields: ["技术版本", "变更摘要"],
+      handlingMode: "approval",
+      allowRepeatedEditing: false,
+      emailNotification: defaultEmailNotification("approval"),
     },
   },
   {
@@ -204,6 +261,9 @@ const initialNodes: DesignerNode[] = [
       permissionGroup: "PDF审核_质量_流程权限组",
       specifyAssignee: true,
       editableFields: ["文件等级", "检验依据"],
+      handlingMode: "approval",
+      allowRepeatedEditing: false,
+      emailNotification: defaultEmailNotification("approval"),
     },
   },
   {
@@ -217,6 +277,9 @@ const initialNodes: DesignerNode[] = [
       permissionGroup: "PDF审核_生产_流程权限组",
       specifyAssignee: false,
       editableFields: ["生效日期", "现场备注"],
+      handlingMode: "approval",
+      allowRepeatedEditing: false,
+      emailNotification: defaultEmailNotification("approval"),
     },
   },
   {
@@ -226,8 +289,9 @@ const initialNodes: DesignerNode[] = [
     data: {
       kind: "end",
       label: "审核完成",
-      description: "全部审核通过，流程结束",
+      description: "全部节点通过或确认后，流程结束",
       editableFields: [],
+      emailNotification: defaultEmailNotification("end"),
     },
   },
 ];
@@ -301,6 +365,9 @@ const createGenericDraft = (starterGroups: string[]): Pick<StoredDraft, "nodes" 
         description: "配置流程权限组和可修改字段",
         specifyAssignee: true,
         editableFields: [],
+        handlingMode: "approval",
+        allowRepeatedEditing: false,
+        emailNotification: defaultEmailNotification("approval"),
       },
     },
     {
@@ -310,8 +377,9 @@ const createGenericDraft = (starterGroups: string[]): Pick<StoredDraft, "nodes" 
       data: {
         kind: "end",
         label: "流程结束",
-        description: "全部前置审批通过后结束",
+        description: "全部前置节点通过或确认后结束",
         editableFields: [],
+        emailNotification: defaultEmailNotification("end"),
       },
     },
   ],
@@ -361,6 +429,13 @@ const readStoredDraft = (
             ? node.data.permissionGroups ?? (node.data.permissionGroup ? [node.data.permissionGroup] : [])
             : node.data.permissionGroups,
           editableFields: node.data.editableFields ?? [],
+          handlingMode: node.data.kind === "approval" ? node.data.handlingMode ?? "approval" : node.data.handlingMode,
+          allowRepeatedEditing: node.data.kind === "approval"
+            ? Boolean(node.data.allowRepeatedEditing && node.data.editableFields?.length)
+            : false,
+          emailNotification: node.data.kind === "approval" || node.data.kind === "end"
+            ? normalizeEmailNotification(node.data.kind, node.data.emailNotification)
+            : undefined,
         },
       })),
       edges: parsed.edges,
@@ -397,6 +472,21 @@ const ProcessNode = ({ data, selected }: NodeProps<DesignerNode>) => {
               <TeamOutlined className="process-node__assignee" />
             </Tooltip>
           )}
+          {data.kind === "approval" && data.handlingMode === "confirmation" ? (
+            <Tooltip title="该节点只能确认完成，不能驳回">
+              <Tag variant="filled" color="cyan">确认</Tag>
+            </Tooltip>
+          ) : null}
+          {data.kind === "approval" && data.activationCondition?.rules.length ? (
+            <Tooltip title={`${data.activationCondition.mode === "all" ? "全部" : "任一"}条件满足时执行`}>
+              <Tag variant="filled" color="purple">条件</Tag>
+            </Tooltip>
+          ) : null}
+          {(data.kind === "approval" || data.kind === "end") && data.emailNotification?.enabled ? (
+            <Tooltip title="该节点已启用邮件通知">
+              <MailOutlined className="process-node__mail" />
+            </Tooltip>
+          ) : null}
         </div>
         <span className="process-node__description">
           {groupLabel || data.description}
@@ -413,6 +503,7 @@ const runValidation = (
   nodes: DesignerNode[],
   edges: DesignerEdge[],
   editableOptions: EditableFieldOption[],
+  conditionFields: ConditionFieldOption[],
 ): ValidationResult[] => {
   const starts = nodes.filter((node) => node.data.kind === "start");
   const ends = nodes.filter((node) => node.data.kind === "end");
@@ -454,6 +545,32 @@ const runValidation = (
       : !node.data.permissionGroup?.trim(),
   );
   const editableLabelByValue = new Map(editableOptions.map((option) => [option.value, option.label]));
+  const conditionFieldById = new Map(conditionFields.map((field) => [field.value, field]));
+  const invalidConditions = approvals.filter((node) => {
+    const condition = node.data.activationCondition;
+    if (!condition) return false;
+    if (!condition.rules.length) return true;
+    return condition.rules.some((rule) => {
+      const field = conditionFieldById.get(rule.fieldId);
+      const supported = field?.type === "checkbox"
+        ? ["contains", "not-contains", "empty", "not-empty"]
+        : field?.type === "text"
+          ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
+          : ["eq", "neq", "empty", "not-empty"];
+      return !field || !supported.includes(rule.operator) || (!["empty", "not-empty"].includes(rule.operator) && (rule.value === undefined || rule.value === ""));
+    });
+  });
+  const requiredReviewerFields = conditionFields.filter((field) => field.inputStage === "reviewer" && field.required);
+  const unassignedReviewerFields = requiredReviewerFields.filter((field) => !approvals.some((node) => node.data.editableFields.includes(field.value)));
+  const invalidRepeatedEditing = approvals.filter((node) => node.data.allowRepeatedEditing && !node.data.editableFields.length);
+  const invalidEmailNodes = nodes.filter((node) => {
+    if (node.data.kind !== "approval" && node.data.kind !== "end") return false;
+    const notification = node.data.emailNotification;
+    return Boolean(notification?.enabled
+      && !notification.notifyReviewers
+      && !notification.notifyInitiator
+      && !(notification.extraUserIds?.length ?? 0));
+  });
 
   const splitNodes = nodes.filter((node) => (adjacency.get(node.id)?.length ?? 0) >= 2);
   const joinNodes = nodes.filter((node) => (reverseAdjacency.get(node.id)?.length ?? 0) >= 2);
@@ -573,6 +690,38 @@ const runValidation = (
         : "各并行路径中的审批节点可修改字段互不重叠",
       pass: conflictMessages.length === 0,
     },
+    {
+      key: "conditions",
+      title: "审批执行条件",
+      detail: invalidConditions.length
+        ? `条件配置不完整：${invalidConditions.map((node) => node.data.label).join("、")}`
+        : "所有条件均引用有效字段并已完整配置",
+      pass: invalidConditions.length === 0,
+    },
+    {
+      key: "reviewer-required",
+      title: "审核人必填字段",
+      detail: unassignedReviewerFields.length
+        ? `尚未分配负责节点：${unassignedReviewerFields.map((field) => field.label).join("、")}`
+        : "审核人必填字段均已分配到至少一个审批节点",
+      pass: unassignedReviewerFields.length === 0,
+    },
+    {
+      key: "repeated-editing",
+      title: "重复修改配置",
+      detail: invalidRepeatedEditing.length
+        ? `请先配置可修改字段：${invalidRepeatedEditing.map((node) => node.data.label).join("、")}`
+        : "重复修改仅用于已授权字段",
+      pass: invalidRepeatedEditing.length === 0,
+    },
+    {
+      key: "email-notification",
+      title: "邮件通知收件人",
+      detail: invalidEmailNodes.length
+        ? `已启用邮件但未选择收件人：${invalidEmailNodes.map((node) => node.data.label).join("、")}`
+        : "所有已启用邮件均已配置收件人",
+      pass: invalidEmailNodes.length === 0,
+    },
   ];
 };
 
@@ -581,18 +730,30 @@ interface DesignerWorkspaceProps {
   definitionId: string;
   versionId: string;
   editableFieldOptions: EditableFieldOption[];
+  conditionFieldOptions: ConditionFieldOption[];
   starterGroups: string[];
 }
 
-const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFieldOptions, starterGroups }: DesignerWorkspaceProps) => {
+const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFieldOptions, conditionFieldOptions, starterGroups }: DesignerWorkspaceProps) => {
   const navigate = useNavigate();
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
+  const users = useIdentityStore((state) => state.users);
   const starterGroupOptions = workflowGroups
     .filter((group) => group.status === "启用" && group.purposes.includes("发起"))
     .map((group) => ({ value: group.id, label: group.name }));
   const approvalGroupOptions = workflowGroups
     .filter((group) => group.status === "启用" && group.purposes.includes("审批"))
     .map((group) => ({ value: group.id, label: group.name }));
+  const extraEmailUserOptions = users.map((user) => {
+    const email = "email" in user ? String(user.email ?? "").trim() : "";
+    const unavailable = user.status !== "启用" || !email;
+    return {
+      value: user.id,
+      label: `${user.name} · ${email || "未维护邮箱"}${user.status !== "启用" ? " · 已停用" : ""}`,
+      disabled: unavailable,
+      email,
+    };
+  });
   const versionBasic = useProcessDefinitionStore((state) =>
     state.definitions.find((item) => item.id === definitionId)?.versions.find((item) => item.id === versionId)?.basic,
   );
@@ -614,9 +775,12 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     () => nodes.find((node) => node.id === selectedNodeId),
     [nodes, selectedNodeId],
   );
+  const selectedEmailNotification = selectedNode && (selectedNode.data.kind === "approval" || selectedNode.data.kind === "end")
+    ? normalizeEmailNotification(selectedNode.data.kind, selectedNode.data.emailNotification)
+    : undefined;
   const validationResults = useMemo(
-    () => runValidation(nodes, edges, editableFieldOptions),
-    [edges, editableFieldOptions, nodes],
+    () => runValidation(nodes, edges, editableFieldOptions, conditionFieldOptions),
+    [conditionFieldOptions, edges, editableFieldOptions, nodes],
   );
   const parallelRegionCount = useMemo(() => {
     const outgoingCount = new Map<string, number>();
@@ -643,10 +807,34 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
         .map((field) => allowed.has(field) ? field : labelToValue.get(field))
         .filter((field): field is string => Boolean(field));
       const nextStarterGroups = node.data.kind === "start" ? starterGroups : node.data.permissionGroups;
+      const nextRepeatedEditing = node.data.kind === "approval" && normalizedFields.length
+        ? Boolean(node.data.allowRepeatedEditing)
+        : false;
+      const nextHandlingMode = node.data.kind === "approval" ? node.data.handlingMode ?? "approval" : node.data.handlingMode;
+      const nextEmailNotification = node.data.kind === "approval" || node.data.kind === "end"
+        ? normalizeEmailNotification(node.data.kind, node.data.emailNotification)
+        : undefined;
+      const emailNotificationUnchanged = nextEmailNotification === undefined && node.data.emailNotification === undefined
+        || Boolean(nextEmailNotification
+          && node.data.emailNotification
+          && nextEmailNotification.enabled === node.data.emailNotification.enabled
+          && nextEmailNotification.notifyReviewers === Boolean(node.data.emailNotification.notifyReviewers)
+          && nextEmailNotification.notifyInitiator === Boolean(node.data.emailNotification.notifyInitiator)
+          && nextEmailNotification.extraUserIds.join("|") === (node.data.emailNotification.extraUserIds ?? []).join("|"));
       return normalizedFields.join("|") === node.data.editableFields.join("|")
         && (nextStarterGroups ?? []).join("|") === (node.data.permissionGroups ?? []).join("|")
+        && nextRepeatedEditing === Boolean(node.data.allowRepeatedEditing)
+        && nextHandlingMode === node.data.handlingMode
+        && emailNotificationUnchanged
         ? node
-        : { ...node, data: { ...node.data, editableFields: normalizedFields, permissionGroups: nextStarterGroups } };
+        : { ...node, data: {
+            ...node.data,
+            editableFields: normalizedFields,
+            permissionGroups: nextStarterGroups,
+            handlingMode: nextHandlingMode,
+            allowRepeatedEditing: nextRepeatedEditing,
+            emailNotification: nextEmailNotification,
+          } };
     }));
   }, [editableFieldOptions, setNodes, starterGroups]);
 
@@ -696,6 +884,12 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
           permissionGroups: kind === "start" ? starterGroups : undefined,
           specifyAssignee: kind === "approval",
           editableFields: [],
+          handlingMode: kind === "approval" ? "approval" : undefined,
+          allowRepeatedEditing: false,
+          activationCondition: undefined,
+          emailNotification: kind === "approval" || kind === "end"
+            ? defaultEmailNotification(kind)
+            : undefined,
         },
       };
       setNodes((currentNodes) => [...currentNodes, node]);
@@ -714,6 +908,17 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
           : node,
       ),
     );
+  };
+
+  const updateSelectedEmailNotification = (changes: Partial<StoredNodeEmailNotification>) => {
+    if (!selectedNode || !selectedEmailNotification) return;
+    updateSelectedNode({
+      emailNotification: {
+        ...selectedEmailNotification,
+        ...changes,
+        extraUserIds: changes.extraUserIds ?? selectedEmailNotification.extraUserIds,
+      },
+    });
   };
 
   const updateStarterGroups = (permissionGroups: string[]) => {
@@ -878,7 +1083,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
             <div>
               <Text strong>并行审核规则</Text>
               <Text type="secondary">
-                同一节点引出多条审核连线时自动并行；多条连线汇入同一节点时，等待全部前置通过后继续。
+                同一节点引出多条审核连线时自动并行；多条连线汇入同一节点时，等待全部前置通过或确认后继续。
               </Text>
             </div>
           </div>
@@ -1033,6 +1238,29 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
 
               {selectedNode.data.kind === "approval" && (
                 <>
+                  <div className="property-field">
+                    <span className="property-field__label">处理方式</span>
+                    <Text type="secondary" className="property-field__help property-field__help--above">
+                      确认与通过具有相同的正向流转效果，但确认节点没有驳回入口。
+                    </Text>
+                    <Radio.Group
+                      className="handling-mode-options"
+                      value={selectedNode.data.handlingMode ?? "approval"}
+                      onChange={(event) => updateSelectedNode({ handlingMode: event.target.value as ApprovalHandlingMode })}
+                    >
+                      {handlingModeOptions.map((option) => (
+                        <Radio key={option.value} value={option.value}>
+                          <span className="handling-mode-option__content">
+                            <Text strong>{option.label}</Text>
+                            <Text type="secondary">{option.description}</Text>
+                          </span>
+                        </Radio>
+                      ))}
+                    </Radio.Group>
+                  </div>
+
+                  <Divider />
+
                   <div className="property-switch-row">
                     <div>
                       <Text strong>发起时指定人员</Text>
@@ -1056,9 +1284,13 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                     <Checkbox.Group
                       value={selectedNode.data.editableFields}
                       options={editableFieldOptions}
-                      onChange={(values) =>
-                        updateSelectedNode({ editableFields: values.map(String) })
-                      }
+                      onChange={(values) => {
+                        const editableFields = values.map(String);
+                        updateSelectedNode({
+                          editableFields,
+                          allowRepeatedEditing: editableFields.length ? selectedNode.data.allowRepeatedEditing : false,
+                        });
+                      }}
                       className="editable-field-options"
                     />
                     {!editableFieldOptions.length && (
@@ -1069,6 +1301,75 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                         description="请返回初始表单，将普通字段或表格列开启“允许审核人修改”后再选择。"
                       />
                     )}
+                    <div className="property-switch-row repeated-editing-row">
+                      <div>
+                        <Text strong>允许重复修改</Text>
+                        <Text type="secondary">处理结果提交后，审核人仍可反复修改本节点授权字段。</Text>
+                      </div>
+                      <Switch
+                        checked={Boolean(selectedNode.data.allowRepeatedEditing)}
+                        disabled={!selectedNode.data.editableFields.length}
+                        onChange={(allowRepeatedEditing) => updateSelectedNode({ allowRepeatedEditing })}
+                      />
+                    </div>
+                    {!selectedNode.data.editableFields.length ? (
+                      <Text type="secondary" className="property-field__help">请先选择至少一个审核人可修改字段。</Text>
+                    ) : null}
+                  </div>
+
+                  <Divider />
+
+                  <div className="property-field condition-editor">
+                    <div className="property-switch-row">
+                      <div>
+                        <Text strong>按条件执行</Text>
+                        <Text type="secondary">条件不满足时自动跳过该节点，并视为已满足汇聚条件。</Text>
+                      </div>
+                      <Switch
+                        checked={Boolean(selectedNode.data.activationCondition)}
+                        onChange={(checked) => updateSelectedNode({ activationCondition: checked ? {
+                          mode: "all",
+                          rules: [{ id: `condition-${Date.now()}`, fieldId: conditionFieldOptions[0]?.value ?? "", operator: "eq", value: "" }],
+                        } : undefined })}
+                      />
+                    </div>
+                    {selectedNode.data.activationCondition ? (
+                      <>
+                        <Segmented
+                          block
+                          value={selectedNode.data.activationCondition.mode}
+                          options={[{ label: "全部满足（AND）", value: "all" }, { label: "任一满足（OR）", value: "any" }]}
+                          onChange={(mode) => updateSelectedNode({ activationCondition: { ...selectedNode.data.activationCondition!, mode: mode as "all" | "any" } })}
+                        />
+                        <div className="condition-rule-list">
+                          {selectedNode.data.activationCondition.rules.map((rule) => {
+                            const field = conditionFieldOptions.find((item) => item.value === rule.fieldId);
+                            const operators: ConditionOperator[] = field?.type === "checkbox"
+                              ? ["contains", "not-contains", "empty", "not-empty"]
+                              : field?.type === "text"
+                                ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
+                                : ["eq", "neq", "empty", "not-empty"];
+                            const updateRule = (patch: Partial<typeof rule>) => updateSelectedNode({ activationCondition: {
+                              ...selectedNode.data.activationCondition!,
+                              rules: selectedNode.data.activationCondition!.rules.map((item) => item.id === rule.id ? { ...item, ...patch } : item),
+                            } });
+                            return <div className="condition-rule" key={rule.id}>
+                              <Select showSearch value={rule.fieldId || undefined} placeholder="选择字段" options={conditionFieldOptions} onChange={(fieldId) => updateRule({ fieldId, operator: "eq", value: "" })} />
+                              <Select value={rule.operator} options={operators.map((operator) => ({ value: operator, label: conditionOperatorLabel(operator) }))} onChange={(operator) => updateRule({ operator })} />
+                              {!["empty", "not-empty"].includes(rule.operator) && (field?.options?.length
+                                ? <Select value={typeof rule.value === "string" ? rule.value || undefined : undefined} placeholder="选择比较值" options={field.options.map((value) => ({ value, label: value }))} onChange={(value) => updateRule({ value })} />
+                                : <Input value={typeof rule.value === "string" ? rule.value : ""} placeholder="输入比较值" onChange={(event) => updateRule({ value: event.target.value })} />)}
+                              <Button type="text" danger icon={<DeleteOutlined />} aria-label="删除条件" onClick={() => updateSelectedNode({ activationCondition: { ...selectedNode.data.activationCondition!, rules: selectedNode.data.activationCondition!.rules.filter((item) => item.id !== rule.id) } })} />
+                            </div>;
+                          })}
+                        </div>
+                        <Button type="dashed" block icon={<PlusOutlined />} onClick={() => updateSelectedNode({ activationCondition: {
+                          ...selectedNode.data.activationCondition,
+                          mode: selectedNode.data.activationCondition?.mode ?? "all",
+                          rules: [...(selectedNode.data.activationCondition?.rules ?? []), { id: `condition-${Date.now()}`, fieldId: conditionFieldOptions[0]?.value ?? "", operator: "eq", value: "" }],
+                        } })}>添加条件</Button>
+                      </>
+                    ) : null}
                   </div>
                 </>
               )}
@@ -1078,9 +1379,71 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                   type="success"
                   showIcon
                   message="结束条件"
-                  description="存在多个前置节点时，系统会自动按 AND 汇聚处理：全部前置审批通过后才会到达。"
+                  description="存在多个前置节点时，系统会自动按 AND 汇聚处理：全部前置节点通过、确认或因条件不满足而跳过后才会到达。"
                 />
               )}
+
+              {(selectedNode.data.kind === "approval" || selectedNode.data.kind === "end") && selectedEmailNotification ? (
+                <>
+                  <Divider />
+                  <div className="property-field email-notification-editor">
+                    <div className="property-switch-row">
+                      <div>
+                        <Text strong><MailOutlined /> 邮件通知</Text>
+                        <Text type="secondary">
+                          {selectedNode.data.kind === "approval" ? "进入本节点并激活待办后发送。" : "流程到达结束节点时发送。"}
+                        </Text>
+                      </div>
+                      <Switch
+                        checked={selectedEmailNotification.enabled}
+                        onChange={(enabled) => updateSelectedEmailNotification({ enabled })}
+                      />
+                    </div>
+                    {selectedEmailNotification.enabled ? (
+                      <div className="email-recipient-settings">
+                        <Text strong>通知对象</Text>
+                        <div className="email-recipient-options">
+                          {selectedNode.data.kind === "approval" ? (
+                            <Checkbox
+                              checked={selectedEmailNotification.notifyReviewers}
+                              onChange={(event) => updateSelectedEmailNotification({ notifyReviewers: event.target.checked })}
+                            >
+                              本节点审核人
+                            </Checkbox>
+                          ) : (
+                            <Checkbox
+                              checked={selectedEmailNotification.notifyInitiator}
+                              onChange={(event) => updateSelectedEmailNotification({ notifyInitiator: event.target.checked })}
+                            >
+                              流程发起人
+                            </Checkbox>
+                          )}
+                        </div>
+                        <label className="property-field email-extra-users">
+                          <span className="property-field__label">额外通知用户</span>
+                          <Select
+                            mode="multiple"
+                            showSearch
+                            allowClear
+                            optionFilterProp="label"
+                            maxTagCount="responsive"
+                            placeholder="按姓名或邮箱选择用户"
+                            value={selectedEmailNotification.extraUserIds}
+                            options={extraEmailUserOptions}
+                            onChange={(extraUserIds) => updateSelectedEmailNotification({ extraUserIds })}
+                          />
+                          <Text type="secondary" className="property-field__help">邮件发送到用户资料中维护的邮箱；停用或无邮箱用户不可新增。</Text>
+                        </label>
+                        {!selectedEmailNotification.notifyReviewers
+                          && !selectedEmailNotification.notifyInitiator
+                          && !selectedEmailNotification.extraUserIds.length ? (
+                            <Alert type="warning" showIcon message="请至少选择一类邮件收件人" />
+                          ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
 
               <div className="property-form__footer">
                 <Button danger icon={<DeleteOutlined />} onClick={deleteSelectedNode}>
@@ -1218,9 +1581,14 @@ export const FlowDesignerPage = () => {
   const editableFieldOptions = useMemo<EditableFieldOption[]>(() => {
     const fields = version?.snapshot.form.fields ?? [];
     return fields.flatMap((field) => field.type === "table"
-      ? (field.columns ?? []).filter((column) => column.reviewEditable).map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }))
+      ? field.inputStage === "reviewer"
+        ? [{ value: field.id, label: `${field.label}（整表）` }]
+        : (field.columns ?? []).filter((column) => column.reviewEditable).map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }))
       : field.reviewEditable ? [{ value: field.id, label: field.label }] : []);
   }, [version?.snapshot.form.fields]);
+  const conditionFieldOptions = useMemo<ConditionFieldOption[]>(() => (version?.snapshot.form.fields ?? [])
+    .filter((field: StoredDesignerField) => !["attachment", "table", "richtext"].includes(field.type))
+    .map((field) => ({ value: field.id, label: field.label, type: field.type, options: field.options, inputStage: field.inputStage ?? "initiator", required: field.required })), [version?.snapshot.form.fields]);
   const starterGroups = version?.basic.starterGroups ?? [];
   const fallbackMeta = useMemo<FlowMeta>(
     () => ({
@@ -1251,6 +1619,14 @@ export const FlowDesignerPage = () => {
             permissionGroups: node.data?.permissionGroups,
             specifyAssignee: node.data?.specifyAssignee,
             editableFields: node.data?.editableFields ?? [],
+            handlingMode: (node.data?.kind ?? "approval") === "approval" ? node.data?.handlingMode ?? "approval" : node.data?.handlingMode,
+            allowRepeatedEditing: (node.data?.kind ?? "approval") === "approval"
+              ? Boolean(node.data?.allowRepeatedEditing && node.data?.editableFields?.length)
+              : false,
+            activationCondition: node.data?.activationCondition,
+            emailNotification: (node.data?.kind ?? "approval") === "approval" || node.data?.kind === "end"
+              ? normalizeEmailNotification(node.data?.kind ?? "approval", node.data?.emailNotification)
+              : undefined,
           },
         })),
         edges: stored.edges.map((edge, index) => ({ id: edge.id ?? `edge-${index}`, source: edge.source, target: edge.target, ...edgeDefaults })),
@@ -1312,6 +1688,7 @@ export const FlowDesignerPage = () => {
         definitionId={definitionId}
         versionId={versionId}
         editableFieldOptions={editableFieldOptions}
+        conditionFieldOptions={conditionFieldOptions}
         starterGroups={starterGroups}
       />
     </ReactFlowProvider>

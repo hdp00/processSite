@@ -30,6 +30,7 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { flowPilotApi } from "../api/flowPilotApi";
 import { ROLE_PERMISSIONS_CHANGED_EVENT, canPersonaAccessLaunch, hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
@@ -59,17 +60,13 @@ export function AppShell() {
   const {
     personaId,
     switchPersona,
-    logout,
-    resetDemo,
   } = usePrototypeStore();
 
   const identityUser = useIdentityStore((state) => state.users.find((user) => user.id === personaId));
-  const resetIdentity = useIdentityStore((state) => state.resetIdentity);
   const persona = identityUser
     ? { id: identityUser.id, name: identityUser.name, role: identityUser.roles.join("、") || identityUser.jobTitle }
     : personas.find((item) => item.id === personaId) ?? personas[2];
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
-  const resetProcessDefinitions = useProcessDefinitionStore((state) => state.resetDefinitions);
   const canInitiate = canPersonaAccessLaunch(personaId);
   const can = (permission: string) => hasPersonaPermission(personaId, permission);
   useEffect(() => {
@@ -166,9 +163,7 @@ export function AppShell() {
       icon: <ReloadOutlined />,
       label: "重置演示数据",
       onClick: () => {
-        resetDemo();
-        resetProcessDefinitions();
-        resetIdentity();
+        void flowPilotApi.system.resetDemo();
       },
     },
     { type: "divider" },
@@ -177,8 +172,7 @@ export function AppShell() {
       icon: <LogoutOutlined />,
       label: "退出登录",
       onClick: () => {
-        logout();
-        navigate("/login");
+        void flowPilotApi.auth.logout().finally(() => navigate("/login"));
       },
     },
   ];

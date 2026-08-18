@@ -1483,7 +1483,8 @@ button {
   background: #fff;
 }
 
-.branch-card.status-已通过 {
+.branch-card.status-已通过,
+.branch-card.status-已确认 {
   border-color: #bfe2d8;
   background: #fbfffd;
 }
@@ -1509,7 +1510,8 @@ button {
   color: #6f7a90;
 }
 
-.status-已通过 .branch-icon { color: #14866d; }
+.status-已通过 .branch-icon,
+.status-已确认 .branch-icon { color: #14866d; }
 .status-已驳回 .branch-icon { color: #d94b4b; }
 
 .branch-card > strong {
@@ -2092,12 +2094,13 @@ button {
   white-space: pre-wrap;
 }
 
-.print-review-table th:nth-child(1) { width: 72px; }
-.print-review-table th:nth-child(2) { width: 130px; }
-.print-review-table th:nth-child(3),
-.print-review-table th:nth-child(4) { width: 72px; }
+.print-review-table th:nth-child(1) { width: 68px; }
+.print-review-table th:nth-child(2) { width: 48px; }
+.print-review-table th:nth-child(3) { width: 116px; }
+.print-review-table th:nth-child(4),
 .print-review-table th:nth-child(5) { width: 66px; }
-.print-review-table th:nth-child(6) { width: 88px; }
+.print-review-table th:nth-child(6) { width: 62px; }
+.print-review-table th:nth-child(7) { width: 84px; }
 
 .print-file-row {
   display: flex;

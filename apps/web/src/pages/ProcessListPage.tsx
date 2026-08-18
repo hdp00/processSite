@@ -2,6 +2,7 @@ import {
   CopyOutlined,
   DownOutlined,
   EyeOutlined,
+  ExportOutlined,
   FilterOutlined,
   PrinterOutlined,
   PlusOutlined,
@@ -10,6 +11,7 @@ import {
 } from "@ant-design/icons";
 import {
   Alert,
+  App,
   Button,
   Card,
   Col,
@@ -24,7 +26,6 @@ import {
   Tag,
   Tooltip,
   Typography,
-  message,
   type TableProps,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -36,9 +37,12 @@ import { usePrototypeStore } from "../state/usePrototypeStore";
 import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canPersonaLaunchDefinition, hasPersonaPermission } from "../state/rolePermissions";
 import { canUserViewInstance } from "../state/workflowAccess";
+import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
 import { PROCESS_TITLE_FIELD_ID, type StoredDesignerField } from "../utils/designerStorage";
+import { downloadProcessListExcel, processExportColumnCount } from "../utils/processExcelExport";
 
 export function ProcessListPage() {
+  const { message: messageApi } = App.useApp();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
@@ -52,10 +56,12 @@ export function ProcessListPage() {
   const [form] = Form.useForm();
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<InstanceStatus>();
+  const [dateRange, setDateRange] = useState(createDefaultDateRange);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedValues, setAdvancedValues] = useState<Record<string, string>>({});
   const [copySource, setCopySource] = useState<ProcessInstance | null>(null);
   const [copyTitle, setCopyTitle] = useState("");
+  const [exporting, setExporting] = useState(false);
   const canCopyCompleted = hasPersonaPermission(personaId, "work-list:复制新建")
     && canPersonaLaunchDefinition(personaId, definition.id);
   const canPrint = hasPersonaPermission(personaId, "work-list:打印");
@@ -75,6 +81,7 @@ export function ProcessListPage() {
   useEffect(() => {
     setKeyword("");
     setStatus(undefined);
+    setDateRange(createDefaultDateRange());
     setAdvancedOpen(false);
     setAdvancedValues({});
     form.resetFields();
@@ -95,18 +102,21 @@ export function ProcessListPage() {
         });
         return matchesKeyword
           && (!status || item.status === status)
+          && isDateTimeInRange(item.createdAt, dateRange)
           && item.definitionId === definition.id
           && canUserViewInstance(personaId, item)
           && matchesAdvanced;
       }),
-    [advancedValues, definition.id, instances, keyword, personaId, queryFields, status],
+    [advancedValues, dateRange, definition.id, instances, keyword, personaId, queryFields, status],
   );
 
   const fieldValue = (record: ProcessInstance, field: StoredDesignerField) => {
-    const value = record.formValues?.[field.id];
-    if (Array.isArray(value)) return value.join("、") || "—";
+    const raw = record.formValues?.[field.id];
+    const value = raw === undefined || raw === null || raw === "" ? field.defaultValue ?? raw : raw;
+    const emptyText = field.inputStage === "reviewer" ? "" : "—";
+    if (Array.isArray(value)) return value.join("、") || emptyText;
     if (value && typeof value === "object") return "已填写";
-    return value === undefined || value === null || value === "" ? "—" : String(value);
+    return value === undefined || value === null || value === "" ? emptyText : String(value);
   };
 
   const dynamicColumns: TableProps<ProcessInstance>["columns"] = listFields.map((field) => ({
@@ -227,8 +237,41 @@ export function ProcessListPage() {
   const reset = () => {
     setKeyword("");
     setStatus(undefined);
+    setDateRange(createDefaultDateRange());
     form.resetFields();
     setAdvancedValues({});
+  };
+
+  const exportCurrentQuery = async () => {
+    if (!filtered.length) {
+      messageApi.warning("当前查询没有可导出的数据");
+      return;
+    }
+    const formFields = currentVersion?.snapshot.form.fields ?? [];
+    if (!processExportColumnCount(systemListFields, formFields)) {
+      messageApi.warning("当前流程尚未配置导出字段");
+      return;
+    }
+
+    setExporting(true);
+    const hideLoading = messageApi.loading("正在生成 Excel，请稍候…", 0);
+    let exportFailed = false;
+    try {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+      downloadProcessListExcel({
+        definitionName: definition.label,
+        systemFields: systemListFields,
+        formFields,
+        instances: filtered,
+      });
+    } catch {
+      exportFailed = true;
+    } finally {
+      hideLoading();
+      setExporting(false);
+    }
+    if (exportFailed) messageApi.error("Excel 导出失败，请稍后重试");
+    else messageApi.success(`已导出当前查询范围内的 ${filtered.length} 条记录`);
   };
 
   return (
@@ -254,7 +297,14 @@ export function ProcessListPage() {
             </Col>
             <Col flex="280px">
               <Form.Item label="发起时间">
-                <DatePicker.RangePicker style={{ width: "100%" }} />
+                <DatePicker.RangePicker
+                  allowClear={false}
+                  value={dateRange}
+                  style={{ width: "100%" }}
+                  onChange={(value) => {
+                    if (value?.[0] && value[1]) setDateRange(normalizeDayRange([value[0], value[1]]));
+                  }}
+                />
               </Form.Item>
             </Col>
             <Col flex="210px">
@@ -309,6 +359,7 @@ export function ProcessListPage() {
           <div><strong>流程实例</strong><Tag bordered={false}>{filtered.length} 条</Tag></div>
           <Space>
             <Typography.Text type="secondary">{definition.label} · 包含当前用户可见的全部历史版本实例</Typography.Text>
+            <Button icon={<ExportOutlined />} loading={exporting} onClick={() => void exportCurrentQuery()}>导出 Excel</Button>
             {isFreeFlow && canPersonaLaunchDefinition(personaId, definition.id) && <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate(`/launch/${definition.id}`)}>新建事项</Button>}
           </Space>
         </div>
@@ -330,16 +381,16 @@ export function ProcessListPage() {
         onCancel={() => setCopySource(null)}
         onOk={() => {
           if (!copySource || !copyTitle.trim()) {
-            message.warning("请输入新流程标题");
+            messageApi.warning("请输入新流程标题");
             return;
           }
           const createdId = copyCompletedInstance(copySource.id, copyTitle);
           if (!createdId) {
-            message.error("复制失败，请确认流程状态和发布权限");
+            messageApi.error("复制失败，请确认流程状态和发布权限");
             return;
           }
           setCopySource(null);
-          message.success("新流程已创建，当前尚无人审核，可以继续修改");
+          messageApi.success("新流程已创建，当前尚无人审核，可以继续修改");
           navigate(`/processes/${createdId}`);
         }}
       >

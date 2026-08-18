@@ -115,11 +115,13 @@ interface DesignerField {
   defaultValue: string | string[];
   listVisible: boolean;
   queryable: boolean;
+  exportVisible?: boolean;
   taskVisible?: boolean;
   taskDisplayName?: string;
   taskOrder?: number;
   taskWidth?: number;
   reviewEditable: boolean;
+  inputStage: "initiator" | "reviewer";
   options?: string[];
   attachment?: AttachmentConfig;
   columns?: TableColumnConfig[];
@@ -172,6 +174,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     taskOrder: 1,
     taskWidth: 240,
     reviewEditable: false,
+    inputStage: "initiator",
   },
   {
     id: "field-document-code",
@@ -188,6 +191,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     taskOrder: 2,
     taskWidth: 150,
     reviewEditable: false,
+    inputStage: "initiator",
   },
   {
     id: "field-category",
@@ -204,6 +208,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     taskOrder: 3,
     taskWidth: 180,
     reviewEditable: false,
+    inputStage: "initiator",
     options: ["质量体系/作业指导书", "质量体系/检验规范", "研发体系/设计规范", "生产体系/工艺文件"],
   },
   {
@@ -217,6 +222,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     listVisible: true,
     queryable: true,
     reviewEditable: true,
+    inputStage: "initiator",
     options: ["受控文件", "内部文件", "公开文件"],
   },
   {
@@ -230,6 +236,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     listVisible: false,
     queryable: true,
     reviewEditable: true,
+    inputStage: "initiator",
     options: ["研发中心", "质量中心", "生产中心", "供应链中心"],
   },
   {
@@ -243,6 +250,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     listVisible: true,
     queryable: true,
     reviewEditable: false,
+    inputStage: "initiator",
     options: ["首次发布", "局部修订", "全面修订"],
   },
   {
@@ -256,6 +264,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     listVisible: false,
     queryable: false,
     reviewEditable: true,
+    inputStage: "initiator",
   },
   {
     id: "field-review-checklist",
@@ -268,6 +277,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     listVisible: false,
     queryable: false,
     reviewEditable: true,
+    inputStage: "initiator",
     columns: [
       {
         id: "col-item",
@@ -325,7 +335,8 @@ const INITIAL_FIELDS: DesignerField[] = [
     listVisible: false,
     queryable: false,
     reviewEditable: false,
-    attachment: { maxSizeMb: 100, maxCount: 20, inlinePdf: true },
+    inputStage: "initiator",
+    attachment: { maxSizeMb: 100, maxCount: 1, inlinePdf: true },
   },
 ];
 
@@ -345,6 +356,7 @@ const createField = (type: FieldType): DesignerField => {
     taskOrder: 1,
     taskWidth: 150,
     reviewEditable: false,
+    inputStage: "initiator",
   };
 
   if (["select", "radio", "checkbox"].includes(type)) {
@@ -355,7 +367,7 @@ const createField = (type: FieldType): DesignerField => {
     base.defaultValue = [];
   }
   if (type === "attachment") {
-    base.attachment = { maxSizeMb: 100, maxCount: 20, inlinePdf: true };
+    base.attachment = { maxSizeMb: 100, maxCount: 1, inlinePdf: true };
   }
   if (type === "table") {
     base.reviewEditable = true;
@@ -516,20 +528,23 @@ const FieldControl = ({ field, interactive = false }: { field: DesignerField; in
     );
   }
   if (field.type === "attachment") {
+    const inlinePdf = field.attachment?.inlinePdf ?? true;
+    const effectiveMaxCount = inlinePdf ? 1 : field.attachment?.maxCount ?? 20;
     return (
       <Upload.Dragger
         accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
         beforeUpload={() => false}
         disabled={!interactive}
-        maxCount={field.attachment?.maxCount ?? 20}
-        multiple
+        maxCount={effectiveMaxCount}
+        multiple={!inlinePdf}
         showUploadList={false}
         className="fd-upload"
       >
         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
         <p className="ant-upload-text">{field.placeholder || "拖拽或点击上传附件"}</p>
         <p className="ant-upload-hint">
-          单个不超过 {field.attachment?.maxSizeMb ?? 100} MB，最多 {field.attachment?.maxCount ?? 20} 个
+          单个不超过 {field.attachment?.maxSizeMb ?? 100} MB，最多 {effectiveMaxCount} 个
+          {inlinePdf ? "；继续上传将替换原文件" : ""}
         </p>
         {field.defaultValue ? <Tag icon={<FilePdfOutlined />} color="red">{String(field.defaultValue)}</Tag> : null}
       </Upload.Dragger>
@@ -602,6 +617,7 @@ const SortableField = ({ field, selected, locked, onSelect, onDelete }: Sortable
           </Tooltip>
           <Tag bordered={false} icon={typeIcon[field.type]}>{typeLabel[field.type]}</Tag>
           {locked ? <Tag bordered={false} color="gold">固定字段</Tag> : null}
+          {field.inputStage === "reviewer" ? <Tag variant="filled" color="purple">审核人填写</Tag> : null}
           {field.reviewEditable ? <Tag bordered={false} color="blue">审核可改</Tag> : null}
         </Space>
         {locked ? (
@@ -641,7 +657,15 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   const workflowName = version?.basic.name ?? definition?.name ?? "流程";
   const [messageApi, messageHolder] = message.useMessage();
   const fallbackFields = useMemo(
-    () => ensureProcessTitleField(version?.snapshot.form.fields) as DesignerField[],
+    () => ensureProcessTitleField(version?.snapshot.form.fields).map((field) => ({
+      ...field,
+      inputStage: field.id === PROCESS_TITLE_FIELD_ID ? "initiator" : field.inputStage ?? "initiator",
+      attachment: field.type === "attachment" ? {
+        maxSizeMb: field.attachment?.maxSizeMb ?? 100,
+        maxCount: (field.attachment?.inlinePdf ?? true) ? 1 : field.attachment?.maxCount ?? 20,
+        inlinePdf: field.attachment?.inlinePdf ?? true,
+      } : field.attachment,
+    })) as DesignerField[],
     [version],
   );
   const initialDraft = useMemo(
@@ -657,7 +681,11 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   const [propertyMode, setPropertyMode] = useState<"field" | "system">("field");
   const [systemListFields, setSystemListFields] = useState<SystemListFieldConfig[]>(() =>
     structuredClone(version?.snapshot.systemFields ?? cloneDefaultSystemListFields())
-      .filter((field) => String(field.key) !== "title"),
+      .filter((field) => String(field.key) !== "title")
+      .map((field) => ({
+        ...field,
+        exportVisible: field.exportVisible ?? field.processListVisible,
+      })),
   );
   const [saveState, setSaveState] = useState<"dirty" | "saved">("saved");
   const skipDirtyEffect = useRef(true);
@@ -681,7 +709,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
 
   const updateSystemListField = (
     key: SystemListFieldConfig["key"],
-    patch: Partial<Pick<SystemListFieldConfig, "taskVisible" | "processListVisible">>,
+    patch: Partial<Pick<SystemListFieldConfig, "taskVisible" | "processListVisible" | "exportVisible">>,
   ) => {
     setSystemListFields((current) =>
       current.map((field) => (field.key === key ? { ...field, ...patch } : field)),
@@ -1045,10 +1073,11 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                       </Form.Item>
                       <Form.Item label="最多文件数">
                         <InputNumber
+                          disabled={selectedField.attachment?.inlinePdf ?? true}
                           min={1}
                           max={20}
                           addonAfter="个"
-                          value={selectedField.attachment?.maxCount ?? 20}
+                          value={(selectedField.attachment?.inlinePdf ?? true) ? 1 : selectedField.attachment?.maxCount ?? 20}
                           onChange={(value) => updateField({
                             attachment: { ...selectedField.attachment!, maxCount: value ?? 20 },
                           })}
@@ -1062,14 +1091,22 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                       </div>
                       <Switch
                         checked={selectedField.attachment?.inlinePdf ?? true}
-                        onChange={(checked) => updateField({ attachment: { ...selectedField.attachment!, inlinePdf: checked } })}
+                        onChange={(checked) => updateField({
+                          attachment: {
+                            maxSizeMb: selectedField.attachment?.maxSizeMb ?? 100,
+                            maxCount: checked ? 1 : selectedField.attachment?.maxCount ?? 20,
+                            inlinePdf: checked,
+                          },
+                        })}
                       />
                     </div>
                     <Alert
                       type="warning"
                       showIcon
-                      message="安全限制"
-                      description="可上传任意业务附件；系统默认阻止可执行文件和脚本类型。"
+                      message={(selectedField.attachment?.inlinePdf ?? true) ? "PDF 单文件替换规则" : "安全限制"}
+                      description={(selectedField.attachment?.inlinePdf ?? true)
+                        ? "开启内嵌展示后固定只保留 1 个文件；继续上传会删除原文件并保留新文件。"
+                        : "可上传任意业务附件；系统默认阻止可执行文件和脚本类型。"}
                     />
                   </div>
                 ) : null}
@@ -1183,8 +1220,27 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
 
                 <div className="fd-property-section">
                   <div className="fd-property-section__title">权限与展示</div>
+                  <Form.Item label="填写阶段">
+                    <Segmented
+                      block
+                      disabled={isTitleField || definition?.type === "free"}
+                      value={selectedField.inputStage}
+                      options={[{ label: "发起人填写", value: "initiator" }, { label: "审核人填写", value: "reviewer" }]}
+                      onChange={(inputStage) => updateField({
+                        inputStage: inputStage as DesignerField["inputStage"],
+                        reviewEditable: inputStage === "reviewer" ? true : selectedField.reviewEditable,
+                      })}
+                    />
+                    <Text type="secondary">
+                      {definition?.type === "free"
+                        ? "自由流程的初始表单由发起人填写。"
+                        : selectedField.inputStage === "reviewer"
+                          ? "发起页面不显示此字段；流程创建后按设计位置显示，由授权审批节点填写。"
+                          : "发起人创建流程时填写。"}
+                    </Text>
+                  </Form.Item>
                   <div className="fd-switch-row">
-                    <div><Text strong>必填项</Text><Text type="secondary">发起时必须填写</Text></div>
+                    <div><Text strong>必填项</Text><Text type="secondary">{selectedField.inputStage === "reviewer" ? "负责此字段的审批节点提交时必须填写" : "发起时必须填写"}</Text></div>
                     <Switch disabled={isTitleField} checked={isTitleField || selectedField.required} onChange={(checked) => updateField({ required: checked })} />
                   </div>
                   <div className="fd-switch-row">
@@ -1194,6 +1250,10 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                   <div className="fd-switch-row">
                     <div><Text strong>作为查询条件</Text><Text type="secondary">用于“流程清单”筛选</Text></div>
                     <Switch disabled={selectedField.type === "richtext"} checked={selectedField.queryable} onChange={(checked) => updateField({ queryable: checked })} />
+                  </div>
+                  <div className="fd-switch-row">
+                    <div><Text strong>导出到 Excel</Text><Text type="secondary">作为流程清单导出文件中的字段</Text></div>
+                    <Switch checked={selectedField.exportVisible ?? selectedField.listVisible} onChange={(checked) => updateField({ exportVisible: checked })} />
                   </div>
                   <div className="fd-switch-row">
                     <div><Text strong>在任务中心显示</Text><Text type="secondary">作为待办的流程关键信息</Text></div>
@@ -1233,7 +1293,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                   )}
                   <div className="fd-switch-row">
                     <div><Text strong>允许审核人修改</Text><Text type="secondary">具体权限在审批节点中设置</Text></div>
-                    <Switch disabled={selectedField.type === "richtext"} checked={selectedField.reviewEditable} onChange={(checked) => updateField({ reviewEditable: checked })} />
+                    <Switch disabled={selectedField.type === "richtext" || selectedField.inputStage === "reviewer"} checked={selectedField.reviewEditable} onChange={(checked) => updateField({ reviewEditable: checked })} />
                   </div>
                 </div>
               </Form>
@@ -1245,7 +1305,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                   type="info"
                   showIcon
                   message="系统字段展示"
-                  description="分别控制系统自动生成的信息在任务中心和流程清单中的显示。配置跟随流程版本保存。"
+                  description="分别控制系统自动生成的信息在任务中心、流程清单和 Excel 导出中的使用。配置跟随流程版本保存。"
                 />
                 <div className="fd-system-field-list">
                   {systemListFields.map((field) => (
@@ -1270,6 +1330,14 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                             size="small"
                             checked={field.processListVisible}
                             onChange={(processListVisible) => updateSystemListField(field.key, { processListVisible })}
+                          />
+                        </label>
+                        <label>
+                          <span>Excel 导出</span>
+                          <Switch
+                            size="small"
+                            checked={field.exportVisible ?? field.processListVisible}
+                            onChange={(exportVisible) => updateSystemListField(field.key, { exportVisible })}
                           />
                         </label>
                       </div>

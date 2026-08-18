@@ -130,10 +130,12 @@ export function TaskCenterPage() {
   });
 
   const formatTaskFieldValue = (record: ProcessInstance, field: StoredDesignerField) => {
-    const value = record.formValues?.[field.id];
-    if (Array.isArray(value)) return value.join("、") || "—";
+    const raw = record.formValues?.[field.id];
+    const value = raw === undefined || raw === null || raw === "" ? field.defaultValue ?? raw : raw;
+    const emptyText = field.inputStage === "reviewer" ? "" : "—";
+    if (Array.isArray(value)) return value.join("、") || emptyText;
     if (typeof value === "object" && value !== null) return "已填写";
-    if (value === undefined || value === null || value === "") return "—";
+    if (value === undefined || value === null || value === "") return emptyText;
     return String(value);
   };
 
@@ -194,6 +196,14 @@ export function TaskCenterPage() {
         )}
       </div>
     );
+  };
+
+  const approvalTaskActionLabel = (record: ProcessInstance) => {
+    const task = actionableTaskByInstance.get(record.id);
+    const definition = definitions.find((item) => item.id === record.definitionId);
+    const version = definition?.versions.find((item) => item.id === record.versionId);
+    const node = version?.snapshot.flow.nodes.find((item) => item.id === task?.nodeId);
+    return node?.data?.handlingMode === "confirmation" ? "进入确认" : "进入审核";
   };
 
   const columns: TableProps<ProcessInstance>["columns"] = [
@@ -278,17 +288,20 @@ export function TaskCenterPage() {
       fixed: "right",
       width: 76,
       align: "center",
-      render: (_, record) => (
-        <Tooltip title={record.workflowType === "free" ? "进入处理" : "进入审核"}>
+      render: (_, record) => {
+        const actionLabel = record.workflowType === "free" ? "进入处理" : approvalTaskActionLabel(record);
+        return (
+        <Tooltip title={actionLabel}>
           <Button
             className="task-action-button"
             type="text"
             icon={record.workflowType === "free" ? <MessageOutlined /> : <AuditOutlined />}
-            aria-label={`${record.workflowType === "free" ? "处理" : "审核"}：${record.title}`}
+            aria-label={`${actionLabel}：${record.title}`}
             onClick={() => navigate(`/processes/${record.id}`)}
           />
         </Tooltip>
-      ),
+        );
+      },
     },
   ];
 

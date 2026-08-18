@@ -163,9 +163,11 @@ function DynamicFieldControl({
   if (field.type === "radio") return <Radio.Group value={value} options={options} onChange={(event) => onChange?.(event.target.value)} />;
   if (field.type === "checkbox") return <Checkbox.Group value={Array.isArray(value) ? value as string[] : []} options={options} onChange={onChange} />;
   if (field.type === "attachment") {
+    const inlinePdf = field.attachment?.inlinePdf ?? false;
+    const maxCount = inlinePdf ? 1 : field.attachment?.maxCount ?? 20;
     const uploadProps: UploadProps = {
-      multiple: (field.attachment?.maxCount ?? 20) > 1,
-      maxCount: field.attachment?.maxCount ?? 20,
+      multiple: !inlinePdf && maxCount > 1,
+      maxCount,
       beforeUpload: (file) => {
         const maxSize = field.attachment?.maxSizeMb ?? 100;
         if (file.size / 1024 / 1024 > maxSize) {
@@ -176,10 +178,14 @@ function DynamicFieldControl({
       },
     };
     return (
-      <Upload.Dragger {...uploadProps} fileList={Array.isArray(value) ? value as UploadProps["fileList"] : []} onChange={onChange}>
+      <Upload.Dragger
+        {...uploadProps}
+        fileList={Array.isArray(value) ? value as UploadProps["fileList"] : []}
+        onChange={({ fileList }) => onChange?.(inlinePdf ? fileList.slice(-1) : fileList)}
+      >
         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-        <p className="ant-upload-text">点击或拖拽上传附件</p>
-        <p className="ant-upload-hint">最多 {field.attachment?.maxCount ?? 20} 个，单个不超过 {field.attachment?.maxSizeMb ?? 100} MB{field.attachment?.inlinePdf ? "；PDF 可在流程页面预览" : ""}</p>
+        <p className="ant-upload-text">{inlinePdf && Array.isArray(value) && value.length ? "点击或拖拽上传新文件并替换原文件" : "点击或拖拽上传附件"}</p>
+        <p className="ant-upload-hint">{inlinePdf ? "仅保留 1 个文件，继续上传将替换原文件" : `最多 ${maxCount} 个`}，单个不超过 {field.attachment?.maxSizeMb ?? 100} MB{inlinePdf ? "；PDF 可在流程页面预览" : ""}</p>
       </Upload.Dragger>
     );
   }
@@ -195,6 +201,7 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
   const formSnapshot = version.snapshot.form;
   const flowSnapshot = version.snapshot.flow;
   const fields = ensureProcessTitleField(formSnapshot.fields);
+  const initiatorFields = fields.filter((field) => (field.inputStage ?? "initiator") !== "reviewer");
   const approvalNodes = useMemo(
     () => flowSnapshot.nodes.filter((node) => node.data?.kind === "approval" && node.data.label),
     [flowSnapshot],
@@ -216,7 +223,7 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
     description: "离开后，当前填写的表单、附件和人员选择将丢失。",
   });
   const initialValues = useMemo(() => {
-    return Object.fromEntries(fields.map((field) => [
+    return Object.fromEntries(initiatorFields.map((field) => [
       field.id,
       field.type === "attachment"
         ? []
@@ -224,11 +231,16 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
           ? [createRow(field.columns ?? [])]
           : field.defaultValue ?? (field.type === "checkbox" ? [] : ""),
     ]));
-  }, [fields]);
+  }, [initiatorFields]);
 
   const runtimeValues = (values: DynamicFormValues) => Object.fromEntries(
-    Object.entries(values).map(([key, value]) => {
-      const field = fields.find((item) => item.id === key);
+    fields.map((field) => {
+      const key = field.id;
+      const value = (field.inputStage ?? "initiator") === "reviewer"
+        ? field.type === "table" || field.type === "attachment"
+          ? []
+          : field.defaultValue ?? (field.type === "checkbox" ? [] : "")
+        : values[key];
       if (field?.type === "attachment") {
         return [key, (value as Array<{ name?: string }> | undefined)?.map((file) => file.name).filter(Boolean) ?? []];
       }
@@ -297,7 +309,7 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
       allowNextNavigation();
       message.success(definition.type === "free"
         ? "事项已创建并生成首位受理人的待办"
-        : `流程已发起，${approvalNodes.length} 个审批节点已按发布版本生成待办`);
+        : "流程已提交，审批或确认节点已按条件和发布版本生成待办");
       navigate("/launch");
     }, 450);
   };
@@ -338,8 +350,11 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
               ]
             : [
                 { title: "填写并提交", description: version.basic.starterGroups.join("、") },
-                { title: "流程审批", description: approvalNodes.map((node) => node.data?.label).join(" / ") || "按当前拓扑" },
-                { title: "流程结束", description: "全部前置节点通过" },
+                {
+                  title: approvalNodes.length > 0 && approvalNodes.every((node) => node.data?.handlingMode === "confirmation") ? "流程确认" : "流程处理",
+                  description: approvalNodes.map((node) => `${node.data?.label}${node.data?.handlingMode === "confirmation" ? "（确认）" : "（审批）"}`).join(" / ") || "按当前拓扑",
+                },
+                { title: "流程结束", description: "全部前置节点通过或确认" },
               ]}
         />
       </Card>
@@ -355,20 +370,23 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
         <div className="process-start-layout">
           <main className="process-start-main">
             <Card className="form-card" title="初始表单" extra={<Typography.Text type="secondary">实例编号提交后由系统生成</Typography.Text>}>
-              {fields.length ? <div className="start-form-grid">{fields.map(renderField)}</div> : <Alert type="warning" showIcon message="当前发布版本没有可用的初始表单字段" />}
+              {initiatorFields.length ? <div className="start-form-grid">{initiatorFields.map(renderField)}</div> : <Alert type="warning" showIcon message="当前发布版本没有可由发起人填写的字段" />}
             </Card>
           </main>
 
           <aside className="process-start-aside">
             {definition.type === "approval" ? (
-              <Card className="approval-card start-reviewer-card" title="审批节点" extra={<TeamOutlined />}>
-                <Alert type="info" showIcon message={`将按当前版本创建 ${approvalNodes.length} 个审批节点`} description="指定人员仅是默认责任人，同一流程权限组的其他成员仍可代办。" />
+              <Card className="approval-card start-reviewer-card" title="审批与确认节点" extra={<TeamOutlined />}>
+                <Alert type="info" showIcon message={`将按当前版本创建 ${approvalNodes.length} 个处理节点`} description="指定人员仅是默认责任人，同一流程权限组的其他成员仍可代办。" />
                 <div className="start-reviewer-list">
                   {approvalNodes.map((node) => (
                     <div className="start-reviewer-item" key={node.id}>
                       <div className="start-reviewer-head">
                         <span><CheckCircleOutlined /><strong>{node.data?.label}</strong></span>
-                        <Tag bordered={false} color="blue">{node.data?.specifyAssignee ? "可指定人员" : "组内任一人"}</Tag>
+                        <Space size={4}>
+                          <Tag bordered={false} color={node.data?.handlingMode === "confirmation" ? "cyan" : "blue"}>{node.data?.handlingMode === "confirmation" ? "确认" : "审批"}</Tag>
+                          <Tag bordered={false}>{node.data?.specifyAssignee ? "可指定人员" : "组内任一人"}</Tag>
+                        </Space>
                       </div>
                       {node.data?.specifyAssignee && (
                         <Form.Item name={`reviewer-${node.id}`} rules={[{ required: true, message: `请选择${node.data.label}默认责任人` }]}>

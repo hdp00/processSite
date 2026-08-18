@@ -1,0 +1,136 @@
+# FlowPilot 前端 Mock REST API
+
+## 1. 定位
+
+当前仓库没有启动真实后端。开发和演示模式使用 MSW 2 在浏览器的 Service Worker 层拦截 `fetch`，因此页面仍通过标准 HTTP 语义访问 `/api/v1`，而不是直接调用 Mock handler 或 Zustand action。
+
+- 正式接口契约：[`flowpilot-rest-api.openapi.yaml`](./flowpilot-rest-api.openapi.yaml)
+- 类型化客户端：`apps/web/src/api/flowPilotApi.ts`
+- HTTP 客户端与错误解析：`apps/web/src/api/client.ts`
+- 浏览器 Mock 入口：`apps/web/src/mocks/browser.ts`
+- 领域 Handler：`apps/web/src/mocks/handlers`
+
+Mock 层是当前前端领域模型的兼容适配器；OpenAPI 是 NestJS 正式实现的目标契约。正式后端接入时，应逐域替换兼容 DTO，并以 OpenAPI 中的服务端校验、事务和并发约束为准。
+
+## 2. 运行方式
+
+```bash
+pnpm install
+pnpm dev
+```
+
+默认启用 Mock API。应用会先等待 Service Worker 启动，再渲染 React，避免首屏请求漏过拦截。
+
+如需连接真实后端，在 `apps/web/.env.local` 中配置：
+
+```dotenv
+VITE_API_MODE=remote
+VITE_API_BASE_URL=http://127.0.0.1:3000/api/v1
+```
+
+`VITE_API_MODE=remote` 会完全跳过 MSW。生产构建是否使用 Mock 由构建环境变量决定，不应把演示 Mock 当作生产后端。
+
+> MSW 是浏览器内的网络拦截层。直接在地址栏打开 `/api/v1/health`，或使用 `curl` 请求 Vite 地址，不会经过页面注册的 Service Worker；请从页面代码或集成测试发起 `fetch`。
+
+## 3. 调用约定
+
+```ts
+import { ApiError } from "./api/client";
+import { flowPilotApi } from "./api/flowPilotApi";
+
+try {
+  const session = await flowPilotApi.auth.login("lina", "1");
+  const tasks = await flowPilotApi.tasks.listMine({ view: "pending", page: 1, pageSize: 20 });
+  console.log(session.user.name, tasks.page.totalElements);
+} catch (error) {
+  if (error instanceof ApiError) {
+    console.error(error.problem.code, error.problem.detail, error.problem.traceId);
+  }
+}
+```
+
+客户端统一提供：
+
+- `/api/v1` 基础地址和查询参数编码；
+- `Authorization: Bearer mock:<userId>` 演示会话；
+- 15 秒默认超时和 `AbortSignal` 取消；
+- 写命令的 `Idempotency-Key`；
+- 基于 `ETag` / `If-Match` 的乐观并发；
+- JSON 请求、multipart 上传和 Blob 下载；
+- RFC Problem Details 风格错误解析。
+
+当前 Mock 兼容层的成功响应采用 `{ data, meta: { requestId, timestamp } }`；错误响应至少包含 `type`、`title`、`status`、`detail`、`instance`、`code` 和 `traceId`。字段校验错误附带 `errors[]`，并发错误可附带 `currentEtag`。
+
+## 4. API 范围
+
+| 领域 | 主要路径 | 已模拟能力 |
+| --- | --- | --- |
+| 健康与 Mock 控制 | `/health`、`/mock/settings`、`/mock/reset` | 健康检查、延迟/故障场景、定向重置演示数据 |
+| 会话 | `/auth/login`、`/auth/me`、`/auth/logout` | 密码校验、停用账号拦截、无密码用户 DTO |
+| 用户与组织 | `/users`、`/departments`、`/positions` | 分页、CRUD、启停、密码重置、ETag、审计 |
+| 角色与权限 | `/roles`、`/permissions` | 角色 CRUD、权限矩阵、变更影响预览 |
+| 流程权限组 | `/workflow-permission-groups` | CRUD、有效成员分页、变更影响预览 |
+| 流程定义与版本 | `/process-definitions` | 新建/复制、版本、分区设计器保存、校验、发布、取消发布、删除 |
+| 发起配置 | `/me/launchable-process-definitions`、`/process-definitions/{id}/launch-config` | 数据范围裁剪、锁定发布版本、候选人员解析 |
+| 流程实例 | `/process-instances` | 分页查询、创建、首审前修改、重新提交、关闭、复制新建 |
+| 审批任务 | `/me/workflow-tasks`、`/workflow-tasks/{id}` | 我的待办/可代办、审批/确认/驳回、重复字段修改 |
+| 自由协作 | `/process-instances/{id}/free-collaboration/*` | 回复、转交、编辑、异常改派、关闭、重新打开 |
+| 附件 | `/attachments`、`/process-instances/{id}/fields/{fieldId}/attachment` | multipart、大小/类型校验、权限下载、PDF 原子单文件替换 |
+| 邮件 Outbox | `/email-outbox` | 收件人解析、去重、发送结果、失败重试演示 |
+| Excel 导出 | `/exports/process-instances`、`/exports/{id}` | 当前查询全量导出任务、状态查询、文件下载 |
+| 操作审计 | `/audit-events` | 分页筛选、详情、关键写操作留痕 |
+
+完整路径、参数、DTO、响应码和示例以 OpenAPI 文件为准。
+
+## 5. 并发、权限和幂等
+
+- GET 单资源返回 `ETag`；要求乐观锁的写接口读取 `If-Match`，缺失或过期分别返回 428/412。
+- 创建、发布、审批、重试等命令使用 `Idempotency-Key`。同键同请求重放首次结果，同键不同请求返回 `IDEMPOTENCY_KEY_REUSED`。
+- 审批任务采用首个成功提交生效；确认节点拒绝驳回；重复修改只更新节点授权字段，不改变原审核结果。
+- Handler 从当前会话解析操作人，不接受请求体伪造操作人，并重新检查页面权限、动作权限和流程数据范围。
+- Mock 权限只用于交互演示和前端集成测试。代码、令牌与数据均在浏览器内，不能形成真实安全边界。
+
+正式后端必须按 OpenAPI 的事务策略，在同一数据库事务内提交实例状态、任务、字段差异、时间线、审计和 Outbox；不能依赖前端按顺序调用多个接口维持一致性。
+
+## 6. 延迟和故障场景
+
+可通过 `PATCH /api/v1/mock/settings` 设置全局场景，或用 `X-Mock-Scenario` 请求头、`?mockScenario=` 覆盖单次请求：
+
+| 场景 | 作用 |
+| --- | --- |
+| `normal` | 确定性短延迟，正常响应 |
+| `slow` | 放大读写延迟，用于检查 loading、重复点击和取消请求 |
+| `offline` | 模拟网络层失败 |
+| `server-error` | 返回 500 Problem Details |
+| `conflict` | 写操作返回 409 并发冲突 |
+| `mail-fail` | 邮件进入失败状态，可验证重试 |
+| `upload-fail` | 上传失败，不覆盖原 PDF 引用 |
+
+```ts
+await flowPilotApi.system.updateMockSettings({
+  scenario: "slow",
+  readDelayMs: 500,
+  writeDelayMs: 1200,
+});
+```
+
+自动化测试应在每条用例前把场景重置为 `normal`。
+
+## 7. 数据与副作用
+
+- 当前流程、身份和运行实例暂时复用带 schema 迁移的原型仓库；已迁移页面不应再直接调用同一领域 action。
+- 附件 Blob 与元数据写入 IndexedDB；PDF 替换在同一仓储事务中更新引用并清理旧文件。
+- Mock 审计、幂等记录、邮件 Outbox 与场景设置在浏览器持久化；重置接口只清理 FlowPilot 自己的 key。
+- 邮件只模拟 Outbox 状态，不连接 SMTP，也不会在浏览器关闭后后台发送。
+- Excel 在浏览器中生成；正式后端应改为异步任务和受权限保护的短期下载地址。
+
+## 8. 正式后端迁移清单
+
+1. 以 OpenAPI 生成 NestJS DTO/校验器或在 CI 中做契约校验。
+2. 保持 `/api/v1`、错误码、分页、ETag 与幂等语义，逐域替换 Mock 兼容 DTO。
+3. 将会话改为 HttpOnly/SameSite Cookie；移除 `mock:<userId>` Bearer 方案。
+4. 将领域命令迁移到 NestJS 服务和 SQLite/Drizzle 事务，建立外键与唯一约束。
+5. 将附件迁移到服务器文件目录，将邮件迁移到持久化 Outbox worker。
+6. 逐页切换到 `flowPilotApi`，最后设置 `VITE_API_MODE=remote` 并删除浏览器业务数据双写。
+7. 对 OpenAPI、领域服务、Handler、组件集成和关键 E2E 分层测试。
+
