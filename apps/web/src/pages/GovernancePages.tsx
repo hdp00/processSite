@@ -61,6 +61,7 @@ import {
   useIdentityStore,
   type DomainRole,
   type DomainUser,
+  type WorkflowGroupPurpose,
   type WorkflowPermissionGroup,
 } from "../state/useIdentityStore";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
@@ -945,7 +946,7 @@ export function PermissionManagementPage() {
   );
 }
 
-type GroupPurpose = "发起" | "审批" | "自由流程受理";
+type GroupPurpose = WorkflowGroupPurpose;
 type GroupRecord = WorkflowPermissionGroup;
 function effectiveMembers(group: Pick<GroupRecord, "directMembers" | "linkedRoles">) {
   const users = useIdentityStore.getState().users;
@@ -979,11 +980,11 @@ export function WorkflowPermissionGroupsPage() {
   const filtered = groups.filter((group) => `${group.name}${group.id}`.toLowerCase().includes(keyword.toLowerCase()) && (!process || group.processes.includes(process)) && (!status || group.status === status));
   const derived = effectiveMembers({ directMembers, linkedRoles });
   const visibleDerived = derived.filter((name) => name.toLowerCase().includes(effectiveMemberKeyword.trim().toLowerCase()));
-  const openEditor = (record: GroupRecord | "new") => { setEditor(record); setEditorDirty(false); setEffectiveMemberKeyword(""); const values = record === "new" ? { name: "", purposes: ["审批"] as GroupPurpose[], status: true, directMembers: [], linkedRoles: [] } : { ...record, status: record.status === "启用" }; setDirectMembers(values.directMembers); setLinkedRoles(values.linkedRoles); form.setFieldsValue(values); };
+  const openEditor = (record: GroupRecord | "new") => { setEditor(record); setEditorDirty(false); setEffectiveMemberKeyword(""); const values = record === "new" ? { name: "", purposes: ["审批/受理"] as GroupPurpose[], status: true, directMembers: [], linkedRoles: [] } : { ...record, status: record.status === "启用" }; setDirectMembers(values.directMembers); setLinkedRoles(values.linkedRoles); form.setFieldsValue(values); };
   const columns: TableProps<GroupRecord>["columns"] = [
     { title: "流程权限组", dataIndex: "name", width: 260, fixed: "left", render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.code}</small></div> },
     { title: "已引用流程", dataIndex: "processes", width: 240, render: (values: string[]) => values.length ? <Space size={[4, 4]} wrap>{values.map((value) => <Tag key={value} bordered={false}>{value}</Tag>)}</Space> : <Typography.Text type="secondary">暂未关联流程</Typography.Text> },
-    { title: "允许用途", dataIndex: "purposes", width: 220, render: (values: GroupPurpose[]) => <Space size={[4, 4]} wrap>{values.map((value) => <Tag key={value} color={value === "发起" ? "cyan" : value === "审批" ? "blue" : "purple"}>{value}</Tag>)}</Space> },
+    { title: "允许用途", dataIndex: "purposes", width: 220, render: (values: GroupPurpose[]) => <Space size={[4, 4]} wrap>{values.map((value) => <Tag key={value} color={value === "发起" ? "cyan" : value === "审批/受理" ? "blue" : "volcano"}>{value}</Tag>)}</Space> },
     { title: "成员构成", key: "composition", width: 220, render: (_, record) => <div className="gov-composition"><span><UserOutlined /> 直接 {record.directMembers.length}</span><span><TeamOutlined /> 角色 {record.linkedRoles.length}</span></div> },
     { title: "有效成员", key: "effective", width: 112, render: (_, record) => <Button className="gov-count-link" type="link" onClick={() => setPreview(record)}>{effectiveMembers(record).length} 人</Button> },
     { title: "状态", dataIndex: "status", width: 118, align: "center", render: (value: EnableStatus) => <StatusTag status={value} /> },
@@ -1009,7 +1010,7 @@ export function WorkflowPermissionGroupsPage() {
             <div className="gov-section-title"><span><SafetyCertificateOutlined />允许用途</span></div>
             <Typography.Paragraph type="secondary">可同时选择多个用途；流程设计器会根据当前位置筛选符合用途的权限组。</Typography.Paragraph>
             <Form.Item name="purposes" rules={[{ required: true, message: "请至少选择一种用途" }]}>
-              <Checkbox.Group className="gov-purpose-checkboxes" options={["发起", "审批", "自由流程受理"].map((value) => ({ label: value, value }))} />
+              <Checkbox.Group className="gov-purpose-checkboxes" options={(["发起", "审批/受理", "关闭"] satisfies GroupPurpose[]).map((value) => ({ label: value, value }))} />
             </Form.Item>
           </div>
           <div className="gov-group-editor-section"><div className="gov-section-title"><span><UserOutlined />直接成员</span><Tag>{directMembers.length} 人</Tag></div><Typography.Paragraph type="secondary">逐个加入的固定人员，不依赖其系统角色。</Typography.Paragraph><Form.Item name="directMembers"><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={identityUsers.filter((user) => !user.builtIn && user.status === "启用").map((user) => ({ value: user.name, label: `${user.name} · ${user.departmentPath}` }))} onChange={(values) => { setEditorDirty(true); setDirectMembers(values); }} /></Form.Item></div>

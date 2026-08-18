@@ -25,6 +25,7 @@ export interface ProcessBasicConfig {
   type: DefinitionType;
   description: string;
   starterGroups: string[];
+  closeGroups: string[];
   assigneeGroups?: string[];
   visibleRoles: string[];
   visibleUsers: string[];
@@ -112,6 +113,7 @@ const emptySnapshot = (): CompleteDesignerSnapshot => ({
 const cloneBasic = (config: ProcessBasicConfig): ProcessBasicConfig => ({
   ...config,
   starterGroups: [...config.starterGroups],
+  closeGroups: [...config.closeGroups],
   assigneeGroups: config.assigneeGroups ? [...config.assigneeGroups] : undefined,
   visibleRoles: [...config.visibleRoles],
   visibleUsers: [...config.visibleUsers],
@@ -122,6 +124,7 @@ const validateSnapshot = (type: DefinitionType, basic: ProcessBasicConfig, snaps
   if (!basic.name.trim()) issues.push("流程名称不能为空");
   if (!basic.instancePrefix.trim()) issues.push("实例编号前缀未配置");
   if (!basic.starterGroups.length) issues.push("至少选择一个发起流程权限组");
+  if (!basic.closeGroups.length) issues.push("至少选择一个关闭流程权限组");
   const titleField = snapshot.form.fields.find((field) => field.id === PROCESS_TITLE_FIELD_ID);
   if (!titleField || titleField.type !== "text") issues.push("初始表单必须包含系统固定的标题文本框");
   if (titleField?.inputStage === "reviewer") issues.push("标题必须由发起人填写");
@@ -193,6 +196,7 @@ const basic = (name: string, code: string, type: DefinitionType, description: st
   type,
   description,
   starterGroups,
+  closeGroups: [],
   visibleRoles: [],
   visibleUsers: [],
   ...extra,
@@ -210,10 +214,10 @@ const seedSnapshot = (id: string, config: ProcessBasicConfig, fieldCount: number
 
 const publishedSeed = (id: string, label: string, publishedAt: string, createdBy: string, changeNote: string, instanceCount: number, config: ProcessBasicConfig, snapshot: CompleteDesignerSnapshot): ProcessVersion => buildVersion(id, label, config, snapshot, { createdAt: publishedAt, createdBy, updatedAt: publishedAt, updatedBy: createdBy, firstPublishedAt: publishedAt, firstPublishedBy: createdBy, publishedAt, changeNote, instanceCount });
 
-const pdfBasic = basic("PDF 文件审核", "PROC-PDF-001", "approval", "受控 PDF 文件由研发、质量、生产并行审核。", ["PDF审核_文控_流程权限组"], { instancePrefix: "DOC", visibleRoles: ["部门查看员"], visibleUsers: ["lina"] });
-const testBasic = basic("测试报告审核", "PROC-TR-002", "approval", "产品测试报告会签与发布流程。", ["测试报告_发起_流程权限组"], { instancePrefix: "DOC", visibleRoles: ["研发经理", "质量经理"] });
-const freeBasic = basic("异常协作事项", "PROC-FREE-003", "free", "按受理人连续流转，可回复、关闭并填写理由后重新打开。", ["自由协作_发起_流程权限组"], { instancePrefix: "ISSUE", assigneeGroups: ["自由协作_受理_流程权限组"], visibleRoles: ["部门查看员"] });
-const supplierBasic = basic("供应商变更评审", "PROC-SC-004", "approval", "供应商材料或制程变更的跨部门审批流程。", ["供应商变更_发起_流程权限组"], { instancePrefix: "SC" });
+const pdfBasic = basic("PDF 文件审核", "PROC-PDF-001", "approval", "受控 PDF 文件由研发、质量、生产并行审核。", ["PDF审核_文控_流程权限组"], { instancePrefix: "DOC", closeGroups: ["PDF审核_文控_流程权限组"], visibleRoles: ["部门查看员"], visibleUsers: ["lina"] });
+const testBasic = basic("测试报告审核", "PROC-TR-002", "approval", "产品测试报告会签与发布流程。", ["测试报告_发起_流程权限组"], { instancePrefix: "DOC", closeGroups: ["测试报告_发起_流程权限组"], visibleRoles: ["研发经理", "质量经理"] });
+const freeBasic = basic("异常协作事项", "PROC-FREE-003", "free", "按受理人连续流转，可回复、关闭并填写理由后重新打开。", ["自由协作_发起_流程权限组"], { instancePrefix: "ISSUE", closeGroups: ["自由协作_发起_流程权限组"], assigneeGroups: ["自由协作_受理_流程权限组"], visibleRoles: ["部门查看员"] });
+const supplierBasic = basic("供应商变更评审", "PROC-SC-004", "approval", "供应商材料或制程变更的跨部门审批流程。", ["供应商变更_发起_流程权限组"], { instancePrefix: "SC", closeGroups: ["供应商变更_发起_流程权限组"] });
 
 const initialDefinitions: ProcessDefinition[] = [
   { id: "pdf-review", code: pdfBasic.code, name: pdfBasic.name, description: pdfBasic.description, type: "approval", disabled: false, publishedVersionId: "pdf-v3", nextVersionNumber: 4, updatedAt: "2026-08-12 16:42", updatedBy: "王敏", instanceCount: 128, versions: [publishedSeed("pdf-v3", "V3", "2026-08-02 14:30", "王敏", "增加质量节点可修改字段并优化并行提醒。", 42, pdfBasic, seedSnapshot("pdf-v3", pdfBasic, 9, 5)), publishedSeed("pdf-v2", "V2", "2026-05-16 10:05", "刘燕", "研发、质量和生产改为同起点并行审核。", 71, pdfBasic, seedSnapshot("pdf-v2", pdfBasic, 8, 5)), publishedSeed("pdf-v1", "V1", "2026-02-12 09:20", "系统管理员", "首次发布。", 15, pdfBasic, seedSnapshot("pdf-v1", pdfBasic, 7, 5))] },
@@ -384,7 +388,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
     }),
     {
       name: "flowpilot-process-definitions-v1",
-      version: 12,
+      version: 13,
       migrate: (persisted) => {
         const legacyState = persisted as { definitions?: Array<Record<string, unknown>> };
         if (!legacyState.definitions) return { definitions: initialDefinitions };
@@ -394,7 +398,14 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           const legacyDraft = raw.draft as Record<string, unknown> | undefined;
           const normalizeBasic = (value: unknown): ProcessBasicConfig => {
             const source = (value ?? fallback?.versions[0]?.basic ?? {}) as Partial<ProcessBasicConfig> & { starterGroup?: string; assigneeGroup?: string };
-            return { name: source.name ?? String(raw.name ?? "未命名流程"), code: source.code ?? String(raw.code ?? "PROC-UNKNOWN"), instancePrefix: source.instancePrefix ?? "", type: source.type ?? (raw.type as DefinitionType) ?? "approval", description: source.description ?? String(raw.description ?? ""), starterGroups: Array.isArray(source.starterGroups) ? [...source.starterGroups] : source.starterGroup ? [source.starterGroup] : [], assigneeGroups: Array.isArray(source.assigneeGroups) ? [...source.assigneeGroups] : source.assigneeGroup ? [source.assigneeGroup] : undefined, visibleRoles: [...(source.visibleRoles ?? [])], visibleUsers: (source.visibleUsers ?? []).map((value) => value === "linxiao" ? "lina" : value) };
+            const starterGroups = Array.isArray(source.starterGroups) ? [...source.starterGroups] : source.starterGroup ? [source.starterGroup] : [];
+            const legacySource = source as typeof source & { closeGroups?: string[]; closerGroups?: string[] };
+            const closeGroups = Array.isArray(legacySource.closeGroups)
+              ? [...legacySource.closeGroups]
+              : Array.isArray(legacySource.closerGroups)
+                ? [...legacySource.closerGroups]
+                : [...starterGroups];
+            return { name: source.name ?? String(raw.name ?? "未命名流程"), code: source.code ?? String(raw.code ?? "PROC-UNKNOWN"), instancePrefix: source.instancePrefix ?? "", type: source.type ?? (raw.type as DefinitionType) ?? "approval", description: source.description ?? String(raw.description ?? ""), starterGroups, closeGroups, assigneeGroups: Array.isArray(source.assigneeGroups) ? [...source.assigneeGroups] : source.assigneeGroup ? [source.assigneeGroup] : undefined, visibleRoles: [...(source.visibleRoles ?? [])], visibleUsers: (source.visibleUsers ?? []).map((value) => value === "linxiao" ? "lina" : value) };
           };
           const normalizeVersion = (item: Record<string, unknown>): ProcessVersion => {
             const config = normalizeBasic(item.basic);

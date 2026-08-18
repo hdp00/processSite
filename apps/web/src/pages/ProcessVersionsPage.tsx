@@ -6,7 +6,7 @@ import { AppBackButton } from "../components/AppBackButton";
 import { StatusPill } from "../components/StatusPill";
 import { useIdentityStore } from "../state/useIdentityStore";
 import { canEditVersion, definitionStatus, getPublishedVersion, getVersionStatus, useProcessDefinitionStore, type ProcessVersion } from "../state/useProcessDefinitionStore";
-import { buildFlowLevels, conditionOperatorLabel, rejectionHandlingLabel, type StoredDesignerField, type StoredNodeEmailNotification } from "../utils/designerStorage";
+import { buildFlowLevels, conditionOperatorLabel, normalizeDesignerInputPermission, rejectionHandlingLabel, type StoredDesignerField, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import "./process-admin-pages.css";
 
 const fieldTypeLabels: Record<string, string> = {
@@ -33,8 +33,7 @@ function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
         <span><small>提示文字</small><strong>{field.placeholder || "—"}</strong></span>
         <span><small>默认值</small><strong>{valueText(field.defaultValue)}</strong></span>
         <span><small>列表、查询与导出</small><strong>{[field.taskVisible && "任务中心", field.listVisible && "流程清单", field.queryable && "可查询", field.exportVisible && "Excel 导出"].filter(Boolean).join("、") || "不展示"}</strong></span>
-        <span><small>审核权限</small><strong>{field.reviewEditable ? "允许授权节点修改" : "不可修改"}</strong></span>
-        <span><small>填写阶段</small><strong>{field.inputStage === "reviewer" ? "审核人填写" : "发起人填写"}</strong></span>
+        <span><small>输入权限</small><strong>{{ initiator: "发起人", both: "发起人/审核人", reviewer: "审核人" }[normalizeDesignerInputPermission(field)]}</strong></span>
       </div>
       {field.options?.length ? <div className="pa-snapshot-options"><small>选项</small><Space size={[5, 5]} wrap>{field.options.map((option) => <Tag key={option}>{option}</Tag>)}</Space></div> : null}
       {field.type === "attachment" ? <div className="pa-snapshot-options"><small>附件规则</small><span>最多 {field.attachment?.maxCount ?? 20} 个，单文件不超过 {field.attachment?.maxSizeMb ?? 100} MB；PDF {field.attachment?.inlinePdf ? "在页面内展示" : "仅提供下载"}</span></div> : null}
@@ -49,7 +48,7 @@ function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
 
 function VersionTableColumns({ field }: { field: StoredDesignerField }) {
   return <div className="pa-snapshot-table-columns">
-    <div><strong>表格列</strong><span>类型</span><span>必填</span><span>审核可改</span></div>
+    <div><strong>表格列</strong><span>类型</span><span>必填</span><span>审核可输入</span></div>
     {(field.columns ?? []).map((column) => <div key={column.id}><strong>{column.label}<small>{column.id}</small></strong><span>{fieldTypeLabels[column.type ?? "text"] ?? column.type}</span><span>{column.required ? "是" : "否"}</span><span>{column.reviewEditable ? "是" : "否"}</span></div>)}
   </div>;
 }
@@ -118,7 +117,7 @@ function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type:
         </div>;
       })}
     </div> : <Alert type="warning" showIcon message="该版本尚未形成可展示的审批拓扑" />}
-    <Alert type="info" showIcon message={`驳回处理：${rejectionHandlingLabel(version.snapshot.flow.meta?.rejectionHandling)}`} description={version.snapshot.flow.meta?.rejectionHandling === "auto-close" ? "任一节点驳回后流程自动关闭。" : version.snapshot.flow.meta?.rejectionHandling === "resubmit-only" ? "发起方修改后重新提交，所有审批节点重新开始。" : "发起方可修改后重新提交并重新开始全部审批，也可以直接关闭流程。"} />
+    <Alert type="info" showIcon message={`驳回处理：${rejectionHandlingLabel(version.snapshot.flow.meta?.rejectionHandling)}`} description={version.snapshot.flow.meta?.rejectionHandling === "auto-close" ? "任一节点驳回后流程自动关闭。" : version.snapshot.flow.meta?.rejectionHandling === "resubmit-only" ? "发起方修改后重新提交，所有审批节点重新开始。" : "发起方可修改后重新提交并重新开始全部审批；关闭权限组也可以直接关闭流程。"} />
   </div>;
 }
 
@@ -215,7 +214,7 @@ export function ProcessVersionsPage() {
     <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}><div className="table-result-head pa-table-head"><div><strong>版本记录</strong><Tag bordered={false}>{versions.length} 个</Tag></div><Typography.Text type="secondary">任何版本都可复制新建；已有实例的版本永久只读</Typography.Text></div><Table<ProcessVersion> rowKey="id" columns={columns} dataSource={versions} scroll={{ x: 1210 }} pagination={false} rowClassName={(record) => definition.publishedVersionId === record.id ? "pa-effective-row" : ""} /></Card>
     <Drawer title={selected ? `${definition.name} · ${selected.version} 完整快照` : "版本详情"} size="large" open={Boolean(selected)} onClose={() => setSelected(undefined)} extra={selected && canEditVersion(definition, selected) ? <Button type="primary" icon={<EditOutlined />} onClick={() => edit(selected)}>编辑版本</Button> : null}>
       {selected && <Tabs className="pa-version-snapshot-tabs" defaultActiveKey="overview" items={[
-        { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: selected.basic.starterGroups.join("、") || "—", span: 2 }, { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles, ...selected.basic.visibleUsers].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${selected.updatedAt} · ${selected.updatedBy}`, span: 2 }]} />
+        { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: selected.basic.starterGroups.join("、") || "—", span: 2 }, { key: "closer", label: "关闭权限组", children: selected.basic.closeGroups.join("、") || "—", span: 2 }, ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: selected.basic.assigneeGroups?.join("、") || "—", span: 2 as const }] : []), { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles, ...selected.basic.visibleUsers].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${selected.updatedAt} · ${selected.updatedBy}`, span: 2 }]} />
           <Alert type={selected.validation.status === "通过" ? "success" : "error"} showIcon message={selected.validation.status === "通过" ? "版本校验通过，可以发布" : "版本校验未通过"} description={selected.validation.issues.length ? selected.validation.issues.join("；") : `自动校验于 ${selected.validation.checkedAt} 完成`} />
           <Timeline items={[{ color: "blue", children: <><strong>创建 {selected.version}</strong><br /><Typography.Text type="secondary">{selected.createdAt} · {selected.createdBy}</Typography.Text></> }, ...(selected.firstPublishedAt ? [{ color: "green", children: <><strong>首次发布</strong><br /><Typography.Text type="secondary">{selected.firstPublishedAt} · {selected.firstPublishedBy}</Typography.Text></> }] : []), ...(selected.lastUnpublishedAt ? [{ color: "gray", children: <><strong>最近取消发布</strong><br /><Typography.Text type="secondary">{selected.lastUnpublishedAt} · {selected.lastUnpublishedBy}<br />原因：{selected.lastUnpublishReason ?? "—"}</Typography.Text></> }] : [])]} />
         </Space> },

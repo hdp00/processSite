@@ -30,6 +30,8 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { ApiError } from "../api/client";
+import { flowPilotApi } from "../api/flowPilotApi";
 import { StatusPill } from "../components/StatusPill";
 import { cloneDefaultSystemListFields, isSystemFieldVisible } from "../data/listFieldConfig";
 import type { InstanceStatus, ProcessInstance } from "../data/types";
@@ -39,7 +41,7 @@ import { canPersonaLaunchDefinition, hasPersonaPermission } from "../state/roleP
 import { canUserViewInstance } from "../state/workflowAccess";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
 import { PROCESS_TITLE_FIELD_ID, type StoredDesignerField } from "../utils/designerStorage";
-import { downloadProcessListExcel, processExportColumnCount } from "../utils/processExcelExport";
+import { downloadProcessListXlsx } from "../utils/processExcelExport";
 
 export function ProcessListPage() {
   const { message: messageApi } = App.useApp();
@@ -243,35 +245,30 @@ export function ProcessListPage() {
   };
 
   const exportCurrentQuery = async () => {
-    if (!filtered.length) {
-      messageApi.warning("当前查询没有可导出的数据");
-      return;
-    }
-    const formFields = currentVersion?.snapshot.form.fields ?? [];
-    if (!processExportColumnCount(systemListFields, formFields)) {
-      messageApi.warning("当前流程尚未配置导出字段");
-      return;
-    }
-
     setExporting(true);
-    const hideLoading = messageApi.loading("正在生成 Excel，请稍候…", 0);
-    let exportFailed = false;
+    const hideLoading = messageApi.loading("正在查询导出数据并生成 Excel，请稍候…", 0);
     try {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
-      downloadProcessListExcel({
-        definitionName: definition.label,
-        systemFields: systemListFields,
-        formFields,
-        instances: filtered,
+      const normalizedRange = normalizeDayRange(dateRange);
+      const dataset = await flowPilotApi.exports.processInstanceData({
+        definitionId: definition.id,
+        dateFrom: normalizedRange[0].format("YYYY-MM-DD"),
+        dateTo: normalizedRange[1].format("YYYY-MM-DD"),
+        q: keyword.trim() || undefined,
+        status,
+        dynamicFilters: advancedValues,
       });
-    } catch {
-      exportFailed = true;
+      const downloaded = await downloadProcessListXlsx(dataset);
+      if (!downloaded) {
+        messageApi.warning("当前流程尚未配置导出字段");
+        return;
+      }
+      messageApi.success(`已导出当前查询范围内的 ${dataset.rowCount} 条记录`);
+    } catch (error) {
+      messageApi.error(error instanceof ApiError ? error.problem.detail : "Excel 导出失败，请稍后重试");
     } finally {
       hideLoading();
       setExporting(false);
     }
-    if (exportFailed) messageApi.error("Excel 导出失败，请稍后重试");
-    else messageApi.success(`已导出当前查询范围内的 ${filtered.length} 条记录`);
   };
 
   return (

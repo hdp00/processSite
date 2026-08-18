@@ -23,6 +23,7 @@
     "@xyflow/react": "^12.11.2",
     "antd": "^6.6.0",
     "dayjs": "^1.11.21",
+    "exceljs": "^4.4.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",

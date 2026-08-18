@@ -215,16 +215,30 @@ export interface ImpactPreview {
   references: string[];
 }
 
-export interface ProcessExportJob {
-  id: string;
+export interface ProcessExcelDataFilter {
+  dateFrom: string;
+  dateTo: string;
   definitionId: string;
-  requestedById: string;
-  status: "queued" | "processing" | "completed" | "failed" | "cancelled";
-  query: Record<string, unknown>;
+  q?: string;
+  status?: string;
+  initiatorId?: string;
+  currentNode?: string;
+  dynamicFilters?: Record<string, unknown>;
+}
+
+export interface ProcessExcelDatasetColumn {
+  key: string;
+  label: string;
+  dataType: "text" | "number" | "date";
+}
+
+export interface ProcessExcelDataset {
+  definitionId: string;
+  definitionName: string;
+  versionId: string;
+  versionLabel: string;
+  generatedAt: string;
   rowCount: number;
-  fileName?: string;
-  createdAt: string;
-  completedAt?: string;
-  expiresAt: string;
-  error?: string;
+  columns: ProcessExcelDatasetColumn[];
+  rows: Array<Array<string | number | boolean | null>>;
 }

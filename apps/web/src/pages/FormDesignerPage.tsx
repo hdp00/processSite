@@ -62,7 +62,7 @@ import {
   Upload,
   message,
 } from "antd";
-import type { TableColumnsType } from "antd";
+import type { TableColumnsType, UploadFile } from "antd";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import {
@@ -71,14 +71,18 @@ import {
 } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { RichTextEditor } from "../components/RichTextEditor";
-import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import {
   cloneDefaultSystemListFields,
   type SystemListFieldConfig,
 } from "../data/listFieldConfig";
 import { canEditVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { ensureProcessTitleField, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
+import {
+  ensureProcessTitleField,
+  normalizeDesignerInputPermission,
+  PROCESS_TITLE_FIELD_ID,
+  type DesignerInputPermission,
+} from "../utils/designerStorage";
 import "./form-designer.css";
 
 const { Text, Title, Paragraph } = Typography;
@@ -121,7 +125,7 @@ interface DesignerField {
   taskOrder?: number;
   taskWidth?: number;
   reviewEditable: boolean;
-  inputStage: "initiator" | "reviewer";
+  inputStage: DesignerInputPermission;
   options?: string[];
   attachment?: AttachmentConfig;
   columns?: TableColumnConfig[];
@@ -370,7 +374,7 @@ const createField = (type: FieldType): DesignerField => {
     base.attachment = { maxSizeMb: 100, maxCount: 1, inlinePdf: true };
   }
   if (type === "table") {
-    base.reviewEditable = true;
+    base.reviewEditable = false;
     base.columns = [
       {
         id: makeId("col"),
@@ -475,12 +479,22 @@ const renderTableCell = (column: TableColumnConfig, interactive: boolean, rowInd
   );
 };
 
-const FieldControl = ({ field, interactive = false }: { field: DesignerField; interactive?: boolean }) => {
+const FieldControl = ({
+  field,
+  interactive = false,
+  value,
+  onChange,
+}: {
+  field: DesignerField;
+  interactive?: boolean;
+  value?: unknown;
+  onChange?: (value: unknown) => void;
+}) => {
   if (field.type === "richtext") {
     return (
       <RichTextEditor
-        value={fieldDefaultText(field) ?? ""}
-        onChange={() => undefined}
+        value={typeof value === "string" ? value : fieldDefaultText(field) ?? ""}
+        onChange={(nextValue) => onChange?.(nextValue)}
         placeholder={field.placeholder || "请输入富文本内容"}
         minHeight={interactive ? 180 : 120}
         disabled={!interactive}
@@ -491,7 +505,8 @@ const FieldControl = ({ field, interactive = false }: { field: DesignerField; in
     return (
       <Select
         disabled={!interactive}
-        defaultValue={fieldDefaultText(field) || undefined}
+        value={value === undefined ? fieldDefaultText(field) || undefined : value}
+        onChange={(nextValue) => onChange?.(nextValue)}
         placeholder={field.placeholder}
         options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
         style={{ width: "100%" }}
@@ -502,7 +517,8 @@ const FieldControl = ({ field, interactive = false }: { field: DesignerField; in
     return (
       <Cascader
         disabled={!interactive}
-        defaultValue={Array.isArray(field.defaultValue) ? field.defaultValue : undefined}
+        value={Array.isArray(value) ? value : Array.isArray(field.defaultValue) ? field.defaultValue : undefined}
+        onChange={(nextValue) => onChange?.(nextValue)}
         options={buildCascaderOptions(field.options)}
         placeholder={field.placeholder}
         style={{ width: "100%" }}
@@ -513,7 +529,8 @@ const FieldControl = ({ field, interactive = false }: { field: DesignerField; in
     return (
       <Radio.Group
         disabled={!interactive}
-        defaultValue={fieldDefaultText(field) || undefined}
+        value={value === undefined ? fieldDefaultText(field) || undefined : value}
+        onChange={(event) => onChange?.(event.target.value)}
         options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
       />
     );
@@ -522,7 +539,8 @@ const FieldControl = ({ field, interactive = false }: { field: DesignerField; in
     return (
       <Checkbox.Group
         disabled={!interactive}
-        defaultValue={Array.isArray(field.defaultValue) ? field.defaultValue : []}
+        value={Array.isArray(value) ? value : Array.isArray(field.defaultValue) ? field.defaultValue : []}
+        onChange={(nextValue) => onChange?.(nextValue)}
         options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
       />
     );
@@ -538,6 +556,8 @@ const FieldControl = ({ field, interactive = false }: { field: DesignerField; in
         maxCount={effectiveMaxCount}
         multiple={!inlinePdf}
         showUploadList={false}
+        fileList={Array.isArray(value) ? value as UploadFile[] : []}
+        onChange={({ fileList }) => onChange?.(fileList)}
         className="fd-upload"
       >
         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
@@ -556,7 +576,7 @@ const FieldControl = ({ field, interactive = false }: { field: DesignerField; in
         <Space size={4}>
           <span>{column.label}</span>
           {column.required ? <Text type="danger">*</Text> : null}
-          {column.reviewEditable ? <Tag className="fd-mini-tag" color="blue">审核可改</Tag> : null}
+          {column.reviewEditable ? <Tag className="fd-mini-tag" color="blue">审核可输入</Tag> : null}
         </Space>
       ),
       key: column.id,
@@ -581,7 +601,14 @@ const FieldControl = ({ field, interactive = false }: { field: DesignerField; in
       </div>
     );
   }
-  return <Input disabled={!interactive} defaultValue={fieldDefaultText(field)} placeholder={field.placeholder} />;
+  return (
+    <Input
+      disabled={!interactive}
+      value={value === undefined ? fieldDefaultText(field) : String(value ?? "")}
+      onChange={(event) => onChange?.(event.target.value)}
+      placeholder={field.placeholder}
+    />
+  );
 };
 
 interface SortableFieldProps {
@@ -617,8 +644,8 @@ const SortableField = ({ field, selected, locked, onSelect, onDelete }: Sortable
           </Tooltip>
           <Tag bordered={false} icon={typeIcon[field.type]}>{typeLabel[field.type]}</Tag>
           {locked ? <Tag bordered={false} color="gold">固定字段</Tag> : null}
-          {field.inputStage === "reviewer" ? <Tag variant="filled" color="purple">审核人填写</Tag> : null}
-          {field.reviewEditable ? <Tag bordered={false} color="blue">审核可改</Tag> : null}
+          {field.inputStage === "reviewer" ? <Tag variant="filled" color="purple">审核人输入</Tag> : null}
+          {field.inputStage === "both" ? <Tag bordered={false} color="blue">发起人/审核人</Tag> : null}
         </Space>
         {locked ? (
           <Tooltip title="标题是所有流程必备字段，不能删除">
@@ -659,7 +686,9 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   const fallbackFields = useMemo(
     () => ensureProcessTitleField(version?.snapshot.form.fields).map((field) => ({
       ...field,
-      inputStage: field.id === PROCESS_TITLE_FIELD_ID ? "initiator" : field.inputStage ?? "initiator",
+      inputStage: field.id === PROCESS_TITLE_FIELD_ID && normalizeDesignerInputPermission(field) === "reviewer"
+        ? "initiator"
+        : normalizeDesignerInputPermission(field),
       attachment: field.type === "attachment" ? {
         maxSizeMb: field.attachment?.maxSizeMb ?? 100,
         maxCount: (field.attachment?.inlinePdf ?? true) ? 1 : field.attachment?.maxCount ?? 20,
@@ -678,6 +707,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   const [fields, setFields] = useState<DesignerField[]>(initialDraft.fields);
   const [selectedId, setSelectedId] = useState(initialDraft.fields[0]?.id ?? "");
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewForm] = Form.useForm();
   const [propertyMode, setPropertyMode] = useState<"field" | "system">("field");
   const [systemListFields, setSystemListFields] = useState<SystemListFieldConfig[]>(() =>
     structuredClone(version?.snapshot.systemFields ?? cloneDefaultSystemListFields())
@@ -697,6 +727,21 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   );
 
   const selectedField = fields.find((field) => field.id === selectedId);
+  const previewFields = useMemo(
+    () => fields.filter((field) => field.inputStage !== "reviewer"),
+    [fields],
+  );
+  const previewInitialValues = useMemo(
+    () => Object.fromEntries(previewFields.map((field) => [
+      field.id,
+      field.type === "table"
+        ? [{ key: "sample-1" }, { key: "sample-2" }]
+        : field.type === "attachment"
+          ? []
+          : field.defaultValue,
+    ])),
+    [previewFields],
+  );
   const isTitleField = selectedField?.id === PROCESS_TITLE_FIELD_ID;
 
   useEffect(() => {
@@ -884,7 +929,6 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
             <Space align="center" size={10}>
               <Title level={4}>{version?.basic.name ?? definition?.name ?? "流程配置"}</Title>
               <Tag color="blue">正式版本 {version?.version ?? "未指定"}</Tag>
-              <StatusPill status={version?.validation.status === "通过" ? "可发布" : "校验未通过"} />
             </Space>
             <Text type="secondary">初始表单 · 单列布局 · 配置发起时需要填写的内容</Text>
           </div>
@@ -937,8 +981,8 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
             className="fd-component-tip"
             type="info"
             showIcon
-            message="审核可修改"
-            description="先在表单中开放字段，再到审批节点选择具体可修改项。"
+            message="输入权限"
+            description="选择“发起人/审核人”或“审核人”后，再到审批节点分配具体可输入字段。"
           />
         </aside>
 
@@ -1012,7 +1056,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                       type="info"
                       showIcon
                       message="流程标题字段"
-                      description="字段标识、文本框类型和必填规则由系统固定；字段名称、说明、提示以及任务中心和流程清单的展示位置可在此配置。"
+                      description="字段标识、文本框类型和必填规则由系统固定；字段名称、说明、提示、输入权限以及任务中心和流程清单的展示位置可在此配置。"
                     />
                   ) : null}
                   <Form.Item label="字段名称" required>
@@ -1211,7 +1255,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                         </Form.Item>
                         <div className="fd-inline-switches">
                           <span><Switch size="small" checked={column.required} onChange={(checked) => updateColumn(column.id, { required: checked })} /> 必填</span>
-                          <span><Switch size="small" checked={column.reviewEditable} onChange={(checked) => updateColumn(column.id, { reviewEditable: checked })} /> 审核人可改</span>
+                          <span><Switch size="small" checked={column.reviewEditable} onChange={(checked) => updateColumn(column.id, { reviewEditable: checked })} /> 审核人可输入</span>
                         </div>
                       </Card>
                     ))}
@@ -1220,15 +1264,18 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
 
                 <div className="fd-property-section">
                   <div className="fd-property-section__title">权限与展示</div>
-                  <Form.Item label="填写阶段">
-                    <Segmented
-                      block
-                      disabled={isTitleField || definition?.type === "free"}
+                  <Form.Item label="输入权限">
+                    <Select
+                      disabled={definition?.type === "free"}
                       value={selectedField.inputStage}
-                      options={[{ label: "发起人填写", value: "initiator" }, { label: "审核人填写", value: "reviewer" }]}
+                      options={[
+                        { label: "发起人", value: "initiator" },
+                        { label: "发起人/审核人", value: "both" },
+                        { label: "审核人", value: "reviewer", disabled: isTitleField },
+                      ]}
                       onChange={(inputStage) => updateField({
                         inputStage: inputStage as DesignerField["inputStage"],
-                        reviewEditable: inputStage === "reviewer" ? true : selectedField.reviewEditable,
+                        reviewEditable: inputStage !== "initiator",
                       })}
                     />
                     <Text type="secondary">
@@ -1236,7 +1283,9 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                         ? "自由流程的初始表单由发起人填写。"
                         : selectedField.inputStage === "reviewer"
                           ? "发起页面不显示此字段；流程创建后按设计位置显示，由授权审批节点填写。"
-                          : "发起人创建流程时填写。"}
+                          : selectedField.inputStage === "both"
+                            ? "发起人创建时填写，之后可由授权审批节点修改。"
+                            : "发起人创建流程时填写，审核人不能修改。"}
                     </Text>
                   </Form.Item>
                   <div className="fd-switch-row">
@@ -1272,7 +1321,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                         <Form.Item label="显示顺序">
                           <InputNumber
                             min={1}
-                            max={6}
+                            max={99}
                             value={selectedField.taskOrder ?? 1}
                             onChange={(value) => updateField({ taskOrder: value ?? 1 })}
                           />
@@ -1288,13 +1337,9 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                           />
                         </Form.Item>
                       </div>
-                      <Text type="secondary">混合流程时在任务下方的信息带显示，最多6项；选择单个流程后最多展开6列。</Text>
+                      <Text type="secondary">选择单个流程时作为独立表格列显示；列较多时任务列表支持横向滚动。</Text>
                     </div>
                   )}
-                  <div className="fd-switch-row">
-                    <div><Text strong>允许审核人修改</Text><Text type="secondary">具体权限在审批节点中设置</Text></div>
-                    <Switch disabled={selectedField.type === "richtext" || selectedField.inputStage === "reviewer"} checked={selectedField.reviewEditable} onChange={(checked) => updateField({ reviewEditable: checked })} />
-                  </div>
                 </div>
               </Form>
             ) : propertyMode === "field" ? (
@@ -1358,6 +1403,11 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
         width={960}
         open={previewOpen}
         onCancel={() => setPreviewOpen(false)}
+        afterOpenChange={(open) => {
+          if (!open) return;
+          previewForm.resetFields();
+          previewForm.setFieldsValue(previewInitialValues);
+        }}
         title={
           <Space>
             <EyeOutlined />
@@ -1368,7 +1418,19 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
         footer={
           <Space>
             <Button onClick={() => setPreviewOpen(false)}>返回编辑</Button>
-            <Button type="primary" onClick={() => messageApi.success("原型预览已完成，实际发布后可正式提交")}>模拟提交</Button>
+            <Button
+              type="primary"
+              onClick={async () => {
+                try {
+                  await previewForm.validateFields();
+                  messageApi.success("表单校验通过，本次预览不会创建流程实例");
+                } catch {
+                  messageApi.warning("请先完成必填项后再校验");
+                }
+              }}
+            >
+              校验表单
+            </Button>
           </Space>
         }
       >
@@ -1381,13 +1443,15 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
             <Tag color="processing">{workflowName}</Tag>
           </div>
           <Divider />
-          <Form layout="vertical" requiredMark="optional">
-            {fields.map((field) => (
+          <Form form={previewForm} initialValues={previewInitialValues} layout="vertical" requiredMark="optional">
+            {previewFields.map((field) => (
               <Form.Item
                 key={field.id}
+                name={field.id}
                 label={field.label}
                 required={field.required}
                 extra={field.description || undefined}
+                rules={field.required ? [{ required: true, message: `请填写${field.label}` }] : undefined}
               >
                 <FieldControl field={field} interactive />
               </Form.Item>

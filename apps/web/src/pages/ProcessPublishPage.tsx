@@ -92,13 +92,15 @@ export function ProcessPublishPage() {
             { key: "source", label: "来源版本", children: version.basedOn ?? "首次创建" },
             { key: "type", label: "流程类型", children: definition.type === "approval" ? "固定审批" : "自由协作" },
             { key: "prefix", label: "编号前缀", children: version.basic.instancePrefix || "—" },
+            { key: "starter", label: "发起权限组", children: version.basic.starterGroups.join("、") || "—", span: 2 },
+            { key: "closer", label: "关闭权限组", children: version.basic.closeGroups.join("、") || "—", span: 2 },
+            ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: version.basic.assigneeGroups?.join("、") || "—", span: 2 as const }] : []),
             { key: "form", label: "初始表单", children: "标题字段由系统固定，其余字段按版本配置", span: 2 },
             { key: "fields", label: "表单字段", children: `${version.snapshot.form.fields.length} 个` },
             { key: "system", label: "系统列表字段", children: `${version.snapshot.systemFields.length} 个配置` },
-            { key: "export", label: "Excel 导出字段", children: `${version.snapshot.systemFields.filter((field) => field.exportVisible).length + version.snapshot.form.fields.filter((field) => field.exportVisible).length} 个`, span: 2 },
           ]} />
           <Divider>初始表单字段</Divider>
-          <Space wrap>{version.snapshot.form.fields.length ? version.snapshot.form.fields.map((field) => <Tag key={field.id} color={field.exportVisible ? "green" : undefined} bordered={false}>{field.label}{field.exportVisible ? " · Excel 导出" : ""}</Tag>) : <Typography.Text type="danger">尚未配置字段</Typography.Text>}</Space>
+          <Space wrap>{version.snapshot.form.fields.length ? version.snapshot.form.fields.map((field) => <Tag key={field.id} bordered={false}>{field.label}</Tag>) : <Typography.Text type="danger">尚未配置字段</Typography.Text>}</Space>
         </Card>
 
         {definition.type === "approval" ? <Card className="pa-section-card" title={<span className="pa-card-title"><ApartmentOutlined /> 审批拓扑与规则</span>}>
@@ -145,7 +147,7 @@ export function ProcessPublishPage() {
             </div>
             <div className="pa-publish-rules">
               <div><strong>流转规则</strong><span>{topologyLevels.some((level) => level.filter((node) => node.data?.kind === "approval").length > 1) ? "同层节点同时开始，全部通过或确认后进入下一步；审批节点任一驳回时取消本轮其他待办。" : "按连线顺序逐节点处理，当前节点通过或确认后进入下一步。"}</span></div>
-              <div><strong>驳回处理</strong><span>{rejectionHandlingLabel(version.snapshot.flow.meta?.rejectionHandling)}：{version.snapshot.flow.meta?.rejectionHandling === "auto-close" ? "流程立即关闭。" : version.snapshot.flow.meta?.rejectionHandling === "resubmit-only" ? "发起方修改后可重新提交，所有审批重新开始。" : "发起方可修改后重新提交，也可直接关闭流程。"}</span></div>
+              <div><strong>驳回处理</strong><span>{rejectionHandlingLabel(version.snapshot.flow.meta?.rejectionHandling)}：{version.snapshot.flow.meta?.rejectionHandling === "auto-close" ? "流程立即关闭。" : version.snapshot.flow.meta?.rejectionHandling === "resubmit-only" ? "发起方修改后可重新提交，所有审批重新开始。" : "发起方可修改后重新提交；关闭权限组也可直接关闭流程。"}</span></div>
               <div><strong>内容锁定</strong><span>首个审核结果提交前，发起方可修改；提交后锁定，驳回后重新开放修改。</span></div>
             </div>
           </> : <Alert type="error" showIcon message="尚未形成可预览的审批拓扑" description="请返回流程设计，配置开始、审批、结束节点并完成连线。" />}
@@ -157,7 +159,7 @@ export function ProcessPublishPage() {
           <div className="pa-validation-score"><CheckCircleFilled /><strong>{version.validation.status}</strong><span>{version.validation.checkedAt}</span></div>
           <Divider />
           <Space direction="vertical" size={10} style={{ width: "100%" }}>
-            <div className="pa-scope-line"><span>基本信息</span><StatusPill compact status={version.basic.instancePrefix && version.basic.starterGroups.length ? "已通过" : "失败"} /></div>
+            <div className="pa-scope-line"><span>基本信息</span><StatusPill compact status={version.basic.instancePrefix && version.basic.starterGroups.length && version.basic.closeGroups.length ? "已通过" : "失败"} /></div>
             <div className="pa-scope-line"><span>初始表单</span><StatusPill compact status={version.snapshot.form.fields.length ? "已通过" : "失败"} /></div>
             <div className="pa-scope-line"><span>{definition.type === "approval" ? "审批拓扑" : "受理范围"}</span><StatusPill compact status={definition.type === "approval" ? (approvalNodes.length ? "已通过" : "失败") : (version.basic.assigneeGroups?.length ? "已通过" : "失败")} /></div>
           </Space>

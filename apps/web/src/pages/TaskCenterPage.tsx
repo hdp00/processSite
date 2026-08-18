@@ -47,7 +47,6 @@ export function TaskCenterPage() {
   const [selectedTemplate, setSelectedTemplate] = useState(() =>
     window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
   );
-  const [expandedInfoIds, setExpandedInfoIds] = useState<string[]>([]);
   const isSuperAdmin = isSuperAdminPersona(personaId);
 
   useEffect(() => {
@@ -113,12 +112,8 @@ export function TaskCenterPage() {
     isSystemFieldVisible(systemListFields, key, "task");
   const titleVisibleForVersion = (version: ReturnType<typeof getEffectiveVersion>) =>
     version?.snapshot.form.fields.find((field) => field.id === PROCESS_TITLE_FIELD_ID)?.taskVisible ?? true;
-  const recordShowsTitle = (record: ProcessInstance) => activeTemplate
-    ? titleVisibleForVersion(selectedVersion)
-    : titleVisibleForVersion(getEffectiveVersion(definitions.find((definition) => definition.id === record.definitionId)));
-  const showTitle = activeTemplate
-    ? titleVisibleForVersion(selectedVersion)
-    : source.some((record) => recordShowsTitle(record));
+  const recordShowsTitle = () => activeTemplate ? titleVisibleForVersion(selectedVersion) : true;
+  const showTitle = activeTemplate ? titleVisibleForVersion(selectedVersion) : true;
   const showTitleCell = showTitle || showSystemField("template") || showSystemField("templateVersion");
   const showNodeCell = showSystemField("currentNode") || showSystemField("round");
   const filtered = source.filter((item) => {
@@ -143,7 +138,7 @@ export function TaskCenterPage() {
     .filter((field) => field.id !== PROCESS_TITLE_FIELD_ID && field.taskVisible)
     .sort((left, right) => (left.taskOrder ?? 999) - (right.taskOrder ?? 999)) ?? [];
   const dynamicColumns: TableProps<ProcessInstance>["columns"] = selectedVersion
-    ? selectedTaskFields.slice(0, 6).map((field) => ({
+    ? selectedTaskFields.map((field) => ({
         title: field.taskDisplayName || field.label,
         key: field.id,
         width: field.taskWidth ?? 160,
@@ -153,50 +148,6 @@ export function TaskCenterPage() {
         ),
       }))
     : [];
-
-  const getTaskInformationFields = (record: ProcessInstance) => {
-    const definition = definitions.find((item) => item.id === record.definitionId);
-    const currentVersion = getEffectiveVersion(definition);
-    return currentVersion?.snapshot.form.fields
-      .filter((field) => field.id !== PROCESS_TITLE_FIELD_ID && field.taskVisible)
-      .sort((left, right) => (left.taskOrder ?? 999) - (right.taskOrder ?? 999)) ?? [];
-  };
-
-  const renderTaskInformation = (record: ProcessInstance) => {
-    const fields = getTaskInformationFields(record);
-    if (!fields.length) return null;
-    const isFullyExpanded = expandedInfoIds.includes(record.id);
-    const visibleFields = isFullyExpanded ? fields : fields.slice(0, 6);
-    const remainingCount = fields.length - visibleFields.length;
-
-    return (
-      <div className="task-detail-band">
-        <div className="task-detail-band__label">流程信息</div>
-        <div className="task-detail-band__fields">
-          {visibleFields.map((field) => {
-            const value = formatTaskFieldValue(record, field);
-            return (
-              <Tooltip title={value} key={field.id}>
-                <div className="task-detail-field">
-                  <small>{field.taskDisplayName || field.label}</small>
-                  <strong>{value}</strong>
-                </div>
-              </Tooltip>
-            );
-          })}
-        </div>
-        {remainingCount > 0 && (
-          <Button
-            type="link"
-            size="small"
-            onClick={() => setExpandedInfoIds((ids) => [...ids, record.id])}
-          >
-            其余 {remainingCount} 项
-          </Button>
-        )}
-      </div>
-    );
-  };
 
   const approvalTaskActionLabel = (record: ProcessInstance) => {
     const task = actionableTaskByInstance.get(record.id);
@@ -218,12 +169,12 @@ export function TaskCenterPage() {
       ),
     }] : []),
     ...(showTitleCell ? [{
-      title: showTitle ? "流程与标题" : "流程信息",
+      title: showTitle ? "流程与标题" : "所属流程",
       dataIndex: "title",
       width: 350,
       render: (value: string, record: ProcessInstance) => (
         <div className="title-cell">
-          {recordShowsTitle(record) ? <strong>{value}</strong> : null}
+          {recordShowsTitle() ? <strong>{value}</strong> : null}
           {(showSystemField("template") || showSystemField("templateVersion")) ? (
             <span>
               {[
@@ -384,7 +335,7 @@ export function TaskCenterPage() {
         <Card className="content-card task-list-card" styles={{ body: { padding: 0 } }}>
           <div className="task-list-context">
             <div><strong>{activeCategoryLabel}</strong><Tag bordered={false}>{filtered.length} 项</Tag></div>
-            <span>{activeTemplate ? "按当前流程的列表字段展示" : "混合流程使用通用字段与流程信息带"}</span>
+            <span>{activeTemplate ? "公共列 + 当前流程自定义列" : "全部流程仅显示公共列"}</span>
           </div>
           <Table<ProcessInstance>
             key={`${tab}-${activeTemplate ?? ALL_FLOWS}`}
@@ -393,17 +344,6 @@ export function TaskCenterPage() {
             columns={columns}
             dataSource={filtered}
             scroll={{ x: activeTemplate ? 1300 : 1020 }}
-            expandable={
-              activeTemplate
-                ? undefined
-                : {
-                    expandedRowRender: renderTaskInformation,
-                    expandedRowKeys: filtered.filter((record) => getTaskInformationFields(record).length > 0).map((record) => record.id),
-                    rowExpandable: (record) => getTaskInformationFields(record).length > 0,
-                    showExpandColumn: false,
-                    expandRowByClick: false,
-                  }
-            }
             pagination={{ defaultPageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total) => `共 ${total} 项任务` }}
             locale={{
               emptyText: (

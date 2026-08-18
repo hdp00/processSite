@@ -78,6 +78,8 @@ import {
 import {
   buildFlowLevels,
   conditionOperatorLabel,
+  normalizeDesignerInputPermission,
+  type DesignerInputPermission,
   type EditableFieldOption,
   type ApprovalHandlingMode,
   type ConditionOperator,
@@ -108,9 +110,17 @@ interface FlowNodeData extends Record<string, unknown> {
 
 interface ConditionFieldOption extends EditableFieldOption {
   type: string;
-  options?: string[];
-  inputStage?: "initiator" | "reviewer";
+  choiceOptions?: string[];
+  inputStage?: DesignerInputPermission;
   required?: boolean;
+}
+
+interface EmailUserOption {
+  value: string;
+  label: string;
+  email: string;
+  searchText: string;
+  disabled: boolean;
 }
 
 type DesignerNode = Node<FlowNodeData, "processNode">;
@@ -147,7 +157,7 @@ const rejectionHandlingOptions: Array<{
   {
     value: "resubmit-or-close",
     label: "重新提交或关闭",
-    description: "进入驳回待处理，由发起方修改后重新提交，或直接关闭流程。",
+    description: "进入驳回待处理，由发起方修改后重新提交；关闭权限组也可直接关闭流程。",
   },
   {
     value: "resubmit-only",
@@ -196,6 +206,22 @@ const normalizeEmailNotification = (
       extraUserIds: [...(notification.extraUserIds ?? [])],
     }
   : defaultEmailNotification(kind);
+
+const normalizeActivationCondition = (
+  condition?: StoredNodeCondition,
+): StoredNodeCondition | undefined => {
+  if (!condition || typeof condition !== "object") return undefined;
+  const source = condition as Partial<StoredNodeCondition>;
+  const rules = Array.isArray(source.rules)
+    ? source.rules.filter((rule) => Boolean(rule && typeof rule === "object")).map((rule, index) => ({
+        id: typeof rule.id === "string" && rule.id ? rule.id : `condition-${index + 1}`,
+        fieldId: typeof rule.fieldId === "string" ? rule.fieldId : "",
+        operator: rule.operator ?? "eq",
+        value: rule.value ?? "",
+      }))
+    : [];
+  return { mode: source.mode === "any" ? "any" : "all", rules };
+};
 
 const kindMeta: Record<
   NodeKind,
@@ -477,8 +503,8 @@ const ProcessNode = ({ data, selected }: NodeProps<DesignerNode>) => {
               <Tag variant="filled" color="cyan">确认</Tag>
             </Tooltip>
           ) : null}
-          {data.kind === "approval" && data.activationCondition?.rules.length ? (
-            <Tooltip title={`${data.activationCondition.mode === "all" ? "全部" : "任一"}条件满足时执行`}>
+          {data.kind === "approval" && normalizeActivationCondition(data.activationCondition)?.rules.length ? (
+            <Tooltip title={`${normalizeActivationCondition(data.activationCondition)?.mode === "all" ? "全部" : "任一"}条件满足时执行`}>
               <Tag variant="filled" color="purple">条件</Tag>
             </Tooltip>
           ) : null}
@@ -547,7 +573,7 @@ const runValidation = (
   const editableLabelByValue = new Map(editableOptions.map((option) => [option.value, option.label]));
   const conditionFieldById = new Map(conditionFields.map((field) => [field.value, field]));
   const invalidConditions = approvals.filter((node) => {
-    const condition = node.data.activationCondition;
+    const condition = normalizeActivationCondition(node.data.activationCondition);
     if (!condition) return false;
     if (!condition.rules.length) return true;
     return condition.rules.some((rule) => {
@@ -742,16 +768,17 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     .filter((group) => group.status === "启用" && group.purposes.includes("发起"))
     .map((group) => ({ value: group.id, label: group.name }));
   const approvalGroupOptions = workflowGroups
-    .filter((group) => group.status === "启用" && group.purposes.includes("审批"))
+    .filter((group) => group.status === "启用" && group.purposes.includes("审批/受理"))
     .map((group) => ({ value: group.id, label: group.name }));
-  const extraEmailUserOptions = users.map((user) => {
+  const extraEmailUserOptions: EmailUserOption[] = users.map((user) => {
     const email = "email" in user ? String(user.email ?? "").trim() : "";
     const unavailable = user.status !== "启用" || !email;
     return {
       value: user.id,
-      label: `${user.name} · ${email || "未维护邮箱"}${user.status !== "启用" ? " · 已停用" : ""}`,
+      label: user.name,
       disabled: unavailable,
       email,
+      searchText: `${user.name} ${email}`,
     };
   });
   const versionBasic = useProcessDefinitionStore((state) =>
@@ -778,6 +805,12 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
   const selectedEmailNotification = selectedNode && (selectedNode.data.kind === "approval" || selectedNode.data.kind === "end")
     ? normalizeEmailNotification(selectedNode.data.kind, selectedNode.data.emailNotification)
     : undefined;
+  const selectedActivationCondition = selectedNode?.data.kind === "approval"
+    ? normalizeActivationCondition(selectedNode.data.activationCondition)
+    : undefined;
+  const selectedExtraEmailUsers = selectedEmailNotification?.extraUserIds
+    .map((userId) => extraEmailUserOptions.find((option) => option.value === userId))
+    .filter((option): option is EmailUserOption => Boolean(option)) ?? [];
   const validationResults = useMemo(
     () => runValidation(nodes, edges, editableFieldOptions, conditionFieldOptions),
     [conditionFieldOptions, edges, editableFieldOptions, nodes],
@@ -811,6 +844,9 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
         ? Boolean(node.data.allowRepeatedEditing)
         : false;
       const nextHandlingMode = node.data.kind === "approval" ? node.data.handlingMode ?? "approval" : node.data.handlingMode;
+      const nextActivationCondition = node.data.kind === "approval"
+        ? normalizeActivationCondition(node.data.activationCondition)
+        : undefined;
       const nextEmailNotification = node.data.kind === "approval" || node.data.kind === "end"
         ? normalizeEmailNotification(node.data.kind, node.data.emailNotification)
         : undefined;
@@ -821,10 +857,24 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
           && nextEmailNotification.notifyReviewers === Boolean(node.data.emailNotification.notifyReviewers)
           && nextEmailNotification.notifyInitiator === Boolean(node.data.emailNotification.notifyInitiator)
           && nextEmailNotification.extraUserIds.join("|") === (node.data.emailNotification.extraUserIds ?? []).join("|"));
+      const activationConditionUnchanged = nextActivationCondition === undefined && node.data.activationCondition === undefined
+        || Boolean(nextActivationCondition
+          && node.data.activationCondition
+          && nextActivationCondition.mode === node.data.activationCondition.mode
+          && nextActivationCondition.rules.length === node.data.activationCondition.rules?.length
+          && nextActivationCondition.rules.every((rule, index) => {
+            const current = node.data.activationCondition?.rules?.[index];
+            return current
+              && rule.id === current.id
+              && rule.fieldId === current.fieldId
+              && rule.operator === current.operator
+              && JSON.stringify(rule.value) === JSON.stringify(current.value);
+          }));
       return normalizedFields.join("|") === node.data.editableFields.join("|")
         && (nextStarterGroups ?? []).join("|") === (node.data.permissionGroups ?? []).join("|")
         && nextRepeatedEditing === Boolean(node.data.allowRepeatedEditing)
         && nextHandlingMode === node.data.handlingMode
+        && activationConditionUnchanged
         && emailNotificationUnchanged
         ? node
         : { ...node, data: {
@@ -833,6 +883,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
             permissionGroups: nextStarterGroups,
             handlingMode: nextHandlingMode,
             allowRepeatedEditing: nextRepeatedEditing,
+            activationCondition: nextActivationCondition,
             emailNotification: nextEmailNotification,
           } };
     }));
@@ -1159,8 +1210,8 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
               block
               value={propertyMode}
               options={[
-                { label: "流程属性", value: "flow" },
                 { label: "节点属性", value: "node", disabled: !selectedNode },
+                { label: "流程属性", value: "flow" },
               ]}
               onChange={(value) => setPropertyMode(value as "flow" | "node")}
             />
@@ -1276,48 +1327,44 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
 
                   <Divider />
 
-                  <div className="property-field">
-                    <span className="property-field__label">审核人可修改字段</span>
-                    <Text type="secondary" className="property-field__help property-field__help--above">
-                      修改内容与审核结果原子提交。并行路径之间不允许选择同一字段。
-                    </Text>
-                    <Checkbox.Group
-                      value={selectedNode.data.editableFields}
-                      options={editableFieldOptions}
-                      onChange={(values) => {
-                        const editableFields = values.map(String);
-                        updateSelectedNode({
-                          editableFields,
-                          allowRepeatedEditing: editableFields.length ? selectedNode.data.allowRepeatedEditing : false,
-                        });
-                      }}
-                      className="editable-field-options"
-                    />
-                    {!editableFieldOptions.length && (
-                      <Alert
-                        type="info"
-                        showIcon
-                        message="初始表单中暂无审核可修改字段"
-                        description="请返回初始表单，将普通字段或表格列开启“允许审核人修改”后再选择。"
-                      />
-                    )}
-                    <div className="property-switch-row repeated-editing-row">
-                      <div>
-                        <Text strong>允许重复修改</Text>
-                        <Text type="secondary">处理结果提交后，审核人仍可反复修改本节点授权字段。</Text>
+                  {editableFieldOptions.length ? (
+                    <>
+                      <div className="property-field">
+                        <span className="property-field__label">审核人可输入字段</span>
+                        <Text type="secondary" className="property-field__help property-field__help--above">
+                          修改内容与审核结果原子提交。并行路径之间不允许选择同一字段。
+                        </Text>
+                        <Checkbox.Group
+                          value={selectedNode.data.editableFields}
+                          options={editableFieldOptions}
+                          onChange={(values) => {
+                            const editableFields = values.map(String);
+                            updateSelectedNode({
+                              editableFields,
+                              allowRepeatedEditing: editableFields.length ? selectedNode.data.allowRepeatedEditing : false,
+                            });
+                          }}
+                          className="editable-field-options"
+                        />
+                        <div className="property-switch-row repeated-editing-row">
+                          <div>
+                            <Text strong>允许重复修改</Text>
+                            <Text type="secondary">处理结果提交后，审核人仍可反复修改本节点授权字段。</Text>
+                          </div>
+                          <Switch
+                            checked={Boolean(selectedNode.data.allowRepeatedEditing)}
+                            disabled={!selectedNode.data.editableFields.length}
+                            onChange={(allowRepeatedEditing) => updateSelectedNode({ allowRepeatedEditing })}
+                          />
+                        </div>
+                        {!selectedNode.data.editableFields.length ? (
+                          <Text type="secondary" className="property-field__help">请先选择至少一个审核人可输入字段。</Text>
+                        ) : null}
                       </div>
-                      <Switch
-                        checked={Boolean(selectedNode.data.allowRepeatedEditing)}
-                        disabled={!selectedNode.data.editableFields.length}
-                        onChange={(allowRepeatedEditing) => updateSelectedNode({ allowRepeatedEditing })}
-                      />
-                    </div>
-                    {!selectedNode.data.editableFields.length ? (
-                      <Text type="secondary" className="property-field__help">请先选择至少一个审核人可修改字段。</Text>
-                    ) : null}
-                  </div>
 
-                  <Divider />
+                      <Divider />
+                    </>
+                  ) : null}
 
                   <div className="property-field condition-editor">
                     <div className="property-switch-row">
@@ -1326,23 +1373,27 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                         <Text type="secondary">条件不满足时自动跳过该节点，并视为已满足汇聚条件。</Text>
                       </div>
                       <Switch
-                        checked={Boolean(selectedNode.data.activationCondition)}
+                        checked={Boolean(selectedActivationCondition)}
+                        disabled={!conditionFieldOptions.length}
                         onChange={(checked) => updateSelectedNode({ activationCondition: checked ? {
                           mode: "all",
                           rules: [{ id: `condition-${Date.now()}`, fieldId: conditionFieldOptions[0]?.value ?? "", operator: "eq", value: "" }],
                         } : undefined })}
                       />
                     </div>
-                    {selectedNode.data.activationCondition ? (
+                    {!conditionFieldOptions.length ? (
+                      <Text type="secondary" className="property-field__help">初始表单中没有可用于判断条件的字段。</Text>
+                    ) : null}
+                    {selectedActivationCondition ? (
                       <>
                         <Segmented
                           block
-                          value={selectedNode.data.activationCondition.mode}
+                          value={selectedActivationCondition.mode}
                           options={[{ label: "全部满足（AND）", value: "all" }, { label: "任一满足（OR）", value: "any" }]}
-                          onChange={(mode) => updateSelectedNode({ activationCondition: { ...selectedNode.data.activationCondition!, mode: mode as "all" | "any" } })}
+                          onChange={(mode) => updateSelectedNode({ activationCondition: { ...selectedActivationCondition, mode: mode as "all" | "any" } })}
                         />
                         <div className="condition-rule-list">
-                          {selectedNode.data.activationCondition.rules.map((rule) => {
+                          {selectedActivationCondition.rules.map((rule) => {
                             const field = conditionFieldOptions.find((item) => item.value === rule.fieldId);
                             const operators: ConditionOperator[] = field?.type === "checkbox"
                               ? ["contains", "not-contains", "empty", "not-empty"]
@@ -1350,23 +1401,31 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                                 ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
                                 : ["eq", "neq", "empty", "not-empty"];
                             const updateRule = (patch: Partial<typeof rule>) => updateSelectedNode({ activationCondition: {
-                              ...selectedNode.data.activationCondition!,
-                              rules: selectedNode.data.activationCondition!.rules.map((item) => item.id === rule.id ? { ...item, ...patch } : item),
+                              ...selectedActivationCondition,
+                              rules: selectedActivationCondition.rules.map((item) => item.id === rule.id ? { ...item, ...patch } : item),
                             } });
                             return <div className="condition-rule" key={rule.id}>
-                              <Select showSearch value={rule.fieldId || undefined} placeholder="选择字段" options={conditionFieldOptions} onChange={(fieldId) => updateRule({ fieldId, operator: "eq", value: "" })} />
+                              <Select
+                                showSearch
+                                title={field?.label}
+                                value={rule.fieldId || undefined}
+                                placeholder="选择字段"
+                                popupMatchSelectWidth={360}
+                                options={conditionFieldOptions}
+                                optionRender={(option) => <span className="condition-field-option" title={String(option.label)}>{option.label}</span>}
+                                onChange={(fieldId) => updateRule({ fieldId, operator: "eq", value: "" })}
+                              />
                               <Select value={rule.operator} options={operators.map((operator) => ({ value: operator, label: conditionOperatorLabel(operator) }))} onChange={(operator) => updateRule({ operator })} />
-                              {!["empty", "not-empty"].includes(rule.operator) && (field?.options?.length
-                                ? <Select value={typeof rule.value === "string" ? rule.value || undefined : undefined} placeholder="选择比较值" options={field.options.map((value) => ({ value, label: value }))} onChange={(value) => updateRule({ value })} />
+                              {!["empty", "not-empty"].includes(rule.operator) && (field?.choiceOptions?.length
+                                ? <Select value={typeof rule.value === "string" ? rule.value || undefined : undefined} placeholder="选择比较值" options={field.choiceOptions.map((value) => ({ value, label: value }))} onChange={(value) => updateRule({ value })} />
                                 : <Input value={typeof rule.value === "string" ? rule.value : ""} placeholder="输入比较值" onChange={(event) => updateRule({ value: event.target.value })} />)}
-                              <Button type="text" danger icon={<DeleteOutlined />} aria-label="删除条件" onClick={() => updateSelectedNode({ activationCondition: { ...selectedNode.data.activationCondition!, rules: selectedNode.data.activationCondition!.rules.filter((item) => item.id !== rule.id) } })} />
+                              <Button type="text" danger icon={<DeleteOutlined />} aria-label="删除条件" onClick={() => updateSelectedNode({ activationCondition: { ...selectedActivationCondition, rules: selectedActivationCondition.rules.filter((item) => item.id !== rule.id) } })} />
                             </div>;
                           })}
                         </div>
                         <Button type="dashed" block icon={<PlusOutlined />} onClick={() => updateSelectedNode({ activationCondition: {
-                          ...selectedNode.data.activationCondition,
-                          mode: selectedNode.data.activationCondition?.mode ?? "all",
-                          rules: [...(selectedNode.data.activationCondition?.rules ?? []), { id: `condition-${Date.now()}`, fieldId: conditionFieldOptions[0]?.value ?? "", operator: "eq", value: "" }],
+                          ...selectedActivationCondition,
+                          rules: [...selectedActivationCondition.rules, { id: `condition-${Date.now()}`, fieldId: conditionFieldOptions[0]?.value ?? "", operator: "eq", value: "" }],
                         } })}>添加条件</Button>
                       </>
                     ) : null}
@@ -1425,14 +1484,37 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                             mode="multiple"
                             showSearch
                             allowClear
-                            optionFilterProp="label"
-                            maxTagCount="responsive"
+                            optionFilterProp="searchText"
+                            maxTagCount={2}
+                            maxTagPlaceholder={(omittedValues) => `另 ${omittedValues.length} 人`}
                             placeholder="按姓名或邮箱选择用户"
                             value={selectedEmailNotification.extraUserIds}
                             options={extraEmailUserOptions}
+                            optionRender={(option) => (
+                              <div className="email-user-option">
+                                <Text strong>{option.data.label}</Text>
+                                <Text type="secondary" ellipsis>{option.data.email || "未维护邮箱"}</Text>
+                              </div>
+                            )}
                             onChange={(extraUserIds) => updateSelectedEmailNotification({ extraUserIds })}
                           />
                           <Text type="secondary" className="property-field__help">邮件发送到用户资料中维护的邮箱；停用或无邮箱用户不可新增。</Text>
+                          {selectedExtraEmailUsers.length ? (
+                            <div className="email-selected-users">
+                              <div className="email-selected-users__summary">
+                                <Text strong>已选择 {selectedExtraEmailUsers.length} 人</Text>
+                                <Text type="secondary">姓名与邮箱</Text>
+                              </div>
+                              <div className="email-selected-users__list">
+                                {selectedExtraEmailUsers.map((user) => (
+                                  <div className="email-selected-user" key={user.value}>
+                                    <Text strong>{user.label}</Text>
+                                    <Text type="secondary" ellipsis={{ tooltip: user.email }}>{user.email}</Text>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                         </label>
                         {!selectedEmailNotification.notifyReviewers
                           && !selectedEmailNotification.notifyInitiator
@@ -1581,14 +1663,23 @@ export const FlowDesignerPage = () => {
   const editableFieldOptions = useMemo<EditableFieldOption[]>(() => {
     const fields = version?.snapshot.form.fields ?? [];
     return fields.flatMap((field) => field.type === "table"
-      ? field.inputStage === "reviewer"
+      ? normalizeDesignerInputPermission(field) === "reviewer"
         ? [{ value: field.id, label: `${field.label}（整表）` }]
-        : (field.columns ?? []).filter((column) => column.reviewEditable).map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }))
-      : field.reviewEditable ? [{ value: field.id, label: field.label }] : []);
+        : normalizeDesignerInputPermission(field) === "both"
+          ? (field.columns ?? []).filter((column) => column.reviewEditable).map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }))
+          : []
+      : normalizeDesignerInputPermission(field) !== "initiator" ? [{ value: field.id, label: field.label }] : []);
   }, [version?.snapshot.form.fields]);
   const conditionFieldOptions = useMemo<ConditionFieldOption[]>(() => (version?.snapshot.form.fields ?? [])
-    .filter((field: StoredDesignerField) => !["attachment", "table", "richtext"].includes(field.type))
-    .map((field) => ({ value: field.id, label: field.label, type: field.type, options: field.options, inputStage: field.inputStage ?? "initiator", required: field.required })), [version?.snapshot.form.fields]);
+    .filter((field: StoredDesignerField) => Boolean(field.id && field.label) && !["attachment", "table", "richtext"].includes(field.type))
+    .map((field) => ({
+      value: field.id,
+      label: field.label,
+      type: field.type,
+      choiceOptions: Array.isArray(field.options) ? field.options.filter((option): option is string => typeof option === "string") : undefined,
+      inputStage: normalizeDesignerInputPermission(field),
+      required: field.required,
+    })), [version?.snapshot.form.fields]);
   const starterGroups = version?.basic.starterGroups ?? [];
   const fallbackMeta = useMemo<FlowMeta>(
     () => ({
@@ -1623,7 +1714,7 @@ export const FlowDesignerPage = () => {
             allowRepeatedEditing: (node.data?.kind ?? "approval") === "approval"
               ? Boolean(node.data?.allowRepeatedEditing && node.data?.editableFields?.length)
               : false,
-            activationCondition: node.data?.activationCondition,
+            activationCondition: normalizeActivationCondition(node.data?.activationCondition),
             emailNotification: (node.data?.kind ?? "approval") === "approval" || node.data?.kind === "end"
               ? normalizeEmailNotification(node.data?.kind ?? "approval", node.data?.emailNotification)
               : undefined,

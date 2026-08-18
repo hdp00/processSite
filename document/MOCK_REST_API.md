@@ -77,7 +77,7 @@ try {
 | 自由协作 | `/process-instances/{id}/free-collaboration/*` | 回复、转交、编辑、异常改派、关闭、重新打开 |
 | 附件 | `/attachments`、`/process-instances/{id}/fields/{fieldId}/attachment` | multipart、大小/类型校验、权限下载、PDF 原子单文件替换 |
 | 邮件 Outbox | `/email-outbox` | 收件人解析、去重、发送结果、失败重试演示 |
-| Excel 导出 | `/exports/process-instances`、`/exports/{id}` | 当前查询全量导出任务、状态查询、文件下载 |
+| Excel 导出 | `/exports/process-instances/data` | 重新校验权限和查询条件，返回当前查询全部导出数据，由浏览器生成 `.xlsx` |
 | 操作审计 | `/audit-events` | 分页筛选、详情、关键写操作留痕 |
 
 完整路径、参数、DTO、响应码和示例以 OpenAPI 文件为准。
@@ -88,6 +88,7 @@ try {
 - 创建、发布、审批、重试等命令使用 `Idempotency-Key`。同键同请求重放首次结果，同键不同请求返回 `IDEMPOTENCY_KEY_REUSED`。
 - 审批任务采用首个成功提交生效；确认节点拒绝驳回；重复修改只更新节点授权字段，不改变原审核结果。
 - Handler 从当前会话解析操作人，不接受请求体伪造操作人，并重新检查页面权限、动作权限和流程数据范围。
+- 流程权限组用途统一为“发起、审批/受理、关闭”。流程版本分别保存发起组、自由流程受理组和关闭组标识；关闭命令按实例锁定版本的关闭组当前有效成员重新鉴权，不从发起或受理资格推导。
 - Mock 权限只用于交互演示和前端集成测试。代码、令牌与数据均在浏览器内，不能形成真实安全边界。
 
 正式后端必须按 OpenAPI 的事务策略，在同一数据库事务内提交实例状态、任务、字段差异、时间线、审计和 Outbox；不能依赖前端按顺序调用多个接口维持一致性。
@@ -122,7 +123,7 @@ await flowPilotApi.system.updateMockSettings({
 - 附件 Blob 与元数据写入 IndexedDB；PDF 替换在同一仓储事务中更新引用并清理旧文件。
 - Mock 审计、幂等记录、邮件 Outbox 与场景设置在浏览器持久化；重置接口只清理 FlowPilot 自己的 key。
 - 邮件只模拟 Outbox 状态，不连接 SMTP，也不会在浏览器关闭后后台发送。
-- Excel 在浏览器中生成；正式后端应改为异步任务和受权限保护的短期下载地址。
+- Excel 在浏览器中使用 ExcelJS 生成真正的 `.xlsx`；Mock 和正式后端都只返回已鉴权、已筛选的列定义与数据行，不生成或保存 Excel 文件。单次最多返回 10000 行，超过上限要求用户缩小查询范围。
 
 ## 8. 正式后端迁移清单
 
@@ -130,7 +131,6 @@ await flowPilotApi.system.updateMockSettings({
 2. 保持 `/api/v1`、错误码、分页、ETag 与幂等语义，逐域替换 Mock 兼容 DTO。
 3. 将会话改为 HttpOnly/SameSite Cookie；移除 `mock:<userId>` Bearer 方案。
 4. 将领域命令迁移到 NestJS 服务和 SQLite/Drizzle 事务，建立外键与唯一约束。
-5. 将附件迁移到服务器文件目录，将邮件迁移到持久化 Outbox worker。
+5. 将附件迁移到服务器文件目录，将邮件迁移到持久化 Outbox worker；Excel 继续由浏览器生成，后端只实现导出数据集查询和权限控制。
 6. 逐页切换到 `flowPilotApi`，最后设置 `VITE_API_MODE=remote` 并删除浏览器业务数据双写。
 7. 对 OpenAPI、领域服务、Handler、组件集成和关键 E2E 分层测试。
-

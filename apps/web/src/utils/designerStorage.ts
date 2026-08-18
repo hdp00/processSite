@@ -102,7 +102,7 @@ export interface StoredDesignerField {
   queryable?: boolean;
   exportVisible?: boolean;
   reviewEditable?: boolean;
-  inputStage?: "initiator" | "reviewer";
+  inputStage?: DesignerInputPermission;
   options?: string[];
   attachment?: {
     maxSizeMb?: number;
@@ -136,12 +136,22 @@ export interface StoredNodeEmailNotification {
 }
 
 export const PROCESS_TITLE_FIELD_ID = "title";
+export type DesignerInputPermission = "initiator" | "both" | "reviewer";
+
+const LEGACY_TITLE_DESCRIPTION = "用于任务中心、流程清单和流程详情统一显示此流程实例";
+
+export const normalizeDesignerInputPermission = (
+  field: Pick<StoredDesignerField, "inputStage" | "reviewEditable">,
+): DesignerInputPermission => {
+  if (field.inputStage === "both" || field.inputStage === "reviewer") return field.inputStage;
+  return field.reviewEditable ? "both" : "initiator";
+};
 
 export const createProcessTitleField = (): StoredDesignerField => ({
   id: PROCESS_TITLE_FIELD_ID,
   type: "text",
   label: "标题",
-  description: "用于任务中心、流程清单和流程详情统一显示此流程实例",
+  description: "",
   placeholder: "请输入标题",
   required: true,
   defaultValue: "",
@@ -165,7 +175,8 @@ export const ensureProcessTitleField = (fields?: StoredDesignerField[]): StoredD
     listVisible: source[titleIndex].listVisible ?? true,
     taskVisible: source[titleIndex].taskVisible ?? true,
     exportVisible: source[titleIndex].exportVisible ?? source[titleIndex].listVisible ?? true,
-    inputStage: "initiator",
+    description: source[titleIndex].description === LEGACY_TITLE_DESCRIPTION ? "" : source[titleIndex].description,
+    inputStage: normalizeDesignerInputPermission(source[titleIndex]) === "reviewer" ? "initiator" : normalizeDesignerInputPermission(source[titleIndex]),
   };
   return source;
 };
@@ -219,7 +230,13 @@ export const readFormDesignerSnapshot = (definitionId: string): StoredFormDesign
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as Partial<StoredFormDesignerSnapshot>;
     return Array.isArray(parsed.fields)
-      ? { fields: ensureProcessTitleField(parsed.fields), savedAt: parsed.savedAt }
+      ? {
+          fields: ensureProcessTitleField(parsed.fields).map((field) => ({
+            ...field,
+            inputStage: normalizeDesignerInputPermission(field),
+          })),
+          savedAt: parsed.savedAt,
+        }
       : undefined;
   } catch {
     return undefined;
@@ -282,7 +299,9 @@ export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapsho
   const fields = ensureProcessTitleField(snapshot.form.fields).map((field) => ({
     ...field,
     exportVisible: field.exportVisible ?? field.listVisible ?? false,
-    inputStage: field.id === PROCESS_TITLE_FIELD_ID ? "initiator" : field.inputStage ?? "initiator",
+    inputStage: field.id === PROCESS_TITLE_FIELD_ID && normalizeDesignerInputPermission(field) === "reviewer"
+      ? "initiator"
+      : normalizeDesignerInputPermission(field),
     ...(field.id === PROCESS_TITLE_FIELD_ID && legacyTitleConfig
       ? { taskVisible: legacyTitleConfig.taskVisible, listVisible: legacyTitleConfig.processListVisible }
       : {}),
@@ -322,13 +341,17 @@ export const getReviewEditableFieldOptions = (definitionId: string): EditableFie
   const snapshot = readFormDesignerSnapshot(definitionId);
   if (!snapshot) return [];
   return snapshot.fields.flatMap((field) => {
+    const inputStage = normalizeDesignerInputPermission(field);
     if (field.type === "table") {
-      if (field.inputStage === "reviewer") return [{ value: field.id, label: `${field.label}（整表）` }];
+      if (inputStage === "reviewer") return [{ value: field.id, label: `${field.label}（整表）` }];
+      if (inputStage !== "both") return [];
       return (field.columns ?? [])
         .filter((column) => column.reviewEditable)
         .map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }));
     }
-    return field.reviewEditable ? [{ value: field.id, label: field.label }] : [];
+    return inputStage === "both" || inputStage === "reviewer"
+      ? [{ value: field.id, label: field.label }]
+      : [];
   });
 };
 

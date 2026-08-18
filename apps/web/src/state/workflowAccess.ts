@@ -27,6 +27,7 @@ export function canUserViewInstance(userId: string, instance: ProcessInstance) {
   if (isNamedOrId(version.basic.visibleUsers, user.id, user.name)) return true;
   if (user.roles.some((role) => version.basic.visibleRoles.includes(role))) return true;
   if (version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))) return true;
+  if (version.basic.closeGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))) return true;
   const approvalGroups = version.snapshot.flow.nodes
     .filter((node) => node.data?.kind === "approval")
     .map((node) => node.data?.permissionGroup)
@@ -47,6 +48,7 @@ export function canUserViewDefinition(userId: string, definitionId: string) {
   const version = getEffectiveVersion(definition);
   if (!user || !version) return false;
   return version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))
+    || version.basic.closeGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))
     || version.basic.visibleUsers.some((value) => value === user.id || value === user.name)
     || user.roles.some((role) => version.basic.visibleRoles.includes(role))
     || version.snapshot.flow.nodes.some((node) =>
@@ -63,5 +65,5 @@ export function canUserCloseInstance(userId: string, instance: ProcessInstance) 
   const version = instanceVersion(instance);
   if (instance.status === "驳回待处理" && version?.snapshot.flow.meta?.rejectionHandling === "resubmit-only") return false;
   if (isSuperAdminPersona(userId)) return true;
-  return Boolean(version?.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(userId, groupId)));
+  return Boolean(version?.basic.closeGroups.some((groupId) => isUserInWorkflowGroup(userId, groupId)));
 }

@@ -34,7 +34,7 @@ import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { FreeFlowEntry, ProcessInstance } from "../data/types";
 import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
-import { effectiveGroupMemberIds, findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
+import { effectiveGroupMemberIds, findIdentityUser, isUserInWorkflowGroup, useIdentityStore } from "../state/useIdentityStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserCloseInstance } from "../state/workflowAccess";
 import "./free-flow.css";
@@ -107,9 +107,12 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const participants = instance?.participants ?? [];
   const isOpen = instance?.status === "进行中";
   const isCurrentAssignee = isOpen && instance?.currentAssignee === persona?.name;
-  const isStarter = Boolean(instance && canUserCloseInstance(personaId, instance));
+  const isStarter = Boolean(
+    isSuperAdmin || lockedVersion?.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(personaId, groupId)),
+  );
+  const canCloseByGroup = Boolean(instance && canUserCloseInstance(personaId, instance));
   const canReply = Boolean(isOpen && (participants.includes(persona?.name ?? "") || isSuperAdmin));
-  const canClose = Boolean(isCurrentAssignee || (isOpen && isStarter));
+  const canClose = Boolean(isOpen && canCloseByGroup);
   const canReopen = Boolean(
     instance?.status === "已关闭" &&
     (participants.includes(persona?.name ?? "") || isStarter),

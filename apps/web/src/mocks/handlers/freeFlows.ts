@@ -207,7 +207,7 @@ export const freeFlowHandlers = [
       if (!body.reason?.trim()) return apiProblem(request, 422, "REASON_REQUIRED", "关闭原因不能为空", "请填写关闭原因。 ");
       usePrototypeStore.getState().closeFreeFlow(found.instance.id, body.reason);
       const updated = instanceById(found.instance.id);
-      if (!changed(found.instance, updated)) return apiProblem(request, 403, "CLOSE_FORBIDDEN", "不能关闭该事项", "只有当前受理人或发起权限组成员可以关闭。 ");
+      if (!changed(found.instance, updated)) return apiProblem(request, 403, "CLOSE_FORBIDDEN", "不能关闭该事项", "只有关闭流程权限组成员可以关闭。 ");
       audit(auth.actor.id, auth.actor.name, "close", updated!, `关闭自由协作事项 ${updated!.code}`, { reason: body.reason });
       return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
     });

@@ -222,7 +222,7 @@ export function ProcessPrintPage() {
               return <li key={`history-${task.id}`}><time>{task.completedAt ?? task.conditionEvaluatedAt}</time><div><strong>第 {task.round} 轮 · {task.nodeName} · {status}</strong><p>{task.status === "已跳过" ? task.conditionSummary ?? "节点条件不满足" : `${task.completedByName ?? "未知处理人"}：${task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写审核意见")}`}</p></div></li>;
             })}
             {instance.status === "已完成" && <li><time>{instance.updatedAt}</time><div><strong>流程完成</strong><p>全部前置节点已通过、确认或按条件跳过。</p></div></li>}
-            {instance.status === "已关闭" && <li><time>{instance.updatedAt}</time><div><strong>流程关闭</strong><p>发起方关闭流程，未完成待办已取消。</p></div></li>}
+            {instance.status === "已关闭" && <li><time>{instance.updatedAt}</time><div><strong>流程关闭</strong><p>授权人员关闭流程，未完成待办已取消。</p></div></li>}
           </ol>
         </section>
 

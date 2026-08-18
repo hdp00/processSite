@@ -22,7 +22,8 @@ import type {
   PageResult,
   PermissionCatalogItem,
   PositionRecord,
-  ProcessExportJob,
+  ProcessExcelDataFilter,
+  ProcessExcelDataset,
   ProcessDefinitionListItem,
   ProcessDefinitionVersionResult,
   ProcessLaunchConfig,
@@ -170,13 +171,14 @@ export const flowPilotApi = {
       apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/close`, { method: "POST", body: { reason }, ifMatch, ...mutation() }),
     copy: (instanceId: string, title: string) =>
       apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/copies`, { method: "POST", body: { title }, ...mutation() }),
-    export: (query: ProcessInstanceQuery = {}) => apiDownload("/process-instances/export", { query }),
   },
   exports: {
-    createProcessInstanceExport: (filter: { dateFrom: string; dateTo: string; q?: string; definitionId: string; status?: string; initiatorId?: string; currentNode?: string; dynamicFilters?: Record<string, unknown> }) =>
-      apiRequest<ProcessExportJob>("/exports/process-instances", { method: "POST", body: { filter }, ...mutation(), timeoutMs: 60_000 }),
-    get: (exportId: string) => apiRequest<ProcessExportJob>(`/exports/${encodeURIComponent(exportId)}`),
-    download: (exportId: string) => apiDownload(`/exports/${encodeURIComponent(exportId)}/content`),
+    processInstanceData: (filter: ProcessExcelDataFilter) =>
+      apiRequest<ProcessExcelDataset>("/exports/process-instances/data", {
+        method: "POST",
+        body: { filter },
+        timeoutMs: 60_000,
+      }),
   },
   tasks: {
     listMine: (query: WorkflowTaskQuery = {}) => apiRequest<PageResult<WorkflowTaskListItem>>("/me/workflow-tasks", { query }),

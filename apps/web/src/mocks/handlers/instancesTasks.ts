@@ -1,4 +1,4 @@
-import { http, HttpResponse } from "msw";
+import { http } from "msw";
 import type {
   ProcessInstanceDetail,
   WorkflowDecisionResult,
@@ -10,7 +10,6 @@ import { getEffectiveVersion, useProcessDefinitionStore } from "../../state/useP
 import { isSuperAdminPersona, usePrototypeStore } from "../../state/usePrototypeStore";
 import { isUserInWorkflowGroup } from "../../state/useIdentityStore";
 import { canUserViewInstance } from "../../state/workflowAccess";
-import { createProcessListExcelFile } from "../../utils/processExcelExport";
 import { getAttachmentRecords } from "../attachmentRepository";
 import {
   apiOk,
@@ -115,36 +114,6 @@ const auditInstance = (actorId: string, actorName: string, action: string, insta
   appendAuditEvent({ category: "instance", action, actorId, actorName, resourceType: "process-instance", resourceId: instance.id, summary, details });
 
 export const instanceTaskHandlers = [
-  http.get(`${API}/process-instances/export`, async ({ request }) => {
-    const simulated = await applyMockScenario(request);
-    if (simulated) return simulated;
-    const auth = requirePermission(request, "work-list:查看");
-    if (auth.response) return auth.response;
-    const instances = filterInstances(request, auth.actor.id);
-    if (!instances.length) return apiProblem(request, 422, "EXPORT_EMPTY_RESULT", "当前查询没有可导出数据", "请调整查询条件后重试。 ");
-    const definitionId = new URL(request.url).searchParams.get("definitionId");
-    if (!definitionId) return apiProblem(request, 422, "DEFINITION_REQUIRED", "缺少流程定义", "导出必须指定 definitionId。 ");
-    const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);
-    const version = getEffectiveVersion(definition);
-    if (!definition || !version) return apiProblem(request, 404, "DEFINITION_NOT_FOUND", "流程定义不存在", "未找到可用于导出的发布版本。 ");
-    const file = createProcessListExcelFile({
-      definitionName: version.basic.name,
-      systemFields: version.snapshot.systemFields,
-      formFields: version.snapshot.form.fields,
-      instances,
-    });
-    if (!file) return apiProblem(request, 422, "EXPORT_NO_COLUMNS", "没有配置导出字段", "请先在流程版本中配置至少一个导出字段。 ");
-    appendAuditEvent({ category: "instance", action: "export", actorId: auth.actor.id, actorName: auth.actor.name, resourceType: "process-definition", resourceId: definitionId, summary: `导出 ${instances.length} 条流程实例` });
-    return new HttpResponse(file.blob, {
-      status: 200,
-      headers: {
-        "Content-Type": file.blob.type,
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
-        "Cache-Control": "no-store",
-      },
-    });
-  }),
-
   http.get(`${API}/process-instances`, async ({ request }) => {
     const simulated = await applyMockScenario(request);
     if (simulated) return simulated;

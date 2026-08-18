@@ -27,7 +27,7 @@ export function ProcessManagementPage() {
   const [type, setType] = useState<DefinitionType>();
   const [createOpen, setCreateOpen] = useState(false);
   const [createDirty, setCreateDirty] = useState(false);
-  const { guard: createDefinitionGuard } = useUnsavedChangesGuard({
+  const { guard: createDefinitionGuard, allowNextNavigation: allowCreateNavigation } = useUnsavedChangesGuard({
     dirty: createDirty,
     title: "新流程信息尚未提交",
     description: "离开后，当前填写的流程名称、类型和说明将丢失。",
@@ -104,6 +104,7 @@ export function ProcessManagementPage() {
     setCreateDirty(false);
     form.resetFields();
     const query = new URLSearchParams({ name: values.name, type: values.type, description: values.description ?? "" });
+    allowCreateNavigation();
     navigate(`/admin/processes/new/basic?${query.toString()}`);
   };
 

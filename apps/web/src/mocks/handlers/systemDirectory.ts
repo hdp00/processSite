@@ -45,7 +45,7 @@ import {
 
 const API_ROOT = "/api/v1";
 const ACTIVE_STATUSES = new Set<EnableStatus>(["启用", "停用"]);
-const GROUP_PURPOSES = new Set<WorkflowGroupPurpose>(["发起", "审批", "自由流程受理"]);
+const GROUP_PURPOSES = new Set<WorkflowGroupPurpose>(["发起", "审批/受理", "关闭"]);
 const MOCK_SCENARIOS = new Set<MockScenario>([
   "normal",
   "slow",

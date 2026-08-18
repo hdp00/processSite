@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export type EnableStatus = "启用" | "停用";
-export type WorkflowGroupPurpose = "发起" | "审批" | "自由流程受理";
+export type WorkflowGroupPurpose = "发起" | "审批/受理" | "关闭";
 
 export interface DomainUser {
   id: string;
@@ -117,20 +117,31 @@ const generatedUsers: DomainUser[] = Array.from({ length: 228 }, (_, index) => {
 const userSeed = [...primaryUsers, ...generatedUsers];
 
 const groupSeed: WorkflowPermissionGroup[] = [
-  { id: "PDF审核_文控_流程权限组", code: "PG-0001", name: "PDF审核_文控_流程权限组", processes: ["PDF 文件审核"], purposes: ["发起"], directMembers: ["王敏", "刘芳"], linkedRoles: ["文控专员"], status: "启用", referenced: true, openTasks: 7, updatedAt: "2026-08-13 10:32" },
-  { id: "PDF审核_研发_流程权限组", code: "PG-0002", name: "PDF审核_研发_流程权限组", processes: ["PDF 文件审核"], purposes: ["审批"], directMembers: ["张伟", "陈晨"], linkedRoles: ["研发审核员"], status: "启用", referenced: true, openTasks: 12, updatedAt: "2026-08-13 09:18" },
-  { id: "PDF审核_质量_流程权限组", code: "PG-0003", name: "PDF审核_质量_流程权限组", processes: ["PDF 文件审核"], purposes: ["审批"], directMembers: ["林晓"], linkedRoles: ["质量审核员"], status: "启用", referenced: true, openTasks: 9, updatedAt: "2026-08-12 17:45" },
-  { id: "PDF审核_生产_流程权限组", code: "PG-0004", name: "PDF审核_生产_流程权限组", processes: ["PDF 文件审核"], purposes: ["审批"], directMembers: ["赵磊", "孙悦"], linkedRoles: ["生产审核员"], status: "启用", referenced: true, openTasks: 9, updatedAt: "2026-08-12 16:21" },
-  { id: "测试报告_发起_流程权限组", code: "PG-0005", name: "测试报告_发起_流程权限组", processes: ["测试报告审核"], purposes: ["发起"], directMembers: ["王敏"], linkedRoles: ["文控专员"], status: "启用", referenced: true, openTasks: 3, updatedAt: "2026-08-11 14:05" },
-  { id: "测试报告_研发_流程权限组", code: "PG-0006", name: "测试报告_研发_流程权限组", processes: ["测试报告审核"], purposes: ["审批"], directMembers: ["张伟"], linkedRoles: ["研发审核员"], status: "启用", referenced: true, openTasks: 2, updatedAt: "2026-08-11 13:05" },
-  { id: "测试报告_质量_流程权限组", code: "PG-0007", name: "测试报告_质量_流程权限组", processes: ["测试报告审核"], purposes: ["审批"], directMembers: ["林晓"], linkedRoles: ["质量审核员"], status: "启用", referenced: true, openTasks: 2, updatedAt: "2026-08-11 13:05" },
-  { id: "测试报告_生产_流程权限组", code: "PG-0008", name: "测试报告_生产_流程权限组", processes: ["测试报告审核"], purposes: ["审批"], directMembers: ["赵磊"], linkedRoles: ["生产审核员"], status: "启用", referenced: true, openTasks: 2, updatedAt: "2026-08-11 13:05" },
-  { id: "自由协作_发起_流程权限组", code: "PG-0009", name: "自由协作_发起_流程权限组", processes: ["自由协作事项流程"], purposes: ["发起"], directMembers: ["王敏", "周杰"], linkedRoles: ["文控专员"], status: "启用", referenced: true, openTasks: 4, updatedAt: "2026-08-10 11:28" },
-  { id: "自由协作_受理_流程权限组", code: "PG-0010", name: "自由协作_受理_流程权限组", processes: ["自由协作事项流程"], purposes: ["自由流程受理"], directMembers: ["张伟", "林晓", "赵磊", "孙悦"], linkedRoles: [], status: "启用", referenced: true, openTasks: 6, updatedAt: "2026-08-10 11:28" },
-  { id: "供应商变更_发起_流程权限组", code: "PG-0011", name: "供应商变更_发起_流程权限组", processes: ["供应商变更会签"], purposes: ["发起"], directMembers: ["王敏"], linkedRoles: ["文控专员"], status: "启用", referenced: true, openTasks: 0, updatedAt: "2026-08-09 09:18" },
-  { id: "供应商变更_评审_流程权限组", code: "PG-0012", name: "供应商变更_评审_流程权限组", processes: ["供应商变更会签"], purposes: ["审批"], directMembers: ["张伟", "林晓", "赵磊"], linkedRoles: [], status: "启用", referenced: true, openTasks: 0, updatedAt: "2026-08-09 09:18" },
-  { id: "技术文件只读_流程权限组", code: "PG-0013", name: "技术文件只读_流程权限组", processes: [], purposes: ["审批"], directMembers: ["何静"], linkedRoles: ["只读观察员"], status: "停用", referenced: false, openTasks: 0, updatedAt: "2026-08-08 09:18" },
+  { id: "PDF审核_文控_流程权限组", code: "PG-0001", name: "PDF审核_文控_流程权限组", processes: ["PDF 文件审核"], purposes: ["发起", "关闭"], directMembers: ["王敏", "刘芳"], linkedRoles: ["文控专员"], status: "启用", referenced: true, openTasks: 7, updatedAt: "2026-08-13 10:32" },
+  { id: "PDF审核_研发_流程权限组", code: "PG-0002", name: "PDF审核_研发_流程权限组", processes: ["PDF 文件审核"], purposes: ["审批/受理"], directMembers: ["张伟", "陈晨"], linkedRoles: ["研发审核员"], status: "启用", referenced: true, openTasks: 12, updatedAt: "2026-08-13 09:18" },
+  { id: "PDF审核_质量_流程权限组", code: "PG-0003", name: "PDF审核_质量_流程权限组", processes: ["PDF 文件审核"], purposes: ["审批/受理"], directMembers: ["林晓"], linkedRoles: ["质量审核员"], status: "启用", referenced: true, openTasks: 9, updatedAt: "2026-08-12 17:45" },
+  { id: "PDF审核_生产_流程权限组", code: "PG-0004", name: "PDF审核_生产_流程权限组", processes: ["PDF 文件审核"], purposes: ["审批/受理"], directMembers: ["赵磊", "孙悦"], linkedRoles: ["生产审核员"], status: "启用", referenced: true, openTasks: 9, updatedAt: "2026-08-12 16:21" },
+  { id: "测试报告_发起_流程权限组", code: "PG-0005", name: "测试报告_发起_流程权限组", processes: ["测试报告审核"], purposes: ["发起", "关闭"], directMembers: ["王敏"], linkedRoles: ["文控专员"], status: "启用", referenced: true, openTasks: 3, updatedAt: "2026-08-11 14:05" },
+  { id: "测试报告_研发_流程权限组", code: "PG-0006", name: "测试报告_研发_流程权限组", processes: ["测试报告审核"], purposes: ["审批/受理"], directMembers: ["张伟"], linkedRoles: ["研发审核员"], status: "启用", referenced: true, openTasks: 2, updatedAt: "2026-08-11 13:05" },
+  { id: "测试报告_质量_流程权限组", code: "PG-0007", name: "测试报告_质量_流程权限组", processes: ["测试报告审核"], purposes: ["审批/受理"], directMembers: ["林晓"], linkedRoles: ["质量审核员"], status: "启用", referenced: true, openTasks: 2, updatedAt: "2026-08-11 13:05" },
+  { id: "测试报告_生产_流程权限组", code: "PG-0008", name: "测试报告_生产_流程权限组", processes: ["测试报告审核"], purposes: ["审批/受理"], directMembers: ["赵磊"], linkedRoles: ["生产审核员"], status: "启用", referenced: true, openTasks: 2, updatedAt: "2026-08-11 13:05" },
+  { id: "自由协作_发起_流程权限组", code: "PG-0009", name: "自由协作_发起_流程权限组", processes: ["自由协作事项流程"], purposes: ["发起", "关闭"], directMembers: ["王敏", "周杰"], linkedRoles: ["文控专员"], status: "启用", referenced: true, openTasks: 4, updatedAt: "2026-08-10 11:28" },
+  { id: "自由协作_受理_流程权限组", code: "PG-0010", name: "自由协作_受理_流程权限组", processes: ["自由协作事项流程"], purposes: ["审批/受理"], directMembers: ["张伟", "林晓", "赵磊", "孙悦"], linkedRoles: [], status: "启用", referenced: true, openTasks: 6, updatedAt: "2026-08-10 11:28" },
+  { id: "供应商变更_发起_流程权限组", code: "PG-0011", name: "供应商变更_发起_流程权限组", processes: ["供应商变更会签"], purposes: ["发起", "关闭"], directMembers: ["王敏"], linkedRoles: ["文控专员"], status: "启用", referenced: true, openTasks: 0, updatedAt: "2026-08-09 09:18" },
+  { id: "供应商变更_评审_流程权限组", code: "PG-0012", name: "供应商变更_评审_流程权限组", processes: ["供应商变更会签"], purposes: ["审批/受理"], directMembers: ["张伟", "林晓", "赵磊"], linkedRoles: [], status: "启用", referenced: true, openTasks: 0, updatedAt: "2026-08-09 09:18" },
+  { id: "技术文件只读_流程权限组", code: "PG-0013", name: "技术文件只读_流程权限组", processes: [], purposes: ["审批/受理"], directMembers: ["何静"], linkedRoles: ["只读观察员"], status: "停用", referenced: false, openTasks: 0, updatedAt: "2026-08-08 09:18" },
 ];
+
+const normalizeWorkflowGroupPurposes = (values: unknown): WorkflowGroupPurpose[] => {
+  const source = Array.isArray(values) ? values.filter((value): value is string => typeof value === "string") : [];
+  const normalized = source.flatMap((value): WorkflowGroupPurpose[] => {
+    if (value === "发起" || value === "关闭" || value === "审批/受理") return [value];
+    if (value === "审批" || value === "自由流程受理") return ["审批/受理"];
+    return [];
+  });
+  if (source.includes("发起") && !source.includes("关闭")) normalized.push("关闭");
+  return [...new Set(normalized)];
+};
 
 const applyUpdater = <T,>(current: T[], updater: CollectionUpdater<T>) =>
   typeof updater === "function" ? updater(current) : updater;
@@ -161,7 +172,7 @@ export const useIdentityStore = create<IdentityState>()(
     }),
     {
       name: "flowpilot-identity-domain-v1",
-      version: 2,
+      version: 3,
       migrate: (persisted) => {
         const state = persisted as Partial<IdentityState>;
         return {
@@ -173,7 +184,10 @@ export const useIdentityStore = create<IdentityState>()(
             roles: [...(user.roles ?? [])],
           })) : userSeed,
           roles: Array.isArray(state.roles) ? state.roles : roleSeed,
-          workflowGroups: Array.isArray(state.workflowGroups) ? state.workflowGroups : groupSeed,
+          workflowGroups: Array.isArray(state.workflowGroups) ? state.workflowGroups.map((group) => ({
+            ...group,
+            purposes: normalizeWorkflowGroupPurposes(group.purposes),
+          })) : groupSeed,
         };
       },
     },

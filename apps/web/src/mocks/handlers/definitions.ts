@@ -337,8 +337,8 @@ export const definitionHandlers = [
     if (!canEditVersion(found.definition, found.version)) return apiProblem(request, 409, "VERSION_NOT_EDITABLE", "流程版本不可编辑", "已发布或已有实例的版本不能修改。 ");
     const body = await parseJsonBody<ProcessBasicConfig>(request);
     if (body instanceof Response) return body;
-    if (!body.name?.trim() || !body.instancePrefix?.trim() || !Array.isArray(body.starterGroups)) {
-      return apiProblem(request, 422, "VALIDATION_FAILED", "基本配置校验失败", "流程名称、编号前缀和发起权限组必须完整。 ");
+    if (!body.name?.trim() || !body.instancePrefix?.trim() || !Array.isArray(body.starterGroups) || !Array.isArray(body.closeGroups)) {
+      return apiProblem(request, 422, "VALIDATION_FAILED", "基本配置校验失败", "流程名称、编号前缀、发起权限组和关闭权限组必须完整。 ");
     }
     if (!useProcessDefinitionStore.getState().updateVersionBasic(definitionId, versionId, body)) {
       return apiProblem(request, 409, "VERSION_SAVE_FAILED", "保存失败", "流程版本状态已经变化。 ");

@@ -640,9 +640,37 @@
 
 .condition-rule {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(92px, 0.8fr) minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(96px, 0.8fr) minmax(0, 1.2fr) 32px;
   gap: 8px;
   align-items: center;
+  padding: 10px;
+  background: #fafbfc;
+  border: 1px solid #e7ebf1;
+  border-radius: 10px;
+}
+
+.condition-rule > .ant-select:first-child {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
+
+.condition-rule > .ant-select:not(:first-child),
+.condition-rule > .ant-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.condition-rule > .ant-btn {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.condition-field-option {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editable-field-options .ant-checkbox-wrapper {
@@ -683,6 +711,63 @@
 
 .email-extra-users {
   gap: 6px;
+}
+
+.email-user-option {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.email-user-option .ant-typography {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.email-selected-users {
+  overflow: hidden;
+  margin-top: 3px;
+  border: 1px solid #e1e7f0;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.email-selected-users__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #f6f8fc;
+  border-bottom: 1px solid #e8ecf2;
+}
+
+.email-selected-users__summary .ant-typography {
+  font-size: 11px;
+}
+
+.email-selected-users__list {
+  display: grid;
+  max-height: 156px;
+  overflow-y: auto;
+}
+
+.email-selected-user {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.7fr) minmax(0, 1.3fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #f0f2f6;
+}
+
+.email-selected-user:last-child {
+  border-bottom: 0;
+}
+
+.email-selected-user .ant-typography {
+  min-width: 0;
+  font-size: 11px;
 }
 
 .process-node__mail {

@@ -26,12 +26,10 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { ProcessWizardNextButton } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
-import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import { useIdentityStore } from "../state/useIdentityStore";
 import {
   canEditVersion,
-  getVersionStatus,
   useProcessDefinitionStore,
   type DefinitionType,
   type ProcessBasicConfig,
@@ -72,7 +70,10 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     .filter((group) => group.status === "启用" && group.purposes.includes("发起"))
     .map((group) => ({ value: group.id, label: group.name }));
   const assigneeGroupOptions = workflowGroups
-    .filter((group) => group.status === "启用" && group.purposes.includes("自由流程受理"))
+    .filter((group) => group.status === "启用" && group.purposes.includes("审批/受理"))
+    .map((group) => ({ value: group.id, label: group.name }));
+  const closeGroupOptions = workflowGroups
+    .filter((group) => group.status === "启用" && group.purposes.includes("关闭"))
     .map((group) => ({ value: group.id, label: group.name }));
   const versionId = searchParams.get("versionId") ?? definition?.versions[0]?.id ?? "";
   const version = definition?.versions.find((item) => item.id === versionId);
@@ -85,6 +86,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     type: definition?.type ?? (searchParams.get("type") === "free" ? "free" : "approval"),
     description: definition?.description ?? searchParams.get("description") ?? "",
     starterGroups: [],
+    closeGroups: [],
     visibleRoles: [],
     visibleUsers: [],
   }), [definition?.code, definition?.description, definition?.name, definition?.type, searchParams, version?.basic]);
@@ -93,7 +95,6 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
   const [dirty, setDirty] = useState(false);
   const workflowType = Form.useWatch("type", form) ?? initialConfig.type;
   const instancePrefix = Form.useWatch("instancePrefix", form) ?? initialConfig.instancePrefix;
-  const currentStatus = definition && version ? getVersionStatus(definition, version.id) : "校验未通过";
 
   useEffect(() => {
     form.setFieldsValue(initialConfig);
@@ -161,7 +162,6 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
           <div>
             <Space size={10} wrap>
               <Typography.Title level={3}>{initialConfig.name}</Typography.Title>
-              <StatusPill status={currentStatus} />
               <Tag color="blue">{isNew ? "首次保存后生成 V1" : `正式版本 ${version?.version}`}</Tag>
               {version?.basedOn && <Tag bordered={false}>来源 {version.basedOn}</Tag>}
             </Space>
@@ -263,12 +263,12 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                 description="权限组可直接加入人员，也可关联角色。组内任意一位符合条件的成员完成操作，即视为该节点完成。"
               />
               <Row gutter={20}>
-                <Col span={workflowType === "free" ? 12 : 24}>
+                <Col span={workflowType === "free" ? 8 : 12}>
                   <Form.Item
                     name="starterGroups"
                     label="发起流程权限组（可多选）"
                     rules={[{ required: true, type: "array", min: 1, message: "请至少选择一个发起流程权限组" }]}
-                    extra="任一所选权限组的有效成员均可发起和关闭该流程。"
+                    extra="任一所选权限组的有效成员均可发起该流程。"
                   >
                     <Select
                       mode="multiple"
@@ -281,10 +281,10 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                   </Form.Item>
                 </Col>
                 {workflowType === "free" && (
-                  <Col span={12}>
+                  <Col span={8}>
                     <Form.Item
                       name="assigneeGroups"
-                      label="可选受理人流程权限组（可多选）"
+                      label="审批/受理流程权限组（可多选）"
                       rules={[{ required: true, type: "array", min: 1, message: "请至少选择一个受理权限组" }]}
                       extra="发起和每次流转时，只能从所选权限组当前有效成员的并集中选择。"
                     >
@@ -299,6 +299,23 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                     </Form.Item>
                   </Col>
                 )}
+                <Col span={workflowType === "free" ? 8 : 12}>
+                  <Form.Item
+                    name="closeGroups"
+                    label="关闭流程权限组（可多选）"
+                    rules={[{ required: true, type: "array", min: 1, message: "请至少选择一个关闭权限组" }]}
+                    extra="关闭资格独立配置，不再由发起或受理资格隐含获得。"
+                  >
+                    <Select
+                      mode="multiple"
+                      showSearch
+                      optionFilterProp="label"
+                      maxTagCount="responsive"
+                      placeholder="搜索并选择一个或多个流程权限组"
+                      options={closeGroupOptions}
+                    />
+                  </Form.Item>
+                </Col>
               </Row>
             </Card>
 

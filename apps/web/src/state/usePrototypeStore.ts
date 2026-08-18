@@ -143,6 +143,12 @@ const isStarterActor = (instance: ProcessInstance, userId: string) => {
   return Boolean(version?.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(userId, groupId)));
 };
 
+const isCloserActor = (instance: ProcessInstance, userId: string) => {
+  if (isSuperAdminPersona(userId)) return true;
+  const version = resolveInstanceVersion(instance);
+  return Boolean(version?.basic.closeGroups.some((groupId) => isUserInWorkflowGroup(userId, groupId)));
+};
+
 const isAllowedFreeAssignee = (instance: ProcessInstance, assignee: string) => {
   const assigneeId = userIdByIdOrName(assignee);
   const version = resolveInstanceVersion(instance);
@@ -661,9 +667,8 @@ export const usePrototypeStore = create<PrototypeState>()(
           const version = target ? resolveInstanceVersion(target) : undefined;
           const canClose = Boolean(
             target && actor && target.status !== "已关闭" &&
-            hasUserPermission(actor.id, "work-launch:发起") &&
             !(target.status === "驳回待处理" && version?.snapshot.flow.meta?.rejectionHandling === "resubmit-only") &&
-            (isSuperAdminPersona(actor.id) || version?.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(actor.id, groupId))),
+            isCloserActor(target, actor.id),
           );
           if (!canClose) return state;
           return {
@@ -966,7 +971,7 @@ export const usePrototypeStore = create<PrototypeState>()(
               const canClose =
                 instance.workflowType === "free" &&
                 instance.status === "进行中" &&
-                (instance.currentAssignee === persona.name || isStarterActor(instance, state.personaId));
+                isCloserActor(instance, state.personaId);
               if (instance.id !== id || !canClose) return instance;
               return {
                 ...instance,

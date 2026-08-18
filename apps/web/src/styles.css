@@ -1073,12 +1073,6 @@ button {
   white-space: nowrap;
 }
 
-.tasks-page .ant-table-expanded-row > .ant-table-cell {
-  padding: 0 16px 12px !important;
-  border-bottom: 1px solid #e3e7ef !important;
-  background: #fff !important;
-}
-
 .tasks-page .task-table.is-mixed-process .ant-table-tbody {
   background: #edf1f6;
 }
@@ -1092,87 +1086,8 @@ button {
   border-top: 12px solid #edf1f6 !important;
 }
 
-.tasks-page .task-table.is-mixed-process .ant-table-tbody > tr.ant-table-row > td:first-child,
-.tasks-page .task-table.is-mixed-process .ant-table-tbody > tr.ant-table-expanded-row > td {
+.tasks-page .task-table.is-mixed-process .ant-table-tbody > tr.ant-table-row > td:first-child {
   box-shadow: inset 4px 0 0 #7188e8;
-}
-
-.tasks-page .task-table.is-mixed-process .ant-table-tbody > tr.ant-table-expanded-row > td {
-  padding: 0 16px 14px !important;
-  border-bottom: 1px solid #d8deea !important;
-  background: #fff !important;
-}
-
-.task-detail-band {
-  display: flex;
-  min-height: 58px;
-  align-items: stretch;
-  gap: 0;
-  overflow: hidden;
-  border: 1px solid #d8e0f1;
-  border-left: 4px solid #7188e8;
-  border-radius: 10px;
-  background: #fbfcff;
-  box-shadow: 0 5px 16px rgba(43, 62, 112, 0.07);
-}
-
-.task-detail-band__label {
-  display: grid;
-  width: 88px;
-  flex: 0 0 88px;
-  place-items: center;
-  border-right: 1px solid #e3e7ef;
-  color: #4058ad;
-  background: #edf1ff;
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.5px;
-}
-
-.task-detail-band__fields {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  align-items: stretch;
-}
-
-.task-detail-field {
-  display: flex;
-  min-width: 0;
-  justify-content: center;
-  flex-direction: column;
-  gap: 4px;
-  padding: 9px 16px;
-  border-right: 1px solid #dfe5f0;
-  background: rgba(255, 255, 255, 0.72);
-}
-
-.task-detail-field:last-child {
-  border-right: 0;
-}
-
-.task-detail-field small {
-  color: #929aaa;
-  font-size: 9px;
-  font-weight: 550;
-}
-
-.task-detail-field strong {
-  display: -webkit-box;
-  overflow: hidden;
-  color: #354158;
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.task-detail-band > .ant-btn {
-  align-self: center;
-  margin: 0 10px;
-  white-space: nowrap;
 }
 
 .query-card .ant-card-body {
@@ -2523,15 +2438,6 @@ button {
   .table-link.strong {
     color: #3158df;
     font-weight: 750;
-  }
-
-  .task-detail-band {
-    border-color: #dfe5f4;
-    background: linear-gradient(90deg, #f3f6ff, #f8faff);
-  }
-
-  .task-detail-field strong {
-    color: #283651;
   }
 
   .status-pill {
