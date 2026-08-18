@@ -1,6 +1,7 @@
 import {
   AppstoreOutlined,
   AuditOutlined,
+  EyeOutlined,
   FileTextOutlined,
   MessageOutlined,
   SearchOutlined,
@@ -22,6 +23,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatusPill } from "../components/StatusPill";
+import { ListFieldValue } from "../components/ListFieldValue";
 import {
   cloneDefaultSystemListFields,
   isSystemFieldVisible,
@@ -31,17 +33,18 @@ import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeSto
 import { useIdentityStore } from "../state/useIdentityStore";
 import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserProcessTask } from "../state/workflowAccess";
-import { PROCESS_TITLE_FIELD_ID, type StoredDesignerField } from "../utils/designerStorage";
+import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 
 const ALL_FLOWS = "__all__";
 const TASK_FLOW_STORAGE_PREFIX = "flowpilot-task-center-flow-v1";
+type TaskCenterTab = "mine" | "substitute" | "initiated";
 
 export function TaskCenterPage() {
   const navigate = useNavigate();
   const { instances, tasks, personaId } = usePrototypeStore();
   const definitions = useProcessDefinitionStore((state) => state.definitions);
   const identityUser = useIdentityStore((state) => state.users.find((user) => user.id === personaId));
-  const [tab, setTab] = useState<"mine" | "substitute">("mine");
+  const [tab, setTab] = useState<TaskCenterTab>("mine");
   const [keyword, setKeyword] = useState("");
   const [flowKeyword, setFlowKeyword] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState(() =>
@@ -77,8 +80,13 @@ export function TaskCenterPage() {
     const task = actionableTaskByInstance.get(instance.id);
     return Boolean(task?.defaultAssigneeId && task.defaultAssigneeId !== personaId);
   });
+  const initiatedInstances = useMemo(() => instances.filter((instance) => {
+    const initiatedByCurrentUser = instance.initiatorId === personaId
+      || Boolean(identityUser?.name && instance.initiator === identityUser.name);
+    return initiatedByCurrentUser && instance.status !== "已完成" && instance.status !== "已关闭";
+  }), [identityUser?.name, instances, personaId]);
 
-  const source = tab === "mine" ? myTasks : substituteTasks;
+  const source = tab === "mine" ? myTasks : tab === "substitute" ? substituteTasks : initiatedInstances;
   const flowCategories = useMemo(() => {
     const counts = new Map<string, number>();
     source.forEach((item) => item.definitionId && counts.set(item.definitionId, (counts.get(item.definitionId) ?? 0) + 1));
@@ -100,7 +108,7 @@ export function TaskCenterPage() {
   const selectedVersion = getEffectiveVersion(selectedDefinition);
   const activeCategoryLabel = activeTemplate
     ? flowCategories.find((category) => category.template === activeTemplate)?.label ?? activeTemplate
-    : "全部待办";
+    : tab === "initiated" ? "全部发起" : "全部待办";
   const selectFlow = (template: string) => {
     setSelectedTemplate(template);
     window.localStorage.setItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`, template);
@@ -124,16 +132,6 @@ export function TaskCenterPage() {
     return matchesKeyword && matchesTemplate;
   });
 
-  const formatTaskFieldValue = (record: ProcessInstance, field: StoredDesignerField) => {
-    const raw = record.formValues?.[field.id];
-    const value = raw === undefined || raw === null || raw === "" ? field.defaultValue ?? raw : raw;
-    const emptyText = field.inputStage === "reviewer" ? "" : "—";
-    if (Array.isArray(value)) return value.join("、") || emptyText;
-    if (typeof value === "object" && value !== null) return "已填写";
-    if (value === undefined || value === null || value === "") return emptyText;
-    return String(value);
-  };
-
   const selectedTaskFields = selectedVersion?.snapshot.form.fields
     .filter((field) => field.id !== PROCESS_TITLE_FIELD_ID && field.taskVisible)
     .sort((left, right) => (left.taskOrder ?? 999) - (right.taskOrder ?? 999)) ?? [];
@@ -144,7 +142,7 @@ export function TaskCenterPage() {
         width: field.taskWidth ?? 160,
         ellipsis: true,
         render: (_, record) => (
-          <span className="task-dynamic-value">{formatTaskFieldValue(record, field)}</span>
+          <ListFieldValue field={field} value={record.formValues?.[field.id]} />
         ),
       }))
     : [];
@@ -215,7 +213,7 @@ export function TaskCenterPage() {
     }] : []),
     ...(showSystemField("createdAt") ? [{ title: "发起时间", dataIndex: "createdAt", width: 150 }] : []),
     ...(showSystemField("updatedAt") ? [{ title: "更新时间", dataIndex: "updatedAt", width: 150 }] : []),
-    {
+    ...(tab !== "initiated" ? [{
       title: "任务归属",
       dataIndex: "designatedReviewer",
       width: 135,
@@ -233,20 +231,22 @@ export function TaskCenterPage() {
           </Tooltip>
         ));
       },
-    },
+    }] : []),
     {
       title: "操作",
       fixed: "right",
       width: 76,
       align: "center",
       render: (_, record) => {
-        const actionLabel = record.workflowType === "free" ? "进入处理" : approvalTaskActionLabel(record);
+        const actionLabel = tab === "initiated"
+          ? "查看流程"
+          : record.workflowType === "free" ? "进入处理" : approvalTaskActionLabel(record);
         return (
         <Tooltip title={actionLabel}>
           <Button
             className="task-action-button"
             type="text"
-            icon={record.workflowType === "free" ? <MessageOutlined /> : <AuditOutlined />}
+            icon={tab === "initiated" ? <EyeOutlined /> : record.workflowType === "free" ? <MessageOutlined /> : <AuditOutlined />}
             aria-label={`${actionLabel}：${record.title}`}
             onClick={() => navigate(`/processes/${record.id}`)}
           />
@@ -263,7 +263,7 @@ export function TaskCenterPage() {
           <Segmented
             className="app-mode-segmented task-tabs"
             value={tab}
-            onChange={(value) => setTab(value as "mine" | "substitute")}
+            onChange={(value) => setTab(value as TaskCenterTab)}
             options={[
               {
                 label: <span className="task-tab-label">我的待办 <span className="task-tab-count">{myTasks.length}</span></span>,
@@ -272,6 +272,10 @@ export function TaskCenterPage() {
               {
                 label: <span className="task-tab-label">可代办 <span className="task-tab-count">{substituteTasks.length}</span></span>,
                 value: "substitute",
+              },
+              {
+                label: <span className="task-tab-label">我的发起 <span className="task-tab-count">{initiatedInstances.length}</span></span>,
+                value: "initiated",
               },
             ]}
           />
@@ -312,7 +316,7 @@ export function TaskCenterPage() {
               onClick={() => selectFlow(ALL_FLOWS)}
             >
               <span className="task-flow-item__icon"><AppstoreOutlined /></span>
-              <span className="task-flow-item__copy"><strong>全部待办</strong><small>所有流程</small></span>
+              <span className="task-flow-item__copy"><strong>{tab === "initiated" ? "全部发起" : "全部待办"}</strong><small>{tab === "initiated" ? "本人发起且未完成" : "所有流程"}</small></span>
               <span className="task-flow-item__count">{source.length}</span>
             </button>
             {visibleFlowCategories.map((category) => (
@@ -339,17 +343,19 @@ export function TaskCenterPage() {
           </div>
           <Table<ProcessInstance>
             key={`${tab}-${activeTemplate ?? ALL_FLOWS}`}
-            className={`task-table ${activeTemplate ? "is-single-process" : "is-mixed-process"}`}
+            className="task-table process-record-table"
             rowKey="id"
             columns={columns}
             dataSource={filtered}
+            bordered
+            size="middle"
             scroll={{ x: activeTemplate ? 1300 : 1020 }}
-            pagination={{ defaultPageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total) => `共 ${total} 项任务` }}
+            pagination={{ defaultPageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total) => `共 ${total} 项${tab === "initiated" ? "流程" : "任务"}` }}
             locale={{
               emptyText: (
                 <Empty
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description={keyword || activeTemplate ? "没有符合筛选条件的任务" : tab === "mine" ? "当前没有指定给你的待办" : "当前组内没有可代办任务"}
+                  description={keyword || activeTemplate ? `没有符合筛选条件的${tab === "initiated" ? "流程" : "任务"}` : tab === "mine" ? "当前没有指定给你的待办" : tab === "substitute" ? "当前组内没有可代办任务" : "当前没有由你发起且尚未完成的流程"}
                 />
               ),
             }}

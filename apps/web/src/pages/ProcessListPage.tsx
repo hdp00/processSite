@@ -33,6 +33,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { StatusPill } from "../components/StatusPill";
+import { ListFieldValue } from "../components/ListFieldValue";
 import { cloneDefaultSystemListFields, isSystemFieldVisible } from "../data/listFieldConfig";
 import type { InstanceStatus, ProcessInstance } from "../data/types";
 import { usePrototypeStore } from "../state/usePrototypeStore";
@@ -40,7 +41,7 @@ import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProc
 import { canPersonaLaunchDefinition, hasPersonaPermission } from "../state/rolePermissions";
 import { canUserViewInstance } from "../state/workflowAccess";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
-import { PROCESS_TITLE_FIELD_ID, type StoredDesignerField } from "../utils/designerStorage";
+import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { downloadProcessListXlsx } from "../utils/processExcelExport";
 
 export function ProcessListPage() {
@@ -112,21 +113,12 @@ export function ProcessListPage() {
     [advancedValues, dateRange, definition.id, instances, keyword, personaId, queryFields, status],
   );
 
-  const fieldValue = (record: ProcessInstance, field: StoredDesignerField) => {
-    const raw = record.formValues?.[field.id];
-    const value = raw === undefined || raw === null || raw === "" ? field.defaultValue ?? raw : raw;
-    const emptyText = field.inputStage === "reviewer" ? "" : "—";
-    if (Array.isArray(value)) return value.join("、") || emptyText;
-    if (value && typeof value === "object") return "已填写";
-    return value === undefined || value === null || value === "" ? emptyText : String(value);
-  };
-
   const dynamicColumns: TableProps<ProcessInstance>["columns"] = listFields.map((field) => ({
     title: field.label,
     key: field.id,
     width: 160,
     ellipsis: true,
-    render: (_, record) => fieldValue(record, field),
+    render: (_, record) => <ListFieldValue field={field} value={record.formValues?.[field.id]} />,
   }));
 
   const columns: TableProps<ProcessInstance>["columns"] = [
@@ -361,9 +353,12 @@ export function ProcessListPage() {
           </Space>
         </div>
         <Table<ProcessInstance>
+          className="process-record-table"
           rowKey="id"
           columns={columns}
           dataSource={filtered}
+          bordered
+          size="middle"
           scroll={{ x: 1530 }}
           pagination={{ pageSize: 8, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录` }}
           onRow={(record) => ({ onDoubleClick: () => navigate(`/processes/${record.id}`) })}

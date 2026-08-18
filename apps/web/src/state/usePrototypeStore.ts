@@ -28,6 +28,9 @@ export type RepeatEditResult = "updated" | "no-changes" | "forbidden";
 type RepublishChanges = Partial<
   Pick<ProcessInstance, "title" | "documentCode" | "documentType" | "documentLevel" | "description" | "pdfName">
 > & { formValues?: Record<string, unknown>; attachmentNames?: string[] };
+type UnreviewedInstanceChanges = RepublishChanges & {
+  assigneeByNode?: Record<string, string | undefined>;
+};
 export type PersonaId = string;
 export const SUPER_ADMIN_PERSONA_ID: PersonaId = "superadmin";
 export const isSuperAdminPersona = (personaId: PersonaId) => personaId === SUPER_ADMIN_PERSONA_ID;
@@ -85,7 +88,7 @@ interface PrototypeState {
   reviewInstance: (id: string, action: ReviewAction, comment: string, documentLevel?: string, fieldChanges?: Record<string, unknown>, taskId?: string) => boolean;
   reviseCompletedTask: (id: string, taskId: string, fieldChanges: Record<string, unknown>, comment?: string) => RepeatEditResult;
   closeInstance: (id: string, reason: string) => void;
-  updateUnreviewedInstance: (id: string, changes: RepublishChanges) => void;
+  updateUnreviewedInstance: (id: string, changes: UnreviewedInstanceChanges) => void;
   republishInstance: (id: string, changes: RepublishChanges) => void;
   copyCompletedInstance: (sourceId: string, title: string) => string | null;
   createFreeFlow: (input: FreeFlowCreateInput) => string;
@@ -706,16 +709,25 @@ export const usePrototypeStore = create<PrototypeState>()(
           if (!canEdit || !target || !version) return state;
           const hasReviewAction = target.reviewers.some((reviewer) => reviewer.status === "已通过" || reviewer.status === "已确认" || reviewer.status === "已驳回");
           if (target.status !== "审核中" || hasReviewAction) return state;
+          const { assigneeByNode, ...instanceChanges } = changes;
           const updatedAt = nowText();
           const nextValues = changes.formValues ?? target.formValues ?? {};
           const previousAssignments = Object.fromEntries(state.tasks
             .filter((task) => task.instanceId === id && task.round === target.round && task.defaultAssigneeId)
             .map((task) => [task.nodeId, task.defaultAssigneeId]));
-          const runtime = buildApprovalRuntime(target.id, target.definitionId ?? legacyDefinitionId(target), version, previousAssignments, updatedAt, nextValues, target.round);
+          const runtime = buildApprovalRuntime(
+            target.id,
+            target.definitionId ?? legacyDefinitionId(target),
+            version,
+            { ...previousAssignments, ...assigneeByNode },
+            updatedAt,
+            nextValues,
+            target.round,
+          );
           return {
             instances: state.instances.map((instance) => instance.id === id ? {
               ...instance,
-              ...changes,
+              ...instanceChanges,
               status: runtime.completed ? "已完成" : "审核中",
               currentNode: runtime.currentNode,
               reviewers: runtime.reviewers,

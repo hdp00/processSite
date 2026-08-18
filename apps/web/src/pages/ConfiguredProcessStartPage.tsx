@@ -143,8 +143,6 @@ function ConfiguredTableInput({
   );
 }
 
-const uploadValue = (event: { fileList?: unknown[] } | unknown[]) => Array.isArray(event) ? event : event?.fileList ?? [];
-
 function DynamicFieldControl({
   field,
   value,
@@ -163,7 +161,7 @@ function DynamicFieldControl({
   if (field.type === "radio") return <Radio.Group value={value} options={options} onChange={(event) => onChange?.(event.target.value)} />;
   if (field.type === "checkbox") return <Checkbox.Group value={Array.isArray(value) ? value as string[] : []} options={options} onChange={onChange} />;
   if (field.type === "attachment") {
-    const inlinePdf = field.attachment?.inlinePdf ?? false;
+    const inlinePdf = field.attachment?.inlinePdf ?? true;
     const maxCount = inlinePdf ? 1 : field.attachment?.maxCount ?? 20;
     const uploadProps: UploadProps = {
       multiple: !inlinePdf && maxCount > 1,
@@ -261,12 +259,8 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
           },
         }]
       : [{ required: field.required, message: `请填写${field.label}` }];
-    const itemProps = field.type === "attachment"
-      ? { valuePropName: "fileList", getValueFromEvent: uploadValue }
-      : {};
     return (
       <Form.Item
-        {...itemProps}
         key={field.id}
         className={wide ? "field-wide" : undefined}
         name={field.id}
