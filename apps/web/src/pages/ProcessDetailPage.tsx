@@ -47,6 +47,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { AppBackButton } from "../components/AppBackButton";
+import { RuntimeReadonlyChoice } from "../components/RuntimeReadonlyChoice";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { ReviewerProgress } from "../data/types";
@@ -192,9 +193,12 @@ export function ProcessDetailPage() {
   ));
   const assignableApprovalNodes = useMemo(
     () => (lockedVersion?.snapshot.flow.nodes ?? []).filter((node) =>
-      node.data?.kind === "approval" && node.data.specifyAssignee && node.data.permissionGroup,
+      node.data?.kind === "approval" && node.data.specifyAssignee && node.data.permissionGroup
+      && tasks.find((task) =>
+        task.instanceId === instance?.id && task.round === instance?.round && task.nodeId === node.id,
+      )?.status !== "已跳过",
     ),
-    [lockedVersion],
+    [instance?.id, instance?.round, lockedVersion, tasks],
   );
   const savedAssignees = useMemo(() => Object.fromEntries(assignableApprovalNodes.map((node) => {
     const assigneeId = tasks.find((task) =>
@@ -279,6 +283,7 @@ export function ProcessDetailPage() {
         ...(!instance.attachmentNames?.length && draftPdfName && !["无附件", "—"].includes(draftPdfName) ? [draftPdfName] : []),
       ]).filter(Boolean))) : [];
   const hasAttachments = attachmentNames.length > 0;
+  const visibleReviewers = instance.reviewers.filter((reviewer) => reviewer.status !== "已跳过");
   const historyItems = [
     {
       color: "blue",
@@ -289,18 +294,19 @@ export function ProcessDetailPage() {
       const roundEvents = tasks
         .filter((task) => task.instanceId === instance.id && task.round === round)
         .flatMap((task) => {
-          const decision = task.status === "已完成" || task.status === "已跳过"
+          if (task.status === "已跳过") return [];
+          const decision = task.status === "已完成"
             ? [{
                 key: `decision-${task.id}`,
-                time: task.completedAt ?? task.conditionEvaluatedAt ?? "",
+                time: task.completedAt ?? "",
                 order: 0,
-                color: task.action === "通过" || task.action === "确认" ? "green" : task.status === "已跳过" ? "gray" : "red",
+                color: task.action === "通过" || task.action === "确认" ? "green" : "red",
                 children: <HistoryItem
-                  title={prefixWithRound(task.round, `${task.nodeName} · ${task.action ? `已${task.action}` : "已跳过"}`)}
-                  person={task.status === "已跳过" ? "系统按节点条件判定" : `实际处理人 ${task.completedByName ?? "未知"}${task.defaultAssigneeId && task.completedById && task.defaultAssigneeId !== task.completedById ? "（代办）" : ""}`}
-                  time={task.completedAt ?? task.conditionEvaluatedAt ?? ""}
+                  title={prefixWithRound(task.round, `${task.nodeName} · ${task.action ? `已${task.action}` : "已完成"}`)}
+                  person={`实际处理人 ${task.completedByName ?? "未知"}${task.defaultAssigneeId && task.completedById && task.defaultAssigneeId !== task.completedById ? "（代办）" : ""}`}
+                  time={task.completedAt ?? ""}
                   detail={[
-                    task.conditionSummary ?? task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写意见"),
+                    task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写意见"),
                     task.submittedFieldChanges?.length ? `修改字段：${[...new Set(task.submittedFieldChanges.map((change) => change.label))].join("、")}` : "",
                   ].filter(Boolean).join("；")}
                 />,
@@ -672,9 +678,10 @@ export function ProcessDetailPage() {
         const text = displayDynamicValue(cell, field);
         const updateCell = (next: unknown) => updateDynamicValue(field.id, rows.map((item, index) => index === rowIndex ? { ...row, [column.id]: next } : item));
         const columnOptions = (column.options ?? []).map((option) => ({ value: option, label: option }));
-        if (column.type === "select") return <Select className={!cellEditable ? "runtime-readonly-choice" : undefined} disabled={!cellEditable} size="small" value={typeof cell === "string" && cell ? cell : undefined} options={columnOptions} placeholder="未填写" onChange={updateCell} />;
-        if (column.type === "radio") return <Radio.Group className={!cellEditable ? "runtime-readonly-choice" : undefined} disabled={!cellEditable} value={typeof cell === "string" && cell ? cell : undefined} options={columnOptions} onChange={(event) => updateCell(event.target.value)} />;
-        if (column.type === "checkbox") return <Checkbox.Group className={!cellEditable ? "runtime-readonly-choice" : undefined} disabled={!cellEditable} value={Array.isArray(cell) ? cell as string[] : []} options={columnOptions} onChange={updateCell} />;
+        if (!cellEditable && column.type && column.type !== "text") return <RuntimeReadonlyChoice type={column.type} size="small" value={cell} options={columnOptions} />;
+        if (column.type === "select") return <Select size="small" value={typeof cell === "string" && cell ? cell : undefined} options={columnOptions} placeholder="未填写" onChange={updateCell} />;
+        if (column.type === "radio") return <Radio.Group value={typeof cell === "string" && cell ? cell : undefined} options={columnOptions} onChange={(event) => updateCell(event.target.value)} />;
+        if (column.type === "checkbox") return <Checkbox.Group value={Array.isArray(cell) ? cell as string[] : []} options={columnOptions} onChange={updateCell} />;
         if (!cellEditable) return text;
         return <Input size="small" value={text === "—" ? "" : text} onChange={(event) => updateCell(event.target.value)} />;
       } }))} />
@@ -685,10 +692,11 @@ export function ProcessDetailPage() {
       </Space> : reviewerEditing ? <Typography.Text className="table-rule-note" type="secondary">审核节点只能修改授权单元格，不能新增或删除整行。</Typography.Text> : null}</div>);
     }
     const options = (field.options ?? []).map((option) => ({ value: option, label: option }));
-    if (field.type === "select") return item(<Select className={!editable ? "runtime-readonly-choice" : undefined} disabled={!editable} value={typeof resolvedValue === "string" && resolvedValue ? resolvedValue : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
-    if (field.type === "cascader") return item(<Cascader className={!editable ? "runtime-readonly-choice" : undefined} disabled={!editable} value={Array.isArray(resolvedValue) ? resolvedValue as string[] : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
-    if (field.type === "radio") return item(<Radio.Group className={!editable ? "runtime-readonly-choice" : undefined} disabled={!editable} value={resolvedValue || undefined} options={options} onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
-    if (field.type === "checkbox") return item(<Checkbox.Group className={!editable ? "runtime-readonly-choice" : undefined} disabled={!editable} value={Array.isArray(resolvedValue) ? resolvedValue as string[] : []} options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
+    if (!editable && ["select", "cascader", "radio", "checkbox"].includes(field.type)) return item(<RuntimeReadonlyChoice type={field.type as "select" | "cascader" | "radio" | "checkbox"} value={resolvedValue} options={options} />);
+    if (field.type === "select") return item(<Select value={typeof resolvedValue === "string" && resolvedValue ? resolvedValue : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
+    if (field.type === "cascader") return item(<Cascader value={Array.isArray(resolvedValue) ? resolvedValue as string[] : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
+    if (field.type === "radio") return item(<Radio.Group value={resolvedValue || undefined} options={options} onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
+    if (field.type === "checkbox") return item(<Checkbox.Group value={Array.isArray(resolvedValue) ? resolvedValue as string[] : []} options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
     if (field.type === "richtext") return item(<Input.TextArea readOnly={!editable} value={String(resolvedValue ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()} placeholder="未填写" onChange={(event) => updateDynamicValue(field.id, event.target.value)} autoSize={{ minRows: 4, maxRows: 10 }} />);
     return item(<Input readOnly={!editable} value={String(resolvedValue ?? "")} placeholder="未填写" onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
   };
@@ -823,30 +831,32 @@ export function ProcessDetailPage() {
       )}
 
       <Card className="progress-card" title="流程进度" extra={<Tag bordered={false}>按实例锁定版本的拓扑推进</Tag>}>
-        <div className="parallel-flow">
+        <div className={`parallel-flow${visibleReviewers.length ? "" : " is-direct"}`}>
           <div className="flow-endpoint done"><CheckOutlined /><span>开始<small>{instance.createdAt.slice(5, 16)}</small></span></div>
           <div className="flow-connector"><span /></div>
-          <div className="parallel-branch-wrap">
-            <div className="parallel-label"><ApartmentBadge />处理节点</div>
-            <div className="parallel-branches">
-              {instance.reviewers.map((reviewer) => {
-                const handlingMode = lockedVersion?.snapshot.flow.nodes.find((node) => node.id === reviewer.key)?.data?.handlingMode ?? "approval";
-                return (
-                <div className={`branch-card status-${reviewer.status}`} key={reviewer.key}>
-                  <div className="branch-card-top">
-                    <span className="branch-icon">{reviewMeta[reviewer.status].icon}</span>
-                    <Space size={4}><Tag bordered={false} color={handlingMode === "confirmation" ? "cyan" : "blue"}>{handlingMode === "confirmation" ? "确认" : "审批"}</Tag><StatusPill status={reviewer.status} /></Space>
-                  </div>
-                  <strong>{reviewer.shortGroup}</strong>
-                  <Tooltip title={reviewer.group}><small>{reviewer.group}</small></Tooltip>
-                  <div className="branch-person"><UserOutlined /> 默认：{findIdentityUser(tasks.find((task) => task.instanceId === instance.id && task.nodeId === reviewer.key && task.round === instance.round)?.defaultAssigneeId ?? "")?.name ?? "组内共享"}</div>
-                  {reviewer.actionAt && reviewer.status !== "已跳过" && <div className="branch-action">实际：{reviewer.name}{reviewer.substitute && <Tag color="purple">代办</Tag>}</div>}
-                </div>
-                );
-              })}
+          {visibleReviewers.length ? <>
+            <div className="parallel-branch-wrap">
+              <div className="parallel-label"><ApartmentBadge />处理节点</div>
+              <div className="parallel-branches">
+                {visibleReviewers.map((reviewer) => {
+                  const handlingMode = lockedVersion?.snapshot.flow.nodes.find((node) => node.id === reviewer.key)?.data?.handlingMode ?? "approval";
+                  return (
+                    <div className={`branch-card status-${reviewer.status}`} key={reviewer.key}>
+                      <div className="branch-card-top">
+                        <span className="branch-icon">{reviewMeta[reviewer.status].icon}</span>
+                        <Space size={4}><Tag bordered={false} color={handlingMode === "confirmation" ? "cyan" : "blue"}>{handlingMode === "confirmation" ? "确认" : "审批"}</Tag><StatusPill status={reviewer.status} /></Space>
+                      </div>
+                      <strong>{reviewer.shortGroup}</strong>
+                      <Tooltip title={reviewer.group}><small>{reviewer.group}</small></Tooltip>
+                      <div className="branch-person"><UserOutlined /> 默认：{findIdentityUser(tasks.find((task) => task.instanceId === instance.id && task.nodeId === reviewer.key && task.round === instance.round)?.defaultAssigneeId ?? "")?.name ?? "组内共享"}</div>
+                      {reviewer.actionAt && <div className="branch-action">实际：{reviewer.name}{reviewer.substitute && <Tag color="purple">代办</Tag>}</div>}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-          <div className="flow-connector"><span /></div>
+            <div className="flow-connector"><span /></div>
+          </> : null}
           <div className={instance.status === "已完成" ? "flow-endpoint done" : "flow-endpoint"}><CheckOutlined /><span>结束<small>{instance.status === "已完成" ? instance.updatedAt.slice(5, 16) : "等待全部通过或确认"}</small></span></div>
         </div>
       </Card>

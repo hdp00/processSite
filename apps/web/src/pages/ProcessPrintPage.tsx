@@ -175,16 +175,16 @@ export function ProcessPrintPage() {
             <li><time>{instance.createdAt}</time><div><strong>流程发起</strong><p>{instance.initiator} 发起流程，附件：{attachmentNames.join("、") || "无"}</p></div></li>
             {Array.from({ length: instance.round }, (_, index) => index + 1).flatMap((round) => {
               const resubmission = instance.resubmissions?.find((record) => record.round === round);
-              const roundTasks = sortedInstanceTasks.filter((task) => task.round === round && (task.status === "已完成" || task.status === "已跳过"));
+              const roundTasks = sortedInstanceTasks.filter((task) => task.round === round && task.status === "已完成");
               return [
                 ...(resubmission ? [<li key={`history-resubmission-${round}`}><time>{resubmission.submittedAt}</time><div><strong>{formatRoundStartLabel(round)}</strong><p>{resubmission.submittedByName} 重新提交{resubmission.modifiedFields.length ? `，修改字段：${resubmission.modifiedFields.map((field) => field.label).join("、")}` : ""}</p></div></li>] : []),
                 ...roundTasks.map((task) => {
                   const status = taskReviewStatus(task);
-                  return <li key={`history-${task.id}`}><time>{task.completedAt ?? task.conditionEvaluatedAt}</time><div><strong>{prefixWithRound(task.round, `${task.nodeName} · ${status}`)}</strong><p>{task.status === "已跳过" ? task.conditionSummary ?? "节点条件不满足" : `${task.completedByName ?? "未知处理人"}：${task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写审核意见")}`}</p></div></li>;
+                  return <li key={`history-${task.id}`}><time>{task.completedAt}</time><div><strong>{prefixWithRound(task.round, `${task.nodeName} · ${status}`)}</strong><p>{task.completedByName ?? "未知处理人"}：{task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写审核意见")}</p></div></li>;
                 }),
               ];
             })}
-            {instance.status === "已完成" && <li><time>{instance.updatedAt}</time><div><strong>流程完成</strong><p>全部前置节点已通过、确认或按条件跳过。</p></div></li>}
+            {instance.status === "已完成" && <li><time>{instance.updatedAt}</time><div><strong>流程完成</strong><p>流程已满足完成条件。</p></div></li>}
             {instance.status === "已关闭" && <li><time>{instance.updatedAt}</time><div><strong>流程关闭</strong><p>授权人员关闭流程，未完成待办已取消。</p></div></li>}
           </ol>
         </section>

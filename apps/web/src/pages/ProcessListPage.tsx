@@ -74,7 +74,13 @@ export function ProcessListPage() {
   const listFields = currentVersion?.snapshot.form.fields.filter((field) =>
     field.id !== PROCESS_TITLE_FIELD_ID && field.listVisible && field.type !== "richtext",
   ) ?? [];
-  const queryFields = currentVersion?.snapshot.form.fields.filter((field) => field.queryable && field.type !== "attachment" && field.type !== "table" && field.type !== "richtext") ?? [];
+  const queryFields = currentVersion?.snapshot.form.fields.filter((field) =>
+    field.id !== PROCESS_TITLE_FIELD_ID
+    && field.queryable
+    && field.type !== "attachment"
+    && field.type !== "table"
+    && field.type !== "richtext",
+  ) ?? [];
   const showSystemField = (key: Parameters<typeof isSystemFieldVisible>[1]) =>
     isSystemFieldVisible(systemListFields, key, "processList");
   const showTitleCell = showTitle || showSystemField("template");

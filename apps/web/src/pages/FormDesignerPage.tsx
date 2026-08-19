@@ -815,7 +815,9 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
 
   const updateField = (patch: Partial<DesignerField>) => {
     if (!selectedId) return;
-    setFields((current) => current.map((field) => (field.id === selectedId ? { ...field, ...patch } : field)));
+    setFields((current) => current.map((field) => (field.id === selectedId
+      ? { ...field, ...patch, ...(field.id === PROCESS_TITLE_FIELD_ID ? { queryable: true } : {}) }
+      : field)));
   };
 
   const updateColumn = (columnId: string, patch: Partial<TableColumnConfig>) => {
@@ -1453,8 +1455,8 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                     <Switch disabled={selectedField.type === "richtext"} checked={selectedField.listVisible} onChange={(checked) => updateField({ listVisible: checked })} />
                   </div>
                   <div className="fd-switch-row">
-                    <div><Text strong>作为查询条件</Text><Text type="secondary">用于“流程清单”筛选</Text></div>
-                    <Switch disabled={selectedField.type === "richtext"} checked={selectedField.queryable} onChange={(checked) => updateField({ queryable: checked })} />
+                    <div><Text strong>作为查询条件</Text><Text type="secondary">{isTitleField ? "标题固定用于流程清单的基础查询，不能关闭" : "用于流程清单的高级查询"}</Text></div>
+                    <Switch disabled={isTitleField || selectedField.type === "richtext"} checked={isTitleField || selectedField.queryable} onChange={(checked) => updateField({ queryable: checked })} />
                   </div>
                   <div className="fd-switch-row">
                     <div><Text strong>导出到 Excel</Text><Text type="secondary">作为流程清单导出文件中的字段</Text></div>

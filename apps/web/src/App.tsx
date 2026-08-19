@@ -161,6 +161,7 @@ export default function App() {
           Select: { activeBorderColor: "#7188ee", hoverBorderColor: "#9aaaf1", activeOutlineColor: "rgba(54, 89, 227, 0.10)" },
           Menu: { darkItemBg: "#152039", darkSubMenuItemBg: "#111a2e", darkItemSelectedBg: "#3659e3", itemHeight: 44 },
           Table: { headerBg: "#f5f7fa", headerColor: "#46536b", rowHoverBg: "#f5f7ff", cellPaddingBlock: 13 },
+          Pagination: { itemActiveBg: "#eef2ff", itemBg: "#fff", itemSize: 34 },
           Modal: { titleFontSize: 17, headerBg: "#ffffff" },
           Drawer: { colorBgElevated: "#ffffff" },
         },

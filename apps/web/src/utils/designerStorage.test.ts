@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyDesignerFieldVisibility,
+  ensureProcessTitleField,
   isDesignerFieldVisible,
   normalizeStoredCondition,
   type StoredDesignerField,
@@ -9,6 +10,14 @@ import {
 const field = (value: Partial<StoredDesignerField> & Pick<StoredDesignerField, "id" | "type" | "label">): StoredDesignerField => value;
 
 describe("表单字段条件显示", () => {
+  it("always restores the fixed title query capability from legacy snapshots", () => {
+    const [title] = ensureProcessTitleField([
+      field({ id: "title", type: "text", label: "标题", queryable: false }),
+    ]);
+
+    expect(title.queryable).toBe(true);
+  });
+
   it("supports option, text and checkbox comparisons", () => {
     const dependent = field({
       id: "field-b",

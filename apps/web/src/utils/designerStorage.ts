@@ -175,6 +175,7 @@ export const ensureProcessTitleField = (fields?: StoredDesignerField[]): StoredD
     id: PROCESS_TITLE_FIELD_ID,
     type: "text",
     required: true,
+    queryable: true,
     listVisible: source[titleIndex].listVisible ?? true,
     taskVisible: source[titleIndex].taskVisible ?? true,
     exportVisible: source[titleIndex].exportVisible ?? source[titleIndex].listVisible ?? true,
