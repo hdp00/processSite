@@ -56,26 +56,18 @@ export function ProcessPrintPage() {
   const attachmentNames = instance.attachmentNames?.length ? instance.attachmentNames : instance.pdfName !== "无附件" ? [instance.pdfName] : [];
   const instanceTasks = tasks.filter((task) => task.instanceId === instance.id);
   const sortedInstanceTasks = [...instanceTasks].sort((left, right) => left.round - right.round || left.createdAt.localeCompare(right.createdAt, "zh-CN") || left.nodeName.localeCompare(right.nodeName, "zh-CN"));
-  const modificationRecords = instanceTasks.flatMap((task) => [
-    ...(task.submittedFieldChanges?.length ? [{
-      key: `${task.id}-submitted`,
-      round: task.round,
-      nodeName: task.nodeName,
-      actor: task.completedByName ?? "—",
-      time: task.completedAt ?? "—",
-      comment: `随${task.action ?? "处理"}结果提交`,
-      changes: task.submittedFieldChanges,
-    }] : []),
-    ...(task.fieldRevisions ?? []).map((revision) => ({
-      key: revision.id,
-      round: task.round,
-      nodeName: task.nodeName,
-      actor: revision.editedByName,
-      time: revision.editedAt,
-      comment: revision.comment?.trim() || "未填写修改说明",
-      changes: revision.changes,
-    })),
-  ]).sort((left, right) => left.time.localeCompare(right.time, "zh-CN"));
+  const reviewedInstanceTasks = sortedInstanceTasks.filter((task) =>
+    task.status === "已完成" &&
+    Boolean(task.action) &&
+    Boolean(task.completedAt || task.completedById || task.completedByName),
+  );
+  const modifiedFieldLabelsByTaskId = new Map(instanceTasks.map((task) => {
+    const labels = [
+      ...(task.submittedFieldChanges ?? []),
+      ...(task.fieldRevisions ?? []).flatMap((revision) => revision.changes),
+    ].map((change) => change.label.trim()).filter(Boolean);
+    return [task.id, [...new Set(labels)]];
+  }));
 
   return (
     <main className="print-preview-page">
@@ -97,8 +89,7 @@ export function ProcessPrintPage() {
         <header className="process-print-header">
           <div className="process-print-brand">FlowPilot</div>
           <div className="process-print-heading">
-            <h1>流程审核记录</h1>
-            <p>{instance.title}</p>
+            <h1>{instance.title}</h1>
           </div>
           <div className="process-print-code">
             <small>流程实例编号</small>
@@ -142,19 +133,21 @@ export function ProcessPrintPage() {
           {attachmentNames.length ? attachmentNames.map((name) => <div className="print-file-row" key={name}><FilePdfOutlined /><div><strong>{name}</strong><span>仅列出附件名称，附件正文不随流程打印</span></div></div>) : <p className="print-empty-text">无附件</p>}
         </section>
 
-        <section className="print-section">
-          <h2>审批进度与审核信息</h2>
-          <table className="print-review-table">
-            <thead>
-              <tr><th>审批节点</th><th>处理方式</th><th>流程权限组</th><th>默认责任人</th><th>实际处理人</th><th>处理结果</th><th>处理时间</th><th>处理说明</th></tr>
-            </thead>
-            <tbody>
-              {sortedInstanceTasks.map((task) => {
+        {reviewedInstanceTasks.length ? (
+          <section className="print-section">
+            <h2>审批进度与审核信息</h2>
+            <table className="print-review-table">
+              <thead>
+                <tr><th>审批节点</th><th>处理方式</th><th>流程权限组</th><th>默认责任人</th><th>实际处理人</th><th>处理结果</th><th>处理时间</th><th>处理说明</th></tr>
+              </thead>
+              <tbody>
+                {reviewedInstanceTasks.map((task) => {
                 const reviewer = instance.reviewers.find((item) => item.key === task.nodeId && task.round === instance.round);
                 const node = version?.snapshot.flow.nodes.find((item) => item.id === task.nodeId);
                 const status = taskReviewStatus(task);
                 const groupName = workflowGroups.find((group) => group.id === task.permissionGroupId)?.name ?? reviewer?.group ?? task.permissionGroupId;
                 const isSubstitute = Boolean(task.completedById && task.defaultAssigneeId && task.completedById !== task.defaultAssigneeId);
+                const modifiedFieldLabels = modifiedFieldLabelsByTaskId.get(task.id) ?? [];
                 return <tr key={task.id}>
                   <td>{task.round > 1 ? <>{formatRoundLabel(task.round)}<br /></> : null}{task.nodeName}</td>
                   <td>{node?.data?.handlingMode === "confirmation" ? "确认" : "审批"}</td>
@@ -163,33 +156,31 @@ export function ProcessPrintPage() {
                   <td>{task.completedAt ? <>{task.completedByName ?? "—"}{isSubstitute ? "（代办）" : ""}</> : "—"}</td>
                   <td><span className={`print-review-status ${reviewStatusClass[status]}`}>{status}</span></td>
                   <td>{task.completedAt ?? task.conditionEvaluatedAt ?? "—"}</td>
-                  <td className="print-multiline">{task.comment ?? task.conditionSummary ?? "—"}</td>
+                  <td className="print-multiline">
+                    <div>{task.comment?.trim() || "—"}</div>
+                    {modifiedFieldLabels.length ? <div className="print-review-changes"><strong>修改字段：</strong>{modifiedFieldLabels.join("、")}</div> : null}
+                  </td>
                 </tr>;
-              })}
-            </tbody>
-          </table>
-        </section>
-
-        <section className="print-section">
-          <h2>审核修改记录</h2>
-          {modificationRecords.length ? <table className="print-data-table">
-            <thead><tr><th>轮次 / 节点</th><th>修改人 / 时间</th><th>修改说明</th><th>字段差异</th></tr></thead>
-            <tbody>{modificationRecords.map((record) => <tr key={record.key}>
-              <td>{record.round > 1 ? <>{formatRoundLabel(record.round)}<br /></> : null}{record.nodeName}</td>
-              <td>{record.actor}<br />{record.time}</td>
-              <td className="print-multiline">{record.comment}</td>
-              <td className="print-multiline">{record.changes.map((change) => `${change.label}：${change.before || "空"} → ${change.after || "空"}`).join("\n")}</td>
-            </tr>)}</tbody>
-          </table> : <p className="print-empty-text">没有审核字段修改记录。</p>}
-        </section>
+                })}
+              </tbody>
+            </table>
+          </section>
+        ) : null}
 
         <section className="print-section">
           <h2>流程流转记录</h2>
           <ol className="print-history-list">
-            <li><time>{instance.createdAt}</time><div><strong>{formatRoundStartLabel(instance.round)}</strong><p>{instance.initiator} 发起流程，附件：{attachmentNames.join("、") || "无"}</p></div></li>
-            {sortedInstanceTasks.filter((task) => task.status === "已完成" || task.status === "已跳过").map((task) => {
-              const status = taskReviewStatus(task);
-              return <li key={`history-${task.id}`}><time>{task.completedAt ?? task.conditionEvaluatedAt}</time><div><strong>{prefixWithRound(task.round, `${task.nodeName} · ${status}`)}</strong><p>{task.status === "已跳过" ? task.conditionSummary ?? "节点条件不满足" : `${task.completedByName ?? "未知处理人"}：${task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写审核意见")}`}</p></div></li>;
+            <li><time>{instance.createdAt}</time><div><strong>流程发起</strong><p>{instance.initiator} 发起流程，附件：{attachmentNames.join("、") || "无"}</p></div></li>
+            {Array.from({ length: instance.round }, (_, index) => index + 1).flatMap((round) => {
+              const resubmission = instance.resubmissions?.find((record) => record.round === round);
+              const roundTasks = sortedInstanceTasks.filter((task) => task.round === round && (task.status === "已完成" || task.status === "已跳过"));
+              return [
+                ...(resubmission ? [<li key={`history-resubmission-${round}`}><time>{resubmission.submittedAt}</time><div><strong>{formatRoundStartLabel(round)}</strong><p>{resubmission.submittedByName} 重新提交{resubmission.modifiedFields.length ? `，修改字段：${resubmission.modifiedFields.map((field) => field.label).join("、")}` : ""}</p></div></li>] : []),
+                ...roundTasks.map((task) => {
+                  const status = taskReviewStatus(task);
+                  return <li key={`history-${task.id}`}><time>{task.completedAt ?? task.conditionEvaluatedAt}</time><div><strong>{prefixWithRound(task.round, `${task.nodeName} · ${status}`)}</strong><p>{task.status === "已跳过" ? task.conditionSummary ?? "节点条件不满足" : `${task.completedByName ?? "未知处理人"}：${task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写审核意见")}`}</p></div></li>;
+                }),
+              ];
             })}
             {instance.status === "已完成" && <li><time>{instance.updatedAt}</time><div><strong>流程完成</strong><p>全部前置节点已通过、确认或按条件跳过。</p></div></li>}
             {instance.status === "已关闭" && <li><time>{instance.updatedAt}</time><div><strong>流程关闭</strong><p>授权人员关闭流程，未完成待办已取消。</p></div></li>}

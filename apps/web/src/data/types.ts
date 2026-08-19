@@ -48,6 +48,14 @@ export interface ReviewerProgress {
   conditionSummary?: string;
 }
 
+export interface ProcessResubmissionRecord {
+  round: number;
+  submittedAt: string;
+  submittedById: string;
+  submittedByName: string;
+  modifiedFields: Array<{ fieldId: string; label: string }>;
+}
+
 export interface ProcessInstance {
   workflowType?: "approval" | "free";
   id: string;
@@ -89,6 +97,7 @@ export interface ProcessInstance {
   attachmentNames?: string[];
   attachmentIds?: string[];
   attachmentIdsByField?: Record<string, string[]>;
+  resubmissions?: ProcessResubmissionRecord[];
   reviewers: ReviewerProgress[];
 }
 

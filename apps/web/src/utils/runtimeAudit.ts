@@ -50,6 +50,23 @@ export const collectRuntimeAuditEvents = (
     summary: `${entry.actor}执行${entry.type}`,
     details: { content: entry.content, assignee: entry.assignee },
   })));
+  const resubmissions = instances.flatMap((instance) => (instance.resubmissions ?? []).map((record): AuditEvent => ({
+    id: `runtime-resubmission-${instance.id}-r${record.round}`,
+    category: "instance",
+    action: "resubmit",
+    actorId: record.submittedById,
+    actorName: record.submittedByName,
+    resourceType: "process-instance",
+    resourceId: instance.id,
+    occurredAt: record.submittedAt,
+    summary: `${record.submittedByName}重新提交流程实例 ${instance.code}`,
+    details: {
+      definitionId: instance.definitionId,
+      versionId: instance.versionId,
+      round: record.round,
+      modifiedFields: record.modifiedFields,
+    },
+  })));
   const creations = instances.map((instance): AuditEvent => ({
     id: `runtime-created-${instance.id}`,
     category: "instance",
@@ -62,5 +79,5 @@ export const collectRuntimeAuditEvents = (
     summary: `${instance.initiator}创建流程实例 ${instance.code}`,
     details: { definitionId: instance.definitionId, versionId: instance.versionId, title: instance.title },
   }));
-  return [...decisions, ...freeFlowEvents, ...creations];
+  return [...decisions, ...resubmissions, ...freeFlowEvents, ...creations];
 };

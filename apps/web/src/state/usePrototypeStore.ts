@@ -351,6 +351,14 @@ const synchronizedInstanceFields = (version: ProcessVersion, values: Record<stri
   };
 };
 
+const collectModifiedFieldReferences = (
+  version: ProcessVersion,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+) => version.snapshot.form.fields
+  .filter((field) => JSON.stringify(before[field.id] ?? null) !== JSON.stringify(after[field.id] ?? null))
+  .map((field) => ({ fieldId: field.id, label: field.label }));
+
 const synchronizedAttachmentFields = (version: ProcessVersion, values: Record<string, unknown>) => {
   const attachmentFields = version.snapshot.form.fields.filter((field) => field.type === "attachment");
   if (!attachmentFields.length) return {};
@@ -543,6 +551,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           attachmentNames,
           attachmentIds: [...(input.attachmentIds ?? [])],
           attachmentIdsByField: structuredClone(input.attachmentIdsByField ?? {}),
+          resubmissions: definition.type === "approval" ? [] : undefined,
         };
         set({
           instances: [created, ...state.instances],
@@ -768,13 +777,15 @@ export const usePrototypeStore = create<PrototypeState>()(
             && canEditProcessInstanceSubmission(target, actor, isSuperAdminPersona(actor.id)),
           );
           if (target.status !== "驳回待处理") return { ok: false, reason: "invalid-state", message: "只有驳回待处理流程可以重新提交" };
-          if (!canRepublish) return { ok: false, reason: "forbidden", message: "只有流程创建人或超级管理员可以修改并重新提交" };
+          if (!canRepublish || !actor) return { ok: false, reason: "forbidden", message: "只有流程创建人或超级管理员可以修改并重新提交" };
           const nextRound = target.round + 1;
+          const submittedAt = nowText();
           const previousAssignments = Object.fromEntries(state.tasks
             .filter((task) => task.instanceId === id && task.round === target.round && task.defaultAssigneeId)
             .map((task) => [task.nodeId, task.defaultAssigneeId]));
           const nextValues = changes.formValues ?? target.formValues ?? {};
-          const freshRuntime = buildApprovalRuntime(target.id, target.definitionId ?? legacyDefinitionId(target), version, previousAssignments, nowText(), nextValues, nextRound);
+          const modifiedFields = collectModifiedFieldReferences(version, target.formValues ?? {}, nextValues);
+          const freshRuntime = buildApprovalRuntime(target.id, target.definitionId ?? legacyDefinitionId(target), version, previousAssignments, submittedAt, nextValues, nextRound);
           const freshTasks = freshRuntime.tasks;
           set({
           instances: state.instances.map((instance) =>
@@ -785,8 +796,18 @@ export const usePrototypeStore = create<PrototypeState>()(
                   status: freshRuntime.completed ? "已完成" : "审核中",
                   currentNode: freshRuntime.currentNode,
                   round: nextRound,
-                  updatedAt: nowText(),
+                  updatedAt: submittedAt,
                   reviewers: freshRuntime.reviewers,
+                  resubmissions: [
+                    ...(instance.resubmissions ?? []),
+                    {
+                      round: nextRound,
+                      submittedAt,
+                      submittedById: actor.id,
+                      submittedByName: actor.name,
+                      modifiedFields,
+                    },
+                  ],
                 }
               : instance,
           ),

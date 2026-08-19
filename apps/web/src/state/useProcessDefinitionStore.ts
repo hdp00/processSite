@@ -103,6 +103,7 @@ interface ProcessDefinitionState {
 
 const nowText = () => new Date().toLocaleString("zh-CN", { hour12: false });
 const versionLabel = (value: number) => `V${value}`;
+const createDefinitionId = () => `process-${crypto.randomUUID()}`;
 
 const emptySnapshot = (): CompleteDesignerSnapshot => ({
   form: { fields: [createProcessTitleField()] },
@@ -246,7 +247,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         if (!currentUserCan("config-definition:编辑")) return "";
         const definitions = get().definitions;
         const sequence = nextSequence(definitions);
-        const id = `process-${Date.now()}`;
+        const id = createDefinitionId();
         const code = `PROC-${type === "approval" ? "AP" : "FREE"}-${String(sequence).padStart(3, "0")}`;
         const config = basic(name.trim(), code, type, description?.trim() || "尚未填写流程说明。", []);
         const firstVersion = buildVersion(`${id}-v1`, "V1", config, emptySnapshot());
@@ -260,7 +261,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         const sourceVersion = getPublishedVersion(source) ?? source?.versions[0];
         if (!source || !sourceVersion) return null;
         const sequence = nextSequence(definitions);
-        const id = `process-${Date.now()}`;
+        const id = createDefinitionId();
         const code = `PROC-${source.type === "approval" ? "AP" : "FREE"}-${String(sequence).padStart(3, "0")}`;
         const config = cloneBasic({ ...sourceVersion.basic, code, name: `${sourceVersion.basic.name}（副本）` });
         const copiedVersion = buildVersion(`${id}-v1`, "V1", config, sourceVersion.snapshot, { basedOn: `${source.code} / ${sourceVersion.version}` });

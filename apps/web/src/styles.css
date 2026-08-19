@@ -2296,16 +2296,6 @@ button {
   letter-spacing: 2px;
 }
 
-.process-print-heading p {
-  max-width: 360px;
-  margin: 5px 0 0;
-  overflow: hidden;
-  color: #566073;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .process-print-code small {
   margin-bottom: 5px;
   color: #747d8d;
@@ -2426,6 +2416,13 @@ button {
 
 .print-multiline {
   white-space: pre-wrap;
+}
+
+.print-review-changes {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed #b7bdc7;
+  color: #475467;
 }
 
 .print-review-table th:nth-child(1) { width: 68px; }

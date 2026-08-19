@@ -279,6 +279,67 @@ export function ProcessDetailPage() {
         ...(!instance.attachmentNames?.length && draftPdfName && !["无附件", "—"].includes(draftPdfName) ? [draftPdfName] : []),
       ]).filter(Boolean))) : [];
   const hasAttachments = attachmentNames.length > 0;
+  const historyItems = [
+    {
+      color: "blue",
+      children: <HistoryItem title="流程发起" person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} detail={hasAttachments ? `提交附件：${attachmentNames.join("、")}` : "提交初始表单"} />,
+    },
+    ...Array.from({ length: instance.round }, (_, index) => index + 1).flatMap((round) => {
+      const resubmission = instance.resubmissions?.find((record) => record.round === round);
+      const roundEvents = tasks
+        .filter((task) => task.instanceId === instance.id && task.round === round)
+        .flatMap((task) => {
+          const decision = task.status === "已完成" || task.status === "已跳过"
+            ? [{
+                key: `decision-${task.id}`,
+                time: task.completedAt ?? task.conditionEvaluatedAt ?? "",
+                order: 0,
+                color: task.action === "通过" || task.action === "确认" ? "green" : task.status === "已跳过" ? "gray" : "red",
+                children: <HistoryItem
+                  title={prefixWithRound(task.round, `${task.nodeName} · ${task.action ? `已${task.action}` : "已跳过"}`)}
+                  person={task.status === "已跳过" ? "系统按节点条件判定" : `实际处理人 ${task.completedByName ?? "未知"}${task.defaultAssigneeId && task.completedById && task.defaultAssigneeId !== task.completedById ? "（代办）" : ""}`}
+                  time={task.completedAt ?? task.conditionEvaluatedAt ?? ""}
+                  detail={[
+                    task.conditionSummary ?? task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写意见"),
+                    task.submittedFieldChanges?.length ? `修改字段：${[...new Set(task.submittedFieldChanges.map((change) => change.label))].join("、")}` : "",
+                  ].filter(Boolean).join("；")}
+                />,
+              }]
+            : [];
+          const revisions = (task.fieldRevisions ?? []).map((revision) => ({
+            key: `revision-${revision.id}`,
+            time: revision.editedAt,
+            order: 1,
+            color: "blue",
+            children: <HistoryItem
+              title={prefixWithRound(task.round, `${task.nodeName} · 继续修改`)}
+              person={`修改人 ${revision.editedByName} · 原结果 ${task.action}`}
+              time={revision.editedAt}
+              detail={[
+                revision.comment ? `说明：${revision.comment}` : "未填写修改说明",
+                `修改字段：${[...new Set(revision.changes.map((change) => change.label))].join("、")}`,
+              ].join("；")}
+            />,
+          }));
+          return [...decision, ...revisions];
+        })
+        .sort((left, right) => left.time.localeCompare(right.time, "zh-CN") || left.order - right.order)
+        .map(({ key, color, children }) => ({ key, color, children }));
+      return [
+        ...(resubmission ? [{
+          key: `resubmission-${round}`,
+          color: "blue",
+          children: <HistoryItem
+            title={formatRoundStartLabel(round)}
+            person={`${resubmission.submittedByName} · 重新提交`}
+            time={resubmission.submittedAt}
+            detail={resubmission.modifiedFields.length ? `重新生成全部审批待办；修改字段：${resubmission.modifiedFields.map((field) => field.label).join("、")}` : "重新生成全部审批待办"}
+          />,
+        }] : []),
+        ...roundEvents,
+      ];
+    }),
+  ];
 
   const openReviewConfirm = (action: Exclude<PendingAction, null>) => {
     if (action === "reject" && !comment.trim()) {
@@ -883,44 +944,7 @@ export function ProcessDetailPage() {
       </div>
 
       <Card title="流转记录" extra={<Tag bordered={false}>按轮次留痕</Tag>}>
-        <Timeline
-          items={[
-            {
-              color: "blue",
-              children: <HistoryItem title={formatRoundStartLabel(instance.round)} person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} detail={hasAttachments ? `提交附件：${attachmentNames.join("、")}` : "提交初始表单"} />,
-            },
-            ...instance.reviewers
-              .filter((reviewer) => reviewer.actionAt)
-              .map((reviewer) => {
-                const reviewerTask = tasks.find((task) => task.instanceId === instance.id && task.round === instance.round && task.nodeId === reviewer.key);
-                const submittedChanges = reviewerTask?.submittedFieldChanges ?? [];
-                return {
-                  color: reviewer.status === "已通过" || reviewer.status === "已确认" ? "green" : reviewer.status === "已跳过" ? "gray" : "red",
-                  children: <HistoryItem title={`${reviewer.shortGroup} · ${reviewer.status}`} person={reviewer.status === "已跳过" ? "系统按节点条件判定" : `实际处理人 ${reviewer.name}${reviewer.substitute ? "（代办）" : ""}`} time={reviewer.actionAt ?? ""} detail={reviewer.conditionSummary ?? [reviewer.comment ?? (reviewer.status === "已确认" ? "未填写确认说明" : "未填写意见"), ...submittedChanges.map((change) => `${change.label}：${change.before} → ${change.after}`)].join("；")} />,
-                };
-              }),
-            ...tasks
-              .filter((task) => task.instanceId === instance.id && task.round < instance.round && (task.status === "已完成" || task.status === "已跳过"))
-              .map((task) => ({
-                color: task.action === "通过" || task.action === "确认" ? "green" : task.status === "已跳过" ? "gray" : "red",
-                children: <HistoryItem
-                  title={prefixWithRound(task.round, `${task.nodeName} · ${task.action ? `已${task.action}` : "已跳过"}`)}
-                  person={task.status === "已跳过" ? "系统按节点条件判定" : `实际处理人 ${task.completedByName ?? "未知"}`}
-                  time={task.completedAt ?? task.conditionEvaluatedAt ?? ""}
-                  detail={task.conditionSummary ?? [
-                    task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写意见"),
-                    ...(task.submittedFieldChanges ?? []).map((change) => `${change.label}：${change.before} → ${change.after}`),
-                  ].join("；")}
-                />,
-              })),
-            ...tasks
-              .filter((task) => task.instanceId === instance.id && task.fieldRevisions?.length)
-              .flatMap((task) => (task.fieldRevisions ?? []).map((revision) => ({
-                color: "blue",
-                children: <HistoryItem title={`${task.nodeName} · 继续修改`} person={`修改人 ${revision.editedByName} · 原结果 ${task.action}`} time={revision.editedAt} detail={[revision.comment ? `说明：${revision.comment}` : "未填写修改说明", ...revision.changes.map((change) => `${change.label}：${change.before} → ${change.after}`)].join("；")} />,
-              }))),
-          ]}
-        />
+        <Timeline items={historyItems} />
       </Card>
 
       <Modal

@@ -28,6 +28,13 @@ const instance: ProcessInstance = {
   documentLevel: "",
   revision: "",
   reviewers: [],
+  resubmissions: [{
+    round: 2,
+    submittedAt: "2026-08-19 09:30:00",
+    submittedById: "wangmin",
+    submittedByName: "王敏",
+    modifiedFields: [{ fieldId: "title", label: "标题" }],
+  }],
 };
 
 const task: WorkflowTask = {
@@ -54,5 +61,7 @@ describe("collectRuntimeAuditEvents", () => {
     expect(events.map((event) => event.id)).toContain("runtime-decision-task-1");
     expect(events.find((event) => event.id === "runtime-decision-task-1")?.details)
       .toMatchObject({ instanceId: "instance-1", instanceCode: "QA26080001", round: 1 });
+    expect(events.find((event) => event.id === "runtime-resubmission-instance-1-r2"))
+      .toMatchObject({ action: "resubmit", actorId: "wangmin", occurredAt: "2026-08-19 09:30:00" });
   });
 });
