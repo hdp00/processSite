@@ -2,6 +2,7 @@ import type { ProcessExcelDataset, ProcessExcelDatasetColumn } from "../api/cont
 import type { SystemListFieldConfig, SystemListFieldKey } from "../data/listFieldConfig";
 import type { ProcessInstance } from "../data/types";
 import type { StoredDesignerField } from "./designerStorage";
+import { formatRoundLabel } from "./roundDisplay";
 
 export interface ProcessExcelDatasetOptions {
   definitionId: string;
@@ -75,7 +76,7 @@ const systemFieldValue = (key: SystemListFieldKey, instance: ProcessInstance): s
       return instance.workflowType === "free"
         ? (instance.status === "进行中" ? instance.currentAssignee ?? null : null)
         : instance.currentNode;
-    case "round": return instance.round;
+    case "round": return formatRoundLabel(instance.round) || null;
     case "initiator": return instance.department ? `${instance.initiator}（${instance.department}）` : instance.initiator;
     case "createdAt": return instance.createdAt;
     case "updatedAt": return instance.updatedAt;
@@ -83,7 +84,6 @@ const systemFieldValue = (key: SystemListFieldKey, instance: ProcessInstance): s
 };
 
 const systemDataType = (key: SystemListFieldKey): ProcessExcelDatasetColumn["dataType"] => {
-  if (key === "round") return "number";
   if (key === "createdAt" || key === "updatedAt") return "date";
   return "text";
 };

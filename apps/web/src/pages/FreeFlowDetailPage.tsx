@@ -37,6 +37,7 @@ import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeSto
 import { effectiveGroupMemberIds, findIdentityUser, isUserInWorkflowGroup, useIdentityStore } from "../state/useIdentityStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserCloseInstance } from "../state/workflowAccess";
+import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
 import "./free-flow.css";
 
 const { Text, Title } = Typography;
@@ -117,7 +118,9 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     instance?.status === "已关闭" &&
     (participants.includes(persona?.name ?? "") || isStarter),
   );
-  const canEditInitial = Boolean(isOpen && (instance?.initiatorId === persona?.id || instance?.initiator === persona?.name));
+  const canEditInitial = Boolean(
+    isOpen && instance && persona && canEditProcessInstanceSubmission(instance, persona, isSuperAdmin),
+  );
   const canForceReassign = Boolean(isOpen && isStarter);
   const initialEntry = instance?.freeTimeline?.find((entry) => entry.type === "created");
   const initialFormDirty = Boolean(initialEditOpen && instance && (

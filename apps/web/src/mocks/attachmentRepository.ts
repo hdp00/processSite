@@ -63,6 +63,35 @@ export const getAttachmentRecords = async (ids?: string[]) => {
   return all.map((item) => item.record).filter((record) => !ids || ids.includes(record.id));
 };
 
+export const assignAttachmentsToInstance = async (
+  ids: string[],
+  instanceId: string,
+  attachmentIdsByField: Record<string, string[]>,
+) => {
+  if (!ids.length) return [];
+  const fieldByAttachmentId = new Map(
+    Object.entries(attachmentIdsByField).flatMap(([fieldId, fieldIds]) => fieldIds.map((id) => [id, fieldId] as const)),
+  );
+  const database = await openDatabase();
+  const transaction = database.transaction(STORE_NAME, "readwrite");
+  const store = transaction.objectStore(STORE_NAME);
+  const all = await requestResult(store.getAll()) as StoredAttachment[];
+  const updated = all
+    .filter((item) => ids.includes(item.record.id))
+    .map((item) => ({
+      ...item,
+      record: {
+        ...item.record,
+        instanceId,
+        fieldId: fieldByAttachmentId.get(item.record.id),
+      },
+    }));
+  updated.forEach((item) => store.put(item));
+  await transactionDone(transaction);
+  database.close();
+  return updated.map((item) => item.record);
+};
+
 export const deleteAttachment = async (id: string) => {
   const database = await openDatabase();
   const transaction = database.transaction(STORE_NAME, "readwrite");

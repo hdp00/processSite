@@ -27,6 +27,7 @@ import {
   Upload,
   message,
   type TableProps,
+  type UploadFile,
   type UploadProps,
 } from "antd";
 import { useMemo, useState } from "react";
@@ -34,7 +35,9 @@ import { useNavigate } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
-import { usePrototypeStore } from "../state/usePrototypeStore";
+import type { AttachmentRecord } from "../api/contracts";
+import type { ProcessInstance } from "../data/types";
+import { flowPilotApi } from "../api/flowPilotApi";
 import { effectiveGroupMemberIds, useIdentityStore } from "../state/useIdentityStore";
 import type { ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
 import {
@@ -43,6 +46,7 @@ import {
   type StoredDesignerField,
   type StoredDesignerTableColumn,
 } from "../utils/designerStorage";
+import { buildCopiedInstanceInitialValues } from "../utils/instanceCopy";
 
 type DynamicRow = Record<string, string | string[] | undefined> & { key: string };
 type DynamicFormValues = Record<string, unknown> & { firstAssignee?: string };
@@ -50,6 +54,8 @@ type DynamicFormValues = Record<string, unknown> & { firstAssignee?: string };
 interface ConfiguredProcessStartPageProps {
   definition: ProcessDefinition;
   version: ProcessVersion;
+  copySource?: ProcessInstance;
+  copySourceVersion?: ProcessVersion;
 }
 
 const createRow = (columns: StoredDesignerTableColumn[]): DynamicRow => ({
@@ -172,6 +178,10 @@ function DynamicFieldControl({
           message.error(`${file.name} 超过 ${maxSize} MB 限制`);
           return Upload.LIST_IGNORE;
         }
+        if (inlinePdf && (!file.name.toLowerCase().endsWith(".pdf") || (file.type && file.type !== "application/pdf"))) {
+          message.error(`${file.name} 不是有效的 PDF 文件`);
+          return Upload.LIST_IGNORE;
+        }
         return false;
       },
     };
@@ -191,9 +201,8 @@ function DynamicFieldControl({
   return <Input value={typeof value === "string" ? value : ""} placeholder={field.placeholder || "请输入"} maxLength={500} onChange={(event) => onChange?.(event.target.value)} />;
 }
 
-export function ConfiguredProcessStartPage({ definition, version }: ConfiguredProcessStartPageProps) {
+export function ConfiguredProcessStartPage({ definition, version, copySource, copySourceVersion }: ConfiguredProcessStartPageProps) {
   const navigate = useNavigate();
-  const createProcessInstance = usePrototypeStore((state) => state.createProcessInstance);
   const identityUsers = useIdentityStore((state) => state.users);
   useIdentityStore((state) => state.workflowGroups);
   const formSnapshot = version.snapshot.form;
@@ -214,13 +223,21 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submittedValues, setSubmittedValues] = useState<DynamicFormValues>({});
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(Boolean(copySource));
   const { guard, allowNextNavigation } = useUnsavedChangesGuard({
     dirty,
     title: "发起内容尚未提交",
     description: "离开后，当前填写的表单、附件和人员选择将丢失。",
   });
   const initialValues = useMemo(() => {
+    if (copySource && copySourceVersion) {
+      return buildCopiedInstanceInitialValues(
+        initiatorFields,
+        copySourceVersion.snapshot.form.fields,
+        copySource.formValues ?? {},
+        copySource.title,
+      );
+    }
     return Object.fromEntries(initiatorFields.map((field) => [
       field.id,
       field.type === "attachment"
@@ -229,9 +246,9 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
           ? [createRow(field.columns ?? [])]
           : field.defaultValue ?? (field.type === "checkbox" ? [] : ""),
     ]));
-  }, [initiatorFields]);
+  }, [copySource, copySourceVersion, initiatorFields]);
 
-  const runtimeValues = (values: DynamicFormValues) => Object.fromEntries(
+  const runtimeValues = (values: DynamicFormValues, uploadedByField: Record<string, AttachmentRecord[]>) => Object.fromEntries(
     fields.map((field) => {
       const key = field.id;
       const value = (field.inputStage ?? "initiator") === "reviewer"
@@ -240,7 +257,7 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
           : field.defaultValue ?? (field.type === "checkbox" ? [] : "")
         : values[key];
       if (field?.type === "attachment") {
-        return [key, (value as Array<{ name?: string }> | undefined)?.map((file) => file.name).filter(Boolean) ?? []];
+        return [key, uploadedByField[key] ?? []];
       }
       return [key, value && typeof value === "object" && "toJSON" in value
         ? (value as { toJSON: () => unknown }).toJSON()
@@ -278,26 +295,40 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
     setConfirmOpen(true);
   };
 
-  const confirmSubmit = () => {
+  const confirmSubmit = async () => {
     setSubmitting(true);
-    window.setTimeout(() => {
-      const values = runtimeValues(submittedValues);
+    const uploadedRecords: AttachmentRecord[] = [];
+    try {
+      const uploadedByField: Record<string, AttachmentRecord[]> = {};
+      for (const field of fields.filter((item) => item.type === "attachment")) {
+        const files = Array.isArray(submittedValues[field.id]) ? submittedValues[field.id] as UploadFile[] : [];
+        const records: AttachmentRecord[] = [];
+        for (const file of files) {
+          const source = file.originFileObj;
+          if (!source) throw new Error(`无法读取附件“${file.name}”，请重新选择文件`);
+          const record = await flowPilotApi.attachments.upload(source);
+          records.push(record);
+          uploadedRecords.push(record);
+        }
+        uploadedByField[field.id] = records;
+      }
+      const values = runtimeValues(submittedValues, uploadedByField);
       const assigneeByNode = Object.fromEntries(
         approvalNodes.map((node) => [node.id, String(submittedValues[`reviewer-${node.id}`] ?? "") || undefined]),
       );
-      const createdId = createProcessInstance({
+      const attachmentIdsByField = Object.fromEntries(
+        Object.entries(uploadedByField).map(([fieldId, records]) => [fieldId, records.map((record) => record.id)]),
+      );
+      await flowPilotApi.instances.create({
         definitionId: definition.id,
         formValues: values,
+        copySourceInstanceId: copySource?.id,
         assigneeByNode,
         firstAssigneeId: submittedValues.firstAssignee,
-        attachmentNames,
+        attachmentIds: uploadedRecords.map((record) => record.id),
+        attachmentIdsByField,
       });
       setSubmitting(false);
-      if (!createdId) {
-        message.error("流程未创建：当前账号、流程权限组或发布版本已发生变化");
-        setConfirmOpen(false);
-        return;
-      }
       setConfirmOpen(false);
       setDirty(false);
       allowNextNavigation();
@@ -305,20 +336,18 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
         ? "事项已创建并生成首位受理人的待办"
         : "流程已提交，审批或确认节点已按条件和发布版本生成待办");
       navigate("/launch");
-    }, 450);
+    } catch (error) {
+      await Promise.allSettled(uploadedRecords.map((record) => flowPilotApi.attachments.remove(record.id)));
+      setSubmitting(false);
+      message.error(error instanceof Error ? error.message : "流程提交失败，请稍后重试");
+    }
   };
-
-  const attachmentNames = fields
-    .filter((field) => field.type === "attachment")
-    .flatMap((field) => (submittedValues[field.id] as Array<{ name?: string }> | undefined) ?? [])
-    .map((file) => file.name)
-    .filter((name): name is string => Boolean(name));
 
   return (
     <div className="page-stack process-start-page">
       <div className="process-start-toolbar">
         <div className="process-start-title">
-          <AppBackButton onClick={() => navigate("/launch")} />
+          <AppBackButton onClick={() => navigate(copySource ? `/processes?definitionId=${encodeURIComponent(definition.id)}` : "/launch")} />
           <Divider type="vertical" />
           <div>
             <strong>{version.basic.name}</strong>
@@ -327,6 +356,13 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
         </div>
         <Button type="primary" icon={<SendOutlined />} onClick={() => form.submit()}>提交</Button>
       </div>
+
+      {copySource ? <Alert
+        type="info"
+        showIcon
+        message={`正在复制新建：${copySource.code}`}
+        description="已带入来源流程中与当前发布版本兼容的最终表单内容，附件、审批记录和人员选择未复制。当前尚未创建新流程，也未占用实例编号；请修改并确认无误后点击提交。"
+      /> : null}
 
       <Card className="start-progress-card">
         <div className="start-progress-copy">

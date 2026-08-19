@@ -1,12 +1,12 @@
 import { FilePdfOutlined, PrinterOutlined } from "@ant-design/icons";
-import { Button, Empty, Space, Tag } from "antd";
+import { Button, Empty } from "antd";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import type { ReviewerProgress, WorkflowTask } from "../data/types";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
-import type { StoredNodeEmailNotification } from "../utils/designerStorage";
+import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../utils/roundDisplay";
 
 const reviewStatusClass: Record<ReviewerProgress["status"], string> = {
   待审核: "pending",
@@ -24,20 +24,6 @@ const taskReviewStatus = (task: WorkflowTask): ReviewerProgress["status"] => {
   if (task.action === "确认") return "已确认";
   if (task.action === "驳回") return "已驳回";
   return "已通过";
-};
-
-const emailNotificationText = (notification?: StoredNodeEmailNotification) => {
-  if (!notification?.enabled) return "不发送";
-  const recipients = [
-    notification.notifyReviewers ? "审核人" : "",
-    notification.notifyInitiator ? "发起人" : "",
-    ...(notification.extraUserIds ?? []).map((userId) => {
-      const user = findIdentityUser(userId);
-      const email = user && "email" in user ? String(user.email ?? "").trim() : "";
-      return user ? `${user.name}${email ? ` <${email}>` : "（未维护邮箱）"}` : userId;
-    }),
-  ].filter(Boolean);
-  return recipients.length ? recipients.join("、") : "已启用，未配置收件人";
 };
 
 const printableValue = (value: unknown): string => {
@@ -68,7 +54,6 @@ export function ProcessPrintPage() {
   const printableFields = version?.snapshot.form.fields.filter((field) => !["attachment", "table"].includes(field.type)) ?? [];
   const tableFields = version?.snapshot.form.fields.filter((field) => field.type === "table") ?? [];
   const attachmentNames = instance.attachmentNames?.length ? instance.attachmentNames : instance.pdfName !== "无附件" ? [instance.pdfName] : [];
-  const configuredNodes = version?.snapshot.flow.nodes.filter((node) => node.data?.kind === "approval" || node.data?.kind === "end") ?? [];
   const instanceTasks = tasks.filter((task) => task.instanceId === instance.id);
   const sortedInstanceTasks = [...instanceTasks].sort((left, right) => left.round - right.round || left.createdAt.localeCompare(right.createdAt, "zh-CN") || left.nodeName.localeCompare(right.nodeName, "zh-CN"));
   const modificationRecords = instanceTasks.flatMap((task) => [
@@ -122,12 +107,12 @@ export function ProcessPrintPage() {
         </header>
 
         <section className="print-section print-summary-section">
-          <h2>一、流程基本信息</h2>
+          <h2>流程基本信息</h2>
           <dl className="print-summary-grid">
             <div><dt>流程名称</dt><dd>{instance.template}</dd></div>
             <div><dt>流程版本</dt><dd>{instance.templateVersion}</dd></div>
             <div><dt>流程状态</dt><dd><span className={`print-status status-${instance.status}`}>{instance.status}</span></dd></div>
-            <div><dt>当前轮次</dt><dd>第 {instance.round} 轮</dd></div>
+            {instance.round > 1 ? <div><dt>当前轮次</dt><dd>{formatRoundLabel(instance.round)}</dd></div> : null}
             <div><dt>发布人</dt><dd>{instance.initiator}（{instance.department}）</dd></div>
             <div><dt>发布时间</dt><dd>{instance.createdAt}</dd></div>
             <div><dt>当前节点</dt><dd>{instance.currentNode}</dd></div>
@@ -136,7 +121,7 @@ export function ProcessPrintPage() {
         </section>
 
         <section className="print-section">
-          <h2>二、流程表单</h2>
+          <h2>流程表单</h2>
           <table className="print-form-table">
             <tbody>
               {printableFields.length ? printableFields.map((field) => (
@@ -153,12 +138,12 @@ export function ProcessPrintPage() {
         </section>
 
         <section className="print-section">
-          <h2>三、附件清单</h2>
+          <h2>附件清单</h2>
           {attachmentNames.length ? attachmentNames.map((name) => <div className="print-file-row" key={name}><FilePdfOutlined /><div><strong>{name}</strong><span>仅列出附件名称，附件正文不随流程打印</span></div></div>) : <p className="print-empty-text">无附件</p>}
         </section>
 
         <section className="print-section">
-          <h2>四、审批进度与审核信息</h2>
+          <h2>审批进度与审核信息</h2>
           <table className="print-review-table">
             <thead>
               <tr><th>审批节点</th><th>处理方式</th><th>流程权限组</th><th>默认责任人</th><th>实际处理人</th><th>处理结果</th><th>处理时间</th><th>处理说明</th></tr>
@@ -171,7 +156,7 @@ export function ProcessPrintPage() {
                 const groupName = workflowGroups.find((group) => group.id === task.permissionGroupId)?.name ?? reviewer?.group ?? task.permissionGroupId;
                 const isSubstitute = Boolean(task.completedById && task.defaultAssigneeId && task.completedById !== task.defaultAssigneeId);
                 return <tr key={task.id}>
-                  <td>第 {task.round} 轮<br />{task.nodeName}</td>
+                  <td>{task.round > 1 ? <>{formatRoundLabel(task.round)}<br /></> : null}{task.nodeName}</td>
                   <td>{node?.data?.handlingMode === "confirmation" ? "确认" : "审批"}</td>
                   <td>{groupName}</td>
                   <td>{findIdentityUser(task?.defaultAssigneeId ?? "")?.name ?? "组内共享"}</td>
@@ -183,29 +168,14 @@ export function ProcessPrintPage() {
               })}
             </tbody>
           </table>
-          {configuredNodes.length ? <>
-            <h3>节点处理与通知配置</h3>
-            <table className="print-data-table">
-              <thead><tr><th>节点</th><th>节点类型</th><th>允许重复修改</th><th>邮件通知</th></tr></thead>
-              <tbody>{configuredNodes.map((node) => {
-                const kind = node.data?.kind ?? "approval";
-                return <tr key={`config-${node.id}`}>
-                  <td>{node.data?.label || (kind === "end" ? "结束" : "未命名节点")}</td>
-                  <td>{kind === "end" ? "结束节点" : node.data?.handlingMode === "confirmation" ? "确认" : "审批"}</td>
-                  <td>{kind === "approval" ? node.data?.allowRepeatedEditing ? "允许" : "不允许" : "不适用"}</td>
-                  <td className="print-multiline">{emailNotificationText(node.data?.emailNotification)}</td>
-                </tr>;
-              })}</tbody>
-            </table>
-          </> : null}
         </section>
 
         <section className="print-section">
-          <h2>五、审核修改记录</h2>
+          <h2>审核修改记录</h2>
           {modificationRecords.length ? <table className="print-data-table">
             <thead><tr><th>轮次 / 节点</th><th>修改人 / 时间</th><th>修改说明</th><th>字段差异</th></tr></thead>
             <tbody>{modificationRecords.map((record) => <tr key={record.key}>
-              <td>第 {record.round} 轮<br />{record.nodeName}</td>
+              <td>{record.round > 1 ? <>{formatRoundLabel(record.round)}<br /></> : null}{record.nodeName}</td>
               <td>{record.actor}<br />{record.time}</td>
               <td className="print-multiline">{record.comment}</td>
               <td className="print-multiline">{record.changes.map((change) => `${change.label}：${change.before || "空"} → ${change.after || "空"}`).join("\n")}</td>
@@ -214,12 +184,12 @@ export function ProcessPrintPage() {
         </section>
 
         <section className="print-section">
-          <h2>六、流程流转记录</h2>
+          <h2>流程流转记录</h2>
           <ol className="print-history-list">
-            <li><time>{instance.createdAt}</time><div><strong>第 {instance.round} 轮发起</strong><p>{instance.initiator} 发起流程，附件：{attachmentNames.join("、") || "无"}</p></div></li>
+            <li><time>{instance.createdAt}</time><div><strong>{formatRoundStartLabel(instance.round)}</strong><p>{instance.initiator} 发起流程，附件：{attachmentNames.join("、") || "无"}</p></div></li>
             {sortedInstanceTasks.filter((task) => task.status === "已完成" || task.status === "已跳过").map((task) => {
               const status = taskReviewStatus(task);
-              return <li key={`history-${task.id}`}><time>{task.completedAt ?? task.conditionEvaluatedAt}</time><div><strong>第 {task.round} 轮 · {task.nodeName} · {status}</strong><p>{task.status === "已跳过" ? task.conditionSummary ?? "节点条件不满足" : `${task.completedByName ?? "未知处理人"}：${task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写审核意见")}`}</p></div></li>;
+              return <li key={`history-${task.id}`}><time>{task.completedAt ?? task.conditionEvaluatedAt}</time><div><strong>{prefixWithRound(task.round, `${task.nodeName} · ${status}`)}</strong><p>{task.status === "已跳过" ? task.conditionSummary ?? "节点条件不满足" : `${task.completedByName ?? "未知处理人"}：${task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写审核意见")}`}</p></div></li>;
             })}
             {instance.status === "已完成" && <li><time>{instance.updatedAt}</time><div><strong>流程完成</strong><p>全部前置节点已通过、确认或按条件跳过。</p></div></li>}
             {instance.status === "已关闭" && <li><time>{instance.updatedAt}</time><div><strong>流程关闭</strong><p>授权人员关闭流程，未完成待办已取消。</p></div></li>}

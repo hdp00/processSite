@@ -1010,3 +1010,67 @@
 
   .flow-designer-workspace { min-width: 960px; }
 }
+
+/* Unified interface system */
+.flow-designer-page {
+  background: #f3f5f8;
+}
+
+.flow-designer-toolbar {
+  min-height: 72px;
+  border-bottom: 1px solid #e3e7ee;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(23, 32, 51, .035);
+  backdrop-filter: none;
+}
+
+.flow-designer-toolbar__icon {
+  border-color: #dbe3ff;
+  border-radius: 10px;
+  background: #eef2ff;
+  box-shadow: none;
+}
+
+.flow-designer-workspace {
+  gap: 12px;
+  padding: 12px;
+}
+
+.flow-designer-palette,
+.flow-designer-properties,
+.flow-designer-canvas {
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(23, 32, 51, .045);
+}
+
+.designer-panel-heading,
+.property-panel-switcher {
+  background: #fff;
+}
+
+.palette-node {
+  border-color: #dfe4ec;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.palette-node:hover {
+  border-color: #a9b7ef;
+  background: #f6f8ff;
+  box-shadow: none;
+}
+
+.flow-designer-canvas {
+  background-color: #f7f8fa;
+  background-image: radial-gradient(#d8deea 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.process-node {
+  box-shadow: 0 3px 10px rgba(23, 32, 51, .08);
+}
+
+.process-node.is-selected {
+  box-shadow: 0 0 0 2px rgba(54, 89, 227, .12), 0 4px 12px rgba(23, 32, 51, .09);
+}

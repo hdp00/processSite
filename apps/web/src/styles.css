@@ -1059,18 +1059,6 @@ button {
   box-shadow: 0 6px 14px rgba(102, 83, 168, 0.22);
 }
 
-.copy-process-modal {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding-top: 8px;
-}
-
-.copy-process-modal > .ant-typography {
-  font-size: 11px;
-  line-height: 1.6;
-}
-
 .process-record-table .ant-table-thead > tr > th {
   padding-block: 13px;
   border-color: #dfe5ee !important;
@@ -1788,18 +1776,17 @@ button {
   line-height: 1.65;
 }
 
-.runtime-process-form .is-readonly .ant-input,
-.runtime-process-form .is-readonly .ant-select-disabled .ant-select-selector {
+.runtime-process-form .is-readonly .ant-input[readonly] {
   color: #28364d;
   border-color: #e2e7ef;
   background: #f8fafc;
   box-shadow: none;
+  cursor: default;
+  opacity: 1;
 }
 
-.runtime-process-form .is-readonly .ant-select-disabled .ant-select-selection-item,
-.runtime-process-form .is-readonly .ant-radio-wrapper-disabled,
-.runtime-process-form .is-readonly .ant-checkbox-wrapper-disabled {
-  color: #28364d;
+.runtime-process-form .is-readonly .runtime-readonly-value {
+  font-weight: 500;
 }
 
 .runtime-process-form .is-editable .ant-input,
@@ -1853,6 +1840,10 @@ button {
   flex: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.attachment-field-list .attachment-delete-button {
+  flex: 0 0 auto;
 }
 
 .editable-field {
@@ -1998,6 +1989,26 @@ button {
   overflow: auto;
   padding: 24px;
   background: radial-gradient(circle at 50% 0, #f2f3f6, #e2e5ea);
+}
+
+.inline-pdf-frame {
+  display: block;
+  width: 100%;
+  height: min(760px, calc(100vh - 210px));
+  min-height: 560px;
+  border: 0;
+  background: #f2f4f7;
+}
+
+.inline-pdf-loading {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  background: #f7f8fa;
+}
+
+.inline-pdf-error {
+  margin: 20px;
 }
 
 .inline-pdf-sheet {
@@ -2957,5 +2968,298 @@ button {
 
   .rich-editor__toolbar {
     background: linear-gradient(180deg, #fafbfd, #f5f7fa);
+  }
+}
+
+/* Unified interface system — see document/UI_DESIGN_GUIDELINES.md */
+@media screen {
+  :root {
+    --ui-ink: #172033;
+    --ui-muted: #69758a;
+    --ui-border: #dfe4ec;
+    --ui-border-soft: #edf0f4;
+    --ui-surface: #fff;
+    --ui-surface-muted: #f7f8fa;
+    --ui-primary: #3659e3;
+    --ui-primary-soft: #eef2ff;
+    --ui-shadow-sm: 0 1px 3px rgba(23, 32, 51, 0.045);
+    --ui-shadow-md: 0 3px 12px rgba(23, 32, 51, 0.055);
+  }
+
+  body {
+    color: var(--ui-ink);
+    background: #f3f5f8;
+  }
+
+  .app-sider {
+    border-right: 1px solid rgba(255, 255, 255, 0.04);
+    background: linear-gradient(180deg, #18233b 0%, #121b2e 100%) !important;
+    box-shadow: none;
+  }
+
+  .brand-mark {
+    border-radius: 10px;
+    background: #4566e8;
+    box-shadow: none;
+  }
+
+  .tenant-chip {
+    box-shadow: none;
+  }
+
+  .app-menu .ant-menu-item,
+  .app-menu .ant-menu-submenu-title {
+    font-weight: 540;
+    transition: color 150ms ease, background 150ms ease;
+  }
+
+  .app-menu .ant-menu-item-selected {
+    background: #3659e3 !important;
+    box-shadow: none;
+  }
+
+  .app-menu .ant-menu-item-selected::before {
+    display: none;
+  }
+
+  .app-header {
+    padding-inline: 28px !important;
+    border-bottom: 1px solid #e3e7ee;
+    background: #fff !important;
+    box-shadow: 0 1px 4px rgba(23, 32, 51, 0.035);
+    backdrop-filter: none;
+  }
+
+  .persona-switcher {
+    background: #f7f8fa !important;
+    box-shadow: none;
+  }
+
+  .user-avatar {
+    box-shadow: 0 0 0 2px #edf1ff;
+  }
+
+  .app-content {
+    padding: 24px 28px 40px;
+    background: #f3f5f8;
+  }
+
+  .page-stack,
+  .free-flow-page,
+  .free-create-page {
+    gap: 20px;
+  }
+
+  .content-card,
+  .query-card,
+  .detail-hero,
+  .progress-card,
+  .pdf-card,
+  .form-card,
+  .approval-card,
+  .empty-page-card,
+  .free-flow-page .ant-card,
+  .free-create-page .ant-card {
+    border: 1px solid var(--ui-border) !important;
+    border-radius: 12px !important;
+    background: var(--ui-surface);
+    box-shadow: var(--ui-shadow-sm);
+  }
+
+  .query-card::before,
+  .detail-hero::before,
+  .free-detail-head::before,
+  .free-initial-card::before,
+  .free-create-card::before {
+    display: none !important;
+  }
+
+  .ant-card .ant-card-head {
+    min-height: 52px;
+    border-bottom: 1px solid var(--ui-border-soft);
+    background: #fff;
+  }
+
+  .ant-card .ant-card-head-title {
+    color: #263149;
+    font-weight: 680;
+  }
+
+  .query-card .ant-card-body {
+    padding: 20px 20px 4px !important;
+  }
+
+  .query-card .ant-form-item {
+    margin-bottom: 16px;
+  }
+
+  .query-card.gov-query-card .ant-card-body,
+  .query-card.pa-filter-card .ant-card-body,
+  .query-card.launch-query-card .ant-card-body {
+    padding: 20px !important;
+  }
+
+  .ant-btn {
+    border-radius: 8px;
+    box-shadow: none;
+    transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+  }
+
+  .ant-btn:not(:disabled):active,
+  .ant-btn-primary:not(:disabled):hover {
+    transform: none;
+  }
+
+  .ant-btn-primary:not(:disabled),
+  .ant-btn-primary:not(:disabled):hover {
+    border-color: var(--ui-primary) !important;
+    background: var(--ui-primary) !important;
+    box-shadow: none;
+  }
+
+  .ant-btn-primary:not(:disabled):hover {
+    border-color: #4c6be7 !important;
+    background: #4c6be7 !important;
+  }
+
+  .ant-input,
+  .ant-input-affix-wrapper,
+  .ant-select-selector,
+  .ant-picker,
+  .ant-input-number,
+  .ant-cascader-picker {
+    border-color: #d8dee8 !important;
+    background: #fff !important;
+  }
+
+  .ant-form-item-label > label,
+  .field-block > span:first-child {
+    color: #3c475b !important;
+    font-weight: 620 !important;
+  }
+
+  .content-card .ant-table-thead > tr > th,
+  .ant-table-wrapper .ant-table-thead > tr > th {
+    height: 46px;
+    border-bottom: 1px solid #dfe4ec;
+    color: #505c70;
+    background: #f5f7fa;
+    font-size: 12px;
+    font-weight: 680;
+  }
+
+  .content-card .ant-table-tbody > tr > td,
+  .ant-table-wrapper .ant-table-tbody > tr > td {
+    border-bottom-color: #edf0f4;
+    color: #303b50;
+    background: #fff;
+  }
+
+  .content-card .ant-table-tbody > tr:hover > td,
+  .ant-table-wrapper .ant-table-tbody > tr:hover > td {
+    background: #f6f8ff !important;
+  }
+
+  .table-toolbar,
+  .table-result-head {
+    min-height: 64px;
+    padding-inline: 20px;
+    border-bottom: 1px solid var(--ui-border-soft);
+    background: #fff;
+  }
+
+  .status-pill {
+    min-width: 76px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-weight: 650;
+    box-shadow: none;
+  }
+
+  .task-action-button.ant-btn,
+  .gov-action.ant-btn,
+  .icon-action-button.ant-btn {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+    border-color: transparent !important;
+    color: #4562d6;
+    background: transparent !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+  }
+
+  .task-action-button.ant-btn:hover,
+  .gov-action.ant-btn:hover,
+  .icon-action-button.ant-btn:hover {
+    border-color: #dbe3ff !important;
+    color: #3155d8 !important;
+    background: var(--ui-primary-soft) !important;
+    transform: none;
+  }
+
+  .app-mode-segmented.ant-segmented,
+  .gov-view-switch.ant-segmented {
+    padding: 4px;
+    border: 1px solid #e0e5ed;
+    border-radius: 10px;
+    background: #eef1f5;
+    box-shadow: none;
+  }
+
+  .app-mode-segmented .ant-segmented-item,
+  .gov-view-switch .ant-segmented-item {
+    min-height: 38px;
+    border-radius: 7px;
+  }
+
+  .app-mode-segmented .ant-segmented-item-selected,
+  .gov-view-switch .ant-segmented-item-selected {
+    color: #2f51cd;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(23, 32, 51, 0.08);
+  }
+
+  .ant-modal-content,
+  .ant-drawer-content {
+    border: 0;
+    border-radius: 12px;
+    box-shadow: 0 18px 48px rgba(20, 31, 53, 0.16) !important;
+  }
+
+  .ant-modal-header,
+  .ant-drawer-header {
+    border-bottom-color: var(--ui-border-soft) !important;
+  }
+
+  .ant-drawer-body {
+    padding: 20px 24px;
+  }
+
+  .branch-card,
+  .pdf-card,
+  .form-card,
+  .approval-card,
+  .free-reply-card {
+    box-shadow: var(--ui-shadow-sm) !important;
+  }
+
+  .login-panel {
+    background: #f4f6fa;
+  }
+
+  .login-card {
+    border-radius: 16px;
+    box-shadow: 0 12px 36px rgba(27, 40, 69, 0.10);
+  }
+
+  .rich-editor {
+    border-color: #d8dee8;
+    box-shadow: none;
+  }
+
+  .rich-editor__toolbar {
+    background: #f7f8fa;
   }
 }

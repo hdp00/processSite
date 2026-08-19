@@ -18,7 +18,6 @@ import {
   DatePicker,
   Form,
   Input,
-  Modal,
   Row,
   Result,
   Select,
@@ -44,6 +43,7 @@ import { canUserViewInstance } from "../state/workflowAccess";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
 import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { downloadProcessListXlsx } from "../utils/processExcelExport";
+import { formatRoundLabel } from "../utils/roundDisplay";
 
 export function ProcessListPage() {
   const { message: messageApi } = App.useApp();
@@ -56,15 +56,13 @@ export function ProcessListPage() {
   const managedDefinition = managedDefinitions.find((item) => item.id === definitionId);
   const currentVersion = getPublishedVersion(managedDefinition);
   const definition = { id: definitionId, label: currentVersion?.basic.name ?? managedDefinition?.name ?? "未命名流程" };
-  const { instances, personaId, copyCompletedInstance } = usePrototypeStore();
+  const { instances, personaId } = usePrototypeStore();
   const [form] = Form.useForm();
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<InstanceStatus>();
   const [dateRange, setDateRange] = useState(createDefaultDateRange);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedValues, setAdvancedValues] = useState<Record<string, string>>({});
-  const [copySource, setCopySource] = useState<ProcessInstance | null>(null);
-  const [copyTitle, setCopyTitle] = useState("");
   const [exporting, setExporting] = useState(false);
   const canCopyCompleted = hasPersonaPermission(personaId, "work-list:复制新建")
     && canPersonaLaunchDefinition(personaId, definition.id);
@@ -161,7 +159,7 @@ export function ProcessListPage() {
           ? (showSystemField("currentNode") && record.status === "进行中" ? record.currentAssignee ?? "" : "")
           : <span>
               {showSystemField("currentNode") ? value : null}
-              {showSystemField("round") ? <small className="inline-subtle">第 {record.round} 轮</small> : null}
+              {showSystemField("round") && record.round > 1 ? <small className="inline-subtle">{formatRoundLabel(record.round)}</small> : null}
             </span>,
     }] : []),
     ...(showSystemField("initiator") ? [{
@@ -208,7 +206,7 @@ export function ProcessListPage() {
             </Tooltip>
           )}
           {record.workflowType !== "free" && record.status === "已完成" && (
-            <Tooltip title={canCopyCompleted ? "复制新建" : "需要该流程的发布权限"}>
+            <Tooltip title={canCopyCompleted ? "复制内容并进入编辑" : "需要复制新建及流程发起权限"}>
               <span>
                 <Button
                   className="task-action-button is-copy"
@@ -216,10 +214,7 @@ export function ProcessListPage() {
                   disabled={!canCopyCompleted}
                   icon={<CopyOutlined />}
                   aria-label={`复制新建：${record.title}`}
-                  onClick={() => {
-                    setCopySource(record);
-                    setCopyTitle(`${record.title}（复制）`);
-                  }}
+                  onClick={() => navigate(`/launch/${record.definitionId}?copyFrom=${record.id}`)}
                 />
               </span>
             </Tooltip>
@@ -379,41 +374,6 @@ export function ProcessListPage() {
         />
       </Card>
 
-      <Modal
-        open={Boolean(copySource)}
-        title="复制新建流程"
-        okText="复制并创建"
-        cancelText="取消"
-        onCancel={() => setCopySource(null)}
-        onOk={() => {
-          if (!copySource || !copyTitle.trim()) {
-            messageApi.warning("请输入新流程标题");
-            return;
-          }
-          const createdId = copyCompletedInstance(copySource.id, copyTitle);
-          if (!createdId) {
-            messageApi.error("复制失败，请确认流程状态和发布权限");
-            return;
-          }
-          setCopySource(null);
-          messageApi.success("新流程已创建，当前尚无人审核，可以继续修改");
-          navigate(`/processes/${createdId}`);
-        }}
-      >
-        <div className="copy-process-modal">
-          <Alert
-            type="info"
-            showIcon
-            message="复制最终表单内容，创建新的流程实例"
-            description="新实例会按目标流程当前版本的编号前缀，从该前缀的共享月序列取得新编号并从第1轮开始；原附件、审批记录、审核结果和流转历史均不会复制。"
-          />
-          <label className="field-block">
-            <span>新流程标题</span>
-            <Input value={copyTitle} onChange={(event) => setCopyTitle(event.target.value)} maxLength={120} showCount />
-          </label>
-          <Typography.Text type="secondary">创建后请重新上传所需附件；新流程在尚无人审核时仍可修改，首位审核人提交后内容锁定。</Typography.Text>
-        </div>
-      </Modal>
     </div>
   );
 }

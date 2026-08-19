@@ -23,6 +23,7 @@ import {
 import { conditionOperatorLabel, evaluateNodeCondition, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { hasUserPermission } from "./permissionEngine";
 import { resolveLockedProcessVersion } from "./processVersionResolver";
+import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
 
 type ReviewAction = "pass" | "confirm" | "reject";
 export type RepeatEditResult = "updated" | "no-changes" | "forbidden";
@@ -64,6 +65,8 @@ export interface CreateProcessInstanceInput {
   assigneeByNode?: Record<string, string | undefined>;
   firstAssigneeId?: string;
   attachmentNames?: string[];
+  attachmentIds?: string[];
+  attachmentIdsByField?: Record<string, string[]>;
 }
 
 export const personas: Array<{
@@ -94,7 +97,6 @@ interface PrototypeState {
   closeInstance: (id: string, reason: string) => RuntimeCommandResult;
   updateUnreviewedInstance: (id: string, changes: UnreviewedInstanceChanges) => RuntimeCommandResult;
   republishInstance: (id: string, changes: RepublishChanges) => RuntimeCommandResult;
-  copyCompletedInstance: (sourceId: string, title: string) => string | null;
   createFreeFlow: (input: FreeFlowCreateInput) => string;
   replyFreeFlow: (id: string, content: string) => void;
   transferFreeFlow: (id: string, content: string, nextAssignee: string) => void;
@@ -539,6 +541,8 @@ export const usePrototypeStore = create<PrototypeState>()(
             : undefined,
           formValues: structuredClone(input.formValues),
           attachmentNames,
+          attachmentIds: [...(input.attachmentIds ?? [])],
+          attachmentIdsByField: structuredClone(input.attachmentIdsByField ?? {}),
         };
         set({
           instances: [created, ...state.instances],
@@ -716,10 +720,10 @@ export const usePrototypeStore = create<PrototypeState>()(
           if (!version) return { ok: false, reason: "version-missing", message: "实例锁定的流程版本不存在，已禁止继续操作" };
           const actor = findIdentityUser(state.personaId);
           const canEdit = Boolean(
-            actor && hasUserPermission(actor.id, "work-launch:发起") &&
-            (isSuperAdminPersona(actor.id) || version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(actor.id, groupId))),
+            actor && hasUserPermission(actor.id, "work-launch:发起")
+            && canEditProcessInstanceSubmission(target, actor, isSuperAdminPersona(actor.id)),
           );
-          if (!canEdit) return { ok: false, reason: "forbidden", message: "当前账号不再具有修改此流程的权限" };
+          if (!canEdit) return { ok: false, reason: "forbidden", message: "只有流程创建人或超级管理员可以修改发起内容" };
           const hasReviewAction = target.reviewers.some((reviewer) => reviewer.status === "已通过" || reviewer.status === "已确认" || reviewer.status === "已驳回");
           if (target.status !== "审核中") return { ok: false, reason: "invalid-state", message: "流程当前状态不允许修改" };
           if (hasReviewAction) return { ok: false, reason: "locked", message: "已有审核人提交结果，流程内容已经锁定" };
@@ -759,12 +763,12 @@ export const usePrototypeStore = create<PrototypeState>()(
           if (!version) return { ok: false, reason: "version-missing", message: "实例锁定的流程版本不存在，已禁止继续操作" };
           const actor = findIdentityUser(state.personaId);
           const canRepublish = Boolean(
-            target.status === "驳回待处理" && actor &&
-            hasUserPermission(actor.id, "work-launch:发起") &&
-            (isSuperAdminPersona(actor.id) || version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(actor.id, groupId))),
+            target.status === "驳回待处理" && actor
+            && hasUserPermission(actor.id, "work-launch:发起")
+            && canEditProcessInstanceSubmission(target, actor, isSuperAdminPersona(actor.id)),
           );
           if (target.status !== "驳回待处理") return { ok: false, reason: "invalid-state", message: "只有驳回待处理流程可以重新提交" };
-          if (!canRepublish) return { ok: false, reason: "forbidden", message: "当前账号不再具有重新提交此流程的权限" };
+          if (!canRepublish) return { ok: false, reason: "forbidden", message: "只有流程创建人或超级管理员可以修改并重新提交" };
           const nextRound = target.round + 1;
           const previousAssignments = Object.fromEntries(state.tasks
             .filter((task) => task.instanceId === id && task.round === target.round && task.defaultAssigneeId)
@@ -797,20 +801,6 @@ export const usePrototypeStore = create<PrototypeState>()(
           });
           return { ok: true };
         },
-      copyCompletedInstance: (sourceId, title) => {
-        const source = get().instances.find((instance) => instance.id === sourceId);
-        if (!source || source.status !== "已完成" || !source.definitionId || !hasUserPermission(get().personaId, "work-list:复制新建")) return null;
-        const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === source.definitionId);
-        const version = getPublishedVersion(definition);
-        if (!version) return null;
-        const copiedValues = structuredClone(source.formValues ?? {});
-        version.snapshot.form.fields.filter((field) => field.type === "attachment").forEach((field) => delete copiedValues[field.id]);
-        version.snapshot.form.fields.filter((field) => field.inputStage === "reviewer").forEach((field) => {
-          copiedValues[field.id] = field.defaultValue ?? (field.type === "checkbox" ? [] : field.type === "table" || field.type === "attachment" ? [] : "");
-        });
-        copiedValues[PROCESS_TITLE_FIELD_ID] = title.trim() || `${source.title}（复制）`;
-        return get().createProcessInstance({ definitionId: source.definitionId, formValues: copiedValues, attachmentNames: [] });
-      },
       createFreeFlow: (input) => {
         const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.type === "free" && getPublishedVersion(item));
         if (!definition) return "";
@@ -927,7 +917,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                 instance.id !== id ||
                 instance.workflowType !== "free" ||
                 instance.status !== "进行中" ||
-                instance.initiator !== persona.name
+                !canEditProcessInstanceSubmission(instance, persona, isSuperAdminPersona(state.personaId))
               ) return instance;
               const originalInitialContent = instance.freeTimeline?.find((entry) => entry.type === "created")?.content ?? "";
               const fieldChanges = [

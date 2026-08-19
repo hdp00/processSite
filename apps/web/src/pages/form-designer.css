@@ -776,3 +776,52 @@
   border-color: #6f87ec;
   box-shadow: 0 0 0 3px rgba(54, 89, 227, 0.10), 0 10px 26px rgba(54, 89, 227, 0.09);
 }
+
+/* Unified interface system (kept last to override the legacy refinement block) */
+.form-designer-page {
+  --fd-border: #dfe4ec;
+  background: #f3f5f8;
+}
+
+.fd-page-header {
+  min-height: 72px;
+  border-bottom: 1px solid #e3e7ee;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(23, 32, 51, .035);
+  backdrop-filter: none;
+}
+
+.fd-workspace {
+  gap: 12px;
+  padding: 12px;
+}
+
+.fd-panel {
+  border-color: #dfe4ec;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(23, 32, 51, .045);
+}
+
+.fd-panel-title {
+  min-height: 54px;
+  background: #fff;
+}
+
+.fd-component-item,
+.fd-field-card {
+  border-color: #dfe4ec;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.fd-component-item:hover,
+.fd-component-item:focus-visible {
+  border-color: #a9b7ef;
+  background: #f6f8ff;
+  box-shadow: none;
+}
+
+.fd-field-card.is-selected {
+  border-color: #6f87ec;
+  box-shadow: 0 0 0 2px rgba(54, 89, 227, .10);
+}

@@ -1764,42 +1764,6 @@ paths:
         "428":
           $ref: "#/components/responses/PreconditionRequired"
 
-  /process-instances/{instanceId}/copies:
-    post:
-      tags: [ProcessInstances]
-      operationId: copyCompletedProcessInstance
-      summary: 从已完成实例的最终表单复制新建
-      description: 不复制附件、实例编号、审核字段、任务、结果、轮次或历史；按目标当前发布版本创建新实例。
-      parameters:
-        - $ref: "#/components/parameters/InstanceId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CopyCompletedInstanceRequest"
-      responses:
-        "201":
-          description: 新实例已创建
-          headers:
-            ETag:
-              $ref: "#/components/headers/ETag"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProcessInstanceDetailDto"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-
   /me/workflow-tasks:
     get:
       tags: [WorkflowTasks]
@@ -4209,6 +4173,10 @@ components:
           type: object
           additionalProperties:
             $ref: "#/components/schemas/JsonValue"
+        copySourceInstanceId:
+          type: string
+          format: uuid
+          description: 复制预填提交时传入来源已完成实例；后端只校验来源、权限和审计，不在提交前创建任何实例
         assigneeByNode:
           type: object
           additionalProperties:
@@ -4253,19 +4221,6 @@ components:
           type: string
           minLength: 1
           maxLength: 2000
-    CopyCompletedInstanceRequest:
-      type: object
-      additionalProperties: false
-      required: [title]
-      properties:
-        title:
-          type: string
-          minLength: 1
-          maxLength: 200
-        targetDefinitionId:
-          type: string
-          format: uuid
-          description: 省略时沿用源实例定义
     ProcessInstanceSummaryDto:
       type: object
       required: [id, revision, definitionId, versionId, code, title, processName, versionLabel, workflowType, status, round, currentNodeNames, initiator, createdAt, updatedAt]

@@ -1,7 +1,8 @@
 import { http } from "msw";
 import type { ProcessInstance } from "../../data/types";
 import { findIdentityUser } from "../../state/useIdentityStore";
-import { usePrototypeStore } from "../../state/usePrototypeStore";
+import { isSuperAdminPersona, usePrototypeStore } from "../../state/usePrototypeStore";
+import { canEditProcessInstanceSubmission } from "../../utils/processInstanceAccess";
 import {
   apiOk,
   apiProblem,
@@ -152,6 +153,9 @@ export const freeFlowHandlers = [
     if (mismatch) return mismatch;
     const found = ensureFreeFlow(request, String(params.instanceId ?? ""));
     if ("response" in found) return found.response;
+    if (!canEditProcessInstanceSubmission(found.instance, auth.actor, isSuperAdminPersona(auth.actor.id))) {
+      return apiProblem(request, 403, "UPDATE_SUBMISSION_FORBIDDEN", "不能修改初始表单", "只有流程创建人或超级管理员可以修改进行中事项的初始表单。 ");
+    }
     const conflict = checkIfMatch(request, found.instance, true);
     if (conflict) return conflict;
     const body = await parseJsonBody<{ title?: string; category?: string; priority?: "普通" | "紧急"; description?: string; initialContent?: string }>(request);
@@ -161,7 +165,7 @@ export const freeFlowHandlers = [
       title: body.title.trim(), category: body.category.trim(), priority: body.priority === "紧急" ? "紧急" : "普通", description: body.description.trim(), initialContent: body.initialContent,
     });
     const updated = instanceById(found.instance.id);
-    if (!changed(found.instance, updated)) return apiProblem(request, 403, "UPDATE_SUBMISSION_FORBIDDEN", "不能修改初始表单", "只有发起人可以修改进行中事项的初始表单。 ");
+    if (!changed(found.instance, updated)) return apiProblem(request, 403, "UPDATE_SUBMISSION_FORBIDDEN", "不能修改初始表单", "只有流程创建人或超级管理员可以修改进行中事项的初始表单。 ");
     audit(auth.actor.id, auth.actor.name, "update-submission", updated!, `修改自由协作事项 ${updated!.code} 初始表单`);
     return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
   }),

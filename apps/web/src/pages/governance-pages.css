@@ -803,3 +803,47 @@
   .gov-filter-grid--monitor .gov-filter-actions,
   .gov-filter-grid--audit .gov-filter-actions { grid-column: 1 / -1; justify-content: flex-start; }
 }
+
+/* Unified interface system */
+.app-content .gov-page .gov-summary-card,
+.app-content .gov-page .gov-query-card,
+.app-content .gov-page .gov-table-card,
+.app-content .gov-page .gov-tree-card,
+.app-content .gov-page .gov-content-card {
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(23, 32, 51, .045);
+}
+
+.app-content .gov-page .gov-summary-item::before {
+  display: none;
+}
+
+.app-content .gov-page .gov-query-card .ant-card-body {
+  padding: 20px;
+}
+
+.app-content .gov-page .gov-filter-grid {
+  gap: 12px 14px;
+}
+
+.app-content .gov-page .gov-action.ant-btn {
+  border-color: transparent;
+  color: #4562d6;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-content .gov-page .gov-action.ant-btn:hover {
+  border-color: #dbe3ff;
+  color: #3155d8;
+  background: #eef2ff;
+  transform: none;
+}
+
+.app-content .gov-page .gov-permission-row,
+.app-content .gov-page .gov-audit-values > div {
+  border-radius: 8px;
+  box-shadow: none;
+}

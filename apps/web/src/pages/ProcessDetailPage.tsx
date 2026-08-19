@@ -3,6 +3,7 @@ import {
   CheckOutlined,
   CloseCircleFilled,
   CloseOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
   EyeOutlined,
@@ -33,6 +34,7 @@ import {
   Radio,
   Select,
   Space,
+  Spin,
   Table,
   Tag,
   Timeline,
@@ -43,16 +45,19 @@ import {
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { flowPilotApi } from "../api/flowPilotApi";
 import { AppBackButton } from "../components/AppBackButton";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { ReviewerProgress } from "../data/types";
 import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
-import { effectiveGroupMemberIds, findIdentityUser, isUserInWorkflowGroup, useIdentityStore } from "../state/useIdentityStore";
+import { effectiveGroupMemberIds, findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
 import { canUserCloseInstance, canUserProcessTask } from "../state/workflowAccess";
 import { hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import type { StoredDesignerField } from "../utils/designerStorage";
+import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
+import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../utils/roundDisplay";
 
 const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> = {
   待审核: { icon: <HistoryOutlined /> },
@@ -79,6 +84,16 @@ const attachmentItemName = (item: unknown) => typeof item === "string"
   : item && typeof item === "object" && "name" in item
     ? String((item as { name?: unknown }).name ?? "")
     : "";
+
+const attachmentItemId = (item: unknown) => item && typeof item === "object" && "id" in item
+  ? String((item as { id?: unknown }).id ?? "")
+  : "";
+
+interface RuntimeAttachmentItem {
+  id?: string;
+  name: string;
+  sourceIndex: number;
+}
 
 const inlinePdfEnabled = (field: StoredDesignerField) => field.attachment?.inlinePdf ?? true;
 
@@ -119,6 +134,8 @@ export function ProcessDetailPage() {
   const [draftAssignees, setDraftAssignees] = useState<Record<string, string>>({});
   const [repeatTaskId, setRepeatTaskId] = useState<string>();
   const [repeatComment, setRepeatComment] = useState("");
+  const [uploadingAttachmentFieldId, setUploadingAttachmentFieldId] = useState<string>();
+  const [deletingAttachmentKey, setDeletingAttachmentKey] = useState<string>();
 
   useEffect(() => {
     if (instance) {
@@ -165,10 +182,9 @@ export function ProcessDetailPage() {
     canReview && currentTask?.defaultAssigneeId && currentTask.defaultAssigneeId !== persona?.id,
   );
   const isDcc = Boolean(instance && canUserCloseInstance(personaId, instance));
-  const canEditAsStarter = Boolean(
-    isSuperAdmin || (persona && lockedVersion?.basic.starterGroups.some((groupId) =>
-      isUserInWorkflowGroup(persona.id, groupId),
-    )),
+  const canEditAsCreator = Boolean(
+    instance && persona && hasPersonaPermission(persona.id, "work-launch:发起")
+    && canEditProcessInstanceSubmission(instance, persona, isSuperAdmin),
   );
   const canPrint = hasPersonaPermission(personaId, "work-list:打印");
   const hasReviewAction = Boolean(instance?.reviewers.some(
@@ -202,8 +218,8 @@ export function ProcessDetailPage() {
   }, [instance, isSuperAdmin, lockedVersion, personaId, tasks]);
   const repeatTask = repeatCandidates.find((task) => task.id === repeatTaskId);
   const repeatNodeConfig = lockedVersion?.snapshot.flow.nodes.find((node) => node.id === repeatTask?.nodeId)?.data;
-  const canEditBeforeReview = Boolean(canEditAsStarter && instance?.status === "审核中" && !hasReviewAction);
-  const canRepublish = Boolean(canEditAsStarter && instance?.status === "驳回待处理");
+  const canEditBeforeReview = Boolean(canEditAsCreator && instance?.status === "审核中" && !hasReviewAction);
+  const canRepublish = Boolean(canEditAsCreator && instance?.status === "驳回待处理");
   const canEditPublishedContent = canEditBeforeReview || canRepublish;
   const editableContentDirty = Boolean(instance && (
     documentLevel !== instance.documentLevel
@@ -433,19 +449,91 @@ export function ProcessDetailPage() {
         label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}`,
       }));
   };
-  const stageAttachment = (field: StoredDesignerField, fileName: string) => {
-    setDraftPdfName(fileName);
-    setDynamicValues((current) => {
-      const currentValue = current[field.id];
-      const existing = Array.isArray(currentValue) ? currentValue.map(String) : [];
-      return {
-        ...current,
-        [field.id]: inlinePdfEnabled(field) ? [fileName] : Array.from(new Set([...existing, fileName])),
-      };
+  const stageAttachment = async (field: StoredDesignerField, file: File) => {
+    const isInlinePdf = inlinePdfEnabled(field);
+    if (isInlinePdf && (!file.name.toLowerCase().endsWith(".pdf") || (file.type && file.type !== "application/pdf"))) {
+      message.error("该附件字段只能上传 PDF 文件");
+      return;
+    }
+    const maxSizeMb = field.attachment?.maxSizeMb ?? 100;
+    if (file.size / 1024 / 1024 > maxSizeMb) {
+      message.error(`${file.name} 超过 ${maxSizeMb} MB 限制`);
+      return;
+    }
+    setUploadingAttachmentFieldId(field.id);
+    try {
+      const record = isInlinePdf
+        ? await flowPilotApi.attachments.replaceFieldAttachment(instance.id, field.id, file)
+        : await flowPilotApi.attachments.upload(file, { instanceId: instance.id, fieldId: field.id });
+      const reference = { id: record.id, name: record.name, size: record.size, contentType: record.contentType };
+      setDraftPdfName(record.name);
+      setDynamicValues((current) => {
+        const existing = Array.isArray(current[field.id]) ? current[field.id] as unknown[] : [];
+        const nextValues = isInlinePdf
+          ? [reference]
+          : [...existing.filter((item) => attachmentItemId(item) !== record.id), reference];
+        return {
+          ...current,
+          [field.id]: nextValues,
+        };
+      });
+      message.success(isInlinePdf ? "PDF 已上传并完成替换" : "附件已上传");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "附件上传失败，请稍后重试");
+    } finally {
+      setUploadingAttachmentFieldId(undefined);
+    }
+  };
+
+  const downloadAttachment = async (attachment: RuntimeAttachmentItem) => {
+    if (!attachment.id) {
+      message.info("当前演示附件没有保存文件内容，仅保留了文件名");
+      return;
+    }
+    try {
+      const { blob, fileName } = await flowPilotApi.attachments.content(attachment.id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName || attachment.name;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "附件下载失败");
+    }
+  };
+  const removeAttachment = (field: StoredDesignerField, attachment: RuntimeAttachmentItem) => {
+    const attachmentKey = `${field.id}:${attachment.id ?? attachment.sourceIndex}`;
+    Modal.confirm({
+      title: "确认删除附件？",
+      content: `删除后将无法继续预览或下载“${attachment.name}”。`,
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        setDeletingAttachmentKey(attachmentKey);
+        try {
+          if (attachment.id) await flowPilotApi.attachments.remove(attachment.id);
+          setDynamicValues((current) => {
+            const rawValue = current[field.id];
+            const currentValue: unknown[] = Array.isArray(rawValue) ? rawValue : [];
+            const nextValue = currentValue.filter((entry, index) => attachment.id
+              ? attachmentItemId(entry) !== attachment.id
+              : index !== attachment.sourceIndex);
+            if (field.id === attachmentFields[0]?.id) {
+              setDraftPdfName(nextValue.map(attachmentItemName).find(Boolean) ?? "无附件");
+            }
+            return { ...current, [field.id]: nextValue };
+          });
+          message.success("附件已删除");
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "附件删除失败");
+          throw error;
+        } finally {
+          setDeletingAttachmentKey(undefined);
+        }
+      },
     });
-    message.success(inlinePdfEnabled(field) && fileName.toLowerCase().endsWith(".pdf")
-      ? "新 PDF 已暂存，原文件将在保存时替换"
-      : canRepublish ? "附件已暂存，将在重新提交时一并提交" : canReview ? "附件已暂存，将随审核结果一起提交" : "附件已暂存，请保存修改");
   };
   const renderDynamicField = (field: StoredDesignerField) => {
     const value = dynamicValues[field.id];
@@ -468,25 +556,43 @@ export function ProcessDetailPage() {
       </Form.Item>
     );
     if (field.type === "attachment") {
-      const names = Array.isArray(value)
-        ? value.map(attachmentItemName).filter(Boolean)
+      const attachments: RuntimeAttachmentItem[] = Array.isArray(value)
+        ? value.map((entry, sourceIndex) => ({ id: attachmentItemId(entry) || undefined, name: attachmentItemName(entry), sourceIndex })).filter((entry) => Boolean(entry.name))
         : field.id === attachmentFields[0]?.id
-          ? attachmentNames
+          ? attachmentNames.map((name, sourceIndex) => ({ id: instance.attachmentIdsByField?.[field.id]?.[sourceIndex], name, sourceIndex }))
           : [];
-      const previewPdfName = inlinePdfEnabled(field)
-        ? names.find((name) => name.toLowerCase().endsWith(".pdf"))
+      const previewPdf = inlinePdfEnabled(field)
+        ? attachments.find((attachment) => attachment.name.toLowerCase().endsWith(".pdf"))
         : undefined;
       return item(<div className="runtime-attachment-field">
         <div className="attachment-field-control">
-          {names.length ? <div className="attachment-field-list">
-            {names.map((name) => <div key={name}><PaperClipOutlined /><strong>{name}</strong><Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => message.info("原型：已触发受控下载")}>下载</Button></div>)}
+          {attachments.length ? <div className="attachment-field-list">
+            {attachments.map((attachment) => {
+              const attachmentKey = `${field.id}:${attachment.id ?? attachment.sourceIndex}`;
+              return <div key={attachmentKey}>
+                <PaperClipOutlined />
+                <strong title={attachment.name}>{attachment.name}</strong>
+                <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => void downloadAttachment(attachment)}>下载</Button>
+                {editable ? <Button
+                  className="attachment-delete-button"
+                  danger
+                  type="text"
+                  size="small"
+                  loading={deletingAttachmentKey === attachmentKey}
+                  icon={<DeleteOutlined />}
+                  aria-label={`删除附件 ${attachment.name}`}
+                  onClick={() => removeAttachment(field, attachment)}
+                >删除</Button> : null}
+              </div>;
+            })}
           </div> : <div className="runtime-empty-control">未上传附件</div>}
-          {editable ? <Upload showUploadList={false} beforeUpload={(file) => { stageAttachment(field, file.name); return false; }}>
-            <Button icon={<UploadOutlined />}>{inlinePdfEnabled(field) && names.length ? "替换 PDF" : names.length ? "继续上传" : "上传附件"}</Button>
+          {editable ? <Upload showUploadList={false} beforeUpload={(file) => { void stageAttachment(field, file); return Upload.LIST_IGNORE; }}>
+            <Button loading={uploadingAttachmentFieldId === field.id} icon={<UploadOutlined />}>{inlinePdfEnabled(field) && attachments.length ? "替换 PDF" : attachments.length ? "继续上传" : "上传附件"}</Button>
           </Upload> : null}
         </div>
-        {previewPdfName ? <InlinePdfPreview
-          fileName={previewPdfName}
+        {previewPdf ? <InlinePdfPreview
+          attachmentId={previewPdf.id}
+          fileName={previewPdf.name}
           title={instance.title}
           code={instance.code}
           version={instance.revision || instance.templateVersion}
@@ -514,10 +620,22 @@ export function ProcessDetailPage() {
       </Space> : reviewerEditing ? <Typography.Text className="table-rule-note" type="secondary">审核节点只能修改授权单元格，不能新增或删除整行。</Typography.Text> : null}</div>);
     }
     const options = (field.options ?? []).map((option) => ({ value: option, label: option }));
-    if (field.type === "select") return item(<Select disabled={!editable} value={typeof resolvedValue === "string" && resolvedValue ? resolvedValue : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
-    if (field.type === "cascader") return item(<Cascader disabled={!editable} value={Array.isArray(resolvedValue) ? resolvedValue as string[] : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
-    if (field.type === "radio") return item(<Radio.Group disabled={!editable} value={resolvedValue || undefined} options={options} onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
-    if (field.type === "checkbox") return item(<Checkbox.Group disabled={!editable} value={Array.isArray(resolvedValue) ? resolvedValue as string[] : []} options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
+    const readOnlyControl = () => {
+      const text = displayDynamicValue(resolvedValue, field);
+      return <Input className="runtime-readonly-value" readOnly value={text === "—" ? "" : text} placeholder="未填写" />;
+    };
+    if (field.type === "select") return item(editable
+      ? <Select value={typeof resolvedValue === "string" && resolvedValue ? resolvedValue : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />
+      : readOnlyControl());
+    if (field.type === "cascader") return item(editable
+      ? <Cascader value={Array.isArray(resolvedValue) ? resolvedValue as string[] : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />
+      : readOnlyControl());
+    if (field.type === "radio") return item(editable
+      ? <Radio.Group value={resolvedValue || undefined} options={options} onChange={(event) => updateDynamicValue(field.id, event.target.value)} />
+      : readOnlyControl());
+    if (field.type === "checkbox") return item(editable
+      ? <Checkbox.Group value={Array.isArray(resolvedValue) ? resolvedValue as string[] : []} options={options} onChange={(next) => updateDynamicValue(field.id, next)} />
+      : readOnlyControl());
     if (field.type === "richtext") return item(<Input.TextArea readOnly={!editable} value={String(resolvedValue ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()} placeholder="未填写" onChange={(event) => updateDynamicValue(field.id, event.target.value)} autoSize={{ minRows: 4, maxRows: 10 }} />);
     return item(<Input readOnly={!editable} value={String(resolvedValue ?? "")} placeholder="未填写" onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
   };
@@ -542,7 +660,7 @@ export function ProcessDetailPage() {
           {canEditBeforeReview && (
             <Button type="primary" icon={<EditOutlined />} onClick={saveBeforeReview}>保存修改</Button>
           )}
-          {isDcc && instance.status === "驳回待处理" && (
+          {canRepublish && (
             <Button type="primary" icon={<ReloadOutlined />} onClick={republish}>重新提交</Button>
           )}
           {isDcc && instance.status !== "已关闭" && (
@@ -563,7 +681,7 @@ export function ProcessDetailPage() {
             <Space split={<Divider type="vertical" />} wrap>
               <Typography.Text copyable>{instance.code}</Typography.Text>
               <span>{instance.template} · {instance.templateVersion}</span>
-              <span>第 {instance.round} 轮</span>
+              {instance.round > 1 ? <span>{formatRoundLabel(instance.round)}</span> : null}
               <span>发起人 {instance.initiator}</span>
               <span>{instance.createdAt}</span>
             </Space>
@@ -631,7 +749,7 @@ export function ProcessDetailPage() {
         />
       )}
 
-      {canEditAsStarter && instance.status === "审核中" && hasReviewAction && (
+      {canEditAsCreator && instance.status === "审核中" && hasReviewAction && (
         <Alert
           type="info"
           showIcon
@@ -769,7 +887,7 @@ export function ProcessDetailPage() {
           items={[
             {
               color: "blue",
-              children: <HistoryItem title={`第 ${instance.round} 轮发起`} person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} detail={hasAttachments ? `提交附件：${attachmentNames.join("、")}` : "提交初始表单"} />,
+              children: <HistoryItem title={formatRoundStartLabel(instance.round)} person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} detail={hasAttachments ? `提交附件：${attachmentNames.join("、")}` : "提交初始表单"} />,
             },
             ...instance.reviewers
               .filter((reviewer) => reviewer.actionAt)
@@ -786,7 +904,7 @@ export function ProcessDetailPage() {
               .map((task) => ({
                 color: task.action === "通过" || task.action === "确认" ? "green" : task.status === "已跳过" ? "gray" : "red",
                 children: <HistoryItem
-                  title={`第 ${task.round} 轮 · ${task.nodeName} · ${task.action ? `已${task.action}` : "已跳过"}`}
+                  title={prefixWithRound(task.round, `${task.nodeName} · ${task.action ? `已${task.action}` : "已跳过"}`)}
                   person={task.status === "已跳过" ? "系统按节点条件判定" : `实际处理人 ${task.completedByName ?? "未知"}`}
                   time={task.completedAt ?? task.conditionEvaluatedAt ?? ""}
                   detail={task.conditionSummary ?? [
@@ -835,6 +953,7 @@ function ApartmentBadge() {
 }
 
 function InlinePdfPreview({
+  attachmentId,
   fileName,
   title,
   code,
@@ -843,6 +962,7 @@ function InlinePdfPreview({
   initiator,
   createdAt,
 }: {
+  attachmentId?: string;
   fileName: string;
   title: string;
   code: string;
@@ -851,13 +971,48 @@ function InlinePdfPreview({
   initiator: string;
   createdAt: string;
 }) {
+  const [sourceUrl, setSourceUrl] = useState<string>();
+  const [loading, setLoading] = useState(Boolean(attachmentId));
+  const [loadError, setLoadError] = useState<string>();
+
+  useEffect(() => {
+    if (!attachmentId) {
+      setSourceUrl(undefined);
+      setLoading(false);
+      setLoadError(undefined);
+      return;
+    }
+    let active = true;
+    let objectUrl: string | undefined;
+    setLoading(true);
+    setLoadError(undefined);
+    void flowPilotApi.attachments.content(attachmentId)
+      .then(({ blob }) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSourceUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        if (active) setLoadError(error instanceof Error ? error.message : "PDF 内容加载失败");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachmentId]);
+
   return (
     <section className="inline-pdf-preview" aria-label={`PDF 预览：${fileName}`}>
       <div className="inline-pdf-toolbar">
         <div><EyeOutlined /><strong>PDF 页面预览</strong><span>{fileName}</span></div>
-        <Tag variant="filled" color="red">原型预览 · 1 / 1</Tag>
+        <Tag variant="filled" color={sourceUrl ? "blue" : "default"}>{sourceUrl ? "浏览器预览" : "兼容预览"}</Tag>
       </div>
-      <div className="inline-pdf-stage">
+      {loading ? <div className="inline-pdf-loading"><Spin description="正在加载 PDF" /></div> : null}
+      {loadError ? <Alert className="inline-pdf-error" type="warning" showIcon title="PDF 暂时无法显示" description={loadError} /> : null}
+      {sourceUrl ? <iframe className="inline-pdf-frame" src={sourceUrl} title={`PDF 文件：${fileName}`} /> : !loading && !loadError ? <div className="inline-pdf-stage">
         <article className="inline-pdf-sheet">
           <header>
             <div><span className="pdf-company">FlowPilot</span><small>公司内部受控文件</small></div>
@@ -876,7 +1031,7 @@ function InlinePdfPreview({
           <div className="inline-pdf-placeholder-lines"><i /><i /><i /><i /><i /><i /></div>
           <div className="inline-pdf-stamp">受控文件</div>
         </article>
-      </div>
+      </div> : null}
     </section>
   );
 }

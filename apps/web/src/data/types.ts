@@ -87,6 +87,8 @@ export interface ProcessInstance {
   freeTimeline?: FreeFlowEntry[];
   formValues?: Record<string, unknown>;
   attachmentNames?: string[];
+  attachmentIds?: string[];
+  attachmentIdsByField?: Record<string, string[]>;
   reviewers: ReviewerProgress[];
 }
 

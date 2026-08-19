@@ -40,3 +40,32 @@
 .free-create-form label > span { color: #364156; font-size: 13px; font-weight: 650; }
 .free-create-form .ant-select { width: 100%; }
 @media (max-width: 1100px) { .free-flow-layout { grid-template-columns: 1fr; } .free-flow-side { display: grid; grid-template-columns: repeat(3, 1fr); } .free-detail-head { align-items: flex-start; flex-direction: column; } }
+
+/* Unified interface system */
+.free-flow-page,
+.free-create-page {
+  gap: 20px;
+}
+
+.free-detail-head,
+.free-flow-page .ant-card,
+.free-create-page .ant-card {
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(23, 32, 51, .045);
+}
+
+.free-detail-head::before {
+  display: none;
+}
+
+.free-initial-card,
+.free-create-card {
+  border-top: 1px solid #dfe4ec;
+}
+
+.free-reply-card,
+.free-compose-card {
+  box-shadow: 0 1px 3px rgba(23, 32, 51, .045);
+}

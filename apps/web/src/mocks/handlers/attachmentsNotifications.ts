@@ -22,6 +22,7 @@ import {
   canUserViewInstance,
 } from "../../state/workflowAccess";
 import type { StoredDesignerField } from "../../utils/designerStorage";
+import { isProcessInstanceCreator } from "../../utils/processInstanceAccess";
 import {
   deleteAttachment,
   getAttachmentRecords,
@@ -117,6 +118,15 @@ const valueNames = (value: unknown) => Array.isArray(value)
     })
   : [];
 
+const attachmentValues = (value: unknown) => Array.isArray(value) ? value : [];
+
+const attachmentReference = (record: AttachmentRecord) => ({
+  id: record.id,
+  name: record.name,
+  size: record.size,
+  contentType: record.contentType,
+});
+
 const attachmentNamesFor = (version: ProcessVersion, values: Record<string, unknown>) =>
   version.snapshot.form.fields
     .filter((field) => field.type === "attachment")
@@ -132,14 +142,14 @@ const synchronizeInstanceAttachment = (
   instanceIdValue: string,
   version: ProcessVersion,
   fieldId: string,
-  names: string[],
+  references: unknown[],
   primarySize?: number,
 ) => {
   let updated = false;
   usePrototypeStore.setState((state) => ({
     instances: state.instances.map((instance) => {
       if (instance.id !== instanceIdValue) return instance;
-      const formValues = { ...(instance.formValues ?? {}), [fieldId]: names };
+      const formValues = { ...(instance.formValues ?? {}), [fieldId]: references };
       const attachmentNames = attachmentNamesFor(version, formValues);
       const firstAttachmentFieldId = version.snapshot.form.fields.find((field) => field.type === "attachment")?.id;
       updated = true;
@@ -161,7 +171,7 @@ const synchronizeInstanceAttachment = (
 };
 
 const actorOwnsInstance = (actor: DomainUser, instance: ProcessInstance) =>
-  instance.initiatorId === actor.id || instance.initiator === actor.name;
+  isProcessInstanceCreator(instance, actor);
 
 const canModifyAttachmentField = (
   actor: DomainUser,
@@ -502,8 +512,8 @@ const uploadHandler = http.post(`${API_BASE}/attachments`, async ({ request }) =
         : undefined);
       await putAttachment({ record, blob: parsed.file });
       if (scope && parsed.instanceId && parsed.fieldId) {
-        const names = [...valueNames(scope.instance.formValues?.[parsed.fieldId]), record.name];
-        if (!synchronizeInstanceAttachment(parsed.instanceId, scope.version, parsed.fieldId, names, record.size)) {
+        const references = [...attachmentValues(scope.instance.formValues?.[parsed.fieldId]), attachmentReference(record)];
+        if (!synchronizeInstanceAttachment(parsed.instanceId, scope.version, parsed.fieldId, references, record.size)) {
           await deleteAttachment(record.id);
           return apiProblem(request, 409, "INSTANCE_CHANGED", "流程实例已变化", "附件已回滚，请刷新流程实例后重试。 ");
         }
@@ -589,9 +599,12 @@ const deleteAttachmentHandler = http.delete(`${API_BASE}/attachments/:attachment
 
     await deleteAttachment(stored.record.id);
     if (scope && stored.record.instanceId && stored.record.fieldId) {
-      const names = valueNames(scope.instance.formValues?.[stored.record.fieldId])
-        .filter((value) => value !== stored.record.name && value !== stored.record.id);
-      if (!synchronizeInstanceAttachment(stored.record.instanceId, scope.version, stored.record.fieldId, names)) {
+      const references = attachmentValues(scope.instance.formValues?.[stored.record.fieldId])
+        .filter((value) => {
+          if (typeof value === "string") return value !== stored.record.name && value !== stored.record.id;
+          return !(value && typeof value === "object" && (("id" in value && value.id === stored.record.id) || ("name" in value && value.name === stored.record.name)));
+        });
+      if (!synchronizeInstanceAttachment(stored.record.instanceId, scope.version, stored.record.fieldId, references)) {
         await putAttachment(stored);
         return apiProblem(request, 409, "INSTANCE_CHANGED", "流程实例已变化", "附件删除已回滚，请刷新后重试。 ");
       }
@@ -644,7 +657,7 @@ const replaceAttachmentHandler = http.put(`${API_BASE}/process-instances/:instan
         .filter((stored): stored is NonNullable<typeof stored> => Boolean(stored));
       const record = attachmentRecord(parsed.file, authenticated.actor, { instanceId: instanceIdValue, fieldId: fieldIdValue });
       await putAttachment({ record, blob: parsed.file }, { instanceId: instanceIdValue, fieldId: fieldIdValue });
-      if (!synchronizeInstanceAttachment(instanceIdValue, scopeResult.version, fieldIdValue, [record.name], record.size)) {
+      if (!synchronizeInstanceAttachment(instanceIdValue, scopeResult.version, fieldIdValue, [attachmentReference(record)], record.size)) {
         await deleteAttachment(record.id);
         await Promise.all(backups.map((stored) => putAttachment(stored)));
         return apiProblem(request, 409, "INSTANCE_CHANGED", "流程实例已变化", "附件替换已回滚，请刷新流程实例后重试。 ");

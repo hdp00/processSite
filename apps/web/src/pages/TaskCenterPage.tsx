@@ -33,6 +33,7 @@ import type { ProcessInstance, WorkflowTask } from "../data/types";
 import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
 import { useIdentityStore } from "../state/useIdentityStore";
 import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { formatRoundLabel } from "../utils/roundDisplay";
 import { canUserProcessTask } from "../state/workflowAccess";
 import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 
@@ -212,7 +213,7 @@ export function TaskCenterPage() {
         <div className="node-cell">
           <span className="node-pulse" />
           {showSystemField("currentNode") ? <span>{record.workflowType === "free" ? record.status === "进行中" ? record.currentAssignee ?? "" : "" : value}</span> : null}
-          {showSystemField("round") && record.workflowType !== "free" ? <small>第 {record.round} 轮</small> : null}
+          {showSystemField("round") && record.workflowType !== "free" && record.round > 1 ? <small>{formatRoundLabel(record.round)}</small> : null}
         </div>
       ),
     }] : []),

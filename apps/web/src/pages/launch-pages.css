@@ -621,3 +621,44 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Unified interface system */
+.app-content .launch-center-page .launch-overview-card,
+.app-content .launch-center-page .launch-definition-card,
+.app-content .process-start-page .start-progress-card,
+.app-content .process-start-page .start-form-card,
+.app-content .process-start-page .start-side-card,
+.app-content .process-start-page .start-rule-card {
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(23, 32, 51, .045);
+}
+
+.app-content .launch-center-page .launch-overview-card::before,
+.app-content .launch-center-page .launch-definition-card::before,
+.app-content .process-start-page .start-form-card::before {
+  display: none;
+}
+
+.app-content .launch-center-page .launch-definition-card:hover {
+  border-color: #cdd7f8;
+  box-shadow: 0 4px 14px rgba(23, 32, 51, .07);
+  transform: none;
+}
+
+.app-content .launch-center-page .launch-definition-card .ant-card-body {
+  padding: 18px;
+}
+
+.app-content .process-start-page .start-progress-card .ant-card-body,
+.app-content .process-start-page .start-form-card .ant-card-body,
+.app-content .process-start-page .start-side-card .ant-card-body {
+  padding: 20px;
+}
+
+.app-content .process-start-page .start-reviewer-item,
+.app-content .process-start-page .start-rule-card li {
+  border-radius: 9px;
+  box-shadow: none;
+}

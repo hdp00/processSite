@@ -1854,3 +1854,74 @@
   }
 
 }
+
+/* Unified interface system */
+.app-content .pa-page .pa-overview-card,
+.app-content .pa-page .pa-config-head,
+.app-content .pa-page .pa-steps-card,
+.app-content .pa-page .pa-section-card,
+.app-content .pa-page .pa-validation-card,
+.app-content .pa-page .pa-table-card,
+.app-content .pa-page .pa-version-stats .ant-card {
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(23, 32, 51, .045);
+}
+
+.app-content .pa-page .pa-overview-card {
+  background: #fff;
+}
+
+.app-content .pa-page .pa-overview-card::before,
+.app-content .pa-page .pa-help-card::after {
+  display: none;
+}
+
+.app-content .pa-page .pa-filter-card .ant-card-body {
+  padding: 20px;
+}
+
+.app-content .pa-page .pa-filter-row {
+  gap: 12px;
+}
+
+.app-content .pa-page .pa-icon-button {
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-content .pa-page .pa-icon-button:hover,
+.app-content .pa-page .pa-icon-button.is-primary,
+.app-content .pa-page .pa-icon-button.is-copy {
+  border-color: #dbe3ff;
+  color: #3155d8;
+  background: #eef2ff;
+  box-shadow: none;
+  transform: none;
+}
+
+.app-content .pa-page .pa-section-card .ant-card-body {
+  padding: 20px 22px 8px;
+}
+
+.app-content .pa-page .pa-config-head .ant-card-body {
+  padding: 18px 20px;
+}
+
+.app-content .pa-page .pa-steps-card .ant-card-body {
+  padding: 18px 22px;
+}
+
+.app-content .pa-page .pa-help-card,
+.app-content .pa-page .pa-scope-card,
+.app-content .pa-page .pa-field-preview,
+.app-content .pa-page .pa-publish-stage,
+.app-content .pa-page .pa-publish-rules > div,
+.app-content .pa-page .pa-validation-score > div,
+.app-content .pa-page .pa-version-drawer__hero {
+  border-radius: 10px;
+  box-shadow: none;
+}

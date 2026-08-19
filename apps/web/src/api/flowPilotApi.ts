@@ -161,7 +161,7 @@ export const flowPilotApi = {
     list: (query: ProcessInstanceQuery = {}) => apiRequest<PageResult<ProcessInstance>>("/process-instances", { query }),
     get: (instanceId: string) => apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}`),
     getResource: (instanceId: string) => apiResource<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}`),
-    create: (input: { definitionId: string; formValues: Record<string, unknown>; assigneeByNode?: Record<string, string | undefined>; firstAssigneeId?: string; attachmentIds?: string[] }) =>
+    create: (input: { definitionId: string; formValues: Record<string, unknown>; copySourceInstanceId?: string; assigneeByNode?: Record<string, string | undefined>; firstAssigneeId?: string; attachmentIds?: string[]; attachmentIdsByField?: Record<string, string[]> }) =>
       apiRequest<ProcessInstanceDetail>("/process-instances", { method: "POST", body: input, ...mutation() }),
     updateSubmission: (instanceId: string, input: { formValues: Record<string, unknown>; attachmentNames?: string[] }, ifMatch?: string) =>
       apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/submission`, { method: "PATCH", body: input, ifMatch }),
@@ -169,8 +169,6 @@ export const flowPilotApi = {
       apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/resubmissions`, { method: "POST", body: input, ifMatch, ...mutation() }),
     close: (instanceId: string, reason: string, ifMatch?: string) =>
       apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/close`, { method: "POST", body: { reason }, ifMatch, ...mutation() }),
-    copy: (instanceId: string, title: string) =>
-      apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/copies`, { method: "POST", body: { title }, ...mutation() }),
   },
   exports: {
     processInstanceData: (filter: ProcessExcelDataFilter) =>

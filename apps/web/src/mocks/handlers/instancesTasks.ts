@@ -11,7 +11,8 @@ import { isSuperAdminPersona, usePrototypeStore } from "../../state/usePrototype
 import { isUserInWorkflowGroup } from "../../state/useIdentityStore";
 import { canUserViewInstance } from "../../state/workflowAccess";
 import { resolveLockedProcessVersion } from "../../state/processVersionResolver";
-import { getAttachmentRecords } from "../attachmentRepository";
+import { canEditProcessInstanceSubmission } from "../../utils/processInstanceAccess";
+import { assignAttachmentsToInstance, getAttachmentRecords } from "../attachmentRepository";
 import {
   apiOk,
   apiProblem,
@@ -134,26 +135,47 @@ export const instanceTaskHandlers = [
       const body = await parseJsonBody<{
         definitionId?: string;
         formValues?: Record<string, unknown>;
+        copySourceInstanceId?: string;
         assigneeByNode?: Record<string, string | undefined>;
         firstAssigneeId?: string;
         attachmentIds?: string[];
+        attachmentIdsByField?: Record<string, string[]>;
       }>(request);
       if (body instanceof Response) return body;
       if (!body.definitionId || !body.formValues || typeof body.formValues !== "object") {
         return apiProblem(request, 422, "VALIDATION_FAILED", "发起数据不完整", "definitionId 和 formValues 为必填项。 ");
       }
+      if (body.copySourceInstanceId) {
+        const source = instanceById(body.copySourceInstanceId);
+        if (!source || source.definitionId !== body.definitionId || source.status !== "已完成" || source.workflowType === "free") {
+          return apiProblem(request, 409, "COPY_SOURCE_INVALID", "复制来源不可用", "来源流程必须是目标流程中仍然存在的已完成审批实例。 ");
+        }
+        if (!hasUserPermission(auth.actor.id, "work-list:复制新建") || !canUserViewInstance(auth.actor.id, source)) {
+          return apiProblem(request, 403, "COPY_SOURCE_FORBIDDEN", "不能复制该流程", "当前账号没有复制新建权限或已失去来源流程查看权限。 ");
+        }
+      }
       const attachments = body.attachmentIds?.length ? await getAttachmentRecords(body.attachmentIds) : [];
       if (attachments.length !== (body.attachmentIds?.length ?? 0)) return apiProblem(request, 422, "ATTACHMENT_NOT_FOUND", "附件引用无效", "部分附件不存在或已经被删除。 ");
+      const attachmentIdsByField = body.attachmentIdsByField ?? {};
+      const mappedAttachmentIds = new Set(Object.values(attachmentIdsByField).flat());
+      if ((body.attachmentIds ?? []).some((id) => !mappedAttachmentIds.has(id))) {
+        return apiProblem(request, 422, "ATTACHMENT_FIELD_MISSING", "附件字段关联无效", "每个附件都必须关联到当前版本中的附件字段。 ");
+      }
       const id = usePrototypeStore.getState().createProcessInstance({
         definitionId: body.definitionId,
         formValues: body.formValues,
         assigneeByNode: body.assigneeByNode,
         firstAssigneeId: body.firstAssigneeId,
         attachmentNames: attachments.map((item) => item.name),
+        attachmentIds: body.attachmentIds,
+        attachmentIdsByField,
       });
       const instance = id ? instanceById(id) : undefined;
       if (!instance) return apiProblem(request, 403, "INSTANCE_CREATE_FORBIDDEN", "流程发起失败", "请确认流程已发布、账号具有发起权限且表单内容有效。 ");
-      auditInstance(auth.actor.id, auth.actor.name, "create", instance, `发起流程 ${instance.code}`);
+      await assignAttachmentsToInstance(body.attachmentIds ?? [], instance.id, attachmentIdsByField);
+      auditInstance(auth.actor.id, auth.actor.name, "create", instance, `发起流程 ${instance.code}`, body.copySourceInstanceId
+        ? { copySourceInstanceId: body.copySourceInstanceId }
+        : undefined);
       return apiOk(request, instanceDetail(instance), { status: 201, headers: { Location: `${API}/process-instances/${instance.id}`, ETag: entityEtag(instance) } });
     });
   }),
@@ -177,6 +199,9 @@ export const instanceTaskHandlers = [
     if (mismatch) return mismatch;
     const found = findVisibleInstance(request, String(params.instanceId ?? ""), auth.actor.id);
     if ("response" in found) return found.response;
+    if (!canEditProcessInstanceSubmission(found.instance, auth.actor, isSuperAdminPersona(auth.actor.id))) {
+      return apiProblem(request, 403, "INSTANCE_UPDATE_FORBIDDEN", "不能修改流程", "只有流程创建人或超级管理员可以修改发起内容。 ");
+    }
     const conflict = checkIfMatch(request, found.instance, true);
     if (conflict) return conflict;
     const hasDecision = usePrototypeStore.getState().tasks.some((task) => task.instanceId === found.instance.id && task.round === found.instance.round && task.status === "已完成" && Boolean(task.action));
@@ -201,6 +226,9 @@ export const instanceTaskHandlers = [
       if (mismatch) return mismatch;
       const found = findVisibleInstance(request, String(params.instanceId ?? ""), auth.actor.id);
       if ("response" in found) return found.response;
+      if (!canEditProcessInstanceSubmission(found.instance, auth.actor, isSuperAdminPersona(auth.actor.id))) {
+        return apiProblem(request, 403, "RESUBMISSION_FORBIDDEN", "无法重新提交", "只有流程创建人或超级管理员可以修改并重新提交。 ");
+      }
       const conflict = checkIfMatch(request, found.instance, true);
       if (conflict) return conflict;
       if (found.instance.status !== "驳回待处理") return apiProblem(request, 409, "INSTANCE_NOT_REJECTED", "流程不在待重新提交状态", "只有驳回待处理流程可以重新提交。 ");
@@ -237,27 +265,6 @@ export const instanceTaskHandlers = [
       if (updated.status !== "已关闭") return apiProblem(request, 403, "CLOSE_FORBIDDEN", "不能关闭流程", "当前账号或流程规则不允许关闭该实例。 ");
       auditInstance(auth.actor.id, auth.actor.name, "close", updated, `关闭流程 ${updated.code}`, { reason: body.reason.trim() });
       return apiOk(request, instanceDetail(updated), { headers: { ETag: entityEtag(updated) } });
-    });
-  }),
-
-  http.post(`${API}/process-instances/:instanceId/copies`, async ({ request, params }) => {
-    const simulated = await applyMockScenario(request, true);
-    if (simulated) return simulated;
-    return withIdempotency(request, async () => {
-      const auth = requirePermission(request, "work-list:复制新建");
-      if (auth.response) return auth.response;
-      const mismatch = ensureSessionActor(request, auth.actor.id);
-      if (mismatch) return mismatch;
-      const found = findVisibleInstance(request, String(params.instanceId ?? ""), auth.actor.id);
-      if ("response" in found) return found.response;
-      const body = await parseJsonBody<{ title?: string }>(request);
-      if (body instanceof Response) return body;
-      if (!body.title?.trim()) return apiProblem(request, 422, "TITLE_REQUIRED", "新流程标题不能为空", "请填写复制后流程的标题。 ");
-      const createdId = usePrototypeStore.getState().copyCompletedInstance(found.instance.id, body.title.trim());
-      const created = createdId ? instanceById(createdId) : undefined;
-      if (!created) return apiProblem(request, 409, "COPY_INSTANCE_FAILED", "复制新建失败", "只有已完成流程且当前用户具有目标流程发起权限时才能复制。 ");
-      auditInstance(auth.actor.id, auth.actor.name, "copy", created, `从 ${found.instance.code} 复制新建 ${created.code}`);
-      return apiOk(request, instanceDetail(created), { status: 201, headers: { Location: `${API}/process-instances/${created.id}`, ETag: entityEtag(created) } });
     });
   }),
 
