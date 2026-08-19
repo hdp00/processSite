@@ -1789,6 +1789,42 @@ button {
   font-weight: 500;
 }
 
+.runtime-process-form .is-readonly .runtime-readonly-choice.ant-select-disabled .ant-select-selector {
+  color: #28364d;
+  border-color: #e2e7ef;
+  background: #f8fafc;
+  box-shadow: none;
+  cursor: default;
+}
+
+.runtime-process-form .is-readonly .runtime-readonly-choice.ant-select-disabled .ant-select-selection-item,
+.runtime-process-form .is-readonly .runtime-readonly-choice.ant-select-disabled .ant-select-selection-placeholder,
+.runtime-process-form .is-readonly .runtime-readonly-choice.ant-select-disabled .ant-select-arrow,
+.runtime-process-form .is-readonly .runtime-readonly-choice .ant-radio-wrapper-disabled,
+.runtime-process-form .is-readonly .runtime-readonly-choice .ant-checkbox-wrapper-disabled {
+  color: #334057;
+  cursor: default;
+  opacity: 1;
+}
+
+.runtime-process-form .is-readonly .runtime-readonly-choice .ant-radio-disabled .ant-radio-inner,
+.runtime-process-form .is-readonly .runtime-readonly-choice .ant-checkbox-disabled .ant-checkbox-inner {
+  border-color: #aab5c5;
+  background: #fff;
+}
+
+.runtime-process-form .is-readonly .runtime-readonly-choice .ant-radio-disabled.ant-radio-checked .ant-radio-inner,
+.runtime-process-form .is-readonly .runtime-readonly-choice .ant-checkbox-disabled.ant-checkbox-checked .ant-checkbox-inner {
+  border-color: #2f67cf;
+  background: #2f67cf;
+}
+
+.runtime-process-form .is-readonly .runtime-readonly-choice .ant-radio-disabled.ant-radio-checked .ant-radio-inner::after,
+.runtime-process-form .is-readonly .runtime-readonly-choice .ant-checkbox-disabled.ant-checkbox-checked .ant-checkbox-inner::after {
+  border-color: #fff;
+  background: #fff;
+}
+
 .runtime-process-form .is-editable .ant-input,
 .runtime-process-form .is-editable .ant-select-selector {
   border-color: #9eb9e8;
@@ -1936,19 +1972,19 @@ button {
 
 .inline-pdf-preview {
   overflow: hidden;
-  margin-top: 9px;
-  border: 1px solid #d9dee7;
-  border-radius: 11px;
-  background: #eef0f4;
+  margin-top: 6px;
+  border: 1px solid #e2e6ed;
+  border-radius: 8px;
+  background: #f6f7f9;
 }
 
 .inline-pdf-toolbar {
   display: flex;
-  min-height: 48px;
+  min-height: 42px;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 8px 13px;
+  gap: 10px;
+  padding: 6px 10px;
   border-bottom: 1px solid #dfe3ea;
   background: #fff;
 }
@@ -1987,7 +2023,7 @@ button {
 .inline-pdf-stage {
   max-height: 590px;
   overflow: auto;
-  padding: 24px;
+  padding: 12px;
   background: radial-gradient(circle at 50% 0, #f2f3f6, #e2e5ea);
 }
 

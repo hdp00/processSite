@@ -100,7 +100,7 @@ export function ProcessPublishPage() {
             { key: "system", label: "系统列表字段", children: `${version.snapshot.systemFields.length} 个配置` },
           ]} />
           <Divider>初始表单字段</Divider>
-          <Space wrap>{version.snapshot.form.fields.length ? version.snapshot.form.fields.map((field) => <Tag key={field.id} bordered={false}>{field.label}</Tag>) : <Typography.Text type="danger">尚未配置字段</Typography.Text>}</Space>
+          <Space wrap>{version.snapshot.form.fields.length ? version.snapshot.form.fields.map((field) => <Tag key={field.id} color={field.displayCondition ? "cyan" : undefined} bordered={false}>{field.label}{field.displayCondition ? " · 条件显示" : ""}</Tag>) : <Typography.Text type="danger">尚未配置字段</Typography.Text>}</Space>
         </Card>
 
         {definition.type === "approval" ? <Card className="pa-section-card" title={<span className="pa-card-title"><ApartmentOutlined /> 审批拓扑与规则</span>}>

@@ -7,6 +7,7 @@ import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
 import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../utils/roundDisplay";
+import { isDesignerFieldVisible } from "../utils/designerStorage";
 
 const reviewStatusClass: Record<ReviewerProgress["status"], string> = {
   待审核: "pending",
@@ -51,8 +52,9 @@ export function ProcessPrintPage() {
     );
   }
 
-  const printableFields = version?.snapshot.form.fields.filter((field) => !["attachment", "table"].includes(field.type)) ?? [];
-  const tableFields = version?.snapshot.form.fields.filter((field) => field.type === "table") ?? [];
+  const visibleFields = version?.snapshot.form.fields.filter((field) => isDesignerFieldVisible(field, instance.formValues ?? {})) ?? [];
+  const printableFields = visibleFields.filter((field) => !["attachment", "table"].includes(field.type));
+  const tableFields = visibleFields.filter((field) => field.type === "table");
   const attachmentNames = instance.attachmentNames?.length ? instance.attachmentNames : instance.pdfName !== "无附件" ? [instance.pdfName] : [];
   const instanceTasks = tasks.filter((task) => task.instanceId === instance.id);
   const sortedInstanceTasks = [...instanceTasks].sort((left, right) => left.round - right.round || left.createdAt.localeCompare(right.createdAt, "zh-CN") || left.nodeName.localeCompare(right.nodeName, "zh-CN"));

@@ -78,10 +78,15 @@ import {
 } from "../data/listFieldConfig";
 import { canEditVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import {
+  conditionOperatorLabel,
   ensureProcessTitleField,
+  isDesignerFieldVisible,
+  normalizeStoredCondition,
   normalizeDesignerInputPermission,
   PROCESS_TITLE_FIELD_ID,
+  type ConditionOperator,
   type DesignerInputPermission,
+  type StoredFieldDisplayCondition,
 } from "../utils/designerStorage";
 import "./form-designer.css";
 
@@ -126,6 +131,7 @@ interface DesignerField {
   taskWidth?: number;
   reviewEditable: boolean;
   inputStage: DesignerInputPermission;
+  displayCondition?: StoredFieldDisplayCondition;
   options?: string[];
   attachment?: AttachmentConfig;
   columns?: TableColumnConfig[];
@@ -161,6 +167,12 @@ const tableTypeLabel: Record<TableColumnType, string> = {
 };
 
 const makeId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+const displayConditionOperators = (type?: FieldType): ConditionOperator[] => type === "checkbox"
+  ? ["contains", "not-contains", "empty", "not-empty"]
+  : type === "text"
+    ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
+    : ["eq", "neq", "empty", "not-empty"];
 
 const INITIAL_FIELDS: DesignerField[] = [
   {
@@ -644,6 +656,7 @@ const SortableField = ({ field, selected, locked, onSelect, onDelete }: Sortable
           </Tooltip>
           <Tag bordered={false} icon={typeIcon[field.type]}>{typeLabel[field.type]}</Tag>
           {locked ? <Tag bordered={false} color="gold">固定字段</Tag> : null}
+          {field.displayCondition ? <Tag bordered={false} color="cyan">条件显示</Tag> : null}
           {field.inputStage === "reviewer" ? <Tag variant="filled" color="purple">审核人输入</Tag> : null}
           {field.inputStage === "both" ? <Tag bordered={false} color="blue">发起人/审核人</Tag> : null}
         </Space>
@@ -689,6 +702,9 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
       inputStage: field.id === PROCESS_TITLE_FIELD_ID && normalizeDesignerInputPermission(field) === "reviewer"
         ? "initiator"
         : normalizeDesignerInputPermission(field),
+      displayCondition: field.id === PROCESS_TITLE_FIELD_ID
+        ? undefined
+        : normalizeStoredCondition(field.displayCondition),
       attachment: field.type === "attachment" ? {
         maxSizeMb: field.attachment?.maxSizeMb ?? 100,
         maxCount: (field.attachment?.inlinePdf ?? true) ? 1 : field.attachment?.maxCount ?? 20,
@@ -708,6 +724,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   const [selectedId, setSelectedId] = useState(initialDraft.fields[0]?.id ?? "");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewForm] = Form.useForm();
+  const previewValues = Form.useWatch([], previewForm) as Record<string, unknown> | undefined;
   const [propertyMode, setPropertyMode] = useState<"field" | "system">("field");
   const [systemListFields, setSystemListFields] = useState<SystemListFieldConfig[]>(() =>
     structuredClone(version?.snapshot.systemFields ?? cloneDefaultSystemListFields())
@@ -727,6 +744,17 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   );
 
   const selectedField = fields.find((field) => field.id === selectedId);
+  const selectedFieldIndex = fields.findIndex((field) => field.id === selectedId);
+  const displayConditionFieldOptions = fields
+    .slice(0, Math.max(0, selectedFieldIndex))
+    .filter((field) => ["text", "select", "cascader", "radio", "checkbox"].includes(field.type))
+    .map((field) => ({
+      value: field.id,
+      label: field.label,
+      type: field.type,
+      choiceOptions: field.options,
+    }));
+  const selectedDisplayCondition = normalizeStoredCondition(selectedField?.displayCondition);
   const previewFields = useMemo(
     () => fields.filter((field) => field.inputStage !== "reviewer"),
     [fields],
@@ -741,6 +769,10 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
           : field.defaultValue,
     ])),
     [previewFields],
+  );
+  const visiblePreviewFields = useMemo(
+    () => previewFields.filter((field) => isDesignerFieldVisible(field, previewValues ?? previewInitialValues)),
+    [previewFields, previewInitialValues, previewValues],
   );
   const isTitleField = selectedField?.id === PROCESS_TITLE_FIELD_ID;
 
@@ -1262,6 +1294,130 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                   </div>
                 ) : null}
 
+                {!isTitleField ? (
+                  <div className="fd-property-section fd-display-condition">
+                    <div className="fd-property-section__title">条件显示</div>
+                    <div className="fd-switch-row">
+                      <div>
+                        <Text strong>按条件显示此项</Text>
+                        <Text type="secondary">仅当之前字段满足规则时显示；隐藏时不校验必填。</Text>
+                      </div>
+                      <Switch
+                        checked={Boolean(selectedDisplayCondition)}
+                        disabled={!displayConditionFieldOptions.length}
+                        onChange={(checked) => updateField({
+                          displayCondition: checked ? {
+                            mode: "all",
+                            rules: [{
+                              id: makeId("display-condition"),
+                              fieldId: displayConditionFieldOptions[0]?.value ?? "",
+                              operator: "eq",
+                              value: displayConditionFieldOptions[0]?.choiceOptions?.[0] ?? "",
+                            }],
+                          } : undefined,
+                        })}
+                      />
+                    </div>
+                    {!displayConditionFieldOptions.length ? (
+                      <Text type="secondary">请先在当前项之前添加文本框、下拉框、多级下拉、单选框或复选框。</Text>
+                    ) : null}
+                    {selectedDisplayCondition ? (
+                      <>
+                        <Segmented
+                          block
+                          value={selectedDisplayCondition.mode}
+                          options={[
+                            { label: "全部满足（AND）", value: "all" },
+                            { label: "任一满足（OR）", value: "any" },
+                          ]}
+                          onChange={(mode) => updateField({
+                            displayCondition: { ...selectedDisplayCondition, mode: mode as "all" | "any" },
+                          })}
+                        />
+                        <div className="fd-display-condition__rules">
+                          {selectedDisplayCondition.rules.map((rule) => {
+                            const sourceField = displayConditionFieldOptions.find((field) => field.value === rule.fieldId);
+                            const operators = displayConditionOperators(sourceField?.type);
+                            const updateRule = (rulePatch: Partial<typeof rule>) => updateField({
+                              displayCondition: {
+                                ...selectedDisplayCondition,
+                                rules: selectedDisplayCondition.rules.map((item) => item.id === rule.id ? { ...item, ...rulePatch } : item),
+                              },
+                            });
+                            return (
+                              <div className="fd-display-condition__rule" key={rule.id}>
+                                <Select
+                                  showSearch
+                                  value={rule.fieldId || undefined}
+                                  placeholder="选择条件字段"
+                                  optionFilterProp="label"
+                                  options={displayConditionFieldOptions}
+                                  onChange={(fieldId) => {
+                                    const nextField = displayConditionFieldOptions.find((field) => field.value === fieldId);
+                                    updateRule({ fieldId, operator: "eq", value: nextField?.choiceOptions?.[0] ?? "" });
+                                  }}
+                                />
+                                <div>
+                                  <Select
+                                    value={rule.operator}
+                                    options={operators.map((operator) => ({ value: operator, label: conditionOperatorLabel(operator) }))}
+                                    onChange={(operator) => updateRule({ operator })}
+                                  />
+                                  {!(["empty", "not-empty"] as ConditionOperator[]).includes(rule.operator) ? (
+                                    sourceField?.choiceOptions?.length ? (
+                                      <Select
+                                        value={typeof rule.value === "string" ? rule.value || undefined : undefined}
+                                        placeholder="选择比较值"
+                                        options={sourceField.choiceOptions.map((value) => ({ value, label: value }))}
+                                        onChange={(value) => updateRule({ value })}
+                                      />
+                                    ) : (
+                                      <Input
+                                        value={typeof rule.value === "string" ? rule.value : ""}
+                                        placeholder="输入比较值"
+                                        onChange={(event) => updateRule({ value: event.target.value })}
+                                      />
+                                    )
+                                  ) : <span />}
+                                  <Button
+                                    danger
+                                    type="text"
+                                    icon={<DeleteOutlined />}
+                                    disabled={selectedDisplayCondition.rules.length === 1}
+                                    aria-label="删除显示条件"
+                                    onClick={() => updateField({
+                                      displayCondition: {
+                                        ...selectedDisplayCondition,
+                                        rules: selectedDisplayCondition.rules.filter((item) => item.id !== rule.id),
+                                      },
+                                    })}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <Button
+                          block
+                          type="dashed"
+                          icon={<PlusOutlined />}
+                          onClick={() => updateField({
+                            displayCondition: {
+                              ...selectedDisplayCondition,
+                              rules: [...selectedDisplayCondition.rules, {
+                                id: makeId("display-condition"),
+                                fieldId: displayConditionFieldOptions[0]?.value ?? "",
+                                operator: "eq",
+                                value: displayConditionFieldOptions[0]?.choiceOptions?.[0] ?? "",
+                              }],
+                            },
+                          })}
+                        >添加条件</Button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="fd-property-section">
                   <div className="fd-property-section__title">权限与展示</div>
                   <Form.Item label="输入权限">
@@ -1444,7 +1600,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
           </div>
           <Divider />
           <Form form={previewForm} initialValues={previewInitialValues} layout="vertical">
-            {previewFields.map((field) => (
+            {visiblePreviewFields.map((field) => (
               <Form.Item
                 key={field.id}
                 name={field.id}

@@ -825,3 +825,32 @@
   border-color: #6f87ec;
   box-shadow: 0 0 0 2px rgba(54, 89, 227, .10);
 }
+
+.fd-display-condition__rules {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 10px 0;
+}
+
+.fd-display-condition__rule {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #e1e6ee;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.fd-display-condition__rule > div {
+  display: grid;
+  grid-template-columns: minmax(96px, .8fr) minmax(120px, 1fr) 30px;
+  gap: 7px;
+  align-items: center;
+}
+
+.fd-display-condition__rule .ant-select,
+.fd-display-condition__rule .ant-input {
+  width: 100%;
+}

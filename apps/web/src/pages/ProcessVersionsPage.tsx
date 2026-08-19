@@ -24,6 +24,7 @@ const valueText = (value?: string | string[]) => Array.isArray(value) ? value.jo
 
 function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
   const fields = version.snapshot.form.fields;
+  const fieldLabels = new Map(fields.map((field) => [field.id, field.label]));
   return <div className="pa-snapshot-stack">
     <div className="pa-snapshot-heading"><div><FormOutlined /><span><strong>初始表单</strong><small>以下内容来自该版本保存的表单完整快照</small></span></div><Tag>{fields.length} 个字段</Tag></div>
     {fields.length ? fields.map((field, index) => <article className="pa-snapshot-field" key={field.id}>
@@ -36,6 +37,7 @@ function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
         <span><small>输入权限</small><strong>{{ initiator: "发起人", both: "发起人/审核人", reviewer: "审核人" }[normalizeDesignerInputPermission(field)]}</strong></span>
       </div>
       {field.options?.length ? <div className="pa-snapshot-options"><small>选项</small><Space size={[5, 5]} wrap>{field.options.map((option) => <Tag key={option}>{option}</Tag>)}</Space></div> : null}
+      {field.displayCondition?.rules.length ? <div className="pa-snapshot-options"><small>显示条件</small><span>{field.displayCondition.rules.map((rule) => `${fieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${["empty", "not-empty"].includes(rule.operator) ? "" : String(rule.value ?? "")}`.trim()).join(field.displayCondition.mode === "all" ? " 且 " : " 或 ")}</span></div> : null}
       {field.type === "attachment" ? <div className="pa-snapshot-options"><small>附件规则</small><span>最多 {field.attachment?.maxCount ?? 20} 个，单文件不超过 {field.attachment?.maxSizeMb ?? 100} MB；PDF {field.attachment?.inlinePdf ? "在页面内展示" : "仅提供下载"}</span></div> : null}
       {field.type === "table" ? <VersionTableColumns field={field} /> : null}
     </article>) : <Alert type="warning" showIcon message="该版本尚未配置初始表单字段" />}

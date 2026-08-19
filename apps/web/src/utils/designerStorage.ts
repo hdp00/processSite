@@ -103,6 +103,7 @@ export interface StoredDesignerField {
   exportVisible?: boolean;
   reviewEditable?: boolean;
   inputStage?: DesignerInputPermission;
+  displayCondition?: StoredFieldDisplayCondition;
   options?: string[];
   attachment?: {
     maxSizeMb?: number;
@@ -125,6 +126,8 @@ export interface StoredNodeCondition {
   mode: "all" | "any";
   rules: StoredNodeConditionRule[];
 }
+
+export type StoredFieldDisplayCondition = StoredNodeCondition;
 
 export type ApprovalHandlingMode = "approval" | "confirmation";
 
@@ -181,6 +184,42 @@ export const ensureProcessTitleField = (fields?: StoredDesignerField[]): StoredD
   return source;
 };
 
+export const normalizeStoredCondition = (
+  condition?: StoredNodeCondition,
+): StoredNodeCondition | undefined => {
+  if (!condition || typeof condition !== "object") return undefined;
+  const source = condition as Partial<StoredNodeCondition>;
+  const rules = Array.isArray(source.rules)
+    ? source.rules.filter((rule) => Boolean(rule && typeof rule === "object")).map((rule, index) => ({
+        id: typeof rule.id === "string" && rule.id ? rule.id : `condition-${index + 1}`,
+        fieldId: typeof rule.fieldId === "string" ? rule.fieldId : "",
+        operator: rule.operator ?? "eq",
+        value: rule.value ?? "",
+      }))
+    : [];
+  return { mode: source.mode === "any" ? "any" : "all", rules };
+};
+
+export const isDesignerFieldVisible = (
+  field: Pick<StoredDesignerField, "displayCondition">,
+  values: Record<string, unknown>,
+) => {
+  const condition = normalizeStoredCondition(field.displayCondition);
+  return !condition || evaluateNodeCondition(condition, values).matches;
+};
+
+export const applyDesignerFieldVisibility = (
+  fields: StoredDesignerField[],
+  values: Record<string, unknown>,
+) => {
+  const nextValues = structuredClone(values);
+  fields.forEach((field) => {
+    if (isDesignerFieldVisible(field, nextValues)) return;
+    nextValues[field.id] = ["checkbox", "cascader", "attachment", "table"].includes(field.type) ? [] : "";
+  });
+  return nextValues;
+};
+
 export interface StoredFormDesignerSnapshot {
   fields: StoredDesignerField[];
   savedAt?: string;
@@ -234,6 +273,9 @@ export const readFormDesignerSnapshot = (definitionId: string): StoredFormDesign
           fields: ensureProcessTitleField(parsed.fields).map((field) => ({
             ...field,
             inputStage: normalizeDesignerInputPermission(field),
+            displayCondition: field.id === PROCESS_TITLE_FIELD_ID
+              ? undefined
+              : normalizeStoredCondition(field.displayCondition),
           })),
           savedAt: parsed.savedAt,
         }
@@ -302,6 +344,9 @@ export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapsho
     inputStage: field.id === PROCESS_TITLE_FIELD_ID && normalizeDesignerInputPermission(field) === "reviewer"
       ? "initiator"
       : normalizeDesignerInputPermission(field),
+    displayCondition: field.id === PROCESS_TITLE_FIELD_ID
+      ? undefined
+      : normalizeStoredCondition(field.displayCondition),
     ...(field.id === PROCESS_TITLE_FIELD_ID && legacyTitleConfig
       ? { taskVisible: legacyTitleConfig.taskVisible, listVisible: legacyTitleConfig.processListVisible }
       : {}),

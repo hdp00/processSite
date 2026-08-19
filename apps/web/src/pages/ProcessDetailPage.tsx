@@ -55,7 +55,7 @@ import { effectiveGroupMemberIds, findIdentityUser, useIdentityStore } from "../
 import { canUserCloseInstance, canUserProcessTask } from "../state/workflowAccess";
 import { hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import type { StoredDesignerField } from "../utils/designerStorage";
+import { isDesignerFieldVisible, type StoredDesignerField } from "../utils/designerStorage";
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
 import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../utils/roundDisplay";
 
@@ -347,7 +347,7 @@ export function ProcessDetailPage() {
       return;
     }
     if (action === "pass" || action === "confirm") {
-      const missing = configuredFields.filter((field) => field.inputStage === "reviewer" && field.required && editableFieldIds.has(field.id)).filter((field) => {
+      const missing = visibleConfiguredFields.filter((field) => field.inputStage === "reviewer" && field.required && editableFieldIds.has(field.id)).filter((field) => {
         const value = dynamicValues[field.id] ?? field.defaultValue;
         if (field.type === "table") {
           const rows = Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
@@ -488,6 +488,7 @@ export function ProcessDetailPage() {
 
   const changedLevel = documentLevel !== instance.documentLevel;
   const configuredFields = lockedVersion?.snapshot.form.fields ?? [];
+  const visibleConfiguredFields = configuredFields.filter((field) => isDesignerFieldVisible(field, dynamicValues));
   const editableFieldIds = new Set(
     (repeatTask ? repeatNodeConfig : currentNodeConfig)?.editableFields ?? [],
   );
@@ -670,8 +671,11 @@ export function ProcessDetailPage() {
         const cellEditable = initiatorEditable || reviewerOwnsTable || (reviewerEditing && editableFieldIds.has(`${field.id}.${column.id}`));
         const text = displayDynamicValue(cell, field);
         const updateCell = (next: unknown) => updateDynamicValue(field.id, rows.map((item, index) => index === rowIndex ? { ...row, [column.id]: next } : item));
+        const columnOptions = (column.options ?? []).map((option) => ({ value: option, label: option }));
+        if (column.type === "select") return <Select className={!cellEditable ? "runtime-readonly-choice" : undefined} disabled={!cellEditable} size="small" value={typeof cell === "string" && cell ? cell : undefined} options={columnOptions} placeholder="未填写" onChange={updateCell} />;
+        if (column.type === "radio") return <Radio.Group className={!cellEditable ? "runtime-readonly-choice" : undefined} disabled={!cellEditable} value={typeof cell === "string" && cell ? cell : undefined} options={columnOptions} onChange={(event) => updateCell(event.target.value)} />;
+        if (column.type === "checkbox") return <Checkbox.Group className={!cellEditable ? "runtime-readonly-choice" : undefined} disabled={!cellEditable} value={Array.isArray(cell) ? cell as string[] : []} options={columnOptions} onChange={updateCell} />;
         if (!cellEditable) return text;
-        if (column.type === "select" || column.type === "radio" || column.type === "checkbox") return <Select size="small" mode={column.type === "checkbox" ? "multiple" : undefined} value={column.type === "checkbox" ? (Array.isArray(cell) ? cell as string[] : []) : typeof cell === "string" && cell ? cell : undefined} options={(column.options ?? []).map((option) => ({ value: option, label: option }))} onChange={updateCell} />;
         return <Input size="small" value={text === "—" ? "" : text} onChange={(event) => updateCell(event.target.value)} />;
       } }))} />
       {reviewerEditing && field.inputStage === "reviewer" && editableFieldIds.has(field.id) ? <Space className="fd-row-actions">
@@ -681,22 +685,10 @@ export function ProcessDetailPage() {
       </Space> : reviewerEditing ? <Typography.Text className="table-rule-note" type="secondary">审核节点只能修改授权单元格，不能新增或删除整行。</Typography.Text> : null}</div>);
     }
     const options = (field.options ?? []).map((option) => ({ value: option, label: option }));
-    const readOnlyControl = () => {
-      const text = displayDynamicValue(resolvedValue, field);
-      return <Input className="runtime-readonly-value" readOnly value={text === "—" ? "" : text} placeholder="未填写" />;
-    };
-    if (field.type === "select") return item(editable
-      ? <Select value={typeof resolvedValue === "string" && resolvedValue ? resolvedValue : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />
-      : readOnlyControl());
-    if (field.type === "cascader") return item(editable
-      ? <Cascader value={Array.isArray(resolvedValue) ? resolvedValue as string[] : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />
-      : readOnlyControl());
-    if (field.type === "radio") return item(editable
-      ? <Radio.Group value={resolvedValue || undefined} options={options} onChange={(event) => updateDynamicValue(field.id, event.target.value)} />
-      : readOnlyControl());
-    if (field.type === "checkbox") return item(editable
-      ? <Checkbox.Group value={Array.isArray(resolvedValue) ? resolvedValue as string[] : []} options={options} onChange={(next) => updateDynamicValue(field.id, next)} />
-      : readOnlyControl());
+    if (field.type === "select") return item(<Select className={!editable ? "runtime-readonly-choice" : undefined} disabled={!editable} value={typeof resolvedValue === "string" && resolvedValue ? resolvedValue : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
+    if (field.type === "cascader") return item(<Cascader className={!editable ? "runtime-readonly-choice" : undefined} disabled={!editable} value={Array.isArray(resolvedValue) ? resolvedValue as string[] : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
+    if (field.type === "radio") return item(<Radio.Group className={!editable ? "runtime-readonly-choice" : undefined} disabled={!editable} value={resolvedValue || undefined} options={options} onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
+    if (field.type === "checkbox") return item(<Checkbox.Group className={!editable ? "runtime-readonly-choice" : undefined} disabled={!editable} value={Array.isArray(resolvedValue) ? resolvedValue as string[] : []} options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
     if (field.type === "richtext") return item(<Input.TextArea readOnly={!editable} value={String(resolvedValue ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()} placeholder="未填写" onChange={(event) => updateDynamicValue(field.id, event.target.value)} autoSize={{ minRows: 4, maxRows: 10 }} />);
     return item(<Input readOnly={!editable} value={String(resolvedValue ?? "")} placeholder="未填写" onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
   };
@@ -862,7 +854,7 @@ export function ProcessDetailPage() {
       <div className="detail-workspace is-form-only">
         <div className="form-review-column">
           <Card className="form-card" title="流程表单">
-            {configuredFields.length ? <Form className="runtime-process-form" layout="vertical"><div className="runtime-form-grid">{configuredFields.map(renderDynamicField)}</div></Form> : <Descriptions bordered size="small" column={1} items={[{ key: "title", label: "标题", children: instance.title }, { key: "description", label: "说明", children: instance.description }]} />}
+            {configuredFields.length ? <Form className="runtime-process-form" layout="vertical"><div className="runtime-form-grid">{visibleConfiguredFields.map(renderDynamicField)}</div></Form> : <Descriptions bordered size="small" column={1} items={[{ key: "title", label: "标题", children: instance.title }, { key: "description", label: "说明", children: instance.description }]} />}
             {canEditBeforeReview && assignableApprovalNodes.length > 0 ? (
               <section className="detail-assignee-section">
                 <div className="detail-assignee-heading">

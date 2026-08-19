@@ -41,7 +41,9 @@ import { flowPilotApi } from "../api/flowPilotApi";
 import { effectiveGroupMemberIds, useIdentityStore } from "../state/useIdentityStore";
 import type { ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
 import {
+  applyDesignerFieldVisibility,
   ensureProcessTitleField,
+  isDesignerFieldVisible,
   rejectionHandlingLabel,
   type StoredDesignerField,
   type StoredDesignerTableColumn,
@@ -247,9 +249,14 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
           : field.defaultValue ?? (field.type === "checkbox" ? [] : ""),
     ]));
   }, [copySource, copySourceVersion, initiatorFields]);
+  const watchedValues = Form.useWatch([], form) as DynamicFormValues | undefined;
+  const visibleInitiatorFields = initiatorFields.filter((field) =>
+    isDesignerFieldVisible(field, watchedValues ?? initialValues),
+  );
 
-  const runtimeValues = (values: DynamicFormValues, uploadedByField: Record<string, AttachmentRecord[]>) => Object.fromEntries(
-    fields.map((field) => {
+  const runtimeValues = (values: DynamicFormValues, uploadedByField: Record<string, AttachmentRecord[]>) => applyDesignerFieldVisibility(
+    fields,
+    Object.fromEntries(fields.map((field) => {
       const key = field.id;
       const value = (field.inputStage ?? "initiator") === "reviewer"
         ? field.type === "table" || field.type === "attachment"
@@ -262,7 +269,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
       return [key, value && typeof value === "object" && "toJSON" in value
         ? (value as { toJSON: () => unknown }).toJSON()
         : value];
-    }),
+    })),
   );
 
   const renderField = (field: StoredDesignerField) => {
@@ -300,7 +307,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
     const uploadedRecords: AttachmentRecord[] = [];
     try {
       const uploadedByField: Record<string, AttachmentRecord[]> = {};
-      for (const field of fields.filter((item) => item.type === "attachment")) {
+      for (const field of fields.filter((item) => item.type === "attachment" && isDesignerFieldVisible(item, submittedValues))) {
         const files = Array.isArray(submittedValues[field.id]) ? submittedValues[field.id] as UploadFile[] : [];
         const records: AttachmentRecord[] = [];
         for (const file of files) {
@@ -399,7 +406,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
         <div className="process-start-layout">
           <main className="process-start-main">
             <Card className="form-card" title="初始表单" extra={<Typography.Text type="secondary">实例编号提交后由系统生成</Typography.Text>}>
-              {initiatorFields.length ? <div className="start-form-grid">{initiatorFields.map(renderField)}</div> : <Alert type="warning" showIcon message="当前发布版本没有可由发起人填写的字段" />}
+              {initiatorFields.length ? <div className="start-form-grid">{visibleInitiatorFields.map(renderField)}</div> : <Alert type="warning" showIcon message="当前发布版本没有可由发起人填写的字段" />}
             </Card>
           </main>
 

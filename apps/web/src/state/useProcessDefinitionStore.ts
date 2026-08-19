@@ -7,6 +7,7 @@ import {
   cloneCompleteDesignerSnapshot,
   createProcessTitleField,
   ensureProcessTitleField,
+  normalizeStoredCondition,
   type CompleteDesignerSnapshot,
 } from "../utils/designerStorage";
 import { currentUserCan } from "./permissionEngine";
@@ -129,6 +130,25 @@ const validateSnapshot = (type: DefinitionType, basic: ProcessBasicConfig, snaps
   const titleField = snapshot.form.fields.find((field) => field.id === PROCESS_TITLE_FIELD_ID);
   if (!titleField || titleField.type !== "text") issues.push("初始表单必须包含系统固定的标题文本框");
   if (titleField?.inputStage === "reviewer") issues.push("标题必须由发起人填写");
+  const fieldIndexById = new Map(snapshot.form.fields.map((field, index) => [field.id, index]));
+  const conditionFieldTypes = new Set(["text", "select", "cascader", "radio", "checkbox"]);
+  const invalidDisplayCondition = snapshot.form.fields.some((field, fieldIndex) => {
+    const condition = normalizeStoredCondition(field.displayCondition);
+    if (!condition) return false;
+    return field.id === PROCESS_TITLE_FIELD_ID || !condition.rules.length || condition.rules.some((rule) => {
+      const sourceIndex = fieldIndexById.get(rule.fieldId);
+      const sourceField = sourceIndex === undefined ? undefined : snapshot.form.fields[sourceIndex];
+      const supported = sourceField?.type === "checkbox"
+        ? ["contains", "not-contains", "empty", "not-empty"]
+        : sourceField?.type === "text"
+          ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
+          : ["eq", "neq", "empty", "not-empty"];
+      return !sourceField || sourceIndex === undefined || sourceIndex >= fieldIndex || !conditionFieldTypes.has(sourceField.type)
+        || !supported.includes(rule.operator)
+        || (!["empty", "not-empty"].includes(rule.operator) && (rule.value === undefined || rule.value === ""));
+    });
+  });
+  if (invalidDisplayCondition) issues.push("初始表单存在无效或未填写完整的字段显示条件");
   if (type === "free") {
     if (!basic.assigneeGroups?.length) issues.push("至少选择一个受理流程权限组");
   } else {

@@ -20,7 +20,7 @@ import {
   normalizeLegacyInstanceNumber,
   resetInstanceNumberSequences,
 } from "../utils/instanceNumber";
-import { conditionOperatorLabel, evaluateNodeCondition, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
+import { applyDesignerFieldVisibility, conditionOperatorLabel, evaluateNodeCondition, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { hasUserPermission } from "./permissionEngine";
 import { resolveLockedProcessVersion } from "./processVersionResolver";
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
@@ -496,8 +496,9 @@ export const usePrototypeStore = create<PrototypeState>()(
         const createdAt = nowText();
         const createdId = crypto.randomUUID();
         const prefix = version.basic.instancePrefix || extractInstancePrefix(definition.code) || "FLOW";
+        const formValues = applyDesignerFieldVisibility(version.snapshot.form.fields, input.formValues);
         const approvalRuntime = definition.type === "approval"
-          ? buildApprovalRuntime(createdId, definition.id, version, input.assigneeByNode ?? {}, createdAt, input.formValues)
+          ? buildApprovalRuntime(createdId, definition.id, version, input.assigneeByNode ?? {}, createdAt, formValues)
           : undefined;
         const firstAssigneeId = userIdByIdOrName(input.firstAssigneeId);
         const firstAssignee = firstAssigneeId ? findIdentityUser(firstAssigneeId) : undefined;
@@ -507,9 +508,9 @@ export const usePrototypeStore = create<PrototypeState>()(
           );
           if (!firstAssignee || !allowed) return null;
         }
-        const title = displayValue(input.formValues[PROCESS_TITLE_FIELD_ID])
+        const title = displayValue(formValues[PROCESS_TITLE_FIELD_ID])
           || `${version.basic.name}申请`;
-        const description = findFormValue(version, input.formValues, ["description", "摘要", "说明", "内容"]);
+        const description = findFormValue(version, formValues, ["description", "摘要", "说明", "内容"]);
         const attachmentNames = [...(input.attachmentNames ?? [])];
         const created: ProcessInstance = {
           id: createdId,
@@ -532,22 +533,22 @@ export const usePrototypeStore = create<PrototypeState>()(
           currentAssigneeId: definition.type === "free" ? firstAssignee?.id : undefined,
           designatedReviewer: definition.type === "free" ? firstAssignee?.name : undefined,
           designatedReviewerId: definition.type === "free" ? firstAssignee?.id : undefined,
-          priority: displayValue(input.formValues.priority) === "紧急" ? "紧急" : "普通",
+          priority: displayValue(formValues.priority) === "紧急" ? "紧急" : "普通",
           description,
           pdfName: attachmentNames[0] ?? "无附件",
           pdfSize: attachmentNames.length ? "待上传" : "—",
-          documentCode: findFormValue(version, input.formValues, ["documentCode", "文件编号", "编号"]),
-          documentType: findFormValue(version, input.formValues, ["documentType", "文件类型", "分类"]),
-          documentLevel: findFormValue(version, input.formValues, ["documentLevel", "密级"]),
-          revision: findFormValue(version, input.formValues, ["revision", "版本"]),
-          category: findFormValue(version, input.formValues, ["category", "分类"]),
+          documentCode: findFormValue(version, formValues, ["documentCode", "文件编号", "编号"]),
+          documentType: findFormValue(version, formValues, ["documentType", "文件类型", "分类"]),
+          documentLevel: findFormValue(version, formValues, ["documentLevel", "密级"]),
+          revision: findFormValue(version, formValues, ["revision", "版本"]),
+          category: findFormValue(version, formValues, ["category", "分类"]),
           participants: definition.type === "free" ? [actor.name, firstAssignee?.name ?? ""].filter(Boolean) : undefined,
           participantIds: definition.type === "free" ? [actor.id, firstAssignee?.id ?? ""].filter(Boolean) : undefined,
           reviewers: approvalRuntime?.reviewers ?? [],
           freeTimeline: definition.type === "free"
-            ? [freeEntry("created", actor.name, { content: displayValue(input.formValues.initialContent), assignee: firstAssignee?.name })]
+            ? [freeEntry("created", actor.name, { content: displayValue(formValues.initialContent), assignee: firstAssignee?.name })]
             : undefined,
-          formValues: structuredClone(input.formValues),
+          formValues,
           attachmentNames,
           attachmentIds: [...(input.attachmentIds ?? [])],
           attachmentIdsByField: structuredClone(input.attachmentIdsByField ?? {}),
@@ -586,7 +587,7 @@ export const usePrototypeStore = create<PrototypeState>()(
         const authorized = fieldChanges
           ? mergeAuthorizedFieldValues(targetVersion, task.nodeId, targetInstance.formValues ?? {}, fieldChanges)
           : { values: targetInstance.formValues ?? {}, changes: [] as WorkflowFieldChange[] };
-        const mergedFormValues = authorized.values;
+        const mergedFormValues = applyDesignerFieldVisibility(targetVersion.snapshot.form.fields, authorized.values);
         const taskAction = action === "pass" ? ("通过" as const) : action === "confirm" ? ("确认" as const) : ("驳回" as const);
         const reviewerStatus = action === "pass" ? ("已通过" as const) : action === "confirm" ? ("已确认" as const) : ("已驳回" as const);
 
@@ -662,14 +663,15 @@ export const usePrototypeStore = create<PrototypeState>()(
         );
         if (!actor || !instance || !task || !version || !canRevise) return "forbidden";
         const authorized = mergeAuthorizedFieldValues(version, task.nodeId, instance.formValues ?? {}, fieldChanges);
+        const nextValues = applyDesignerFieldVisibility(version.snapshot.form.fields, authorized.values);
         if (!authorized.changes.length) return "no-changes";
         const editedAt = nowText();
         set((current) => ({
           instances: current.instances.map((item) => item.id === id ? {
             ...item,
-            ...synchronizedInstanceFields(version, authorized.values),
-            ...synchronizedAttachmentFields(version, authorized.values),
-            formValues: authorized.values,
+            ...synchronizedInstanceFields(version, nextValues),
+            ...synchronizedAttachmentFields(version, nextValues),
+            formValues: nextValues,
             updatedAt: editedAt,
           } : item),
           tasks: current.tasks.map((item) => item.id === task.id ? {
@@ -738,7 +740,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           if (hasReviewAction) return { ok: false, reason: "locked", message: "已有审核人提交结果，流程内容已经锁定" };
           const { assigneeByNode, ...instanceChanges } = changes;
           const updatedAt = nowText();
-          const nextValues = changes.formValues ?? target.formValues ?? {};
+          const nextValues = applyDesignerFieldVisibility(version.snapshot.form.fields, changes.formValues ?? target.formValues ?? {});
           const previousAssignments = Object.fromEntries(state.tasks
             .filter((task) => task.instanceId === id && task.round === target.round && task.defaultAssigneeId)
             .map((task) => [task.nodeId, task.defaultAssigneeId]));
@@ -755,6 +757,9 @@ export const usePrototypeStore = create<PrototypeState>()(
             instances: state.instances.map((instance) => instance.id === id ? {
               ...instance,
               ...instanceChanges,
+              ...synchronizedInstanceFields(version, nextValues),
+              ...synchronizedAttachmentFields(version, nextValues),
+              formValues: nextValues,
               status: runtime.completed ? "已完成" : "审核中",
               currentNode: runtime.currentNode,
               reviewers: runtime.reviewers,
@@ -783,7 +788,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           const previousAssignments = Object.fromEntries(state.tasks
             .filter((task) => task.instanceId === id && task.round === target.round && task.defaultAssigneeId)
             .map((task) => [task.nodeId, task.defaultAssigneeId]));
-          const nextValues = changes.formValues ?? target.formValues ?? {};
+          const nextValues = applyDesignerFieldVisibility(version.snapshot.form.fields, changes.formValues ?? target.formValues ?? {});
           const modifiedFields = collectModifiedFieldReferences(version, target.formValues ?? {}, nextValues);
           const freshRuntime = buildApprovalRuntime(target.id, target.definitionId ?? legacyDefinitionId(target), version, previousAssignments, submittedAt, nextValues, nextRound);
           const freshTasks = freshRuntime.tasks;
@@ -793,6 +798,9 @@ export const usePrototypeStore = create<PrototypeState>()(
               ? {
                   ...instance,
                   ...changes,
+                  ...synchronizedInstanceFields(version, nextValues),
+                  ...synchronizedAttachmentFields(version, nextValues),
+                  formValues: nextValues,
                   status: freshRuntime.completed ? "已完成" : "审核中",
                   currentNode: freshRuntime.currentNode,
                   round: nextRound,
