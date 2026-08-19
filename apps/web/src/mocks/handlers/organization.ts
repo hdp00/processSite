@@ -12,6 +12,7 @@ import {
   readStoredRolePermissions,
 } from "../../state/rolePermissions";
 import { effectiveGroupMemberIds, useIdentityStore } from "../../state/useIdentityStore";
+import { useOrganizationStore } from "../../state/useOrganizationStore";
 import {
   apiNoContent,
   apiOk,
@@ -28,28 +29,6 @@ import {
 } from "../runtime";
 
 const API = "/api/v1";
-const DEPARTMENT_KEY = "flowpilot-mock-api-departments-v1";
-const POSITION_KEY = "flowpilot-mock-api-positions-v1";
-
-const departmentSeeds: DepartmentRecord[] = [
-  { id: "rd", name: "研发", path: "研发", status: "启用", memberCount: 0, sortOrder: 10 },
-  { id: "rd-software", name: "软件", parentId: "rd", path: "研发 / 软件", status: "启用", memberCount: 0, sortOrder: 11 },
-  { id: "rd-hardware", name: "硬件", parentId: "rd", path: "研发 / 硬件", status: "启用", memberCount: 0, sortOrder: 12 },
-  { id: "rd-test", name: "测试", parentId: "rd", path: "研发 / 测试", status: "启用", memberCount: 0, sortOrder: 13 },
-  { id: "quality", name: "质量", path: "质量", status: "启用", memberCount: 0, sortOrder: 20 },
-  { id: "quality-system", name: "体系", parentId: "quality", path: "质量 / 体系", status: "启用", memberCount: 0, sortOrder: 21 },
-  { id: "quality-iqc", name: "来料检验", parentId: "quality", path: "质量 / 来料检验", status: "启用", memberCount: 0, sortOrder: 22 },
-  { id: "production", name: "生产", path: "生产", status: "启用", memberCount: 0, sortOrder: 30 },
-  { id: "production-line1", name: "一车间", parentId: "production", path: "生产 / 一车间", status: "启用", memberCount: 0, sortOrder: 31 },
-  { id: "production-line2", name: "二车间", parentId: "production", path: "生产 / 二车间", status: "启用", memberCount: 0, sortOrder: 32 },
-  { id: "document", name: "文控", path: "文控", status: "启用", memberCount: 0, sortOrder: 40 },
-  { id: "system", name: "系统内置", path: "系统内置", status: "启用", memberCount: 0, sortOrder: 99 },
-];
-
-const positionSeeds: PositionRecord[] = [
-  { id: "position-employee", name: "员工", description: "普通业务岗位", status: "启用", memberCount: 0 },
-  { id: "position-manager", name: "经理", description: "部门管理岗位", status: "启用", memberCount: 0 },
-];
 
 const permissions: PermissionCatalogItem[] = [
   "work-launch:查看", "work-launch:发起", "work-task:查看", "work-task:审核", "work-task:驳回",
@@ -63,29 +42,26 @@ const permissions: PermissionCatalogItem[] = [
   return { key, page, action };
 });
 
-const readCollection = <T,>(key: string, fallback: T[]) => {
-  try {
-    const value = JSON.parse(window.localStorage.getItem(key) ?? "[]") as T[];
-    return Array.isArray(value) && value.length ? value : structuredClone(fallback);
-  } catch {
-    return structuredClone(fallback);
-  }
-};
-
-const writeCollection = <T,>(key: string, value: T[]) => window.localStorage.setItem(key, JSON.stringify(value));
-
 const departments = () => {
   const users = useIdentityStore.getState().users;
-  return readCollection(DEPARTMENT_KEY, departmentSeeds).map((item) => ({
-    ...item,
-    memberCount: users.filter((user) => user.department.includes(item.id)).length,
+  return useOrganizationStore.getState().departments.map((item): DepartmentRecord => ({
+    id: item.key,
+    name: item.name,
+    parentId: item.parentKey,
+    path: item.path,
+    status: item.status,
+    memberCount: users.filter((user) => user.department.includes(item.key)).length,
+    sortOrder: item.sort,
   }));
 };
 
 const positions = () => {
   const users = useIdentityStore.getState().users;
-  return readCollection(POSITION_KEY, positionSeeds).map((item) => ({
-    ...item,
+  return useOrganizationStore.getState().jobTitles.map((item): PositionRecord => ({
+    id: item.id,
+    name: item.name,
+    description: item.description,
+    status: item.status,
     memberCount: users.filter((user) => user.jobTitle === item.name).length,
   }));
 };
@@ -138,7 +114,18 @@ export const organizationHandlers = [
       if (!name || (body.parentId && !parent)) return apiProblem(request, 422, "VALIDATION_FAILED", "部门数据无效", "请填写部门名称并选择有效上级部门。 ");
       if (current.some((item) => item.parentId === body.parentId && item.name === name)) return apiProblem(request, 409, "DEPARTMENT_NAME_CONFLICT", "同级部门名称已存在", "请使用其他部门名称。 ");
       const record: DepartmentRecord = { id: globalThis.crypto.randomUUID(), name, parentId: parent?.id, path: parent ? `${parent.path} / ${name}` : name, status: "启用", memberCount: 0, sortOrder: body.sortOrder ?? current.length * 10 };
-      writeCollection(DEPARTMENT_KEY, [...current, record].map((item) => ({ ...item, memberCount: 0 })));
+      useOrganizationStore.getState().setDepartments((items) => [...items, {
+        key: record.id,
+        name: record.name,
+        path: record.path,
+        level: record.parentId ? 2 : 1,
+        parentKey: record.parentId,
+        sort: record.sortOrder,
+        status: record.status,
+        users: 0,
+        referenced: false,
+        description: "",
+      }]);
       audit(auth.actor.id, auth.actor.name, "create-department", "department", record.id, `创建部门 ${record.path}`);
       return apiOk(request, record, { status: 201, headers: { ETag: entityEtag(record) } });
     });
@@ -164,9 +151,20 @@ export const organizationHandlers = [
     const body = await parseJsonBody<Partial<Pick<DepartmentRecord, "name" | "status" | "sortOrder">>>(request);
     if (body instanceof Response) return body;
     const updated: DepartmentRecord = { ...record, ...body, name: body.name?.trim() || record.name };
-    writeCollection(DEPARTMENT_KEY, current.map((item) => item.id === record.id ? { ...updated, memberCount: 0 } : { ...item, memberCount: 0 }));
-    audit(auth.actor.id, auth.actor.name, "update-department", "department", record.id, `更新部门 ${updated.path}`);
-    return apiOk(request, updated, { headers: { ETag: entityEtag(updated) } });
+    useOrganizationStore.getState().setDepartments((items) => items.map((item) => item.key === record.id ? {
+      ...item,
+      name: updated.name,
+      status: updated.status,
+      sort: updated.sortOrder,
+    } : item));
+    const departmentById = new Map(useOrganizationStore.getState().departments.map((item) => [item.key, item]));
+    useIdentityStore.getState().setUsers((users) => users.map((user) => {
+      const assigned = [...user.department].reverse().map((id) => departmentById.get(id)).find(Boolean);
+      return assigned ? { ...user, departmentPath: assigned.path } : user;
+    }));
+    const saved = departments().find((item) => item.id === record.id) ?? updated;
+    audit(auth.actor.id, auth.actor.name, "update-department", "department", record.id, `更新部门 ${saved.path}`);
+    return apiOk(request, saved, { headers: { ETag: entityEtag(saved) } });
   }),
   http.delete(`${API}/departments/:departmentId`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
@@ -179,7 +177,7 @@ export const organizationHandlers = [
     const conflict = checkIfMatch(request, record, true);
     if (conflict) return conflict;
     if (record.memberCount || current.some((item) => item.parentId === record.id)) return apiProblem(request, 409, "DEPARTMENT_IN_USE", "部门正在使用", "请先移走部门成员并删除所有下级部门。 ");
-    writeCollection(DEPARTMENT_KEY, current.filter((item) => item.id !== record.id).map((item) => ({ ...item, memberCount: 0 })));
+    useOrganizationStore.getState().setDepartments((items) => items.filter((item) => item.key !== record.id));
     audit(auth.actor.id, auth.actor.name, "delete-department", "department", record.id, `删除部门 ${record.path}`);
     return apiNoContent(request);
   }),
@@ -203,7 +201,14 @@ export const organizationHandlers = [
       if (!name) return apiProblem(request, 422, "POSITION_NAME_REQUIRED", "职务名称不能为空", "请填写职务名称。 ");
       if (current.some((item) => item.name === name)) return apiProblem(request, 409, "POSITION_NAME_CONFLICT", "职务名称已存在", "请使用其他职务名称。 ");
       const record: PositionRecord = { id: globalThis.crypto.randomUUID(), name, description: body.description?.trim() ?? "", status: "启用", memberCount: 0 };
-      writeCollection(POSITION_KEY, [...current, record].map((item) => ({ ...item, memberCount: 0 })));
+      useOrganizationStore.getState().setJobTitles((items) => [...items, {
+        id: record.id,
+        name: record.name,
+        description: record.description,
+        status: record.status,
+        users: 0,
+        sort: Math.max(0, ...items.map((item) => item.sort)) + 10,
+      }]);
       audit(auth.actor.id, auth.actor.name, "create-position", "position", record.id, `创建职务 ${record.name}`);
       return apiOk(request, record, { status: 201, headers: { ETag: entityEtag(record) } });
     });
@@ -229,7 +234,16 @@ export const organizationHandlers = [
     const body = await parseJsonBody<Partial<Pick<PositionRecord, "name" | "description" | "status">>>(request);
     if (body instanceof Response) return body;
     const updated: PositionRecord = { ...record, ...body, name: body.name?.trim() || record.name };
-    writeCollection(POSITION_KEY, current.map((item) => item.id === record.id ? { ...updated, memberCount: 0 } : { ...item, memberCount: 0 }));
+    useOrganizationStore.getState().setJobTitles((items) => items.map((item) => item.id === record.id ? {
+      ...item,
+      name: updated.name,
+      description: updated.description,
+      status: updated.status,
+    } : item));
+    if (updated.name !== record.name) {
+      useIdentityStore.getState().setUsers((users) => users.map((user) =>
+        user.jobTitle === record.name ? { ...user, jobTitle: updated.name } : user));
+    }
     audit(auth.actor.id, auth.actor.name, "update-position", "position", record.id, `更新职务 ${updated.name}`);
     return apiOk(request, updated, { headers: { ETag: entityEtag(updated) } });
   }),
@@ -244,7 +258,7 @@ export const organizationHandlers = [
     const conflict = checkIfMatch(request, record, true);
     if (conflict) return conflict;
     if (record.memberCount) return apiProblem(request, 409, "POSITION_IN_USE", "职务正在使用", "请先调整使用该职务的用户。 ");
-    writeCollection(POSITION_KEY, current.filter((item) => item.id !== record.id).map((item) => ({ ...item, memberCount: 0 })));
+    useOrganizationStore.getState().setJobTitles((items) => items.filter((item) => item.id !== record.id));
     audit(auth.actor.id, auth.actor.name, "delete-position", "position", record.id, `删除职务 ${record.name}`);
     return apiNoContent(request);
   }),

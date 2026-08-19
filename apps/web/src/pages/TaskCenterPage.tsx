@@ -11,6 +11,7 @@ import {
 import {
   Button,
   Card,
+  Dropdown,
   Empty,
   Input,
   Segmented,
@@ -28,10 +29,10 @@ import {
   cloneDefaultSystemListFields,
   isSystemFieldVisible,
 } from "../data/listFieldConfig";
-import type { ProcessInstance } from "../data/types";
+import type { ProcessInstance, WorkflowTask } from "../data/types";
 import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
 import { useIdentityStore } from "../state/useIdentityStore";
-import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserProcessTask } from "../state/workflowAccess";
 import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 
@@ -59,26 +60,32 @@ export function TaskCenterPage() {
     setFlowKeyword("");
   }, [personaId]);
 
-  const actionableTaskByInstance = useMemo(() => new Map(
-    tasks
-      .filter((task) => task.status === "待处理" && canUserProcessTask(personaId, task))
-      .map((task) => [task.instanceId, task]),
-  ), [personaId, tasks]);
+  const actionableTasks = useMemo(() => tasks
+    .filter((task) => task.status === "待处理" && canUserProcessTask(personaId, task)), [personaId, tasks]);
+  const actionableTasksByInstance = useMemo(() => actionableTasks.reduce((result, task) => {
+    const current = result.get(task.instanceId) ?? [];
+    result.set(task.instanceId, [...current, task]);
+    return result;
+  }, new Map<string, WorkflowTask[]>()), [actionableTasks]);
+  const myTaskItems = useMemo(() => actionableTasks.filter((task) =>
+    isSuperAdmin || !task.defaultAssigneeId || task.defaultAssigneeId === personaId,
+  ), [actionableTasks, isSuperAdmin, personaId]);
+  const substituteTaskItems = useMemo(() => isSuperAdmin ? [] : actionableTasks.filter((task) =>
+    Boolean(task.defaultAssigneeId && task.defaultAssigneeId !== personaId),
+  ), [actionableTasks, isSuperAdmin, personaId]);
   const actionable = useMemo(() => instances.filter((instance) =>
     instance.workflowType === "free"
-      ? instance.status === "进行中" && Boolean(isSuperAdmin || identityUser?.name === instance.currentAssignee)
-      : instance.status === "审核中" && actionableTaskByInstance.has(instance.id),
-  ), [actionableTaskByInstance, identityUser?.name, instances, isSuperAdmin]);
+      ? instance.status === "进行中" && Boolean(isSuperAdmin || identityUser?.id === instance.currentAssigneeId)
+      : instance.status === "审核中" && actionableTasksByInstance.has(instance.id),
+  ), [actionableTasksByInstance, identityUser?.id, instances, isSuperAdmin]);
 
   const myTasks = actionable.filter((instance) => {
     if (isSuperAdmin || instance.workflowType === "free") return true;
-    const task = actionableTaskByInstance.get(instance.id);
-    return !task?.defaultAssigneeId || task.defaultAssigneeId === personaId;
+    return myTaskItems.some((task) => task.instanceId === instance.id);
   });
   const substituteTasks = actionable.filter((instance) => {
     if (isSuperAdmin || instance.workflowType === "free") return false;
-    const task = actionableTaskByInstance.get(instance.id);
-    return Boolean(task?.defaultAssigneeId && task.defaultAssigneeId !== personaId);
+    return substituteTaskItems.some((task) => task.instanceId === instance.id);
   });
   const initiatedInstances = useMemo(() => instances.filter((instance) => {
     const initiatedByCurrentUser = instance.initiatorId === personaId
@@ -105,7 +112,7 @@ export function TaskCenterPage() {
     category.label.toLowerCase().includes(flowKeyword.trim().toLowerCase()),
   );
   const selectedDefinition = definitions.find((item) => item.id === activeTemplate);
-  const selectedVersion = getEffectiveVersion(selectedDefinition);
+  const selectedVersion = getPublishedVersion(selectedDefinition);
   const activeCategoryLabel = activeTemplate
     ? flowCategories.find((category) => category.template === activeTemplate)?.label ?? activeTemplate
     : tab === "initiated" ? "全部发起" : "全部待办";
@@ -118,7 +125,7 @@ export function TaskCenterPage() {
     : cloneDefaultSystemListFields();
   const showSystemField = (key: Parameters<typeof isSystemFieldVisible>[1]) =>
     isSystemFieldVisible(systemListFields, key, "task");
-  const titleVisibleForVersion = (version: ReturnType<typeof getEffectiveVersion>) =>
+  const titleVisibleForVersion = (version: ReturnType<typeof getPublishedVersion>) =>
     version?.snapshot.form.fields.find((field) => field.id === PROCESS_TITLE_FIELD_ID)?.taskVisible ?? true;
   const recordShowsTitle = () => activeTemplate ? titleVisibleForVersion(selectedVersion) : true;
   const showTitle = activeTemplate ? titleVisibleForVersion(selectedVersion) : true;
@@ -147,8 +154,14 @@ export function TaskCenterPage() {
       }))
     : [];
 
-  const approvalTaskActionLabel = (record: ProcessInstance) => {
-    const task = actionableTaskByInstance.get(record.id);
+  const tasksForRecord = (record: ProcessInstance) => {
+    const recordTasks = actionableTasksByInstance.get(record.id) ?? [];
+    if (tab === "mine") return recordTasks.filter((task) => isSuperAdmin || !task.defaultAssigneeId || task.defaultAssigneeId === personaId);
+    if (tab === "substitute") return recordTasks.filter((task) => !isSuperAdmin && Boolean(task.defaultAssigneeId && task.defaultAssigneeId !== personaId));
+    return [];
+  };
+
+  const approvalTaskActionLabel = (record: ProcessInstance, task?: WorkflowTask) => {
     const definition = definitions.find((item) => item.id === record.definitionId);
     const version = definition?.versions.find((item) => item.id === record.versionId);
     const node = version?.snapshot.flow.nodes.find((item) => item.id === task?.nodeId);
@@ -198,7 +211,7 @@ export function TaskCenterPage() {
       render: (value: string, record: ProcessInstance) => (
         <div className="node-cell">
           <span className="node-pulse" />
-          {showSystemField("currentNode") ? <span>{value}</span> : null}
+          {showSystemField("currentNode") ? <span>{record.workflowType === "free" ? record.status === "进行中" ? record.currentAssignee ?? "" : "" : value}</span> : null}
           {showSystemField("round") && record.workflowType !== "free" ? <small>第 {record.round} 轮</small> : null}
         </div>
       ),
@@ -218,15 +231,19 @@ export function TaskCenterPage() {
       dataIndex: "designatedReviewer",
       width: 135,
       render: (_value?: string, record?: ProcessInstance) => {
-        const task = record ? actionableTaskByInstance.get(record.id) : undefined;
-        const defaultAssignee = useIdentityStore.getState().users.find((user) => user.id === task?.defaultAssigneeId)?.name;
+        const recordTasks = record ? tasksForRecord(record) : [];
+        const task = recordTasks[0];
+        const defaultAssignees = recordTasks
+          .map((item) => useIdentityStore.getState().users.find((user) => user.id === item.defaultAssigneeId)?.name)
+          .filter(Boolean);
+        const defaultAssignee = [...new Set(defaultAssignees)].join("、") || "未指定";
         return (
         isSuperAdmin ? (
-          <Tag icon={<AuditOutlined />} color="gold">超级管理员可处理</Tag>
+          <Tag icon={<AuditOutlined />} color="gold">{record?.workflowType === "free" ? "可处理" : `可处理 ${recordTasks.length} 个节点`}</Tag>
         ) : tab === "mine" ? (
-          <Tag icon={<UserOutlined />} color="blue">{record?.workflowType === "free" ? "当前由我受理" : task?.defaultAssigneeId ? "指定给我" : "组内共享"}</Tag>
+          <Tag icon={<UserOutlined />} color="blue">{record?.workflowType === "free" ? "当前由我受理" : recordTasks.length > 1 ? `${recordTasks.length} 个节点` : task?.defaultAssigneeId ? "指定给我" : "组内共享"}</Tag>
         ) : (
-          <Tooltip title={`默认责任人：${defaultAssignee ?? "未指定"}。同组成员可直接代为审核。`}>
+          <Tooltip title={`默认责任人：${defaultAssignee}。同组成员可直接代为审核。`}>
             <Tag icon={<TeamOutlined />} color="purple">可代办 · {defaultAssignee}</Tag>
           </Tooltip>
         ));
@@ -238,19 +255,36 @@ export function TaskCenterPage() {
       width: 76,
       align: "center",
       render: (_, record) => {
+        const recordTasks = tasksForRecord(record);
         const actionLabel = tab === "initiated"
           ? "查看流程"
-          : record.workflowType === "free" ? "进入处理" : approvalTaskActionLabel(record);
-        return (
+          : record.workflowType === "free" ? "进入处理" : recordTasks.length > 1 ? "选择处理节点" : approvalTaskActionLabel(record, recordTasks[0]);
+        const actionButton = (
         <Tooltip title={actionLabel}>
           <Button
             className="task-action-button"
             type="text"
             icon={tab === "initiated" ? <EyeOutlined /> : record.workflowType === "free" ? <MessageOutlined /> : <AuditOutlined />}
             aria-label={`${actionLabel}：${record.title}`}
-            onClick={() => navigate(`/processes/${record.id}`)}
+            onClick={() => {
+              if (recordTasks.length > 1) return;
+              const taskQuery = recordTasks[0] ? `?taskId=${encodeURIComponent(recordTasks[0].id)}` : "";
+              navigate(`/processes/${record.id}${taskQuery}`);
+            }}
           />
         </Tooltip>
+        );
+        if (record.workflowType === "free" || tab === "initiated" || recordTasks.length <= 1) return actionButton;
+        return (
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: recordTasks.map((task) => ({ key: task.id, label: task.nodeName })),
+              onClick: ({ key }) => navigate(`/processes/${record.id}?taskId=${encodeURIComponent(key)}`),
+            }}
+          >
+            {actionButton}
+          </Dropdown>
         );
       },
     },
@@ -266,11 +300,11 @@ export function TaskCenterPage() {
             onChange={(value) => setTab(value as TaskCenterTab)}
             options={[
               {
-                label: <span className="task-tab-label">我的待办 <span className="task-tab-count">{myTasks.length}</span></span>,
+                label: <span className="task-tab-label">我的待办 <span className="task-tab-count">{myTaskItems.length}</span></span>,
                 value: "mine",
               },
               {
-                label: <span className="task-tab-label">可代办 <span className="task-tab-count">{substituteTasks.length}</span></span>,
+                label: <span className="task-tab-label">可代办 <span className="task-tab-count">{substituteTaskItems.length}</span></span>,
                 value: "substitute",
               },
               {

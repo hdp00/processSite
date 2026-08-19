@@ -1,6 +1,7 @@
 import { http } from "msw";
 import type { AuditEvent } from "../../api/contracts";
 import { usePrototypeStore } from "../../state/usePrototypeStore";
+import { collectRuntimeAuditEvents } from "../../utils/runtimeAudit";
 import {
   apiOk,
   applyMockScenario,
@@ -14,48 +15,7 @@ const API = "/api/v1";
 
 const runtimeAuditEvents = (): AuditEvent[] => {
   const { tasks, instances } = usePrototypeStore.getState();
-  const instanceById = new Map(instances.map((item) => [item.id, item]));
-  const decisions = tasks.flatMap((task): AuditEvent[] => {
-    if (!task.action || !task.completedAt) return [];
-    const instance = instanceById.get(task.instanceId);
-    const result: AuditEvent[] = [{
-      id: `runtime-decision-${task.id}`,
-      category: "task",
-      action: task.action === "通过" ? "pass" : task.action === "确认" ? "confirm" : "reject",
-      actorId: task.completedById,
-      actorName: task.completedByName,
-      resourceType: "workflow-task",
-      resourceId: task.id,
-      occurredAt: task.completedAt,
-      summary: `${task.completedByName ?? "审核人"}${task.action}节点 ${task.nodeName}`,
-      details: { instanceId: task.instanceId, instanceCode: instance?.code, round: task.round },
-    }];
-    (task.fieldRevisions ?? []).forEach((revision) => result.push({
-      id: `runtime-revision-${revision.id}`,
-      category: "task",
-      action: "revise-fields",
-      actorId: revision.editedById,
-      actorName: revision.editedByName,
-      resourceType: "workflow-task",
-      resourceId: task.id,
-      occurredAt: revision.editedAt,
-      summary: `${revision.editedByName}继续修改节点 ${task.nodeName} 的授权字段`,
-      details: { instanceId: task.instanceId, comment: revision.comment, changes: revision.changes },
-    }));
-    return result;
-  });
-  const freeFlowEvents = instances.flatMap((instance) => (instance.freeTimeline ?? []).map((entry): AuditEvent => ({
-    id: `runtime-free-${instance.id}-${entry.id}`,
-    category: "instance",
-    action: entry.type,
-    actorName: entry.actor,
-    resourceType: "free-flow-instance",
-    resourceId: instance.id,
-    occurredAt: entry.time,
-    summary: `${entry.actor}执行${entry.type}`,
-    details: { content: entry.content, assignee: entry.assignee },
-  })));
-  return [...decisions, ...freeFlowEvents];
+  return collectRuntimeAuditEvents(instances, tasks);
 };
 
 const comparableTime = (value: string) => {

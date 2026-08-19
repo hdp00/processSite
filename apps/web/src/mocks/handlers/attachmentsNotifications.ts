@@ -181,7 +181,7 @@ const canModifyAttachmentField = (
   if (initiatorMayEdit) return true;
 
   if (instance.workflowType === "free" && instance.status === "进行中") {
-    return (instance.currentAssignee === actor.name || actorOwnsInstance(actor, instance))
+    return (instance.currentAssigneeId === actor.id || actorOwnsInstance(actor, instance))
       && (hasUserPermission(actor.id, "work-task:审核") || hasUserPermission(actor.id, "work-launch:发起"));
   }
 

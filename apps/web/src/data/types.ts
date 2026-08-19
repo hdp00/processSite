@@ -81,7 +81,9 @@ export interface ProcessInstance {
   testConclusion?: string;
   category?: string;
   currentAssignee?: string;
+  currentAssigneeId?: string;
   participants?: string[];
+  participantIds?: string[];
   freeTimeline?: FreeFlowEntry[];
   formValues?: Record<string, unknown>;
   attachmentNames?: string[];

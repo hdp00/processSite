@@ -23,6 +23,7 @@ import {
 } from "../../state/useIdentityStore";
 import { useProcessDefinitionStore } from "../../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../../state/usePrototypeStore";
+import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { clearAttachments } from "../attachmentRepository";
 import {
   apiNoContent,
@@ -83,7 +84,8 @@ const userDto = (user: DomainUser): DirectoryUser => {
 const roleDto = (role: DomainRole): DomainRole => ({
   ...role,
   members: [...role.members],
-  users: useIdentityStore.getState().users.filter((user) => user.roles.includes(role.name)).length,
+  memberUserIds: [...(role.memberUserIds ?? [])],
+  users: useIdentityStore.getState().users.filter((user) => user.roleIds?.includes(role.id)).length,
 });
 
 const groupDto = (group: WorkflowPermissionGroup): WorkflowPermissionGroup => ({
@@ -92,6 +94,8 @@ const groupDto = (group: WorkflowPermissionGroup): WorkflowPermissionGroup => ({
   purposes: [...group.purposes],
   directMembers: [...group.directMembers],
   linkedRoles: [...group.linkedRoles],
+  directMemberUserIds: [...(group.directMemberUserIds ?? [])],
+  linkedRoleIds: [...(group.linkedRoleIds ?? [])],
 });
 
 const paramValue = (value: string | readonly string[] | undefined) =>
@@ -294,6 +298,7 @@ const mockResetHandler = http.post(`${API_ROOT}/mock/reset`, async ({ request })
     usePrototypeStore.getState().resetDemo();
     useProcessDefinitionStore.getState().resetDefinitions();
     useIdentityStore.getState().resetIdentity();
+    useOrganizationStore.getState().resetOrganization();
     if ("indexedDB" in window) await clearAttachments();
     resetMockApiRuntime();
     auditIdentity(actor, "mock.reset", "mock-runtime", "global", "Mock 演示数据已重置");
@@ -559,7 +564,7 @@ const userDeleteHandler = http.delete(`${API_ROOT}/users/:userId`, async ({ requ
   if (authorized.actor.id === current.id) return apiProblem(request, 409, "SELF_DELETE_NOT_ALLOWED", "不能删除当前账号", "请由其他管理员处理此账号。 ");
   const revisionProblem = checkIfMatch(request, userDto(current));
   if (revisionProblem) return revisionProblem;
-  const referencingGroups = useIdentityStore.getState().workflowGroups.filter((group) => group.directMembers.includes(current.name));
+  const referencingGroups = useIdentityStore.getState().workflowGroups.filter((group) => group.directMemberUserIds?.includes(current.id));
   if (referencingGroups.length) {
     return apiProblem(request, 409, "USER_REFERENCED", "用户仍被流程权限组引用", `请先从以下权限组移除该用户：${referencingGroups.map((group) => group.name).join("、")}。`);
   }
@@ -654,6 +659,7 @@ const roleCreateHandler = http.post(`${API_ROOT}/roles`, async ({ request }) => 
       users: resolvedMembers.names.length,
       status: status as EnableStatus,
       members: resolvedMembers.names,
+      memberUserIds: useIdentityStore.getState().users.filter((user) => resolvedMembers.names.includes(user.name)).map((user) => user.id),
     };
     useIdentityStore.getState().setRoles((roles) => [...roles, record]);
     auditIdentity(authorized.actor, "role.created", "role", record.id, `角色 ${record.name} 已创建`, { after: roleDto(record) });
@@ -698,6 +704,7 @@ const roleUpdateHandler = http.patch(`${API_ROOT}/roles/:roleId`, async ({ reque
     description: description ?? current.description,
     status: status as EnableStatus,
     members: resolvedMembers.names,
+    memberUserIds: useIdentityStore.getState().users.filter((user) => resolvedMembers.names.includes(user.name)).map((user) => user.id),
     users: resolvedMembers.names.length,
   };
   useIdentityStore.getState().setRoles((roles) => roles.map((role) => role.id === current.id ? updated : role));
@@ -722,7 +729,7 @@ const roleDeleteHandler = http.delete(`${API_ROOT}/roles/:roleId`, async ({ requ
   if (current.builtIn) return immutableBuiltIn(request, "超级管理员角色");
   const revisionProblem = checkIfMatch(request, roleDto(current));
   if (revisionProblem) return revisionProblem;
-  const referencingGroups = useIdentityStore.getState().workflowGroups.filter((group) => group.linkedRoles.includes(current.name));
+  const referencingGroups = useIdentityStore.getState().workflowGroups.filter((group) => group.linkedRoleIds?.includes(current.id));
   if (referencingGroups.length) return apiProblem(request, 409, "ROLE_REFERENCED", "角色仍被流程权限组引用", `请先从以下权限组移除角色关联：${referencingGroups.map((group) => group.name).join("、")}。`);
   useIdentityStore.getState().setRoles((roles) => roles.filter((role) => role.id !== current.id));
   removePermissionRecord(current.id);
@@ -812,6 +819,8 @@ const groupCreateHandler = http.post(`${API_ROOT}/workflow-permission-groups`, a
       purposes: (purposes ?? []) as WorkflowGroupPurpose[],
       directMembers: resolved.direct.names,
       linkedRoles: resolved.roles.names,
+      directMemberUserIds: useIdentityStore.getState().users.filter((user) => resolved.direct.names.includes(user.name)).map((user) => user.id),
+      linkedRoleIds: useIdentityStore.getState().roles.filter((role) => resolved.roles.names.includes(role.name)).map((role) => role.id),
       status: status as EnableStatus,
       referenced: false,
       openTasks: 0,
@@ -863,6 +872,8 @@ const groupUpdateHandler = http.patch(`${API_ROOT}/workflow-permission-groups/:g
     purposes: (purposes ?? current.purposes) as WorkflowGroupPurpose[],
     directMembers: resolved.direct.names,
     linkedRoles: resolved.roles.names,
+    directMemberUserIds: useIdentityStore.getState().users.filter((user) => resolved.direct.names.includes(user.name)).map((user) => user.id),
+    linkedRoleIds: useIdentityStore.getState().roles.filter((role) => resolved.roles.names.includes(role.name)).map((role) => role.id),
     status: status as EnableStatus,
     updatedAt: new Date().toISOString(),
   };

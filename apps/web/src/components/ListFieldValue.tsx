@@ -11,7 +11,9 @@ const isEmptyValue = (value: unknown) =>
   value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
 
 export function ListFieldValue({ field, value: rawValue }: ListFieldValueProps) {
-  const value = isEmptyValue(rawValue) ? field.defaultValue ?? rawValue : rawValue;
+  // 列配置来自当前发布版本；历史实例没有该字段时必须保持为空，
+  // 不能把当前版本的默认值伪装成历史业务数据。
+  const value = rawValue;
 
   if (isEmptyValue(value)) {
     return <span className="list-field-value is-empty">—</span>;

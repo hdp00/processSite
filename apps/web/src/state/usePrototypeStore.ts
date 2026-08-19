@@ -7,7 +7,7 @@ import type {
   WorkflowFieldChange,
   WorkflowTask,
 } from "../data/types";
-import { getEffectiveVersion, useProcessDefinitionStore, type ProcessVersion } from "./useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore, type ProcessVersion } from "./useProcessDefinitionStore";
 import {
   effectiveGroupMemberIds,
   findIdentityUser,
@@ -22,9 +22,13 @@ import {
 } from "../utils/instanceNumber";
 import { conditionOperatorLabel, evaluateNodeCondition, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { hasUserPermission } from "./permissionEngine";
+import { resolveLockedProcessVersion } from "./processVersionResolver";
 
 type ReviewAction = "pass" | "confirm" | "reject";
 export type RepeatEditResult = "updated" | "no-changes" | "forbidden";
+export type RuntimeCommandResult =
+  | { ok: true }
+  | { ok: false; reason: "not-found" | "version-missing" | "forbidden" | "invalid-state" | "locked"; message: string };
 type RepublishChanges = Partial<
   Pick<ProcessInstance, "title" | "documentCode" | "documentType" | "documentLevel" | "description" | "pdfName">
 > & { formValues?: Record<string, unknown>; attachmentNames?: string[] };
@@ -87,9 +91,9 @@ interface PrototypeState {
   createProcessInstance: (input: CreateProcessInstanceInput) => string | null;
   reviewInstance: (id: string, action: ReviewAction, comment: string, documentLevel?: string, fieldChanges?: Record<string, unknown>, taskId?: string) => boolean;
   reviseCompletedTask: (id: string, taskId: string, fieldChanges: Record<string, unknown>, comment?: string) => RepeatEditResult;
-  closeInstance: (id: string, reason: string) => void;
-  updateUnreviewedInstance: (id: string, changes: UnreviewedInstanceChanges) => void;
-  republishInstance: (id: string, changes: RepublishChanges) => void;
+  closeInstance: (id: string, reason: string) => RuntimeCommandResult;
+  updateUnreviewedInstance: (id: string, changes: UnreviewedInstanceChanges) => RuntimeCommandResult;
+  republishInstance: (id: string, changes: RepublishChanges) => RuntimeCommandResult;
   copyCompletedInstance: (sourceId: string, title: string) => string | null;
   createFreeFlow: (input: FreeFlowCreateInput) => string;
   replyFreeFlow: (id: string, content: string) => void;
@@ -135,9 +139,7 @@ const legacyDefinitionId = (instance: ProcessInstance) => {
 
 const resolveInstanceVersion = (instance: ProcessInstance) => {
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === legacyDefinitionId(instance));
-  return definition?.versions.find((version) => version.id === instance.versionId)
-    ?? definition?.versions.find((version) => version.version === normalizeTemplateVersion(instance.templateVersion))
-    ?? getEffectiveVersion(definition);
+  return resolveLockedProcessVersion(definition, instance);
 };
 
 const isStarterActor = (instance: ProcessInstance, userId: string) => {
@@ -301,13 +303,19 @@ const mergeAuthorizedFieldValues = (
 const hydrateLegacyInstance = (instance: ProcessInstance): ProcessInstance => {
   const definitionId = legacyDefinitionId(instance);
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);
-  const version = definition?.versions.find((item) => item.version === normalizeTemplateVersion(instance.templateVersion))
-    ?? getEffectiveVersion(definition);
+  const version = definition?.versions.find((item) => item.version === normalizeTemplateVersion(instance.templateVersion));
   return {
     ...instance,
+    currentNode: instance.workflowType === "free" && instance.status === "进行中"
+      ? instance.currentAssignee ?? instance.currentNode.replace(/受理中$/, "")
+      : instance.currentNode
+        .replace("等待发布方重新发布", "等待发起方重新提交")
+        .replace("等待发布方重新处理", "等待发起方重新提交"),
     definitionId,
     versionId: instance.versionId ?? version?.id,
     initiatorId: instance.initiatorId ?? userIdByIdOrName(instance.initiator),
+    currentAssigneeId: instance.currentAssigneeId ?? userIdByIdOrName(instance.currentAssignee),
+    participantIds: instance.participantIds ?? (instance.participants ?? []).map(userIdByIdOrName).filter((value): value is string => Boolean(value)),
     formValues: instance.formValues ?? {
       title: instance.title,
       documentCode: instance.documentCode,
@@ -465,7 +473,7 @@ export const usePrototypeStore = create<PrototypeState>()(
         const state = get();
         const actor = findIdentityUser(state.personaId);
         const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === input.definitionId);
-        const version = getEffectiveVersion(definition);
+        const version = getPublishedVersion(definition);
         const canStart = Boolean(
           actor?.status === "启用" &&
           definition &&
@@ -511,6 +519,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           round: 1,
           currentNode: definition.type === "approval" ? approvalRuntime?.currentNode ?? "等待审批" : (firstAssignee?.name ?? ""),
           currentAssignee: definition.type === "free" ? firstAssignee?.name : undefined,
+          currentAssigneeId: definition.type === "free" ? firstAssignee?.id : undefined,
           designatedReviewer: definition.type === "free" ? firstAssignee?.name : undefined,
           designatedReviewerId: definition.type === "free" ? firstAssignee?.id : undefined,
           priority: displayValue(input.formValues.priority) === "紧急" ? "紧急" : "普通",
@@ -523,6 +532,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           revision: findFormValue(version, input.formValues, ["revision", "版本"]),
           category: findFormValue(version, input.formValues, ["category", "分类"]),
           participants: definition.type === "free" ? [actor.name, firstAssignee?.name ?? ""].filter(Boolean) : undefined,
+          participantIds: definition.type === "free" ? [actor.id, firstAssignee?.id ?? ""].filter(Boolean) : undefined,
           reviewers: approvalRuntime?.reviewers ?? [],
           freeTimeline: definition.type === "free"
             ? [freeEntry("created", actor.name, { content: displayValue(input.formValues.initialContent), assignee: firstAssignee?.name })]
@@ -663,18 +673,19 @@ export const usePrototypeStore = create<PrototypeState>()(
         }));
         return "updated";
       },
-      closeInstance: (id, reason) =>
-        set((state) => {
-          const target = state.instances.find((instance) => instance.id === id);
-          const actor = findIdentityUser(state.personaId);
-          const version = target ? resolveInstanceVersion(target) : undefined;
-          const canClose = Boolean(
-            target && actor && target.status !== "已关闭" &&
-            !(target.status === "驳回待处理" && version?.snapshot.flow.meta?.rejectionHandling === "resubmit-only") &&
-            isCloserActor(target, actor.id),
-          );
-          if (!canClose) return state;
-          return {
+      closeInstance: (id, reason) => {
+        const state = get();
+        const target = state.instances.find((instance) => instance.id === id);
+        if (!target) return { ok: false, reason: "not-found", message: "流程实例不存在或已被删除" };
+        const version = resolveInstanceVersion(target);
+        if (!version) return { ok: false, reason: "version-missing", message: "实例锁定的流程版本不存在，已禁止继续操作" };
+        const actor = findIdentityUser(state.personaId);
+        if (!actor || !isCloserActor(target, actor.id)) return { ok: false, reason: "forbidden", message: "当前账号不再具有关闭此流程的权限" };
+        if (target.status === "已关闭") return { ok: false, reason: "invalid-state", message: "流程已经关闭" };
+        if (target.status === "驳回待处理" && version.snapshot.flow.meta?.rejectionHandling === "resubmit-only") {
+          return { ok: false, reason: "invalid-state", message: "当前流程规则只允许重新提交，不能关闭" };
+        }
+        set({
           instances: state.instances.map((instance) =>
             instance.id === id
               ? {
@@ -694,21 +705,24 @@ export const usePrototypeStore = create<PrototypeState>()(
               ? { ...taskItem, status: "已取消" as const }
               : taskItem,
           ),
-        };
-        }),
-      updateUnreviewedInstance: (id, changes) =>
-        set((state) => {
+        });
+        return { ok: true };
+      },
+      updateUnreviewedInstance: (id, changes) => {
+          const state = get();
           const target = state.instances.find((instance) => instance.id === id);
+          if (!target) return { ok: false, reason: "not-found", message: "流程实例不存在或已被删除" };
+          const version = resolveInstanceVersion(target);
+          if (!version) return { ok: false, reason: "version-missing", message: "实例锁定的流程版本不存在，已禁止继续操作" };
           const actor = findIdentityUser(state.personaId);
-          const version = target ? resolveInstanceVersion(target) : undefined;
           const canEdit = Boolean(
-            target && actor &&
-            hasUserPermission(actor.id, "work-launch:发起") &&
-            (isSuperAdminPersona(actor.id) || version?.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(actor.id, groupId))),
+            actor && hasUserPermission(actor.id, "work-launch:发起") &&
+            (isSuperAdminPersona(actor.id) || version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(actor.id, groupId))),
           );
-          if (!canEdit || !target || !version) return state;
+          if (!canEdit) return { ok: false, reason: "forbidden", message: "当前账号不再具有修改此流程的权限" };
           const hasReviewAction = target.reviewers.some((reviewer) => reviewer.status === "已通过" || reviewer.status === "已确认" || reviewer.status === "已驳回");
-          if (target.status !== "审核中" || hasReviewAction) return state;
+          if (target.status !== "审核中") return { ok: false, reason: "invalid-state", message: "流程当前状态不允许修改" };
+          if (hasReviewAction) return { ok: false, reason: "locked", message: "已有审核人提交结果，流程内容已经锁定" };
           const { assigneeByNode, ...instanceChanges } = changes;
           const updatedAt = nowText();
           const nextValues = changes.formValues ?? target.formValues ?? {};
@@ -724,7 +738,7 @@ export const usePrototypeStore = create<PrototypeState>()(
             nextValues,
             target.round,
           );
-          return {
+          set({
             instances: state.instances.map((instance) => instance.id === id ? {
               ...instance,
               ...instanceChanges,
@@ -734,19 +748,23 @@ export const usePrototypeStore = create<PrototypeState>()(
               updatedAt,
             } : instance),
             tasks: [...runtime.tasks, ...state.tasks.filter((task) => !(task.instanceId === id && task.round === target.round))],
-          };
-        }),
-      republishInstance: (id, changes) =>
-        set((state) => {
+          });
+          return { ok: true };
+        },
+      republishInstance: (id, changes) => {
+          const state = get();
           const target = state.instances.find((instance) => instance.id === id);
+          if (!target) return { ok: false, reason: "not-found", message: "流程实例不存在或已被删除" };
+          const version = resolveInstanceVersion(target);
+          if (!version) return { ok: false, reason: "version-missing", message: "实例锁定的流程版本不存在，已禁止继续操作" };
           const actor = findIdentityUser(state.personaId);
-          const version = target ? resolveInstanceVersion(target) : undefined;
           const canRepublish = Boolean(
-            target?.status === "驳回待处理" && actor && version &&
+            target.status === "驳回待处理" && actor &&
             hasUserPermission(actor.id, "work-launch:发起") &&
             (isSuperAdminPersona(actor.id) || version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(actor.id, groupId))),
           );
-          if (!target || !version || !canRepublish) return state;
+          if (target.status !== "驳回待处理") return { ok: false, reason: "invalid-state", message: "只有驳回待处理流程可以重新提交" };
+          if (!canRepublish) return { ok: false, reason: "forbidden", message: "当前账号不再具有重新提交此流程的权限" };
           const nextRound = target.round + 1;
           const previousAssignments = Object.fromEntries(state.tasks
             .filter((task) => task.instanceId === id && task.round === target.round && task.defaultAssigneeId)
@@ -754,7 +772,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           const nextValues = changes.formValues ?? target.formValues ?? {};
           const freshRuntime = buildApprovalRuntime(target.id, target.definitionId ?? legacyDefinitionId(target), version, previousAssignments, nowText(), nextValues, nextRound);
           const freshTasks = freshRuntime.tasks;
-          return {
+          set({
           instances: state.instances.map((instance) =>
             instance.id === id
               ? {
@@ -776,13 +794,14 @@ export const usePrototypeStore = create<PrototypeState>()(
                 : task,
             ),
           ],
-          };
-        }),
+          });
+          return { ok: true };
+        },
       copyCompletedInstance: (sourceId, title) => {
         const source = get().instances.find((instance) => instance.id === sourceId);
         if (!source || source.status !== "已完成" || !source.definitionId || !hasUserPermission(get().personaId, "work-list:复制新建")) return null;
         const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === source.definitionId);
-        const version = getEffectiveVersion(definition);
+        const version = getPublishedVersion(definition);
         if (!version) return null;
         const copiedValues = structuredClone(source.formValues ?? {});
         version.snapshot.form.fields.filter((field) => field.type === "attachment").forEach((field) => delete copiedValues[field.id]);
@@ -793,7 +812,7 @@ export const usePrototypeStore = create<PrototypeState>()(
         return get().createProcessInstance({ definitionId: source.definitionId, formValues: copiedValues, attachmentNames: [] });
       },
       createFreeFlow: (input) => {
-        const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.type === "free" && getEffectiveVersion(item));
+        const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.type === "free" && getPublishedVersion(item));
         if (!definition) return "";
         return get().createProcessInstance({
           definitionId: definition.id,
@@ -817,7 +836,7 @@ export const usePrototypeStore = create<PrototypeState>()(
               const canReply =
                 instance.workflowType === "free" &&
                 instance.status === "进行中" &&
-                (instance.participants?.includes(persona.name) || isSuperAdminPersona(state.personaId));
+                (instance.participantIds?.includes(persona.id) || isSuperAdminPersona(state.personaId));
               if (instance.id !== id || !canReply) return instance;
               return {
                 ...instance,
@@ -825,6 +844,9 @@ export const usePrototypeStore = create<PrototypeState>()(
                 participants: isSuperAdminPersona(state.personaId)
                   ? instance.participants
                   : [...new Set([...(instance.participants ?? []), persona.name])],
+                participantIds: isSuperAdminPersona(state.personaId)
+                  ? instance.participantIds
+                  : [...new Set([...(instance.participantIds ?? []), persona.id])],
                 freeTimeline: [
                   ...(instance.freeTimeline ?? []),
                   freeEntry("reply", persona.name, { content }),
@@ -838,10 +860,11 @@ export const usePrototypeStore = create<PrototypeState>()(
           const persona = currentPersona(state.personaId);
           const actionAt = nowText();
           const target = state.instances.find((instance) => instance.id === id);
+          const nextAssigneeId = userIdByIdOrName(nextAssignee);
           const canTransfer =
             target?.workflowType === "free" &&
             target.status === "进行中" &&
-            (target.currentAssignee === persona.name || isSuperAdminPersona(state.personaId)) &&
+            (target.currentAssigneeId === persona.id || isSuperAdminPersona(state.personaId)) &&
             isAllowedFreeAssignee(target, nextAssignee);
           if (!target || !canTransfer) return state;
           const entries: FreeFlowEntry[] = [
@@ -855,10 +878,12 @@ export const usePrototypeStore = create<PrototypeState>()(
                 ? {
                     ...instance,
                     currentAssignee: nextAssignee,
+                    currentAssigneeId: nextAssigneeId,
                     designatedReviewer: nextAssignee,
-                    currentNode: `${nextAssignee}受理中`,
+                    currentNode: nextAssignee,
                     updatedAt: actionAt,
                     participants: [...new Set([...(instance.participants ?? []), nextAssignee])],
+                    participantIds: [...new Set([...(instance.participantIds ?? []), ...(nextAssigneeId ? [nextAssigneeId] : [])])],
                     freeTimeline: entries,
                   }
                 : instance,
@@ -946,6 +971,7 @@ export const usePrototypeStore = create<PrototypeState>()(
         set((state) => {
           const persona = currentPersona(state.personaId);
           const actionAt = nowText();
+          const assigneeId = userIdByIdOrName(assignee);
           return {
             instances: state.instances.map((instance) => {
               const canReassign =
@@ -958,10 +984,12 @@ export const usePrototypeStore = create<PrototypeState>()(
               return {
                 ...instance,
                 currentAssignee: assignee,
+                currentAssigneeId: assigneeId,
                 designatedReviewer: assignee,
-                currentNode: `${assignee}受理中`,
+                currentNode: assignee,
                 updatedAt: actionAt,
                 participants: [...new Set([...(instance.participants ?? []), assignee])],
+                participantIds: [...new Set([...(instance.participantIds ?? []), ...(assigneeId ? [assigneeId] : [])])],
                 freeTimeline: [
                   ...(instance.freeTimeline ?? []),
                   freeEntry("reassigned", persona.name, {
@@ -989,6 +1017,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                 ...instance,
                 status: "已关闭",
                 currentAssignee: undefined,
+                currentAssigneeId: undefined,
                 designatedReviewer: undefined,
                 currentNode: "事项已关闭",
                 updatedAt: actionAt,
@@ -1001,22 +1030,25 @@ export const usePrototypeStore = create<PrototypeState>()(
         set((state) => {
           const persona = currentPersona(state.personaId);
           const actionAt = nowText();
+          const assigneeId = userIdByIdOrName(assignee);
           return {
             instances: state.instances.map((instance) => {
               const canReopen =
                 instance.workflowType === "free" &&
                 instance.status === "已关闭" &&
-                (instance.participants?.includes(persona.name) || isStarterActor(instance, state.personaId)) &&
+                (instance.participantIds?.includes(persona.id) || isStarterActor(instance, state.personaId)) &&
                 isAllowedFreeAssignee(instance, assignee);
               if (instance.id !== id || !canReopen) return instance;
               return {
                 ...instance,
                 status: "进行中",
                 currentAssignee: assignee,
+                currentAssigneeId: assigneeId,
                 designatedReviewer: assignee,
-                currentNode: `${assignee}受理中`,
+                currentNode: assignee,
                 updatedAt: actionAt,
                 participants: [...new Set([...(instance.participants ?? []), persona.name, assignee])],
+                participantIds: [...new Set([...(instance.participantIds ?? []), persona.id, ...(assigneeId ? [assigneeId] : [])])],
                 freeTimeline: [
                   ...(instance.freeTimeline ?? []),
                   freeEntry("reopened", persona.name, { content: reason, assignee }),
@@ -1037,7 +1069,7 @@ export const usePrototypeStore = create<PrototypeState>()(
     }),
     {
       name: "flowpilot-prototype-v5",
-      version: 13,
+      version: 14,
       migrate: (persisted) => {
         const { notices: legacyNotices, ...state } = persisted as PrototypeState & { notices?: unknown };
         void legacyNotices;

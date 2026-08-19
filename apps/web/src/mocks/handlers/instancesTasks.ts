@@ -6,10 +6,11 @@ import type {
 } from "../../api/contracts";
 import type { InstanceStatus, ProcessInstance, WorkflowTask } from "../../data/types";
 import { hasUserPermission } from "../../state/permissionEngine";
-import { getEffectiveVersion, useProcessDefinitionStore } from "../../state/useProcessDefinitionStore";
+import { useProcessDefinitionStore } from "../../state/useProcessDefinitionStore";
 import { isSuperAdminPersona, usePrototypeStore } from "../../state/usePrototypeStore";
 import { isUserInWorkflowGroup } from "../../state/useIdentityStore";
 import { canUserViewInstance } from "../../state/workflowAccess";
+import { resolveLockedProcessVersion } from "../../state/processVersionResolver";
 import { getAttachmentRecords } from "../attachmentRepository";
 import {
   apiOk,
@@ -33,9 +34,7 @@ const taskById = (id: string) => usePrototypeStore.getState().tasks.find((item) 
 
 const resolveVersion = (instance: ProcessInstance) => {
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === instance.definitionId);
-  return definition?.versions.find((item) => item.id === instance.versionId)
-    ?? definition?.versions.find((item) => item.version.toLowerCase() === instance.templateVersion.toLowerCase())
-    ?? getEffectiveVersion(definition);
+  return resolveLockedProcessVersion(definition, instance);
 };
 
 const instanceDetail = (instance: ProcessInstance): ProcessInstanceDetail => ({
@@ -185,7 +184,8 @@ export const instanceTaskHandlers = [
     const body = await parseJsonBody<{ formValues?: Record<string, unknown>; attachmentNames?: string[] }>(request);
     if (body instanceof Response) return body;
     if (!body.formValues) return apiProblem(request, 422, "FORM_VALUES_REQUIRED", "缺少表单内容", "formValues 为必填项。 ");
-    usePrototypeStore.getState().updateUnreviewedInstance(found.instance.id, { formValues: body.formValues, attachmentNames: body.attachmentNames });
+    const result = usePrototypeStore.getState().updateUnreviewedInstance(found.instance.id, { formValues: body.formValues, attachmentNames: body.attachmentNames });
+    if (!result.ok) return apiProblem(request, result.reason === "forbidden" ? 403 : 409, "INSTANCE_UPDATE_REJECTED", "流程修改失败", result.message);
     const updated = instanceById(found.instance.id)!;
     auditInstance(auth.actor.id, auth.actor.name, "update-submission", updated, `修改未审核流程 ${updated.code}`);
     return apiOk(request, instanceDetail(updated), { headers: { ETag: entityEtag(updated) } });
@@ -207,7 +207,8 @@ export const instanceTaskHandlers = [
       const body = await parseJsonBody<{ formValues?: Record<string, unknown>; attachmentNames?: string[] }>(request);
       if (body instanceof Response) return body;
       if (!body.formValues) return apiProblem(request, 422, "FORM_VALUES_REQUIRED", "缺少表单内容", "formValues 为必填项。 ");
-      usePrototypeStore.getState().republishInstance(found.instance.id, { formValues: body.formValues, attachmentNames: body.attachmentNames });
+      const result = usePrototypeStore.getState().republishInstance(found.instance.id, { formValues: body.formValues, attachmentNames: body.attachmentNames });
+      if (!result.ok) return apiProblem(request, result.reason === "forbidden" ? 403 : 409, "RESUBMISSION_FORBIDDEN", "无法重新提交", result.message);
       const updated = instanceById(found.instance.id)!;
       if (updated.status === "驳回待处理") return apiProblem(request, 409, "RESUBMISSION_FORBIDDEN", "无法重新提交", "当前账号没有重新提交权限或版本状态已经变化。 ");
       auditInstance(auth.actor.id, auth.actor.name, "resubmit", updated, `重新提交流程 ${updated.code}，第 ${updated.round} 轮`);
@@ -230,7 +231,8 @@ export const instanceTaskHandlers = [
       const body = await parseJsonBody<{ reason?: string }>(request);
       if (body instanceof Response) return body;
       if (!body.reason?.trim()) return apiProblem(request, 422, "REASON_REQUIRED", "关闭原因不能为空", "请填写关闭原因。 ");
-      usePrototypeStore.getState().closeInstance(found.instance.id, body.reason.trim());
+      const result = usePrototypeStore.getState().closeInstance(found.instance.id, body.reason.trim());
+      if (!result.ok) return apiProblem(request, result.reason === "forbidden" ? 403 : 409, "CLOSE_FORBIDDEN", "不能关闭流程", result.message);
       const updated = instanceById(found.instance.id)!;
       if (updated.status !== "已关闭") return apiProblem(request, 403, "CLOSE_FORBIDDEN", "不能关闭流程", "当前账号或流程规则不允许关闭该实例。 ");
       auditInstance(auth.actor.id, auth.actor.name, "close", updated, `关闭流程 ${updated.code}`, { reason: body.reason.trim() });

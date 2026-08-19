@@ -106,7 +106,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
   const participants = instance?.participants ?? [];
   const isOpen = instance?.status === "进行中";
-  const isCurrentAssignee = isOpen && instance?.currentAssignee === persona?.name;
+  const isCurrentAssignee = isOpen && instance?.currentAssigneeId === persona?.id;
   const isStarter = Boolean(
     isSuperAdmin || lockedVersion?.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(personaId, groupId)),
   );

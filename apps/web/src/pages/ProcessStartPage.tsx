@@ -1,7 +1,7 @@
 import { Alert } from "antd";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
-import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { ConfiguredProcessStartPage } from "./ConfiguredProcessStartPage";
 import "./launch-pages.css";
 
@@ -16,7 +16,7 @@ export function ProcessStartPage() {
   const definition = useProcessDefinitionStore((state) =>
     state.definitions.find((candidate) => candidate.id === resolvedDefinitionId),
   );
-  const effectiveVersion = getEffectiveVersion(definition);
+  const effectiveVersion = getPublishedVersion(definition);
 
   if (!definition || definition.disabled || !effectiveVersion) {
     return (

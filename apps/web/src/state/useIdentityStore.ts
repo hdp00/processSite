@@ -14,6 +14,7 @@ export interface DomainUser {
   departmentPath: string;
   jobTitle: string;
   roles: string[];
+  roleIds?: string[];
   status: EnableStatus;
   lastLogin: string;
   builtIn?: boolean;
@@ -31,6 +32,7 @@ export interface DomainRole {
   users: number;
   status: EnableStatus;
   members: string[];
+  memberUserIds?: string[];
   builtIn?: boolean;
 }
 
@@ -42,6 +44,8 @@ export interface WorkflowPermissionGroup {
   purposes: WorkflowGroupPurpose[];
   directMembers: string[];
   linkedRoles: string[];
+  directMemberUserIds?: string[];
+  linkedRoleIds?: string[];
   status: EnableStatus;
   referenced: boolean;
   openTasks: number;
@@ -156,39 +160,102 @@ const syncUsersFromRoles = (users: DomainUser[], previous: DomainRole[], next: D
   });
 };
 
+const canonicalizeIdentityRelations = (
+  users: DomainUser[],
+  roles: DomainRole[],
+  workflowGroups: WorkflowPermissionGroup[],
+) => {
+  const usersWithRoleIds = users.map((user) => ({
+    ...user,
+    roleIds: user.roleIds ?? roles.filter((role) => user.roles.includes(role.name)).map((role) => role.id),
+  }));
+  const rolesWithMemberIds = roles.map((role) => ({
+    ...role,
+    memberUserIds: role.memberUserIds ?? usersWithRoleIds
+      .filter((user) => role.members.includes(user.name) || user.roleIds?.includes(role.id))
+      .map((user) => user.id),
+  }));
+  const normalizedUsers = usersWithRoleIds.map((user) => ({
+    ...user,
+    roles: rolesWithMemberIds.filter((role) => role.memberUserIds?.includes(user.id)).map((role) => role.name),
+    roleIds: rolesWithMemberIds.filter((role) => role.memberUserIds?.includes(user.id)).map((role) => role.id),
+  }));
+  const normalizedRoles = rolesWithMemberIds.map((role) => ({
+    ...role,
+    members: normalizedUsers.filter((user) => role.memberUserIds?.includes(user.id)).map((user) => user.name),
+    users: normalizedUsers.filter((user) => role.memberUserIds?.includes(user.id)).length,
+  }));
+  const normalizedGroups = workflowGroups.map((group) => {
+    const directMemberUserIds = group.directMemberUserIds
+      ?? normalizedUsers.filter((user) => group.directMembers.includes(user.name)).map((user) => user.id);
+    const linkedRoleIds = group.linkedRoleIds
+      ?? normalizedRoles.filter((role) => group.linkedRoles.includes(role.name)).map((role) => role.id);
+    return {
+      ...group,
+      directMemberUserIds,
+      linkedRoleIds,
+      directMembers: normalizedUsers.filter((user) => directMemberUserIds.includes(user.id)).map((user) => user.name),
+      linkedRoles: normalizedRoles.filter((role) => linkedRoleIds.includes(role.id)).map((role) => role.name),
+    };
+  });
+  return { users: normalizedUsers, roles: normalizedRoles, workflowGroups: normalizedGroups };
+};
+
+const initialIdentity = canonicalizeIdentityRelations(userSeed, roleSeed, groupSeed);
+
 export const useIdentityStore = create<IdentityState>()(
   persist(
     (set) => ({
-      users: userSeed,
-      roles: roleSeed,
-      workflowGroups: groupSeed,
-      setUsers: (updater) => set((state) => ({ users: applyUpdater(state.users, updater) })),
-      setRoles: (updater) => set((state) => {
-        const roles = applyUpdater(state.roles, updater);
-        return { roles, users: syncUsersFromRoles(state.users, state.roles, roles) };
+      users: initialIdentity.users,
+      roles: initialIdentity.roles,
+      workflowGroups: initialIdentity.workflowGroups,
+      setUsers: (updater) => set((state) => {
+        const users = applyUpdater(state.users, updater).map((user) => ({
+          ...user,
+          roleIds: state.roles.filter((role) => user.roles.includes(role.name)).map((role) => role.id),
+        }));
+        const roles = state.roles.map((role) => ({
+          ...role,
+          memberUserIds: users.filter((user) => user.roleIds?.includes(role.id)).map((user) => user.id),
+        }));
+        return canonicalizeIdentityRelations(users, roles, state.workflowGroups);
       }),
-      setWorkflowGroups: (updater) => set((state) => ({ workflowGroups: applyUpdater(state.workflowGroups, updater) })),
-      resetIdentity: () => set({ users: userSeed, roles: roleSeed, workflowGroups: groupSeed }),
+      setRoles: (updater) => set((state) => {
+        const roles = applyUpdater(state.roles, updater).map((role) => ({
+          ...role,
+          memberUserIds: role.memberUserIds ?? state.users.filter((user) => role.members.includes(user.name)).map((user) => user.id),
+        }));
+        const users = syncUsersFromRoles(state.users, state.roles, roles).map((user) => ({
+          ...user,
+          roleIds: roles.filter((role) => role.memberUserIds?.includes(user.id)).map((role) => role.id),
+        }));
+        return canonicalizeIdentityRelations(users, roles, state.workflowGroups);
+      }),
+      setWorkflowGroups: (updater) => set((state) => canonicalizeIdentityRelations(
+        state.users,
+        state.roles,
+        applyUpdater(state.workflowGroups, updater),
+      )),
+      resetIdentity: () => set(initialIdentity),
     }),
     {
       name: "flowpilot-identity-domain-v1",
-      version: 3,
+      version: 4,
       migrate: (persisted) => {
         const state = persisted as Partial<IdentityState>;
-        return {
-          ...state,
-          users: Array.isArray(state.users) ? state.users.map((user) => ({
+        return canonicalizeIdentityRelations(
+          Array.isArray(state.users) ? state.users.map((user) => ({
             ...user,
             email: user.email?.trim() || companyEmail(user.account),
             password: user.password || "1",
             roles: [...(user.roles ?? [])],
           })) : userSeed,
-          roles: Array.isArray(state.roles) ? state.roles : roleSeed,
-          workflowGroups: Array.isArray(state.workflowGroups) ? state.workflowGroups.map((group) => ({
+          Array.isArray(state.roles) ? state.roles : roleSeed,
+          Array.isArray(state.workflowGroups) ? state.workflowGroups.map((group) => ({
             ...group,
             purposes: normalizeWorkflowGroupPurposes(group.purposes),
           })) : groupSeed,
-        };
+        );
       },
     },
   ),
@@ -211,7 +278,8 @@ export const effectiveGroupMemberIds = (groupIdOrName: string) => {
   if (!group) return [];
   return users
     .filter((user) => !user.builtIn && user.status === "启用")
-    .filter((user) => group.directMembers.includes(user.name) || user.roles.some((role) => group.linkedRoles.includes(role)))
+    .filter((user) => group.directMemberUserIds?.includes(user.id)
+      || user.roleIds?.some((roleId) => group.linkedRoleIds?.includes(roleId)))
     .map((user) => user.id);
 };
 

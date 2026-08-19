@@ -20,6 +20,7 @@ import {
   Input,
   Modal,
   Row,
+  Result,
   Select,
   Space,
   Table,
@@ -37,7 +38,7 @@ import { ListFieldValue } from "../components/ListFieldValue";
 import { cloneDefaultSystemListFields, isSystemFieldVisible } from "../data/listFieldConfig";
 import type { InstanceStatus, ProcessInstance } from "../data/types";
 import { usePrototypeStore } from "../state/usePrototypeStore";
-import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canPersonaLaunchDefinition, hasPersonaPermission } from "../state/rolePermissions";
 import { canUserViewInstance } from "../state/workflowAccess";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
@@ -53,7 +54,7 @@ export function ProcessListPage() {
     ?? managedDefinitions.find((item) => Boolean(item.publishedVersionId))?.id
     ?? "";
   const managedDefinition = managedDefinitions.find((item) => item.id === definitionId);
-  const currentVersion = getEffectiveVersion(managedDefinition);
+  const currentVersion = getPublishedVersion(managedDefinition);
   const definition = { id: definitionId, label: currentVersion?.basic.name ?? managedDefinition?.name ?? "未命名流程" };
   const { instances, personaId, copyCompletedInstance } = usePrototypeStore();
   const [form] = Form.useForm();
@@ -262,6 +263,19 @@ export function ProcessListPage() {
       setExporting(false);
     }
   };
+
+  if (!managedDefinition || !currentVersion) {
+    return (
+      <Card className="content-card">
+        <Result
+          status="info"
+          title="流程清单入口当前不可用"
+          subTitle="该流程没有发布版本。历史实例仍可在实例监控中查询，但流程清单不会展示该流程入口。"
+          extra={<Button type="primary" onClick={() => navigate("/tasks")}>返回任务中心</Button>}
+        />
+      </Card>
+    );
+  }
 
   return (
     <div className="page-stack">

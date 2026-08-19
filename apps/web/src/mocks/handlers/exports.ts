@@ -1,7 +1,7 @@
 import { http } from "msw";
 import type { ProcessExcelDataFilter } from "../../api/contracts";
 import type { ProcessInstance } from "../../data/types";
-import { getEffectiveVersion, useProcessDefinitionStore } from "../../state/useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore } from "../../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../../state/usePrototypeStore";
 import { canUserViewInstance } from "../../state/workflowAccess";
 import { buildProcessExcelDataset } from "../../utils/processExcelExport";
@@ -65,7 +65,7 @@ export const exportHandlers = [
     }
 
     const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === filter.definitionId);
-    const version = getEffectiveVersion(definition);
+    const version = getPublishedVersion(definition);
     if (!definition || !version) {
       return apiProblem(request, 404, "DEFINITION_NOT_FOUND", "流程定义不存在", "未找到可用于导出的发布版本。");
     }

@@ -229,7 +229,6 @@ const initialDefinitions: ProcessDefinition[] = [
 const nextSequence = (definitions: ProcessDefinition[]) => Math.max(0, ...definitions.map((definition) => Number(definition.code.match(/(\d+)$/)?.[1] ?? 0))) + 1;
 
 export const getPublishedVersion = (definition?: ProcessDefinition) => definition?.versions.find((version) => version.id === definition.publishedVersionId);
-export const getEffectiveVersion = getPublishedVersion;
 export const getVersionStatus = (definition: ProcessDefinition, versionId: string): VersionStatus => definition.publishedVersionId === versionId ? "已发布" : definition.versions.find((version) => version.id === versionId)?.validation.status === "通过" ? "可发布" : "校验未通过";
 export const canEditVersion = (definition: ProcessDefinition, version: ProcessVersion) => definition.publishedVersionId !== version.id && version.instanceCount === 0;
 export const definitionStatus = (definition: ProcessDefinition): DefinitionStatus => definition.disabled ? "已停用" : definition.publishedVersionId ? "已发布" : "未发布";

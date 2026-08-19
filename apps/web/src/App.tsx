@@ -1,37 +1,36 @@
-import { App as AntApp, ConfigProvider } from "antd";
+import { App as AntApp, ConfigProvider, Spin } from "antd";
 import { Result } from "antd";
 import zhCN from "antd/locale/zh_CN";
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, RouterProvider, createBrowserRouter, createRoutesFromElements, useParams } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { AppBackButton } from "./components/AppBackButton";
-import { FlowDesignerPage } from "./pages/FlowDesignerPage";
-import { FreeFlowDetailPage } from "./pages/FreeFlowDetailPage";
-import FormDesignerPage from "./pages/FormDesignerPage";
-import {
-  AuditLogPage,
-  DepartmentManagementPage,
-  InstanceMonitorPage,
-  PermissionManagementPage,
-  RoleManagementPage,
-  UserManagementPage,
-  WorkflowPermissionGroupsPage,
-} from "./pages/GovernancePages";
 import { LoginPage } from "./pages/LoginPage";
-import { ProcessLaunchCenterPage } from "./pages/ProcessLaunchCenterPage";
-import { ProcessBasicConfigPage } from "./pages/ProcessBasicConfigPage";
-import { ProcessManagementPage } from "./pages/ProcessManagementPage";
-import { ProcessPublishPage } from "./pages/ProcessPublishPage";
-import { ProcessStartPage } from "./pages/ProcessStartPage";
-import { ProcessVersionsPage } from "./pages/ProcessVersionsPage";
-import { ProcessDetailPage } from "./pages/ProcessDetailPage";
-import { ProcessListPage } from "./pages/ProcessListPage";
-import { ProcessPrintPage } from "./pages/ProcessPrintPage";
-import { TaskCenterPage } from "./pages/TaskCenterPage";
 import { canPersonaAccessLaunch, canPersonaLaunchDefinition, hasPersonaPermission } from "./state/rolePermissions";
-import { getEffectiveVersion, useProcessDefinitionStore } from "./state/useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore } from "./state/useProcessDefinitionStore";
 import { usePrototypeStore } from "./state/usePrototypeStore";
 import { canUserViewInstance } from "./state/workflowAccess";
+
+const FlowDesignerPage = lazy(() => import("./pages/FlowDesignerPage").then((module) => ({ default: module.FlowDesignerPage })));
+const FreeFlowDetailPage = lazy(() => import("./pages/FreeFlowDetailPage").then((module) => ({ default: module.FreeFlowDetailPage })));
+const FormDesignerPage = lazy(() => import("./pages/FormDesignerPage"));
+const ProcessLaunchCenterPage = lazy(() => import("./pages/ProcessLaunchCenterPage").then((module) => ({ default: module.ProcessLaunchCenterPage })));
+const ProcessBasicConfigPage = lazy(() => import("./pages/ProcessBasicConfigPage").then((module) => ({ default: module.ProcessBasicConfigPage })));
+const ProcessManagementPage = lazy(() => import("./pages/ProcessManagementPage").then((module) => ({ default: module.ProcessManagementPage })));
+const ProcessPublishPage = lazy(() => import("./pages/ProcessPublishPage").then((module) => ({ default: module.ProcessPublishPage })));
+const ProcessStartPage = lazy(() => import("./pages/ProcessStartPage").then((module) => ({ default: module.ProcessStartPage })));
+const ProcessVersionsPage = lazy(() => import("./pages/ProcessVersionsPage").then((module) => ({ default: module.ProcessVersionsPage })));
+const ProcessDetailPage = lazy(() => import("./pages/ProcessDetailPage").then((module) => ({ default: module.ProcessDetailPage })));
+const ProcessListPage = lazy(() => import("./pages/ProcessListPage").then((module) => ({ default: module.ProcessListPage })));
+const ProcessPrintPage = lazy(() => import("./pages/ProcessPrintPage").then((module) => ({ default: module.ProcessPrintPage })));
+const TaskCenterPage = lazy(() => import("./pages/TaskCenterPage").then((module) => ({ default: module.TaskCenterPage })));
+const AuditLogPage = lazy(() => import("./pages/GovernancePages").then((module) => ({ default: module.AuditLogPage })));
+const DepartmentManagementPage = lazy(() => import("./pages/GovernancePages").then((module) => ({ default: module.DepartmentManagementPage })));
+const InstanceMonitorPage = lazy(() => import("./pages/GovernancePages").then((module) => ({ default: module.InstanceMonitorPage })));
+const PermissionManagementPage = lazy(() => import("./pages/GovernancePages").then((module) => ({ default: module.PermissionManagementPage })));
+const RoleManagementPage = lazy(() => import("./pages/GovernancePages").then((module) => ({ default: module.RoleManagementPage })));
+const UserManagementPage = lazy(() => import("./pages/GovernancePages").then((module) => ({ default: module.UserManagementPage })));
+const WorkflowPermissionGroupsPage = lazy(() => import("./pages/GovernancePages").then((module) => ({ default: module.WorkflowPermissionGroupsPage })));
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const authenticated = usePrototypeStore((state) => state.authenticated);
@@ -50,14 +49,14 @@ function PersonaGate({ scope, definitionId, permission, children }: { scope: "in
   const targetDefinition = useProcessDefinitionStore((state) =>
     state.definitions.find((item) => item.id === targetDefinitionId),
   );
-  const targetEffectiveVersion = getEffectiveVersion(targetDefinition);
+  const targetPublishedVersion = getPublishedVersion(targetDefinition);
   const allowed = scope === "permission"
     ? Boolean(permission && hasPersonaPermission(personaId, permission))
     : targetDefinitionId
       ? Boolean(
         targetDefinition
         && !targetDefinition.disabled
-        && targetEffectiveVersion
+        && targetPublishedVersion
         && canPersonaLaunchDefinition(personaId, targetDefinitionId),
       )
       : canPersonaAccessLaunch(personaId);
@@ -168,7 +167,9 @@ export default function App() {
       }}
     >
       <AntApp>
-        <RouterProvider router={router} />
+        <Suspense fallback={<div className="route-loading"><Spin size="large" tip="页面加载中" /></div>}>
+          <RouterProvider router={router} />
+        </Suspense>
       </AntApp>
     </ConfigProvider>
   );

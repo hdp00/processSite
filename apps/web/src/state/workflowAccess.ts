@@ -1,14 +1,13 @@
 import type { ProcessInstance, WorkflowTask } from "../data/types";
 import { hasPersonaPermission } from "./rolePermissions";
-import { getEffectiveVersion, useProcessDefinitionStore } from "./useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore } from "./useProcessDefinitionStore";
 import { findIdentityUser, isUserInWorkflowGroup } from "./useIdentityStore";
 import { isSuperAdminPersona, usePrototypeStore } from "./usePrototypeStore";
+import { resolveLockedProcessVersion } from "./processVersionResolver";
 
 const instanceVersion = (instance: ProcessInstance) => {
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === instance.definitionId);
-  return definition?.versions.find((version) => version.id === instance.versionId)
-    ?? definition?.versions.find((version) => version.version === instance.templateVersion)
-    ?? getEffectiveVersion(definition);
+  return resolveLockedProcessVersion(definition, instance);
 };
 
 const isNamedOrId = (values: string[], userId: string, userName: string) =>
@@ -20,7 +19,7 @@ export function canUserViewInstance(userId: string, instance: ProcessInstance) {
   const user = findIdentityUser(userId);
   if (!user || user.status !== "启用") return false;
   if (instance.initiatorId === user.id || instance.initiator === user.name) return true;
-  if (instance.participants?.includes(user.name) || instance.currentAssignee === user.name) return true;
+  if (instance.participantIds?.includes(user.id) || instance.currentAssigneeId === user.id) return true;
 
   const version = instanceVersion(instance);
   if (!version) return false;
@@ -45,7 +44,7 @@ export function canUserViewDefinition(userId: string, definitionId: string) {
   if (isSuperAdminPersona(userId)) return true;
   const user = findIdentityUser(userId);
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);
-  const version = getEffectiveVersion(definition);
+  const version = getPublishedVersion(definition);
   if (!user || !version) return false;
   return version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))
     || version.basic.closeGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))

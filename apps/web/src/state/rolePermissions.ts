@@ -1,4 +1,4 @@
-import { getEffectiveVersion, useProcessDefinitionStore } from "./useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore } from "./useProcessDefinitionStore";
 import { isUserInWorkflowGroup } from "./useIdentityStore";
 import { isSuperAdminPersona, type PersonaId } from "./usePrototypeStore";
 import {
@@ -31,7 +31,7 @@ export function canPersonaLaunchDefinition(personaId: PersonaId, definitionId: s
   if (isSuperAdminPersona(personaId)) return true;
   if (!canPersonaAccessLaunch(personaId)) return false;
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);
-  const version = getEffectiveVersion(definition);
+  const version = getPublishedVersion(definition);
   return Boolean(definition && !definition.disabled && version
     && version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(personaId, groupId)));
 }

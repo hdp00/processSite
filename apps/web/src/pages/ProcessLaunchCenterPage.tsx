@@ -10,7 +10,7 @@ import { Button, Card, Empty, Space, Tag, Typography } from "antd";
 import { useMemo, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { canPersonaLaunchDefinition } from "../state/rolePermissions";
-import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import "./launch-pages.css";
 
@@ -79,7 +79,7 @@ export function ProcessLaunchCenterPage() {
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
   const availableDefinitions = useMemo(
     () => managedDefinitions.flatMap((managed, index) => {
-      const effective = getEffectiveVersion(managed);
+      const effective = getPublishedVersion(managed);
       if (managed.disabled || !effective) return [];
       const preset = launchDefinitions.find((item) => item.id === managed.id);
       const allowed = canPersonaLaunchDefinition(personaId, managed.id);

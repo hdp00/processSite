@@ -59,7 +59,7 @@ export function hasUserPermission(userId: string, permission: string) {
   if (userId === "superadmin") return true;
   const user = findIdentityUser(userId);
   if (!user || user.status !== "启用") return false;
-  const roles = useIdentityStore.getState().roles.filter((role) => role.status === "启用" && user.roles.includes(role.name));
+  const roles = useIdentityStore.getState().roles.filter((role) => role.status === "启用" && user.roleIds?.includes(role.id));
   const permissionMap = readStoredRolePermissions();
   return roles.some((role) => (permissionMap[role.id] ?? []).includes(permission));
 }
@@ -74,4 +74,3 @@ export function currentSessionUserId() {
 }
 
 export const currentUserCan = (permission: string) => hasUserPermission(currentSessionUserId(), permission);
-

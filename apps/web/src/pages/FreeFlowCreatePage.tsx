@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { RichTextEditor } from "../components/RichTextEditor";
-import { getEffectiveVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { personas, usePrototypeStore } from "../state/usePrototypeStore";
 import "./free-flow.css";
 
@@ -17,7 +17,7 @@ export function FreeFlowCreatePage() {
   const createFreeFlow = usePrototypeStore((state) => state.createFreeFlow);
   const instancePrefix = useProcessDefinitionStore((state) => {
     const definition = state.definitions.find((item) => item.id === "free-collaboration");
-    return getEffectiveVersion(definition)?.basic.instancePrefix
+    return getPublishedVersion(definition)?.basic.instancePrefix
       ?? "ISSUE";
   });
   const [title, setTitle] = useState("");

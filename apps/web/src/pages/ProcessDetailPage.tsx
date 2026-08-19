@@ -42,7 +42,7 @@ import {
   message,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
@@ -87,6 +87,7 @@ type PendingAction = "pass" | "confirm" | "reject" | null;
 export function ProcessDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     instances,
     tasks,
@@ -142,9 +143,14 @@ export function ProcessDetailPage() {
   ]);
 
 
-  const currentTask = useMemo(() => tasks.find((task) =>
+  const currentTasks = useMemo(() => tasks.filter((task) =>
     task.instanceId === instance?.id && task.status === "待处理" && canUserProcessTask(personaId, task),
   ), [instance?.id, personaId, tasks]);
+  const requestedTaskId = searchParams.get("taskId");
+  const currentTask = useMemo(() => requestedTaskId
+    ? currentTasks.find((task) => task.id === requestedTaskId)
+    : currentTasks.length === 1 ? currentTasks[0] : undefined,
+  [currentTasks, requestedTaskId]);
   const currentReviewer = useMemo(
     () => instance?.reviewers.find((reviewer) => reviewer.key === currentTask?.nodeId),
     [currentTask?.nodeId, instance],
@@ -232,7 +238,21 @@ export function ProcessDetailPage() {
     );
   }
 
-  const attachmentFields = (lockedVersion?.snapshot.form.fields ?? []).filter((field) => field.type === "attachment");
+  if (!definition || !lockedVersion) {
+    return (
+      <Card className="empty-page-card">
+        <Alert
+          type="error"
+          showIcon
+          title="实例锁定的流程版本不可用"
+          description="系统没有找到该实例创建时使用的完整版本快照。为避免错误套用其他版本，当前实例已禁止查看表单和继续办理，请联系流程管理员检查版本数据。"
+        />
+        <AppBackButton onClick={() => navigate("/tasks")} />
+      </Card>
+    );
+  }
+
+  const attachmentFields = lockedVersion.snapshot.form.fields.filter((field) => field.type === "attachment");
   const hasConfiguredAttachmentField = attachmentFields.length > 0;
   const hasDynamicAttachmentValues = attachmentFields.some((field) => Object.prototype.hasOwnProperty.call(dynamicValues, field.id));
   const dynamicAttachmentNames = configuredAttachmentNames(attachmentFields, dynamicValues);
@@ -315,7 +335,11 @@ export function ProcessDetailPage() {
       message.warning("请填写关闭说明");
       return;
     }
-    closeInstance(instance.id, closeReason.trim());
+    const result = closeInstance(instance.id, closeReason.trim());
+    if (!result.ok) {
+      message.error(result.message);
+      return;
+    }
     setCloseOpen(false);
     setCloseReason("");
     message.success("流程已关闭，未完成待办已取消");
@@ -335,7 +359,7 @@ export function ProcessDetailPage() {
       cancelText: "取消",
       icon: <ReloadOutlined />,
       onOk: () => {
-        republishInstance(instance.id, {
+        const result = republishInstance(instance.id, {
           title: dynamicText(["title", "标题"], draftTitle.trim()),
           documentCode: dynamicText(["documentCode", "文件编号", "报告编号"], draftDocumentCode.trim()),
           documentType: dynamicText(["documentType", "文件类型", "分类"], draftDocumentType),
@@ -345,6 +369,10 @@ export function ProcessDetailPage() {
           formValues: dynamicValues,
           attachmentNames,
         });
+        if (!result.ok) {
+          message.error(result.message);
+          return;
+        }
         message.success("流程已重新提交，全部分支待办已重新生成");
       },
     });
@@ -363,7 +391,7 @@ export function ProcessDetailPage() {
       message.warning(`请为“${invalidAssigneeNode.data?.label ?? "审批节点"}”选择当前流程权限组内的有效人员`);
       return;
     }
-    updateUnreviewedInstance(instance.id, {
+    const result = updateUnreviewedInstance(instance.id, {
       title: dynamicText(["title", "标题"], draftTitle.trim()),
       documentCode: dynamicText(["documentCode", "文件编号", "报告编号"], draftDocumentCode.trim()),
       documentType: dynamicText(["documentType", "文件类型", "分类"], draftDocumentType),
@@ -374,6 +402,10 @@ export function ProcessDetailPage() {
       attachmentNames,
       assigneeByNode: draftAssignees,
     });
+    if (!result.ok) {
+      message.error(result.message);
+      return;
+    }
     message.success("修改已保存，默认审核人员与本轮待办已同步更新");
   };
 
@@ -430,7 +462,6 @@ export function ProcessDetailPage() {
         key={field.id}
         className={itemClassName}
         label={field.label}
-        required={field.required}
         extra={field.description || undefined}
       >
         {control}
@@ -544,6 +575,32 @@ export function ProcessDetailPage() {
           <span>最近更新 {instance.updatedAt}</span>
         </div>
       </Card>
+
+      {currentTasks.length > 1 && !currentTask && (
+        <Alert
+          type="info"
+          showIcon
+          title="请选择本次要处理的节点"
+          description="你在此实例中同时拥有多个待处理节点。不同节点的可修改字段和处理方式可能不同。"
+          action={(
+            <Space wrap>
+              {currentTasks.map((task) => (
+                <Button
+                  key={task.id}
+                  size="small"
+                  onClick={() => {
+                    const next = new URLSearchParams(searchParams);
+                    next.set("taskId", task.id);
+                    setSearchParams(next, { replace: true });
+                  }}
+                >
+                  {task.nodeName}
+                </Button>
+              ))}
+            </Space>
+          )}
+        />
+      )}
 
       {isSubstitute && (
         <Alert

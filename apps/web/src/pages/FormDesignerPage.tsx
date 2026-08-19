@@ -1443,7 +1443,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
             <Tag color="processing">{workflowName}</Tag>
           </div>
           <Divider />
-          <Form form={previewForm} initialValues={previewInitialValues} layout="vertical" requiredMark="optional">
+          <Form form={previewForm} initialValues={previewInitialValues} layout="vertical">
             {previewFields.map((field) => (
               <Form.Item
                 key={field.id}

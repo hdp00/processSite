@@ -58,76 +58,28 @@ import {
   notifyRolePermissionsChanged,
 } from "../state/rolePermissions";
 import {
+  findIdentityUser,
   useIdentityStore,
   type DomainRole,
   type DomainUser,
   type WorkflowGroupPurpose,
   type WorkflowPermissionGroup,
 } from "../state/useIdentityStore";
+import {
+  departmentCascaderOptions,
+  useOrganizationStore,
+  type DepartmentRecord,
+  type JobTitleRecord,
+} from "../state/useOrganizationStore";
+import { usePrototypeStore } from "../state/usePrototypeStore";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { readAuditEvents } from "../mocks/runtime";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
+import { collectRuntimeAuditEvents } from "../utils/runtimeAudit";
 import "./governance-pages.css";
 
 type EnableStatus = "启用" | "停用";
 type JobTitle = string;
-
-interface JobTitleRecord {
-  id: string;
-  name: string;
-  sort: number;
-  status: EnableStatus;
-  users: number;
-  description: string;
-}
-
-const JOB_TITLE_STORAGE_KEY = "flowpilot-governance-job-titles-v1";
-const JOB_TITLES_CHANGED_EVENT = "flowpilot-job-titles-changed";
-const initialJobTitles: JobTitleRecord[] = [
-  { id: "JOB-001", name: "经理", sort: 10, status: "启用", users: 55, description: "部门或业务管理岗位。" },
-  { id: "JOB-002", name: "员工", sort: 20, status: "启用", users: 184, description: "普通业务执行岗位。" },
-];
-
-function readJobTitles() {
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(JOB_TITLE_STORAGE_KEY) ?? "null") as JobTitleRecord[] | null;
-    return Array.isArray(saved) && saved.length ? saved : initialJobTitles;
-  } catch {
-    return initialJobTitles;
-  }
-}
-
-function writeJobTitles(value: JobTitleRecord[]) {
-  window.localStorage.setItem(JOB_TITLE_STORAGE_KEY, JSON.stringify(value));
-  window.dispatchEvent(new Event(JOB_TITLES_CHANGED_EVENT));
-}
-
-const departmentOptions = [
-  {
-    value: "rd",
-    label: "研发",
-    children: [
-      { value: "rd-software", label: "软件" },
-      { value: "rd-hardware", label: "硬件" },
-      { value: "rd-test", label: "测试" },
-    ],
-  },
-  {
-    value: "quality",
-    label: "质量",
-    children: [
-      { value: "quality-system", label: "体系" },
-      { value: "quality-iqc", label: "来料检验" },
-    ],
-  },
-  {
-    value: "production",
-    label: "生产",
-    children: [
-      { value: "production-line1", label: "一车间" },
-      { value: "production-line2", label: "二车间" },
-    ],
-  },
-  { value: "document", label: "文控" },
-];
 
 const roleOptions = ["超级管理员", "系统管理员", "流程管理员", "文控专员", "研发审核员", "质量审核员", "生产审核员", "只读观察员"];
 const assignableRoleOptions = roleOptions.filter((role) => role !== "超级管理员");
@@ -150,49 +102,6 @@ const departmentByIndex = [
 ];
 
 type UserRecord = DomainUser;
-
-function makeUsers(): UserRecord[] {
-  const configuredJobTitles = readJobTitles();
-  const managerTitle = configuredJobTitles.find((item) => item.id === "JOB-001")?.name ?? "经理";
-  const employeeTitle = configuredJobTitles.find((item) => item.id === "JOB-002")?.name
-    ?? configuredJobTitles.find((item) => item.status === "启用")?.name
-    ?? "员工";
-  const regularUsers: UserRecord[] = Array.from({ length: 238 }, (_, index) => {
-    const department = departmentByIndex[index % departmentByIndex.length];
-    const name = peopleNames[index % peopleNames.length] + (index >= peopleNames.length ? String(Math.floor(index / peopleNames.length) + 1) : "");
-    const primaryRole = index % 11 === 0 ? "流程管理员" : index % 5 === 0 ? "质量审核员" : index % 3 === 0 ? "研发审核员" : "只读观察员";
-    return {
-      id: `USR-${String(index + 1).padStart(4, "0")}`,
-      account: `user${String(index + 1).padStart(3, "0")}`,
-      email: `user${String(index + 1).padStart(3, "0")}@company.local`,
-      password: "1",
-      name,
-      department: department.value,
-      departmentPath: department.path,
-      jobTitle: index % 13 === 0 || department.value.length === 1 ? managerTitle : employeeTitle,
-      roles: index % 17 === 0 ? [primaryRole, "文控专员"] : [primaryRole],
-      status: index % 19 === 0 ? "停用" : "启用",
-      lastLogin: index % 9 === 0 ? "从未登录" : `2026-08-${String(13 - (index % 8)).padStart(2, "0")} ${String(8 + (index % 10)).padStart(2, "0")}:26`,
-    };
-  });
-  return [
-    {
-      id: "USR-0000",
-      account: "superadmin",
-      email: "superadmin@company.local",
-      password: "1",
-      name: "超级管理员",
-      department: ["system"],
-      departmentPath: "系统内置",
-      jobTitle: managerTitle,
-      roles: ["超级管理员"],
-      status: "启用",
-      lastLogin: "演示身份可直接切换",
-      builtIn: true,
-    },
-    ...regularUsers,
-  ];
-}
 
 function StatusTag({ status }: { status: EnableStatus }) {
   return <StatusPill status={status} />;
@@ -250,7 +159,9 @@ export function UserManagementPage() {
   const confirmEditorClose = useCloseEditorConfirmation();
   const users = useIdentityStore((state) => state.users);
   const setUsers = useIdentityStore((state) => state.setUsers);
-  const [jobTitles, setJobTitles] = useState(readJobTitles);
+  const jobTitles = useOrganizationStore((state) => state.jobTitles);
+  const departments = useOrganizationStore((state) => state.departments);
+  const departmentOptions = useMemo(() => departmentCascaderOptions(departments), [departments]);
   const [draftFilters, setDraftFilters] = useState({ keyword: "", department: [] as string[], jobTitle: "", role: "", status: "" });
   const [filters, setFilters] = useState(draftFilters);
   const [page, setPage] = useState(1);
@@ -263,12 +174,6 @@ export function UserManagementPage() {
     title: "用户信息尚未保存",
     description: "离开后，当前用户编辑内容将丢失。",
   });
-
-  useEffect(() => {
-    const refreshJobTitles = () => setJobTitles(readJobTitles());
-    window.addEventListener(JOB_TITLES_CHANGED_EVENT, refreshJobTitles);
-    return () => window.removeEventListener(JOB_TITLES_CHANGED_EVENT, refreshJobTitles);
-  }, []);
 
   const activeJobTitles = jobTitles.filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
   const managerTitleName = jobTitles.find((item) => item.id === "JOB-001")?.name;
@@ -396,36 +301,14 @@ export function UserManagementPage() {
   );
 }
 
-interface DepartmentRecord {
-  key: string;
-  name: string;
-  path: string;
-  level: 1 | 2;
-  parentKey?: string;
-  sort: number;
-  status: EnableStatus;
-  users: number;
-  referenced: boolean;
-  description: string;
-}
-
-const initialDepartments: DepartmentRecord[] = [
-  { key: "rd", name: "研发", path: "研发", level: 1, sort: 10, status: "启用", users: 72, referenced: true, description: "负责产品设计、软件与硬件开发。" },
-  { key: "rd-software", name: "软件", path: "研发 / 软件", level: 2, parentKey: "rd", sort: 10, status: "启用", users: 36, referenced: true, description: "嵌入式与平台软件开发。" },
-  { key: "rd-hardware", name: "硬件", path: "研发 / 硬件", level: 2, parentKey: "rd", sort: 20, status: "启用", users: 24, referenced: true, description: "电路、结构及器件设计。" },
-  { key: "rd-test", name: "测试", path: "研发 / 测试", level: 2, parentKey: "rd", sort: 30, status: "启用", users: 12, referenced: false, description: "研发验证与系统测试。" },
-  { key: "quality", name: "质量", path: "质量", level: 1, sort: 20, status: "启用", users: 41, referenced: true, description: "质量体系、检验与持续改进。" },
-  { key: "quality-system", name: "体系", path: "质量 / 体系", level: 2, parentKey: "quality", sort: 10, status: "启用", users: 15, referenced: true, description: "质量体系文件与内审。" },
-  { key: "quality-iqc", name: "来料检验", path: "质量 / 来料检验", level: 2, parentKey: "quality", sort: 20, status: "启用", users: 26, referenced: true, description: "供应商来料检验。" },
-  { key: "production", name: "生产", path: "生产", level: 1, sort: 30, status: "启用", users: 108, referenced: true, description: "生产计划与现场执行。" },
-  { key: "document", name: "文控", path: "文控", level: 1, sort: 40, status: "启用", users: 8, referenced: true, description: "受控文件发布与流程发起。" },
-];
-
 export function DepartmentManagementPage() {
   const confirmEditorClose = useCloseEditorConfirmation();
   const [section, setSection] = useState<"departments" | "jobTitles">("departments");
-  const [departments, setDepartments] = useState(initialDepartments);
-  const [jobTitles, setJobTitles] = useState(readJobTitles);
+  const departments = useOrganizationStore((state) => state.departments);
+  const setDepartments = useOrganizationStore((state) => state.setDepartments);
+  const jobTitles = useOrganizationStore((state) => state.jobTitles);
+  const setJobTitles = useOrganizationStore((state) => state.setJobTitles);
+  const setIdentityUsers = useIdentityStore((state) => state.setUsers);
   const [selectedKey, setSelectedKey] = useState("rd");
   const [editor, setEditor] = useState<{ mode: "new-root" | "new-child" | "edit"; record?: DepartmentRecord } | null>(null);
   const [jobTitleEditor, setJobTitleEditor] = useState<JobTitleRecord | "new" | null>(null);
@@ -438,9 +321,6 @@ export function DepartmentManagementPage() {
     description: "离开后，当前部门或职务的编辑内容将丢失。",
   });
 
-  useEffect(() => {
-    writeJobTitles(jobTitles);
-  }, [jobTitles]);
   const selected = departments.find((item) => item.key === selectedKey) ?? departments[0];
   const treeData = departments.filter((item) => item.level === 1).sort((a, b) => a.sort - b.sort).map((root) => ({
     key: root.key,
@@ -534,6 +414,13 @@ export function DepartmentManagementPage() {
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => {
           if (editor?.mode === "edit") {
             setDepartments((rows) => rows.map((item) => item.key === selected.key ? { ...item, name: values.name, path: item.parentKey ? `${rows.find((parent) => parent.key === item.parentKey)?.name} / ${values.name}` : values.name, sort: values.sort, status: values.status ? "启用" : "停用", description: values.description } : item));
+            const parentName = selected.parentKey ? departments.find((item) => item.key === selected.parentKey)?.name : undefined;
+            setIdentityUsers((users) => users.map((user) => user.department.includes(selected.key) ? {
+              ...user,
+              departmentPath: parentName ? `${parentName} / ${values.name}` : user.department.length > 1
+                ? `${values.name} / ${departments.find((item) => item.key === user.department[1])?.name ?? user.departmentPath.split(" / ").at(-1)}`
+                : values.name,
+            } : user));
             message.success("部门信息已保存");
           } else {
             const isChild = editor?.mode === "new-child";
@@ -560,6 +447,9 @@ export function DepartmentManagementPage() {
             message.success("职务已新增");
           } else if (jobTitleEditor) {
             setJobTitles((rows) => rows.map((item) => item.id === jobTitleEditor.id ? { ...item, name: values.name.trim(), sort: values.sort, status: values.status ? "启用" : "停用", description: values.description } : item));
+            if (jobTitleEditor.name !== values.name.trim()) {
+              setIdentityUsers((users) => users.map((user) => user.jobTitle === jobTitleEditor.name ? { ...user, jobTitle: values.name.trim() } : user));
+            }
             message.success("职务信息已保存");
           }
           setEditorDirty(false);
@@ -617,6 +507,7 @@ export function RoleManagementPage() {
   const roles = useIdentityStore((state) => state.roles);
   const setRoles = useIdentityStore((state) => state.setRoles);
   const identityUsers = useIdentityStore((state) => state.users);
+  const organizationJobTitles = useOrganizationStore((state) => state.jobTitles);
   const [keyword, setKeyword] = useState("");
   const [editor, setEditor] = useState<RoleRecord | "new" | null>(null);
   const [memberRole, setMemberRole] = useState<RoleRecord | null>(null);
@@ -635,7 +526,7 @@ export function RoleManagementPage() {
     window.localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(roles));
   }, [roles]);
   const filtered = roles.filter((role) => `${role.name}${role.description}`.toLowerCase().includes(keyword.toLowerCase()));
-  const configuredRoleJobTitles = readJobTitles().filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
+  const configuredRoleJobTitles = organizationJobTitles.filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
   const roleMemberCandidates = identityUsers.filter((user) => !user.builtIn).map((user) => ({
     name: user.name,
     department: user.departmentPath,
@@ -681,9 +572,9 @@ export function RoleManagementPage() {
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => {
           if (editor === "new") setRoles((rows) => {
             const identity = nextRoleIdentity(rows);
-            return [...rows, { ...identity, name: values.name.trim(), description: values.description, status: values.status ? "启用" : "停用", members: editingMembers, users: editingMembers.length, pagePermissions: 0, actionPermissions: 0 }];
+            return [...rows, { ...identity, name: values.name.trim(), description: values.description, status: values.status ? "启用" : "停用", members: editingMembers, memberUserIds: identityUsers.filter((user) => editingMembers.includes(user.name)).map((user) => user.id), users: editingMembers.length, pagePermissions: 0, actionPermissions: 0 }];
           });
-          else if (editor) setRoles((rows) => rows.map((item) => item.id === editor.id ? { ...item, name: values.name.trim(), description: values.description, status: values.status ? "启用" : "停用", members: editingMembers, users: editingMembers.length } : item));
+          else if (editor) setRoles((rows) => rows.map((item) => item.id === editor.id ? { ...item, name: values.name.trim(), description: values.description, status: values.status ? "启用" : "停用", members: editingMembers, memberUserIds: identityUsers.filter((user) => editingMembers.includes(user.name)).map((user) => user.id), users: editingMembers.length } : item));
           message.success("角色已保存"); setEditorDirty(false); setEditor(null);
         }}>
           <Form.Item name="name" label="角色名称" rules={[
@@ -948,11 +839,12 @@ export function PermissionManagementPage() {
 
 type GroupPurpose = WorkflowGroupPurpose;
 type GroupRecord = WorkflowPermissionGroup;
-function effectiveMembers(group: Pick<GroupRecord, "directMembers" | "linkedRoles">) {
+function effectiveMembers(group: Pick<GroupRecord, "directMembers" | "linkedRoles" | "directMemberUserIds" | "linkedRoleIds">) {
   const users = useIdentityStore.getState().users;
   return users
     .filter((user) => !user.builtIn && user.status === "启用")
-    .filter((user) => group.directMembers.includes(user.name) || user.roles.some((role) => group.linkedRoles.includes(role)))
+    .filter((user) => group.directMemberUserIds?.includes(user.id)
+      || user.roleIds?.some((roleId) => group.linkedRoleIds?.includes(roleId)))
     .map((user) => user.name);
 }
 
@@ -967,8 +859,8 @@ export function WorkflowPermissionGroupsPage() {
   const [status, setStatus] = useState<string>();
   const [editor, setEditor] = useState<GroupRecord | "new" | null>(null);
   const [preview, setPreview] = useState<GroupRecord | null>(null);
-  const [directMembers, setDirectMembers] = useState<string[]>([]);
-  const [linkedRoles, setLinkedRoles] = useState<string[]>([]);
+  const [directMemberUserIds, setDirectMemberUserIds] = useState<string[]>([]);
+  const [linkedRoleIds, setLinkedRoleIds] = useState<string[]>([]);
   const [effectiveMemberKeyword, setEffectiveMemberKeyword] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
   const [form] = Form.useForm();
@@ -978,14 +870,28 @@ export function WorkflowPermissionGroupsPage() {
     description: "离开后，权限组用途、直接成员和关联角色的修改将丢失。",
   });
   const filtered = groups.filter((group) => `${group.name}${group.id}`.toLowerCase().includes(keyword.toLowerCase()) && (!process || group.processes.includes(process)) && (!status || group.status === status));
-  const derived = effectiveMembers({ directMembers, linkedRoles });
+  const directMembers = identityUsers.filter((user) => directMemberUserIds.includes(user.id)).map((user) => user.name);
+  const linkedRoles = identityRoles.filter((role) => linkedRoleIds.includes(role.id)).map((role) => role.name);
+  const derived = effectiveMembers({ directMembers, linkedRoles, directMemberUserIds, linkedRoleIds });
   const visibleDerived = derived.filter((name) => name.toLowerCase().includes(effectiveMemberKeyword.trim().toLowerCase()));
-  const openEditor = (record: GroupRecord | "new") => { setEditor(record); setEditorDirty(false); setEffectiveMemberKeyword(""); const values = record === "new" ? { name: "", purposes: ["审批/受理"] as GroupPurpose[], status: true, directMembers: [], linkedRoles: [] } : { ...record, status: record.status === "启用" }; setDirectMembers(values.directMembers); setLinkedRoles(values.linkedRoles); form.setFieldsValue(values); };
+  const openEditor = (record: GroupRecord | "new") => {
+    setEditor(record);
+    setEditorDirty(false);
+    setEffectiveMemberKeyword("");
+    const memberIds = record === "new" ? [] : record.directMemberUserIds ?? identityUsers.filter((user) => record.directMembers.includes(user.name)).map((user) => user.id);
+    const roleIds = record === "new" ? [] : record.linkedRoleIds ?? identityRoles.filter((role) => record.linkedRoles.includes(role.name)).map((role) => role.id);
+    const values = record === "new"
+      ? { name: "", purposes: ["审批/受理"] as GroupPurpose[], status: true, directMemberUserIds: [], linkedRoleIds: [] }
+      : { ...record, directMemberUserIds: memberIds, linkedRoleIds: roleIds, status: record.status === "启用" };
+    setDirectMemberUserIds(memberIds);
+    setLinkedRoleIds(roleIds);
+    form.setFieldsValue(values);
+  };
   const columns: TableProps<GroupRecord>["columns"] = [
     { title: "流程权限组", dataIndex: "name", width: 260, fixed: "left", render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.code}</small></div> },
     { title: "已引用流程", dataIndex: "processes", width: 240, render: (values: string[]) => values.length ? <Space size={[4, 4]} wrap>{values.map((value) => <Tag key={value} bordered={false}>{value}</Tag>)}</Space> : <Typography.Text type="secondary">暂未关联流程</Typography.Text> },
     { title: "允许用途", dataIndex: "purposes", width: 220, render: (values: GroupPurpose[]) => <Space size={[4, 4]} wrap>{values.map((value) => <Tag key={value} color={value === "发起" ? "cyan" : value === "审批/受理" ? "blue" : "volcano"}>{value}</Tag>)}</Space> },
-    { title: "成员构成", key: "composition", width: 220, render: (_, record) => <div className="gov-composition"><span><UserOutlined /> 直接 {record.directMembers.length}</span><span><TeamOutlined /> 角色 {record.linkedRoles.length}</span></div> },
+    { title: "成员构成", key: "composition", width: 220, render: (_, record) => <div className="gov-composition"><span><UserOutlined /> 直接 {record.directMemberUserIds?.length ?? record.directMembers.length}</span><span><TeamOutlined /> 角色 {record.linkedRoleIds?.length ?? record.linkedRoles.length}</span></div> },
     { title: "有效成员", key: "effective", width: 112, render: (_, record) => <Button className="gov-count-link" type="link" onClick={() => setPreview(record)}>{effectiveMembers(record).length} 人</Button> },
     { title: "状态", dataIndex: "status", width: 118, align: "center", render: (value: EnableStatus) => <StatusTag status={value} /> },
     { title: "更新时间", dataIndex: "updatedAt", width: 150 },
@@ -999,7 +905,7 @@ export function WorkflowPermissionGroupsPage() {
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程权限组" count={filtered.length} extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增权限组</Button>} /><Table<GroupRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 个权限组` }} /></Card>
       <Drawer width={720} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增流程权限组" : "编辑流程权限组"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存并立即生效</Button></Space>}>
         {editor !== "new" && editor?.openTasks ? <Alert className="gov-drawer-alert" type="warning" showIcon message={`当前有 ${editor.openTasks} 项运行待办`} description="保存后，新增成员立即获得处理资格；被移除成员将立即失去尚未处理的待办资格。" /> : null}
-        <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => { const processes = editor === "new" ? [] : editor!.processes; const nextCode = `PG-${String(Math.max(0, ...groups.map((group) => Number(group.code.match(/\d+$/)?.[0] ?? 0))) + 1).padStart(4, "0")}`; const record: GroupRecord = { id: editor === "new" ? `workflow-group-${crypto.randomUUID()}` : editor!.id, code: editor === "new" ? nextCode : editor!.code, name: values.name, processes, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用", referenced: processes.length > 0, openTasks: editor === "new" ? 0 : editor!.openTasks, updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }) }; setGroups((rows) => editor === "new" ? [...rows, record] : rows.map((item) => item.id === record.id ? record : item)); message.success("流程权限组已保存，成员资格已立即更新"); setEditorDirty(false); setEditor(null); }}>
+        <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => { const processes = editor === "new" ? [] : editor!.processes; const nextCode = `PG-${String(Math.max(0, ...groups.map((group) => Number(group.code.match(/\d+$/)?.[0] ?? 0))) + 1).padStart(4, "0")}`; const record: GroupRecord = { id: editor === "new" ? `workflow-group-${crypto.randomUUID()}` : editor!.id, code: editor === "new" ? nextCode : editor!.code, name: values.name, processes, purposes: values.purposes, directMembers, linkedRoles, directMemberUserIds, linkedRoleIds, status: values.status ? "启用" : "停用", referenced: processes.length > 0, openTasks: editor === "new" ? 0 : editor!.openTasks, updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }) }; setGroups((rows) => editor === "new" ? [...rows, record] : rows.map((item) => item.id === record.id ? record : item)); message.success("流程权限组已保存，成员资格已立即更新"); setEditorDirty(false); setEditor(null); }}>
           <div className="gov-form-grid"><Form.Item name="name" label="权限组名称" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="status" label="状态" valuePropName="checked"><Switch checkedChildren="启用" unCheckedChildren="停用" /></Form.Item></div>
           <div className="gov-group-editor-section gov-group-reference-section">
             <div className="gov-section-title"><span><ApartmentOutlined />已引用流程</span><Tag>{editor !== "new" && editor ? editor.processes.length : 0} 个</Tag></div>
@@ -1013,8 +919,8 @@ export function WorkflowPermissionGroupsPage() {
               <Checkbox.Group className="gov-purpose-checkboxes" options={(["发起", "审批/受理", "关闭"] satisfies GroupPurpose[]).map((value) => ({ label: value, value }))} />
             </Form.Item>
           </div>
-          <div className="gov-group-editor-section"><div className="gov-section-title"><span><UserOutlined />直接成员</span><Tag>{directMembers.length} 人</Tag></div><Typography.Paragraph type="secondary">逐个加入的固定人员，不依赖其系统角色。</Typography.Paragraph><Form.Item name="directMembers"><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={identityUsers.filter((user) => !user.builtIn && user.status === "启用").map((user) => ({ value: user.name, label: `${user.name} · ${user.departmentPath}` }))} onChange={(values) => { setEditorDirty(true); setDirectMembers(values); }} /></Form.Item></div>
-          <div className="gov-group-editor-section"><div className="gov-section-title"><span><TeamOutlined />关联角色</span><Tag>{linkedRoles.length} 个</Tag></div><Typography.Paragraph type="secondary">角色下的全部用户动态加入；角色成员变化会立即同步到本权限组。</Typography.Paragraph><Form.Item name="linkedRoles"><Select mode="multiple" showSearch optionFilterProp="label" options={identityRoles.filter((role) => !role.builtIn && role.status === "启用").map((role) => ({ value: role.name, label: role.name }))} onChange={(values) => { setEditorDirty(true); setLinkedRoles(values); }} /></Form.Item></div>
+          <div className="gov-group-editor-section"><div className="gov-section-title"><span><UserOutlined />直接成员</span><Tag>{directMemberUserIds.length} 人</Tag></div><Typography.Paragraph type="secondary">逐个加入的固定人员，不依赖其系统角色。</Typography.Paragraph><Form.Item name="directMemberUserIds"><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={identityUsers.filter((user) => !user.builtIn && user.status === "启用").map((user) => ({ value: user.id, label: `${user.name} · ${user.departmentPath}` }))} onChange={(values) => { setEditorDirty(true); setDirectMemberUserIds(values); }} /></Form.Item></div>
+          <div className="gov-group-editor-section"><div className="gov-section-title"><span><TeamOutlined />关联角色</span><Tag>{linkedRoleIds.length} 个</Tag></div><Typography.Paragraph type="secondary">角色下的全部用户动态加入；角色成员变化会立即同步到本权限组。</Typography.Paragraph><Form.Item name="linkedRoleIds"><Select mode="multiple" showSearch optionFilterProp="label" options={identityRoles.filter((role) => !role.builtIn && role.status === "启用").map((role) => ({ value: role.id, label: role.name }))} onChange={(values) => { setEditorDirty(true); setLinkedRoleIds(values); }} /></Form.Item></div>
           <div className="gov-effective-preview">
             <div className="gov-effective-preview__head"><strong>有效成员预览</strong><Tag color="blue">去重后 {derived.length} 人</Tag></div>
             <Input
@@ -1026,9 +932,9 @@ export function WorkflowPermissionGroupsPage() {
             />
             <div className="gov-effective-member-grid">
               {visibleDerived.map((name) => {
-                const direct = directMembers.includes(name);
                 const user = identityUsers.find((item) => item.name === name);
-                const roles = linkedRoles.filter((role) => user?.roles.includes(role));
+                const direct = user ? directMemberUserIds.includes(user.id) : false;
+                const roles = identityRoles.filter((role) => linkedRoleIds.includes(role.id) && user?.roleIds?.includes(role.id)).map((role) => role.name);
                 return (
                   <div className="gov-effective-member" key={name}>
                     <div><strong>{name}</strong><Tag color="success" bordered={false}>有效</Tag></div>
@@ -1044,7 +950,7 @@ export function WorkflowPermissionGroupsPage() {
       </Drawer>
       <Drawer width={560} open={Boolean(preview)} onClose={() => setPreview(null)} title={`${preview?.name ?? ""} · 有效成员`}>
         <Alert className="gov-drawer-alert" type="info" showIcon message="相同人员仅计一次" description="来源标签用于说明人员是被直接添加、通过角色加入，或同时来自两种方式。" />
-        <div className="gov-member-list">{preview ? effectiveMembers(preview).map((name) => { const user = identityUsers.find((item) => item.name === name); const direct = preview.directMembers.includes(name); const roles = preview.linkedRoles.filter((role) => user?.roles.includes(role)); return <div className="gov-member-row" key={name}><PersonChip name={name} detail={user?.departmentPath} /><Space size={[4, 4]} wrap>{direct ? <Tag color="cyan">直接加入</Tag> : null}{roles.map((role) => <Tag color="purple" key={role}>角色带入：{role}</Tag>)}</Space></div>; }) : null}</div>
+        <div className="gov-member-list">{preview ? effectiveMembers(preview).map((name) => { const user = identityUsers.find((item) => item.name === name); const direct = user ? preview.directMemberUserIds?.includes(user.id) ?? false : false; const roles = identityRoles.filter((role) => preview.linkedRoleIds?.includes(role.id) && user?.roleIds?.includes(role.id)).map((role) => role.name); return <div className="gov-member-row" key={name}><PersonChip name={name} detail={user?.departmentPath} /><Space size={[4, 4]} wrap>{direct ? <Tag color="cyan">直接加入</Tag> : null}{roles.map((role) => <Tag color="purple" key={role}>角色带入：{role}</Tag>)}</Space></div>; }) : null}</div>
       </Drawer>
     </div>
   );
@@ -1052,23 +958,36 @@ export function WorkflowPermissionGroupsPage() {
 
 type InstanceMonitorStatus = "审核中" | "驳回待处理" | "已完成" | "已关闭" | "进行中";
 interface MonitorRecord { id: string; code: string; title: string; process: string; version: string; status: InstanceMonitorStatus; node: string; initiator: string; department: string; createdAt: string; updatedAt: string; }
-const monitorRows: MonitorRecord[] = [
-  { id: "MON-1", code: "PDF-202608-0042", title: "MTR-320 步进电机装配作业指导书", process: "PDF审核", version: "V2", status: "审核中", node: "研发、质量、生产审核", initiator: "王敏", department: "文控", createdAt: "2026-08-13 09:10", updatedAt: "2026-08-13 11:26" },
-  { id: "MON-2", code: "PDF-202608-0041", title: "驱动器来料检验规范", process: "PDF审核", version: "V2", status: "驳回待处理", node: "发起方重新处理", initiator: "曹颖", department: "文控", createdAt: "2026-08-12 16:35", updatedAt: "2026-08-13 10:02" },
-  { id: "MON-3", code: "TR-202608-0019", title: "高低温循环测试报告", process: "测试报告审核", version: "V1", status: "审核中", node: "质量复核", initiator: "周宁", department: "研发 / 测试", createdAt: "2026-08-12 14:20", updatedAt: "2026-08-13 09:46" },
-  { id: "MON-4", code: "PDF-202608-0038", title: "包装工位作业指导书", process: "PDF审核", version: "V1", status: "已完成", node: "", initiator: "王敏", department: "文控", createdAt: "2026-08-10 08:42", updatedAt: "2026-08-11 16:18" },
-  { id: "MON-5", code: "FC-202608-0015", title: "产线扫码异常排查", process: "自由协作", version: "V1", status: "进行中", node: "张伟", initiator: "韩松", department: "生产 / 一车间", createdAt: "2026-08-11 10:06", updatedAt: "2026-08-13 12:40" },
-  { id: "MON-6", code: "FC-202608-0011", title: "供应商标签信息确认", process: "自由协作", version: "V1", status: "已关闭", node: "", initiator: "徐洁", department: "质量 / 来料检验", createdAt: "2026-08-08 13:34", updatedAt: "2026-08-12 15:10" },
-  { id: "MON-7", code: "PDF-202608-0035", title: "MTR-180 最终检验规范", process: "PDF审核", version: "V1", status: "已关闭", node: "", initiator: "冯浩", department: "文控", createdAt: "2026-08-07 09:12", updatedAt: "2026-08-09 17:22" },
-];
 const monitorStatuses: InstanceMonitorStatus[] = ["审核中", "驳回待处理", "已完成", "已关闭", "进行中"];
 
 export function InstanceMonitorPage() {
+  const instances = usePrototypeStore((state) => state.instances);
+  const definitions = useProcessDefinitionStore((state) => state.definitions);
   const [keyword, setKeyword] = useState("");
   const [process, setProcess] = useState<string>();
   const [status, setStatus] = useState<InstanceMonitorStatus>();
   const [dateRange, setDateRange] = useState(createDefaultDateRange);
   const [detail, setDetail] = useState<MonitorRecord | null>(null);
+  const monitorRows = useMemo(() => instances.map((instance): MonitorRecord => {
+    const definition = definitions.find((item) => item.id === instance.definitionId);
+    const version = definition?.versions.find((item) => item.id === instance.versionId);
+    const assignee = instance.currentAssigneeId ? findIdentityUser(instance.currentAssigneeId)?.name : instance.currentAssignee;
+    return {
+      id: instance.id,
+      code: instance.code,
+      title: instance.title,
+      process: version?.basic.name ?? definition?.name ?? instance.template,
+      version: version?.version ?? instance.templateVersion,
+      status: instance.status,
+      node: instance.status === "已完成" || instance.status === "已关闭"
+        ? ""
+        : instance.workflowType === "free" ? assignee ?? "" : instance.currentNode,
+      initiator: instance.initiator,
+      department: instance.department,
+      createdAt: instance.createdAt,
+      updatedAt: instance.updatedAt,
+    };
+  }), [definitions, instances]);
   const filtered = monitorRows.filter((row) => `${row.code}${row.title}${row.initiator}`.toLowerCase().includes(keyword.toLowerCase()) && (!process || row.process === process) && (!status || row.status === status) && isDateTimeInRange(row.createdAt, dateRange));
   const columns: TableProps<MonitorRecord>["columns"] = [
     { title: "实例编号", dataIndex: "code", width: 170, fixed: "left", render: (value: string, record) => <Button className="gov-table-link" type="link" onClick={() => setDetail(record)}>{value}</Button> },
@@ -1084,7 +1003,7 @@ export function InstanceMonitorPage() {
   return (
     <div className="page-stack gov-page">
       <Alert type="info" showIcon message="实例监控为只读页面" description="运维人员可以查询和查看流程、表单及流转信息，但不能强制关闭、改派、跳过节点或修改业务数据。" />
-      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--monitor"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="实例编号、标题或发起人" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={["PDF审核", "测试报告审核", "自由协作"].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={monitorStatuses.map((value) => ({ value }))} /></label><label><span>发起时间</span><DatePicker.RangePicker allowClear={false} value={dateRange} onChange={(value) => { if (value?.[0] && value[1]) setDateRange(normalizeDayRange([value[0], value[1]])); }} /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => message.success(`已查询到 ${filtered.length} 条实例`)}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); setDateRange(createDefaultDateRange()); }}>重置</Button></div></div></Card>
+      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--monitor"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="实例编号、标题或发起人" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={Array.from(new Set(monitorRows.map((row) => row.process))).map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={monitorStatuses.map((value) => ({ value }))} /></label><label><span>发起时间</span><DatePicker.RangePicker allowClear={false} value={dateRange} onChange={(value) => { if (value?.[0] && value[1]) setDateRange(normalizeDayRange([value[0], value[1]])); }} /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => message.success(`已查询到 ${filtered.length} 条实例`)}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); setDateRange(createDefaultDateRange()); }}>重置</Button></div></div></Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程实例" count={filtered.length} extra={<Typography.Text type="secondary"><LockOutlined /> 全部操作只读</Typography.Text>} /><Table<MonitorRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1510 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条实例` }} /></Card>
       <Drawer width={660} open={Boolean(detail)} onClose={() => setDetail(null)} title="流程实例详情（只读）">
         {detail ? <><div className="gov-detail-hero-row"><span className="gov-detail-icon"><FileSearchOutlined /></span><div><Typography.Title level={4}>{detail.title}</Typography.Title><Typography.Text type="secondary">{detail.code} · {detail.process} {detail.version}</Typography.Text></div><StatusPill status={detail.status} /></div><Descriptions bordered column={2} size="small" items={[{ key: "initiator", label: "发起人", children: `${detail.initiator}（${detail.department}）` }, { key: "created", label: "发起时间", children: detail.createdAt }, { key: "node", label: "当前节点", children: detail.node || "—" }, { key: "updated", label: "更新时间", children: detail.updatedAt }]} /><div className="gov-detail-section"><div className="gov-section-title">流转概览</div><Timeline items={[{ color: "green", children: <><strong>{detail.initiator} 发起流程</strong><small>{detail.createdAt}</small></> }, { color: "blue", children: <><strong>进入 {detail.node || "结束"}</strong><small>{detail.updatedAt}</small></> }, { color: "gray", children: <Typography.Text type="secondary">后续流转记录将在这里按时间显示</Typography.Text> }]} /></div><Alert type="warning" showIcon message="只读限制" description="本页没有强制关闭、异常改派、跳过节点或修改表单的入口。" /></> : null}
@@ -1095,22 +1014,56 @@ export function InstanceMonitorPage() {
 
 type AuditResult = "成功" | "失败";
 interface AuditRecord { id: string; operator: string; department: string; module: string; object: string; objectId: string; action: string; result: AuditResult; ip: string; time: string; before: string; after: string; detail: string; }
-const auditRows: AuditRecord[] = [
-  { id: "LOG-20260813-0088", operator: "王敏", department: "文控", module: "流程实例", object: "MTR-320 步进电机装配作业指导书", objectId: "PDF-202608-0042", action: "重新提交", result: "成功", ip: "10.20.3.46", time: "2026-08-13 11:26:08", before: "状态：驳回待处理\n轮次：1", after: "状态：审核中\n轮次：2", detail: "保留原实例编号，全部并行审批分支重新开始。" },
-  { id: "LOG-20260813-0087", operator: "林晓", department: "研发 / 软件", module: "审批任务", object: "研发审核", objectId: "TASK-00981", action: "提交审核", result: "成功", ip: "10.20.12.31", time: "2026-08-13 11:21:42", before: "审核状态：待审核", after: "审核状态：通过", detail: "以流程权限组成员身份完成审批。" },
-  { id: "LOG-20260813-0086", operator: "赵磊", department: "研发", module: "用户管理", object: "用户 user083", objectId: "USR-0083", action: "重置密码", result: "成功", ip: "10.20.1.18", time: "2026-08-13 11:09:17", before: "密码：******", after: "密码：******", detail: "管理员手动重置本地账号密码。" },
-  { id: "LOG-20260813-0085", operator: "陈晨", department: "研发 / 硬件", module: "登录认证", object: "本地账号登录", objectId: "user146", action: "登录", result: "失败", ip: "10.20.16.72", time: "2026-08-13 10:58:03", before: "—", after: "认证失败", detail: "账号或密码错误；首版不触发连续失败锁定。" },
-  { id: "LOG-20260813-0084", operator: "王敏", department: "文控", module: "流程权限组", object: "PDF审核_质量_审核组", objectId: "PG-0003", action: "修改成员", result: "成功", ip: "10.20.3.46", time: "2026-08-13 10:42:55", before: "直接成员：王敏、孙悦", after: "直接成员：王敏\n关联角色：质量审核员", detail: "变更已立即影响运行中待办的有效成员范围。" },
-  { id: "LOG-20260813-0083", operator: "周宁", department: "研发 / 测试", module: "自由协作", object: "产线扫码异常排查", objectId: "FC-202608-0015", action: "改派受理人", result: "成功", ip: "10.20.12.44", time: "2026-08-13 10:31:20", before: "当前受理人：周宁", after: "当前受理人：张伟", detail: "异常改派操作，时间线已记录。" },
-  { id: "LOG-20260813-0082", operator: "系统管理员", department: "系统", module: "角色权限", object: "流程管理员", objectId: "ROLE-002", action: "保存权限", result: "成功", ip: "10.20.1.10", time: "2026-08-13 10:15:06", before: "页面权限：7\n动作权限：19", after: "页面权限：8\n动作权限：21", detail: "新增流程版本停用权限。" },
-];
+
+const auditModuleLabels: Record<string, string> = {
+  authentication: "登录认证",
+  definition: "流程定义",
+  instance: "流程实例",
+  task: "审批任务",
+  identity: "组织权限",
+};
+
+const auditActionLabels: Record<string, string> = {
+  create: "创建",
+  pass: "通过",
+  confirm: "确认",
+  reject: "驳回",
+  "revise-fields": "修改审核字段",
+  "delete-version": "删除版本",
+};
 
 export function AuditLogPage() {
+  const instances = usePrototypeStore((state) => state.instances);
+  const tasks = usePrototypeStore((state) => state.tasks);
   const [keyword, setKeyword] = useState("");
   const [module, setModule] = useState<string>();
   const [result, setResult] = useState<AuditResult>();
   const [dateRange, setDateRange] = useState(createDefaultDateRange);
   const [detail, setDetail] = useState<AuditRecord | null>(null);
+  const auditRows = useMemo(() => {
+    const eventsById = new Map(
+      [...readAuditEvents(), ...collectRuntimeAuditEvents(instances, tasks)].map((event) => [event.id, event]),
+    );
+    return Array.from(eventsById.values()).map((event): AuditRecord => {
+      const actor = event.actorId ? findIdentityUser(event.actorId) : undefined;
+      const details = event.details ? JSON.stringify(event.details, null, 2) : "—";
+      return {
+        id: event.id,
+        operator: event.actorName ?? actor?.name ?? "系统",
+        department: actor?.departmentPath ?? "系统",
+        module: auditModuleLabels[event.category] ?? event.category,
+        object: event.summary,
+        objectId: event.resourceId,
+        action: auditActionLabels[event.action] ?? event.action,
+        result: "成功",
+        ip: "—",
+        time: event.occurredAt.replace("T", " ").replace(/\.\d{3}Z$/, ""),
+        before: "—",
+        after: details,
+        detail: event.summary,
+      };
+    }).sort((left, right) => Date.parse(right.time.replace(" ", "T")) - Date.parse(left.time.replace(" ", "T")));
+  }, [instances, tasks]);
   const filtered = auditRows.filter((row) => `${row.operator}${row.object}${row.objectId}${row.ip}`.toLowerCase().includes(keyword.toLowerCase()) && (!module || row.module === module) && (!result || row.result === result) && isDateTimeInRange(row.time, dateRange));
   const columns: TableProps<AuditRecord>["columns"] = [
     { title: "时间", dataIndex: "time", width: 170, fixed: "left" },

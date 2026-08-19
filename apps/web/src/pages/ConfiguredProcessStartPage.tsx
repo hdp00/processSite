@@ -356,7 +356,6 @@ export function ConfiguredProcessStartPage({ definition, version }: ConfiguredPr
       <Form<DynamicFormValues>
         form={form}
         layout="vertical"
-        requiredMark="optional"
         initialValues={initialValues}
         onValuesChange={() => setDirty(true)}
         onFinish={prepareSubmit}

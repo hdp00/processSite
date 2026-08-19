@@ -362,7 +362,7 @@ export const initialInstances: ProcessInstance[] = [
     createdAt: "2026-08-12 09:20",
     updatedAt: "2026-08-13 10:18",
     round: 1,
-    currentNode: "林晓受理中",
+    currentNode: "林晓",
     currentAssignee: "林晓",
     priority: "紧急",
     designatedReviewer: "林晓",

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter @process-site/web dev",
     "build": "pnpm --filter @process-site/web build",
-    "typecheck": "pnpm --filter @process-site/web typecheck"
+    "typecheck": "pnpm --filter @process-site/web typecheck",
+    "test": "pnpm --filter @process-site/web test"
   }
 }
