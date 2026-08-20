@@ -1,4 +1,5 @@
 import { http, HttpResponse } from "msw";
+import { MOCK_API_BASE_URL } from "../apiBase";
 import type {
   AttachmentRecord,
   EmailOutboxItem,
@@ -47,7 +48,7 @@ import {
   withIdempotency,
 } from "../runtime";
 
-const API_BASE = "/api/v1";
+const API_BASE = MOCK_API_BASE_URL;
 const EMAIL_OUTBOX_KEY = "flowpilot-mock-email-outbox-v1";
 const DEFAULT_MAX_ATTACHMENT_SIZE_MB = 100;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

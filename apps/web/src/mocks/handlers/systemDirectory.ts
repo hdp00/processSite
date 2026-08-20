@@ -25,6 +25,7 @@ import { useProcessDefinitionStore } from "../../state/useProcessDefinitionStore
 import { usePrototypeStore } from "../../state/usePrototypeStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { clearAttachments } from "../attachmentRepository";
+import { MOCK_API_BASE_URL } from "../apiBase";
 import {
   apiNoContent,
   apiOk,
@@ -44,7 +45,7 @@ import {
   type AuthResult,
 } from "../runtime";
 
-const API_ROOT = "/api/v1";
+const API_ROOT = MOCK_API_BASE_URL;
 const ACTIVE_STATUSES = new Set<EnableStatus>(["启用", "停用"]);
 const GROUP_PURPOSES = new Set<WorkflowGroupPurpose>(["发起", "审批/受理", "关闭"]);
 const MOCK_SCENARIOS = new Set<MockScenario>([

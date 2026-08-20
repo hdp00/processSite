@@ -129,7 +129,9 @@ const router = createBrowserRouter(createRoutesFromElements(
     </Route>
     <Route path="*" element={<Navigate to="/tasks" replace />} />
   </>,
-));
+), {
+  basename: import.meta.env.BASE_URL.replace(/\/$/, "") || "/",
+});
 
 export default function App() {
   return (

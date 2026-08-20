@@ -1,4 +1,5 @@
 import { http } from "msw";
+import { MOCK_API_BASE_URL } from "../apiBase";
 import type { ProcessInstance } from "../../data/types";
 import { findIdentityUser } from "../../state/useIdentityStore";
 import { isSuperAdminPersona, usePrototypeStore } from "../../state/usePrototypeStore";
@@ -15,7 +16,7 @@ import {
   withIdempotency,
 } from "../runtime";
 
-const API = "/api/v1";
+const API = MOCK_API_BASE_URL;
 
 const instanceById = (id: string) => usePrototypeStore.getState().instances.find((item) => item.id === id);
 

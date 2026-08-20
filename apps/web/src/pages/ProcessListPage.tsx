@@ -216,7 +216,7 @@ export function ProcessListPage() {
                 type="text"
                 icon={<PrinterOutlined />}
                 aria-label={`打印流程为 PDF：${record.title}`}
-                onClick={() => window.open(`/processes/${record.id}/print`, "_blank", "noopener,noreferrer")}
+                onClick={() => window.open(`${import.meta.env.BASE_URL}processes/${record.id}/print`, "_blank", "noopener,noreferrer")}
               />
             </Tooltip>
           )}

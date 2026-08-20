@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-当前仓库没有启动真实后端。开发和演示模式使用 MSW 2 在浏览器的 Service Worker 层拦截 `fetch`，因此页面仍通过标准 HTTP 语义访问 `/api/v1`，而不是直接调用 Mock handler 或 Zustand action。
+当前仓库没有启动真实后端。开发和 debug 演示模式使用 MSW 2 的页面内 Fetch/XHR 拦截器处理请求，不注册 Service Worker，因此通过普通 HTTP 部署到 IIS 时也可以运行。页面仍通过标准 HTTP 语义访问 Mock API，而不是直接调用 Mock handler 或 Zustand action。
 
 - 正式接口契约：[`flowpilot-rest-api.openapi.yaml`](./flowpilot-rest-api.openapi.yaml)
 - 类型化客户端：`apps/web/src/api/flowPilotApi.ts`
@@ -19,7 +19,15 @@ pnpm install
 pnpm dev
 ```
 
-默认启用 Mock API。应用会先等待 Service Worker 启动，再渲染 React，避免首屏请求漏过拦截。
+开发服务器默认启用 Mock API。应用会先启用页面内请求拦截器，再渲染 React，避免首屏请求漏过拦截。
+
+生成可部署的 HTTP 演示包：
+
+```bash
+pnpm build:debug
+```
+
+debug 构建固定使用 `/flowpilot/mock-api/v1`，请求只在当前页面内处理，不发送到 IIS。PDF、附件和富媒体正文继续保存在当前浏览器的 IndexedDB 中。
 
 如需连接真实后端，在 `apps/web/.env.local` 中配置：
 
@@ -28,9 +36,15 @@ VITE_API_MODE=remote
 VITE_API_BASE_URL=http://127.0.0.1:3000/api/v1
 ```
 
-`VITE_API_MODE=remote` 会完全跳过 MSW。生产构建是否使用 Mock 由构建环境变量决定，不应把演示 Mock 当作生产后端。
+正式构建使用：
 
-> MSW 是浏览器内的网络拦截层。直接在地址栏打开 `/api/v1/health`，或使用 `curl` 请求 Vite 地址，不会经过页面注册的 Service Worker；请从页面代码或集成测试发起 `fetch`。
+```bash
+pnpm build
+```
+
+该命令固定读取 `.env.production`，使用 `/api/v1` 后端并完全排除浏览器 Mock。演示 Mock 不属于正式业务数据源。
+
+> 页面内拦截器只处理当前页面代码发起的 Fetch/XHR。直接在地址栏打开 Mock API，或使用 `curl` 请求 IIS 地址，不会进入 Mock Handler。
 
 ## 3. 调用约定
 

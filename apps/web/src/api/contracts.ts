@@ -68,10 +68,14 @@ export interface ApiHealth {
 }
 
 export interface AuthSession {
-  accessToken: string;
-  tokenType: "Bearer";
-  expiresIn: number;
+  accessToken?: string;
+  tokenType?: "Bearer";
+  expiresIn?: number;
   user: DirectoryUser;
+  roleIds?: string[];
+  permissions?: string[];
+  superAdmin?: boolean;
+  expiresAt?: string;
 }
 
 export interface ProcessDefinitionListItem extends ProcessDefinition {

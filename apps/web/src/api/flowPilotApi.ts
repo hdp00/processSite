@@ -67,12 +67,18 @@ export const flowPilotApi = {
   },
   auth: {
     login: async (account: string, password: string) => {
-      const session = await apiRequest<AuthSession>("/auth/login", { method: "POST", body: { account, password }, ...mutation() });
+      const body = import.meta.env.VITE_API_MODE === "remote"
+        ? { loginName: account, password }
+        : { account, password };
+      const session = await apiRequest<AuthSession>("/auth/login", { method: "POST", body, ...mutation() });
       writeApiAccessToken(session.accessToken);
       usePrototypeStore.getState().login(session.user.id);
       return session;
     },
-    me: () => apiRequest<DirectoryUser>("/auth/me"),
+    me: async () => {
+      const session = await apiRequest<AuthSession | DirectoryUser>("/auth/me");
+      return "user" in session ? session.user : session;
+    },
     logout: async () => {
       try {
         await apiRequest<void>("/auth/logout", { method: "POST", ...mutation() });

@@ -800,7 +800,7 @@ export function ProcessDetailPage() {
       <div className="detail-topbar">
         <AppBackButton onClick={() => navigate(-1)} />
         <div className="detail-topbar-actions">
-          {canPrint && <Button icon={<PrinterOutlined />} onClick={() => window.open(`/processes/${instance.id}/print`, "_blank", "noopener,noreferrer")}>打印为 PDF</Button>}
+          {canPrint && <Button icon={<PrinterOutlined />} onClick={() => window.open(`${import.meta.env.BASE_URL}processes/${instance.id}/print`, "_blank", "noopener,noreferrer")}>打印为 PDF</Button>}
           {repeatTask ? (
             <>
               <Button onClick={cancelRepeatEditing}>取消继续修改</Button>

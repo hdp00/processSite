@@ -5,7 +5,9 @@
   "packageManager": "pnpm@11.1.3",
   "scripts": {
     "dev": "pnpm --filter @process-site/web dev",
+    "preview": "pnpm --filter @process-site/web preview",
     "build": "pnpm --filter @process-site/web build",
+    "build:debug": "pnpm --filter @process-site/web build:debug",
     "typecheck": "pnpm --filter @process-site/web typecheck",
     "test": "pnpm --filter @process-site/web test"
   }

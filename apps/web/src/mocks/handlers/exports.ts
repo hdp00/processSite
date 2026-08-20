@@ -1,4 +1,5 @@
 import { http } from "msw";
+import { MOCK_API_BASE_URL } from "../apiBase";
 import type { ProcessExcelDataFilter } from "../../api/contracts";
 import type { ProcessInstance } from "../../data/types";
 import { getPublishedVersion, useProcessDefinitionStore } from "../../state/useProcessDefinitionStore";
@@ -14,7 +15,7 @@ import {
   requirePermission,
 } from "../runtime";
 
-const API = "/api/v1";
+const API = MOCK_API_BASE_URL;
 const MAX_EXPORT_ROWS = 10_000;
 
 const instanceDate = (instance: ProcessInstance) => {

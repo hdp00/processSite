@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { readApiAccessToken, writeApiAccessToken } from "./api/client";
+import { writeApiAccessToken } from "./api/client";
 import { flowPilotApi } from "./api/flowPilotApi";
 import { hydrateRemoteApplication } from "./api/remoteHydration";
 import { usePrototypeStore } from "./state/usePrototypeStore";
@@ -15,13 +15,11 @@ const renderApp = () => ReactDOM.createRoot(document.getElementById("root")!).re
 );
 
 const bootstrap = async () => {
-  const mockApiEnabled = import.meta.env.VITE_API_MODE !== "remote"
-    && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_API === "true");
+  const mockApiEnabled = import.meta.env.VITE_API_MODE === "mock"
+    || (import.meta.env.DEV && import.meta.env.VITE_API_MODE !== "remote");
   if (mockApiEnabled) {
     const { startMockApi } = await import("./mocks/browser");
     await startMockApi();
-  } else if (!readApiAccessToken()) {
-    usePrototypeStore.getState().logout();
   } else {
     try {
       const user = await flowPilotApi.auth.me();

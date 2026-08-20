@@ -1,4 +1,5 @@
 import { http } from "msw";
+import { MOCK_API_BASE_URL } from "../apiBase";
 import type {
   DepartmentRecord,
   ImpactPreview,
@@ -28,7 +29,7 @@ import {
   withIdempotency,
 } from "../runtime";
 
-const API = "/api/v1";
+const API = MOCK_API_BASE_URL;
 
 const permissions: PermissionCatalogItem[] = [
   "work-launch:查看", "work-launch:发起", "work-task:查看", "work-task:审核", "work-task:驳回",

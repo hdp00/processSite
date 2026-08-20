@@ -1,4 +1,5 @@
 import { http } from "msw";
+import { MOCK_API_BASE_URL } from "../apiBase";
 import type { AuditEvent } from "../../api/contracts";
 import { usePrototypeStore } from "../../state/usePrototypeStore";
 import { collectRuntimeAuditEvents } from "../../utils/runtimeAudit";
@@ -11,7 +12,7 @@ import {
   requirePermission,
 } from "../runtime";
 
-const API = "/api/v1";
+const API = MOCK_API_BASE_URL;
 
 const runtimeAuditEvents = (): AuditEvent[] => {
   const { tasks, instances } = usePrototypeStore.getState();

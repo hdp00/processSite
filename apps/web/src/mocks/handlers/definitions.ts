@@ -19,6 +19,7 @@ import {
 import { canPersonaLaunchDefinition } from "../../state/rolePermissions";
 import { compareDomainTimestamps } from "../../utils/domainTime";
 import type { CompleteDesignerSnapshot } from "../../utils/designerStorage";
+import { MOCK_API_BASE_URL } from "../apiBase";
 import {
   apiNoContent,
   apiOk,
@@ -34,7 +35,7 @@ import {
   withIdempotency,
 } from "../runtime";
 
-const API = "/api/v1";
+const API = MOCK_API_BASE_URL;
 
 const definitionById = (definitionId: string) =>
   useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);

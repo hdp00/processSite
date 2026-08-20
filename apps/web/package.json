@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "build": "tsc -b && vite build --mode production",
+    "build:debug": "tsc -b && vite build --mode debug",
     "typecheck": "tsc -b --pretty false",
-    "test": "vitest run",
-    "mock:worker": "msw init"
+    "test": "vitest run"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
@@ -31,6 +32,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@mswjs/interceptors": "0.41.9",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
@@ -38,10 +40,5 @@
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
     "vitest": "^4.1.10"
-  },
-  "msw": {
-    "workerDirectory": [
-      "public"
-    ]
   }
 }
