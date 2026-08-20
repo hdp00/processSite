@@ -1,0 +1,32 @@
+const pad = (value: number) => String(value).padStart(2, "0");
+
+export const formatDomainTimestamp = (date: Date) => [
+  `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+  `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+].join(" ");
+
+export const nowDomainTimestamp = () => formatDomainTimestamp(new Date());
+
+export const domainTimestampEpoch = (value: string) => {
+  const normalized = value
+    .replace(/年|\//g, "-")
+    .replace(/月/g, "-")
+    .replace(/日/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const localMatch = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
+  const epoch = localMatch
+    ? new Date(
+        Number(localMatch[1]),
+        Number(localMatch[2]) - 1,
+        Number(localMatch[3]),
+        Number(localMatch[4]),
+        Number(localMatch[5]),
+        Number(localMatch[6] ?? 0),
+      ).getTime()
+    : Date.parse(normalized);
+  return Number.isFinite(epoch) ? epoch : Number.NEGATIVE_INFINITY;
+};
+
+export const compareDomainTimestamps = (left: string, right: string) =>
+  domainTimestampEpoch(left) - domainTimestampEpoch(right);

@@ -37,10 +37,12 @@ import {
   MailOutlined,
   PlayCircleFilled,
   PlusOutlined,
+  RedoOutlined,
   SafetyCertificateOutlined,
   SaveOutlined,
   SettingOutlined,
   TeamOutlined,
+  UndoOutlined,
 } from "@ant-design/icons";
 import {
   Alert,
@@ -61,6 +63,8 @@ import {
 } from "antd";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
+import { cacheProcessVersion } from "../api/entityCache";
+import { flowPilotApi } from "../api/flowPilotApi";
 import {
   ProcessWizardNextButton,
   ProcessWizardPreviousButton,
@@ -68,7 +72,8 @@ import {
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
-import { resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
+import { useUndoRedoHistory } from "../hooks/useUndoRedoHistory";
+import { effectiveGroupMemberIds, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import {
   canEditVersion,
   getVersionStatus,
@@ -88,6 +93,11 @@ import {
   type StoredNodeCondition,
   type StoredNodeEmailNotification,
 } from "../utils/designerStorage";
+import { flattenDesignerChoiceOptions, type DesignerChoiceOption } from "../utils/designerOptions";
+import {
+  validateApprovalFlow,
+  type ProcessValidationContext,
+} from "../utils/processDefinitionValidation";
 import "./flow-designer.css";
 
 const { Text, Title } = Typography;
@@ -110,7 +120,7 @@ interface FlowNodeData extends Record<string, unknown> {
 
 interface ConditionFieldOption extends EditableFieldOption {
   type: string;
-  choiceOptions?: string[];
+  choiceOptions?: DesignerChoiceOption[];
   inputStage?: DesignerInputPermission;
   required?: boolean;
 }
@@ -529,228 +539,9 @@ const nodeTypes = { processNode: ProcessNode };
 const runValidation = (
   nodes: DesignerNode[],
   edges: DesignerEdge[],
-  editableOptions: EditableFieldOption[],
-  conditionFields: ConditionFieldOption[],
-): ValidationResult[] => {
-  const starts = nodes.filter((node) => node.data.kind === "start");
-  const ends = nodes.filter((node) => node.data.kind === "end");
-  const approvals = nodes.filter((node) => node.data.kind === "approval");
-
-  const adjacency = new Map<string, string[]>();
-  const reverseAdjacency = new Map<string, string[]>();
-  nodes.forEach((node) => {
-    adjacency.set(node.id, []);
-    reverseAdjacency.set(node.id, []);
-  });
-  edges.forEach((edge) => {
-    adjacency.get(edge.source)?.push(edge.target);
-    reverseAdjacency.get(edge.target)?.push(edge.source);
-  });
-
-  const visit = (origin: string | undefined, graph: Map<string, string[]>) => {
-    const visited = new Set<string>();
-    if (!origin) return visited;
-    const queue = [origin];
-    while (queue.length) {
-      const current = queue.shift();
-      if (!current || visited.has(current)) continue;
-      visited.add(current);
-      graph.get(current)?.forEach((next) => queue.push(next));
-    }
-    return visited;
-  };
-
-  const reachableFromStart = visit(starts[0]?.id, adjacency);
-  const canReachEnd = visit(ends[0]?.id, reverseAdjacency);
-  const disconnected = nodes.filter(
-    (node) => !reachableFromStart.has(node.id) || !canReachEnd.has(node.id),
-  );
-
-  const missingGroups = [...starts, ...approvals].filter((node) =>
-    node.data.kind === "start"
-      ? !node.data.permissionGroups?.length
-      : !node.data.permissionGroup?.trim(),
-  );
-  const editableLabelByValue = new Map(editableOptions.map((option) => [option.value, option.label]));
-  const conditionFieldById = new Map(conditionFields.map((field) => [field.value, field]));
-  const invalidConditions = approvals.filter((node) => {
-    const condition = normalizeActivationCondition(node.data.activationCondition);
-    if (!condition) return false;
-    if (!condition.rules.length) return true;
-    return condition.rules.some((rule) => {
-      const field = conditionFieldById.get(rule.fieldId);
-      const supported = field?.type === "checkbox"
-        ? ["contains", "not-contains", "empty", "not-empty"]
-        : field?.type === "text"
-          ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
-          : ["eq", "neq", "empty", "not-empty"];
-      return !field || !supported.includes(rule.operator) || (!["empty", "not-empty"].includes(rule.operator) && (rule.value === undefined || rule.value === ""));
-    });
-  });
-  const requiredReviewerFields = conditionFields.filter((field) => field.inputStage === "reviewer" && field.required);
-  const unassignedReviewerFields = requiredReviewerFields.filter((field) => !approvals.some((node) => node.data.editableFields.includes(field.value)));
-  const invalidRepeatedEditing = approvals.filter((node) => node.data.allowRepeatedEditing && !node.data.editableFields.length);
-  const invalidEmailNodes = nodes.filter((node) => {
-    if (node.data.kind !== "approval" && node.data.kind !== "end") return false;
-    const notification = node.data.emailNotification;
-    return Boolean(notification?.enabled
-      && !notification.notifyReviewers
-      && !notification.notifyInitiator
-      && !(notification.extraUserIds?.length ?? 0));
-  });
-
-  const splitNodes = nodes.filter((node) => (adjacency.get(node.id)?.length ?? 0) >= 2);
-  const joinNodes = nodes.filter((node) => (reverseAdjacency.get(node.id)?.length ?? 0) >= 2);
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const invalidSplits: string[] = [];
-  const conflictMessages: string[] = [];
-  splitNodes.forEach((splitNode) => {
-    const branchRootIds = adjacency.get(splitNode.id) ?? [];
-    const invalidTargets = branchRootIds
-      .map((id) => nodeById.get(id))
-      .filter((node) => node?.data.kind !== "approval");
-
-    const branchDistances = branchRootIds.map((rootId) => {
-      const distances = new Map<string, number>();
-      const queue: Array<[string, number]> = [[rootId, 0]];
-      while (queue.length) {
-        const [current, distance] = queue.shift()!;
-        if (distances.has(current)) continue;
-        distances.set(current, distance);
-        adjacency.get(current)?.forEach((next) => queue.push([next, distance + 1]));
-      }
-      return distances;
-    });
-    const commonJoin = joinNodes
-      .filter((node) => branchDistances.every((distances) => distances.has(node.id)))
-      .sort((left, right) => {
-        const leftDistance = branchDistances.reduce(
-          (sum, distances) => sum + (distances.get(left.id) ?? Number.MAX_SAFE_INTEGER),
-          0,
-        );
-        const rightDistance = branchDistances.reduce(
-          (sum, distances) => sum + (distances.get(right.id) ?? Number.MAX_SAFE_INTEGER),
-          0,
-        );
-        return leftDistance - rightDistance;
-      })[0];
-
-    if (invalidTargets.length || !commonJoin) {
-      invalidSplits.push(splitNode.data.label);
-      return;
-    }
-
-    const fieldOwners = new Map<string, Array<{ branch: number; label: string }>>();
-    branchRootIds.forEach((rootId, branch) => {
-      const visited = new Set<string>();
-      const queue = [rootId];
-      while (queue.length) {
-        const current = queue.shift()!;
-        if (current === commonJoin.id || visited.has(current)) continue;
-        visited.add(current);
-        const node = nodeById.get(current);
-        if (node?.data.kind === "approval") {
-          node.data.editableFields.forEach((field) => {
-            fieldOwners.set(field, [
-              ...(fieldOwners.get(field) ?? []),
-              { branch, label: node.data.label },
-            ]);
-          });
-        }
-        adjacency.get(current)?.forEach((next) => queue.push(next));
-      }
-    });
-    fieldOwners.forEach((owners, field) => {
-      if (new Set(owners.map((owner) => owner.branch)).size > 1) {
-        conflictMessages.push(
-          `${editableLabelByValue.get(field) ?? field}（${[...new Set(owners.map((owner) => owner.label))].join("、")}）`,
-        );
-      }
-    });
-  });
-
-  const uniqueTerminals = starts.length === 1 && ends.length === 1;
-  const connected = uniqueTerminals && disconnected.length === 0;
-
-  return [
-    {
-      key: "terminal",
-      title: "开始与结束节点唯一",
-      detail: uniqueTerminals
-        ? "已检测到 1 个开始节点和 1 个结束节点"
-        : `当前开始节点 ${starts.length} 个，结束节点 ${ends.length} 个`,
-      pass: uniqueTerminals,
-    },
-    {
-      key: "connected",
-      title: "流程连通性",
-      detail: connected
-        ? `全部 ${nodes.length} 个节点均可由开始到达并最终流向结束`
-        : disconnected.length
-          ? `未连通节点：${disconnected.map((node) => node.data.label).join("、")}`
-          : "请先修正开始与结束节点",
-      pass: connected,
-    },
-    {
-      key: "groups",
-      title: "流程权限组",
-      detail: missingGroups.length
-        ? `未配置：${missingGroups.map((node) => node.data.label).join("、")}`
-        : `发起节点及 ${approvals.length} 个审批节点均已配置权限组`,
-      pass: missingGroups.length === 0,
-    },
-    {
-      key: "parallel-topology",
-      title: "并行与汇聚拓扑",
-      detail: invalidSplits.length
-        ? `${invalidSplits.join("、")} 的多条分支需要直接连接审批节点并汇聚到同一后续节点`
-        : splitNodes.length
-          ? `已自动识别 ${splitNodes.length} 处并行、${joinNodes.length} 处汇聚`
-          : "当前为串行流程，无需配置并行节点",
-      pass: invalidSplits.length === 0,
-    },
-    {
-      key: "field-conflict",
-      title: "并行可修改字段冲突",
-      detail: conflictMessages.length
-        ? `发现冲突：${conflictMessages.join("；")}`
-        : "各并行路径中的审批节点可修改字段互不重叠",
-      pass: conflictMessages.length === 0,
-    },
-    {
-      key: "conditions",
-      title: "审批执行条件",
-      detail: invalidConditions.length
-        ? `条件配置不完整：${invalidConditions.map((node) => node.data.label).join("、")}`
-        : "所有条件均引用有效字段并已完整配置",
-      pass: invalidConditions.length === 0,
-    },
-    {
-      key: "reviewer-required",
-      title: "审核人必填字段",
-      detail: unassignedReviewerFields.length
-        ? `尚未分配负责节点：${unassignedReviewerFields.map((field) => field.label).join("、")}`
-        : "审核人必填字段均已分配到至少一个审批节点",
-      pass: unassignedReviewerFields.length === 0,
-    },
-    {
-      key: "repeated-editing",
-      title: "重复修改配置",
-      detail: invalidRepeatedEditing.length
-        ? `请先配置可修改字段：${invalidRepeatedEditing.map((node) => node.data.label).join("、")}`
-        : "重复修改仅用于已授权字段",
-      pass: invalidRepeatedEditing.length === 0,
-    },
-    {
-      key: "email-notification",
-      title: "邮件通知收件人",
-      detail: invalidEmailNodes.length
-        ? `已启用邮件但未选择收件人：${invalidEmailNodes.map((node) => node.data.label).join("、")}`
-        : "所有已启用邮件均已配置收件人",
-      pass: invalidEmailNodes.length === 0,
-    },
-  ];
-};
+  fields: StoredDesignerField[],
+  context: ProcessValidationContext,
+): ValidationResult[] => validateApprovalFlow(nodes, edges, fields, context);
 
 interface DesignerWorkspaceProps {
   initialDraft: StoredDraft;
@@ -758,10 +549,11 @@ interface DesignerWorkspaceProps {
   versionId: string;
   editableFieldOptions: EditableFieldOption[];
   conditionFieldOptions: ConditionFieldOption[];
+  formFields: StoredDesignerField[];
   starterGroups: string[];
 }
 
-const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFieldOptions, conditionFieldOptions, starterGroups }: DesignerWorkspaceProps) => {
+const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFieldOptions, conditionFieldOptions, formFields, starterGroups }: DesignerWorkspaceProps) => {
   const navigate = useNavigate();
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const users = useIdentityStore((state) => state.users);
@@ -782,11 +574,6 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
       searchText: `${user.name} ${email}`,
     };
   });
-  const versionBasic = useProcessDefinitionStore((state) =>
-    state.definitions.find((item) => item.id === definitionId)?.versions.find((item) => item.id === versionId)?.basic,
-  );
-  const updateVersionBasic = useProcessDefinitionStore((state) => state.updateVersionBasic);
-  const updateVersionFlowSnapshot = useProcessDefinitionStore((state) => state.updateVersionFlowSnapshot);
   const [nodes, setNodes, onNodesChange] = useNodesState<DesignerNode>(initialDraft.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<DesignerEdge>(initialDraft.edges);
   const [meta, setMeta] = useState<FlowMeta>(initialDraft.meta);
@@ -798,6 +585,31 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
   const [autoSaved, setAutoSaved] = useState(true);
   const skipDirtyEffect = useRef(true);
   const { fitView, screenToFlowPosition } = useReactFlow<DesignerNode, DesignerEdge>();
+  const designerHistoryValue = useMemo(
+    () => ({
+      nodes: nodes.map((node) => ({
+        ...node,
+        selected: undefined,
+        dragging: undefined,
+        measured: undefined,
+      })),
+      edges: edges.map((edge) => ({ ...edge, selected: undefined })),
+      meta: { ...meta, lastSavedAt: "" },
+    }),
+    [edges, meta, nodes],
+  );
+  const { canUndo, canRedo, undo, redo } = useUndoRedoHistory(
+    designerHistoryValue,
+    (snapshot) => {
+      setNodes(snapshot.nodes);
+      setEdges(snapshot.edges);
+      setMeta((current) => ({ ...snapshot.meta, lastSavedAt: current.lastSavedAt }));
+      setSelectedNodeId((current) => snapshot.nodes.some((node) => node.id === current)
+        ? current
+        : snapshot.nodes.find((node) => node.data.kind === "approval")?.id ?? null);
+    },
+    { historyKey: `${definitionId}:${versionId}:flow` },
+  );
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId),
@@ -813,8 +625,11 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     .map((userId) => extraEmailUserOptions.find((option) => option.value === userId))
     .filter((option): option is EmailUserOption => Boolean(option)) ?? [];
   const validationResults = useMemo(
-    () => runValidation(nodes, edges, editableFieldOptions, conditionFieldOptions),
-    [conditionFieldOptions, edges, editableFieldOptions, nodes],
+    () => runValidation(nodes, edges, formFields, {
+      workflowGroups,
+      effectiveMemberIds: effectiveGroupMemberIds,
+    }),
+    [edges, formFields, nodes, workflowGroups],
   );
   const parallelRegionCount = useMemo(() => {
     const outgoingCount = new Map<string, number>();
@@ -832,6 +647,25 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     }
     setAutoSaved(false);
   }, [edges, meta, nodes]);
+
+  useEffect(() => {
+    const handleHistoryShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && event.shiftKey) {
+        event.preventDefault();
+        redo();
+      } else if (key === "z") {
+        event.preventDefault();
+        undo();
+      } else if (key === "y") {
+        event.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", handleHistoryShortcut);
+    return () => window.removeEventListener("keydown", handleHistoryShortcut);
+  }, [redo, undo]);
 
   useEffect(() => {
     const allowed = new Set(editableFieldOptions.map((option) => option.value));
@@ -1011,20 +845,25 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     message.success("已按连线层级自动整理节点");
   };
 
-  const saveVersion = () => {
+  const saveVersion = async () => {
     const nextMeta = { ...meta, lastSavedAt: formatTime() };
     skipDirtyEffect.current = true;
     setMeta(nextMeta);
     const startGroups = nodes.find((node) => node.data.kind === "start")?.data.permissionGroups ?? starterGroups;
-    if (versionBasic) updateVersionBasic(definitionId, versionId, { ...versionBasic, name: nextMeta.name, starterGroups: startGroups });
-    const saved = updateVersionFlowSnapshot(definitionId, versionId, { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot);
-    if (saved) {
+    try {
+      const resource = await flowPilotApi.definitions.versionResource(definitionId, versionId);
+      const saved = await flowPilotApi.definitions.saveFlowDesigner(definitionId, versionId, {
+        basicPatch: { name: nextMeta.name, starterGroups: startGroups },
+        flow: { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot,
+      }, resource.etag);
+      cacheProcessVersion(definitionId, saved.version);
       setAutoSaved(true);
       message.success("版本已保存，并已自动更新校验结果");
-    } else {
-      message.error("该版本当前不可编辑，请返回版本记录确认状态");
+      return true;
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "该版本当前不可编辑，请返回版本记录确认状态");
+      return false;
     }
-    return saved;
   };
 
   const { guard, allowNextNavigation } = useUnsavedChangesGuard({
@@ -1034,14 +873,14 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     description: "可以先保存节点、连线和流程规则再离开，也可以放弃本次修改。",
   });
 
-  const goPrevious = () => {
-    if (!autoSaved && !saveVersion()) return;
+  const goPrevious = async () => {
+    if (!autoSaved && !await saveVersion()) return;
     allowNextNavigation();
     navigate(`/admin/processes/${definitionId}/form?versionId=${versionId}`);
   };
 
-  const goNext = () => {
-    if (!autoSaved && !saveVersion()) return;
+  const goNext = async () => {
+    if (!autoSaved && !await saveVersion()) return;
     if (!allValidationPassed) {
       message.warning("流程结构校验未通过，版本已保留，可在发布页面查看问题并返回修改");
     }
@@ -1075,6 +914,14 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
             {autoSaved ? `版本已保存 · ${meta.lastSavedAt}` : "有未保存修改"}
           </span>
           <ProcessWizardPreviousButton step="初始表单" onClick={goPrevious} />
+          <Space.Compact>
+            <Tooltip title="撤销（Ctrl+Z）">
+              <Button aria-label="撤销" disabled={!canUndo} icon={<UndoOutlined />} onClick={undo} />
+            </Tooltip>
+            <Tooltip title="重做（Ctrl+Shift+Z / Ctrl+Y）">
+              <Button aria-label="重做" disabled={!canRedo} icon={<RedoOutlined />} onClick={redo} />
+            </Tooltip>
+          </Space.Compact>
           <Button icon={<ApartmentOutlined />} onClick={autoLayout}>
             自动布局
           </Button>
@@ -1414,11 +1261,14 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                                 popupMatchSelectWidth={360}
                                 options={conditionFieldOptions}
                                 optionRender={(option) => <span className="condition-field-option" title={String(option.label)}>{option.label}</span>}
-                                onChange={(fieldId) => updateRule({ fieldId, operator: "eq", value: "" })}
+                                onChange={(fieldId) => {
+                                  const nextField = conditionFieldOptions.find((option) => option.value === fieldId);
+                                  updateRule({ fieldId, operator: "eq", value: nextField?.choiceOptions?.[0]?.id ?? "" });
+                                }}
                               />
                               <Select value={rule.operator} options={operators.map((operator) => ({ value: operator, label: conditionOperatorLabel(operator) }))} onChange={(operator) => updateRule({ operator })} />
                               {!["empty", "not-empty"].includes(rule.operator) && (field?.choiceOptions?.length
-                                ? <Select value={typeof rule.value === "string" ? rule.value || undefined : undefined} placeholder="选择比较值" options={field.choiceOptions.map((value) => ({ value, label: value }))} onChange={(value) => updateRule({ value })} />
+                                ? <Select value={typeof rule.value === "string" ? rule.value || undefined : undefined} placeholder="选择比较值" options={field.choiceOptions.map((option) => ({ value: option.id, label: option.label }))} onChange={(value) => updateRule({ value })} />
                                 : <Input value={typeof rule.value === "string" ? rule.value : ""} placeholder="输入比较值" onChange={(event) => updateRule({ value: event.target.value })} />)}
                               <Button type="text" danger icon={<DeleteOutlined />} aria-label="删除条件" onClick={() => updateSelectedNode({ activationCondition: { ...selectedActivationCondition, rules: selectedActivationCondition.rules.filter((item) => item.id !== rule.id) } })} />
                             </div>;
@@ -1677,7 +1527,7 @@ export const FlowDesignerPage = () => {
       value: field.id,
       label: field.label,
       type: field.type,
-      choiceOptions: Array.isArray(field.options) ? field.options.filter((option): option is string => typeof option === "string") : undefined,
+      choiceOptions: flattenDesignerChoiceOptions(field.options),
       inputStage: normalizeDesignerInputPermission(field),
       required: field.required,
     })), [version?.snapshot.form.fields]);
@@ -1781,6 +1631,7 @@ export const FlowDesignerPage = () => {
         versionId={versionId}
         editableFieldOptions={editableFieldOptions}
         conditionFieldOptions={conditionFieldOptions}
+        formFields={version.snapshot.form.fields}
         starterGroups={starterGroups}
       />
     </ReactFlowProvider>

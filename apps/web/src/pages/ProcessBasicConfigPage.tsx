@@ -24,6 +24,8 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
+import { cacheProcessDefinition, cacheProcessVersion } from "../api/entityCache";
+import { flowPilotApi } from "../api/flowPilotApi";
 import { ProcessWizardNextButton } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
@@ -43,9 +45,6 @@ interface ProcessBasicConfigPageProps {
 
 type BasicConfigValues = ProcessBasicConfig;
 
-const roleOptions = ["系统管理员", "文控专员", "研发经理", "质量经理", "生产经理", "部门查看员"]
-  .map((value) => ({ value, label: value }));
-
 export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageProps) {
   const navigate = useNavigate();
   const params = useParams<{ definitionId?: string; id?: string }>();
@@ -58,6 +57,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === resolvedId));
   const isNew = resolvedId === "new";
   const identityUsers = useIdentityStore((state) => state.users);
+  const identityRoles = useIdentityStore((state) => state.roles);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const userOptions = useMemo(() => identityUsers
     .filter((user) => user.status === "启用" && !user.builtIn)
@@ -66,6 +66,10 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
       value: user.id,
       label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}`,
     })), [identityUsers]);
+  const roleOptions = useMemo(() => identityRoles
+    .filter((role) => role.status === "启用" && !role.builtIn)
+    .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
+    .map((role) => ({ value: role.id, label: role.name })), [identityRoles]);
   const starterGroupOptions = workflowGroups
     .filter((group) => group.status === "启用" && group.purposes.includes("发起"))
     .map((group) => ({ value: group.id, label: group.name }));
@@ -77,8 +81,6 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     .map((group) => ({ value: group.id, label: group.name }));
   const versionId = searchParams.get("versionId") ?? definition?.versions[0]?.id ?? "";
   const version = definition?.versions.find((item) => item.id === versionId);
-  const createDefinition = useProcessDefinitionStore((state) => state.createDefinition);
-  const updateVersionBasic = useProcessDefinitionStore((state) => state.updateVersionBasic);
   const initialConfig = useMemo<BasicConfigValues>(() => version?.basic ?? ({
     name: definition?.name ?? searchParams.get("name") ?? "",
     code: definition?.code ?? "保存后自动生成",
@@ -103,24 +105,28 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
   const saveVersion = async (navigateToCreated = true) => {
     const values = await form.validateFields();
     if (isNew) {
-      const createdId = createDefinition({ name: values.name, type: values.type, description: values.description });
-      const createdVersion = useProcessDefinitionStore.getState().definitions.find((item) => item.id === createdId)?.versions[0];
-      if (!createdVersion || !updateVersionBasic(createdId, createdVersion.id, { ...values, code: createdVersion.basic.code })) {
-        message.error("流程定义创建失败");
+      try {
+        const created = await flowPilotApi.definitions.create({ basic: values });
+        cacheProcessDefinition(created.definition);
+        setDirty(false);
+        setLastSavedAt("刚刚");
+        message.success("流程定义已保存，并生成正式 V1");
+        if (navigateToCreated) {
+          allowNextNavigation();
+          navigate(`/admin/processes/${created.definition.id}/basic?versionId=${created.version.id}`, { replace: true });
+        }
+        return { definitionId: created.definition.id, versionId: created.version.id };
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : "流程定义创建失败");
         return null;
       }
-      setDirty(false);
-      setLastSavedAt("刚刚");
-      message.success("流程定义已保存，并生成正式 V1");
-      if (navigateToCreated) {
-        allowNextNavigation();
-        navigate(`/admin/processes/${createdId}/basic?versionId=${createdVersion.id}`, { replace: true });
-      }
-      return { definitionId: createdId, versionId: createdVersion.id };
     }
-    const saved = updateVersionBasic(resolvedId, versionId, values);
-    if (!saved) {
-      message.error("该版本当前不可编辑，请返回版本记录确认状态");
+    try {
+      const resource = await flowPilotApi.definitions.versionResource(resolvedId, versionId);
+      const savedVersion = await flowPilotApi.definitions.saveBasic(resolvedId, versionId, values, resource.etag);
+      cacheProcessVersion(resolvedId, savedVersion);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "该版本当前不可编辑，请返回版本记录确认状态");
       return null;
     }
     setDirty(false);

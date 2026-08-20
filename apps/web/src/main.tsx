@@ -1,6 +1,10 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { readApiAccessToken, writeApiAccessToken } from "./api/client";
+import { flowPilotApi } from "./api/flowPilotApi";
+import { hydrateRemoteApplication } from "./api/remoteHydration";
+import { usePrototypeStore } from "./state/usePrototypeStore";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
@@ -11,9 +15,22 @@ const renderApp = () => ReactDOM.createRoot(document.getElementById("root")!).re
 );
 
 const bootstrap = async () => {
-  if (import.meta.env.VITE_API_MODE !== "remote") {
+  const mockApiEnabled = import.meta.env.VITE_API_MODE !== "remote"
+    && (import.meta.env.DEV || import.meta.env.VITE_ENABLE_MOCK_API === "true");
+  if (mockApiEnabled) {
     const { startMockApi } = await import("./mocks/browser");
     await startMockApi();
+  } else if (!readApiAccessToken()) {
+    usePrototypeStore.getState().logout();
+  } else {
+    try {
+      const user = await flowPilotApi.auth.me();
+      usePrototypeStore.getState().login(user.id);
+      await hydrateRemoteApplication();
+    } catch {
+      writeApiAccessToken();
+      usePrototypeStore.getState().logout();
+    }
   }
   renderApp();
 };

@@ -3,6 +3,7 @@ import type { SystemListFieldConfig, SystemListFieldKey } from "../data/listFiel
 import type { ProcessInstance } from "../data/types";
 import type { StoredDesignerField } from "./designerStorage";
 import { formatRoundLabel } from "./roundDisplay";
+import { displayDesignerChoiceValue } from "./designerOptions";
 
 export interface ProcessExcelDatasetOptions {
   definitionId: string;
@@ -52,7 +53,7 @@ const tableText = (value: unknown, field: StoredDesignerField) => {
     if (!row || typeof row !== "object") return String(scalarValue(row) ?? "");
     const values = row as Record<string, unknown>;
     const content = columns.length
-      ? columns.map((column) => `${column.label}：${scalarValue(values[column.id]) ?? ""}`).join("；")
+      ? columns.map((column) => `${column.label}：${column.type && column.type !== "text" ? displayDesignerChoiceValue(column.options, values[column.id], { omitUnknown: true }) : scalarValue(values[column.id]) ?? ""}`).join("；")
       : Object.entries(values).map(([key, item]) => `${key}：${scalarValue(item) ?? ""}`).join("；");
     return `第 ${index + 1} 行：${content}`;
   }).join("\n");
@@ -63,6 +64,9 @@ const formFieldValue = (instance: ProcessInstance, field: StoredDesignerField) =
   const value = instance.formValues?.[field.id];
   if (field.type === "table") return tableText(value, field);
   if (field.type === "richtext" && typeof value === "string") return plainText(value);
+  if (["select", "radio", "checkbox", "cascader"].includes(field.type)) {
+    return displayDesignerChoiceValue(field.options, value, { hierarchical: field.type === "cascader", omitUnknown: true }) || null;
+  }
   return scalarValue(value);
 };
 

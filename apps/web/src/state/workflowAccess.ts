@@ -24,7 +24,7 @@ export function canUserViewInstance(userId: string, instance: ProcessInstance) {
   const version = instanceVersion(instance);
   if (!version) return false;
   if (isNamedOrId(version.basic.visibleUsers, user.id, user.name)) return true;
-  if (user.roles.some((role) => version.basic.visibleRoles.includes(role))) return true;
+  if (user.roleIds?.some((roleId) => version.basic.visibleRoles.includes(roleId))) return true;
   if (version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))) return true;
   if (version.basic.closeGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))) return true;
   const approvalGroups = version.snapshot.flow.nodes
@@ -49,7 +49,7 @@ export function canUserViewDefinition(userId: string, definitionId: string) {
   return version.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))
     || version.basic.closeGroups.some((groupId) => isUserInWorkflowGroup(user.id, groupId))
     || version.basic.visibleUsers.some((value) => value === user.id || value === user.name)
-    || user.roles.some((role) => version.basic.visibleRoles.includes(role))
+    || user.roleIds?.some((roleId) => version.basic.visibleRoles.includes(roleId))
     || version.snapshot.flow.nodes.some((node) =>
       Boolean(node.data?.permissionGroup && isUserInWorkflowGroup(user.id, node.data.permissionGroup)),
     );

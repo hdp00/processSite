@@ -35,6 +35,8 @@ import {
   SettingOutlined,
   TableOutlined,
   TagsOutlined,
+  RedoOutlined,
+  UndoOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
 import {
@@ -65,6 +67,8 @@ import {
 import type { TableColumnsType, UploadFile } from "antd";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
+import { cacheProcessVersion } from "../api/entityCache";
+import { flowPilotApi } from "../api/flowPilotApi";
 import {
   ProcessWizardNextButton,
   ProcessWizardPreviousButton,
@@ -72,6 +76,7 @@ import {
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
+import { useUndoRedoHistory } from "../hooks/useUndoRedoHistory";
 import {
   cloneDefaultSystemListFields,
   type SystemListFieldConfig,
@@ -88,6 +93,17 @@ import {
   type DesignerInputPermission,
   type StoredFieldDisplayCondition,
 } from "../utils/designerStorage";
+import {
+  appendDesignerChoiceOption,
+  createDesignerChoiceOption,
+  designerChoiceOptionsToAntd,
+  flattenDesignerChoiceOptions,
+  normalizeDesignerChoiceOptions,
+  normalizeDesignerChoiceValue,
+  removeDesignerChoiceOption,
+  updateDesignerChoiceOption,
+  type DesignerChoiceOption,
+} from "../utils/designerOptions";
 import "./form-designer.css";
 
 const { Text, Title, Paragraph } = Typography;
@@ -105,13 +121,16 @@ interface TableColumnConfig {
   width: number;
   align: ColumnAlign;
   reviewEditable: boolean;
-  options?: string[];
+  options?: DesignerChoiceOption[];
 }
 
 interface AttachmentConfig {
   maxSizeMb: number;
   maxCount: number;
   inlinePdf: boolean;
+  allowedExtensions: string[];
+  excelToPdf: boolean;
+  maxPreviewPages: number;
 }
 
 interface DesignerField {
@@ -127,13 +146,10 @@ interface DesignerField {
   queryable: boolean;
   exportVisible?: boolean;
   taskVisible?: boolean;
-  taskDisplayName?: string;
-  taskOrder?: number;
-  taskWidth?: number;
   reviewEditable: boolean;
   inputStage: DesignerInputPermission;
   displayCondition?: StoredFieldDisplayCondition;
-  options?: string[];
+  options?: DesignerChoiceOption[];
   attachment?: AttachmentConfig;
   columns?: TableColumnConfig[];
 }
@@ -175,6 +191,9 @@ const displayConditionOperators = (type?: FieldType): ConditionOperator[] => typ
     ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
     : ["eq", "neq", "empty", "not-empty"];
 
+const makeChoiceOptions = (labels: string[], scope: string, hierarchical = false) =>
+  normalizeDesignerChoiceOptions(labels, scope, hierarchical);
+
 const INITIAL_FIELDS: DesignerField[] = [
   {
     id: "field-document-name",
@@ -187,9 +206,6 @@ const INITIAL_FIELDS: DesignerField[] = [
     listVisible: true,
     queryable: true,
     taskVisible: true,
-    taskDisplayName: "文件标题",
-    taskOrder: 1,
-    taskWidth: 240,
     reviewEditable: false,
     inputStage: "initiator",
   },
@@ -204,9 +220,6 @@ const INITIAL_FIELDS: DesignerField[] = [
     listVisible: true,
     queryable: true,
     taskVisible: true,
-    taskDisplayName: "文件编号",
-    taskOrder: 2,
-    taskWidth: 150,
     reviewEditable: false,
     inputStage: "initiator",
   },
@@ -221,12 +234,9 @@ const INITIAL_FIELDS: DesignerField[] = [
     listVisible: true,
     queryable: true,
     taskVisible: true,
-    taskDisplayName: "文档分类",
-    taskOrder: 3,
-    taskWidth: 180,
     reviewEditable: false,
     inputStage: "initiator",
-    options: ["质量体系/作业指导书", "质量体系/检验规范", "研发体系/设计规范", "生产体系/工艺文件"],
+    options: makeChoiceOptions(["质量体系/作业指导书", "质量体系/检验规范", "研发体系/设计规范", "生产体系/工艺文件"], "field-category", true),
   },
   {
     id: "field-document-level",
@@ -240,7 +250,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     queryable: true,
     reviewEditable: true,
     inputStage: "initiator",
-    options: ["受控文件", "内部文件", "公开文件"],
+    options: makeChoiceOptions(["受控文件", "内部文件", "公开文件"], "field-document-level"),
   },
   {
     id: "field-department",
@@ -254,7 +264,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     queryable: true,
     reviewEditable: true,
     inputStage: "initiator",
-    options: ["研发中心", "质量中心", "生产中心", "供应链中心"],
+    options: makeChoiceOptions(["研发中心", "质量中心", "生产中心", "供应链中心"], "field-departments"),
   },
   {
     id: "field-revision-type",
@@ -268,7 +278,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     queryable: true,
     reviewEditable: false,
     inputStage: "initiator",
-    options: ["首次发布", "局部修订", "全面修订"],
+    options: makeChoiceOptions(["首次发布", "局部修订", "全面修订"], "field-change-type"),
   },
   {
     id: "field-revision-note",
@@ -315,7 +325,7 @@ const INITIAL_FIELDS: DesignerField[] = [
         width: 170,
         align: "center",
         reviewEditable: true,
-        options: ["符合", "不符合"],
+        options: makeChoiceOptions(["符合", "不符合"], "field-change-table.rd-result"),
       },
       {
         id: "col-risk",
@@ -326,7 +336,7 @@ const INITIAL_FIELDS: DesignerField[] = [
         width: 140,
         align: "center",
         reviewEditable: true,
-        options: ["低", "中", "高"],
+        options: makeChoiceOptions(["低", "中", "高"], "field-change-table.quality-risk"),
       },
       {
         id: "col-corrective",
@@ -337,7 +347,7 @@ const INITIAL_FIELDS: DesignerField[] = [
         width: 170,
         align: "center",
         reviewEditable: true,
-        options: ["需要跟进"],
+        options: makeChoiceOptions(["需要跟进"], "field-change-table.production-follow"),
       },
     ],
   },
@@ -353,7 +363,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     queryable: false,
     reviewEditable: false,
     inputStage: "initiator",
-    attachment: { maxSizeMb: 100, maxCount: 1, inlinePdf: true },
+    attachment: { maxSizeMb: 100, maxCount: 1, inlinePdf: true, allowedExtensions: ["pdf"], excelToPdf: false, maxPreviewPages: 1 },
   },
 ];
 
@@ -370,24 +380,23 @@ const createField = (type: FieldType): DesignerField => {
     listVisible: false,
     queryable: false,
     taskVisible: false,
-    taskDisplayName: `新建${typeLabel[type]}`,
-    taskOrder: 1,
-    taskWidth: 150,
     reviewEditable: false,
     inputStage: "initiator",
   };
 
   if (["select", "radio", "checkbox"].includes(type)) {
-    base.options = ["选项一", "选项二", "选项三"];
+    base.options = makeChoiceOptions(["选项一", "选项二", "选项三"], base.id);
   }
   if (type === "cascader") {
-    base.options = ["一级选项/二级选项 A", "一级选项/二级选项 B"];
+    base.options = makeChoiceOptions(["一级选项/二级选项 A", "一级选项/二级选项 B"], base.id, true);
     base.defaultValue = [];
   }
   if (type === "attachment") {
-    base.attachment = { maxSizeMb: 100, maxCount: 1, inlinePdf: true };
+    base.attachment = { maxSizeMb: 100, maxCount: 1, inlinePdf: true, allowedExtensions: ["pdf"], excelToPdf: false, maxPreviewPages: 1 };
   }
   if (type === "table") {
+    const conclusionColumnId = makeId("col");
+    const conclusionOptions = makeChoiceOptions(["符合", "不符合"], `${base.id}.${conclusionColumnId}`);
     base.reviewEditable = false;
     base.columns = [
       {
@@ -401,48 +410,19 @@ const createField = (type: FieldType): DesignerField => {
         reviewEditable: false,
       },
       {
-        id: makeId("col"),
+        id: conclusionColumnId,
         label: "结论",
         type: "select",
         required: true,
-        defaultValue: "符合",
+        defaultValue: conclusionOptions[0]?.id ?? "",
         width: 150,
         align: "center",
         reviewEditable: true,
-        options: ["符合", "不符合"],
+        options: conclusionOptions,
       },
     ];
   }
   return base;
-};
-
-interface CascaderOption {
-  value: string;
-  label: string;
-  children?: CascaderOption[];
-}
-
-const buildCascaderOptions = (paths: string[] = []): CascaderOption[] => {
-  const roots: CascaderOption[] = [];
-  paths.forEach((path) => {
-    const levels = path.split("/").map((item) => item.trim()).filter(Boolean);
-    let cursor = roots;
-    levels.forEach((level) => {
-      let option = cursor.find((item) => item.value === level);
-      if (!option) {
-        option = { value: level, label: level, children: [] };
-        cursor.push(option);
-      }
-      cursor = option.children ?? [];
-      option.children = cursor;
-    });
-  });
-  const removeEmptyChildren = (items: CascaderOption[]): CascaderOption[] =>
-    items.map((item) => ({
-      ...item,
-      children: item.children?.length ? removeEmptyChildren(item.children) : undefined,
-    }));
-  return removeEmptyChildren(roots);
 };
 
 const fieldDefaultText = (field: DesignerField) =>
@@ -457,7 +437,7 @@ const renderTableCell = (column: TableColumnConfig, interactive: boolean, rowInd
         size="small"
         disabled={!interactive}
         defaultValue={typeof column.defaultValue === "string" ? column.defaultValue : undefined}
-        options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+        options={designerChoiceOptionsToAntd(column.options)}
       />
     );
   }
@@ -467,7 +447,7 @@ const renderTableCell = (column: TableColumnConfig, interactive: boolean, rowInd
         key={key}
         disabled={!interactive}
         defaultValue={Array.isArray(column.defaultValue) ? column.defaultValue : []}
-        options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+        options={designerChoiceOptionsToAntd(column.options)}
       />
     );
   }
@@ -478,7 +458,7 @@ const renderTableCell = (column: TableColumnConfig, interactive: boolean, rowInd
         size="small"
         disabled={!interactive}
         defaultValue={typeof column.defaultValue === "string" ? column.defaultValue : undefined}
-        options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+        options={designerChoiceOptionsToAntd(column.options)}
         style={{ width: "100%" }}
       />
     );
@@ -522,7 +502,7 @@ const FieldControl = ({
         value={value === undefined ? fieldDefaultText(field) || undefined : value}
         onChange={(nextValue) => onChange?.(nextValue)}
         placeholder={field.placeholder}
-        options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+        options={designerChoiceOptionsToAntd(field.options)}
         style={{ width: "100%" }}
       />
     );
@@ -533,7 +513,7 @@ const FieldControl = ({
         disabled={!interactive}
         value={Array.isArray(value) ? value : Array.isArray(field.defaultValue) ? field.defaultValue : undefined}
         onChange={(nextValue) => onChange?.(nextValue)}
-        options={buildCascaderOptions(field.options)}
+        options={designerChoiceOptionsToAntd(field.options)}
         placeholder={field.placeholder}
         style={{ width: "100%" }}
       />
@@ -545,7 +525,7 @@ const FieldControl = ({
         disabled={!interactive}
         value={value === undefined ? fieldDefaultText(field) || undefined : value}
         onChange={(event) => onChange?.(event.target.value)}
-        options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+        options={designerChoiceOptionsToAntd(field.options)}
       />
     );
   }
@@ -555,7 +535,7 @@ const FieldControl = ({
         disabled={!interactive}
         value={Array.isArray(value) ? value : Array.isArray(field.defaultValue) ? field.defaultValue : []}
         onChange={(nextValue) => onChange?.(nextValue)}
-        options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+        options={designerChoiceOptionsToAntd(field.options)}
       />
     );
   }
@@ -643,17 +623,81 @@ interface SortableFieldProps {
   onDelete: () => void;
 }
 
-const normalizeInlineOptions = (options: string[]) => Array.from(new Set(options.map((item) => item.trim()).filter(Boolean)));
+interface ChoiceOptionsEditorProps {
+  options: DesignerChoiceOption[];
+  hierarchical?: boolean;
+  compact?: boolean;
+  onChange: (options: DesignerChoiceOption[]) => void;
+}
+
+const ChoiceOptionsEditor = ({ options, hierarchical, compact, onChange }: ChoiceOptionsEditorProps) => {
+  const renderOptions = (items: DesignerChoiceOption[], depth = 0): ReactNode => items.map((option) => (
+    <div className="fd-choice-option-node" key={option.id} style={{ marginLeft: depth * 16 }}>
+      <div className="fd-choice-option-row">
+        <Input
+          aria-label="选项名称"
+          size={compact ? "small" : "middle"}
+          value={option.label}
+          maxLength={60}
+          onChange={(event) => onChange(updateDesignerChoiceOption(options, option.id, { label: event.target.value }))}
+        />
+        {hierarchical ? <Button
+          type="text"
+          size="small"
+          icon={<PlusOutlined />}
+          aria-label={`在${option.label}下新增子项`}
+          onClick={() => onChange(appendDesignerChoiceOption(options, "新建子项", option.id))}
+        /> : null}
+        <Button
+          type="text"
+          size="small"
+          danger
+          icon={<DeleteOutlined />}
+          aria-label={`删除选项${option.label}`}
+          onClick={() => onChange(removeDesignerChoiceOption(options, option.id))}
+        />
+      </div>
+      {option.children?.length ? renderOptions(option.children, depth + 1) : null}
+    </div>
+  ));
+
+  return <div className={`fd-choice-options-editor${compact ? " is-compact" : ""}`}>
+    {options.length ? renderOptions(options) : <Text type="secondary">暂无选项</Text>}
+    <Button
+      type="dashed"
+      size="small"
+      block
+      icon={<PlusOutlined />}
+      onClick={() => onChange([...options, createDesignerChoiceOption(hierarchical ? "新建一级选项" : "新建选项")])}
+    >{hierarchical ? "新增一级选项" : "新增选项"}</Button>
+  </div>;
+};
+
+const sanitizeFieldDefault = (field: DesignerField, options: DesignerChoiceOption[]) => {
+  const validIds = new Set(flattenDesignerChoiceOptions(options).map((option) => option.id));
+  if (field.type === "checkbox") {
+    return Array.isArray(field.defaultValue) ? field.defaultValue.filter((value) => validIds.has(value)) : [];
+  }
+  if (field.type === "cascader") {
+    return Array.isArray(field.defaultValue) && field.defaultValue.every((value) => validIds.has(value))
+      ? field.defaultValue
+      : [];
+  }
+  return typeof field.defaultValue === "string" && validIds.has(field.defaultValue) ? field.defaultValue : "";
+};
+
+const sanitizeChoiceDefault = (
+  type: TableColumnType | "cascader",
+  value: string | string[],
+  options: DesignerChoiceOption[],
+) => type === "text" ? value : sanitizeFieldDefault({ type, defaultValue: value } as DesignerField, options);
 
 const SortableField = ({ field, selected, locked, onSelect, onPatch, onDelete }: SortableFieldProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: field.id });
-  const updateOptions = (source: string[]) => {
-    const options = normalizeInlineOptions(source);
-    const defaultValue = Array.isArray(field.defaultValue)
-      ? field.defaultValue.filter((item) => options.includes(item))
-      : options.includes(field.defaultValue) ? field.defaultValue : "";
-    onPatch({ options, defaultValue });
-  };
+  const updateOptions = (options: DesignerChoiceOption[]) => onPatch({
+    options,
+    defaultValue: sanitizeFieldDefault(field, options),
+  });
   return (
     <div
       ref={setNodeRef}
@@ -718,16 +762,7 @@ const SortableField = ({ field, selected, locked, onSelect, onPatch, onDelete }:
           {field.options ? (
             <div className="fd-inline-options">
               <Text type="secondary">选项</Text>
-              <Select
-                aria-label="字段选项"
-                mode="tags"
-                value={field.options}
-                open={false}
-                tokenSeparators={[",", "，"]}
-                placeholder={field.type === "cascader" ? "输入路径并回车，例如 一级/二级" : "输入选项并回车"}
-                onFocus={onSelect}
-                onChange={updateOptions}
-              />
+              <ChoiceOptionsEditor options={field.options} hierarchical={field.type === "cascader"} compact onChange={updateOptions} />
             </div>
           ) : null}
           <Space size={18} wrap>
@@ -756,7 +791,6 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   const navigate = useNavigate();
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const version = definition?.versions.find((item) => item.id === versionId);
-  const updateVersionFormSnapshot = useProcessDefinitionStore((state) => state.updateVersionFormSnapshot);
   const workflowName = version?.basic.name ?? definition?.name ?? "流程";
   const [messageApi, messageHolder] = message.useMessage();
   const fallbackFields = useMemo(
@@ -772,6 +806,9 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
         maxSizeMb: field.attachment?.maxSizeMb ?? 100,
         maxCount: (field.attachment?.inlinePdf ?? true) ? 1 : field.attachment?.maxCount ?? 20,
         inlinePdf: field.attachment?.inlinePdf ?? true,
+        allowedExtensions: field.attachment?.allowedExtensions ?? ((field.attachment?.inlinePdf ?? true) ? ["pdf"] : []),
+        excelToPdf: field.attachment?.excelToPdf ?? false,
+        maxPreviewPages: field.attachment?.maxPreviewPages ?? 1,
       } : field.attachment,
     })) as DesignerField[],
     [version],
@@ -800,6 +837,21 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   const [saveState, setSaveState] = useState<"dirty" | "saved">("saved");
   const skipDirtyEffect = useRef(true);
   const [savedAt, setSavedAt] = useState(initialDraft.savedAt ?? "刚刚");
+  const designerHistoryValue = useMemo(
+    () => ({ fields, systemListFields }),
+    [fields, systemListFields],
+  );
+  const { canUndo, canRedo, undo, redo } = useUndoRedoHistory(
+    designerHistoryValue,
+    (snapshot) => {
+      setFields(snapshot.fields);
+      setSystemListFields(snapshot.systemListFields);
+      setSelectedId((current) => snapshot.fields.some((field) => field.id === current)
+        ? current
+        : snapshot.fields[0]?.id ?? "");
+    },
+    { historyKey: `${definitionId}:${versionId}:form` },
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -815,7 +867,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
       value: field.id,
       label: field.label,
       type: field.type,
-      choiceOptions: field.options,
+      choiceOptions: flattenDesignerChoiceOptions(field.options),
     }));
   const selectedDisplayCondition = normalizeStoredCondition(selectedField?.displayCondition);
   const previewFields = useMemo(
@@ -846,6 +898,25 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     }
     setSaveState("dirty");
   }, [fields, systemListFields]);
+
+  useEffect(() => {
+    const handleHistoryShortcut = (event: KeyboardEvent) => {
+      if (previewOpen || !(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && event.shiftKey) {
+        event.preventDefault();
+        redo();
+      } else if (key === "z") {
+        event.preventDefault();
+        undo();
+      } else if (key === "y") {
+        event.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", handleHistoryShortcut);
+    return () => window.removeEventListener("keydown", handleHistoryShortcut);
+  }, [previewOpen, redo, undo]);
 
   const updateSystemListField = (
     key: SystemListFieldConfig["key"],
@@ -930,16 +1001,19 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     });
   };
 
-  const saveVersion = () => {
+  const saveVersion = async () => {
     const time = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
     skipDirtyEffect.current = true;
     setSavedAt(time);
-    const saved = updateVersionFormSnapshot(definitionId, versionId, {
-      fields: ensureProcessTitleField(fields),
-      savedAt: time,
-    }, systemListFields);
-    if (!saved) {
-      messageApi.error("当前版本不可编辑，请返回版本记录确认发布状态和实例数量");
+    try {
+      const resource = await flowPilotApi.definitions.versionResource(definitionId, versionId);
+      const saved = await flowPilotApi.definitions.saveFormDesigner(definitionId, versionId, {
+        form: { fields: ensureProcessTitleField(fields), savedAt: time },
+        systemFields: systemListFields,
+      }, resource.etag);
+      cacheProcessVersion(definitionId, saved.version);
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : "当前版本不可编辑，请返回版本记录确认发布状态和实例数量");
       return false;
     }
     setSaveState("saved");
@@ -954,13 +1028,13 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     description: "可以先保存表单和列表字段配置再离开，也可以放弃本次修改。",
   });
 
-  const goPrevious = () => {
-    if (saveState === "dirty" && !saveVersion()) return;
+  const goPrevious = async () => {
+    if (saveState === "dirty" && !await saveVersion()) return;
     allowNextNavigation();
     navigate(`/admin/processes/${definitionId}/basic?versionId=${versionId}`);
   };
 
-  const goNext = () => {
+  const goNext = async () => {
     const invalidField = fields.find((field) => !field.label.trim());
     if (invalidField) {
       setSelectedId(invalidField.id);
@@ -968,7 +1042,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
       messageApi.error("存在未命名字段，请补充后继续");
       return;
     }
-    if (saveState === "dirty" && !saveVersion()) return;
+    if (saveState === "dirty" && !await saveVersion()) return;
     allowNextNavigation();
     navigate(definition?.type === "free"
       ? `/admin/processes/${definitionId}/publish?versionId=${versionId}`
@@ -981,7 +1055,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
         <Select
           mode="multiple"
           value={Array.isArray(field.defaultValue) ? field.defaultValue : []}
-          options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+          options={designerChoiceOptionsToAntd(field.options)}
           onChange={(value) => updateField({ defaultValue: value })}
           placeholder="请选择默认项"
         />
@@ -991,7 +1065,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
       return (
         <Cascader
           value={Array.isArray(field.defaultValue) ? field.defaultValue : undefined}
-          options={buildCascaderOptions(field.options)}
+          options={designerChoiceOptionsToAntd(field.options)}
           onChange={(value) => updateField({ defaultValue: value.map(String) })}
           placeholder="请选择默认路径"
         />
@@ -1002,7 +1076,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
         <Select
           allowClear
           value={typeof field.defaultValue === "string" && field.defaultValue ? field.defaultValue : undefined}
-          options={(field.options ?? []).map((item) => ({ label: item, value: item }))}
+          options={designerChoiceOptionsToAntd(field.options)}
           onChange={(value) => updateField({ defaultValue: value ?? "" })}
           placeholder="请选择默认值"
         />
@@ -1048,6 +1122,14 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
             <span>{saveState === "dirty" ? "有未保存修改" : `版本已保存 · ${savedAt}`}</span>
           </div>
           <ProcessWizardPreviousButton step="基本信息" onClick={goPrevious} />
+          <Space.Compact>
+            <Tooltip title="撤销（Ctrl+Z）">
+              <Button aria-label="撤销" disabled={!canUndo} icon={<UndoOutlined />} onClick={undo} />
+            </Tooltip>
+            <Tooltip title="重做（Ctrl+Shift+Z / Ctrl+Y）">
+              <Button aria-label="重做" disabled={!canRedo} icon={<RedoOutlined />} onClick={redo} />
+            </Tooltip>
+          </Space.Compact>
           <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>预览</Button>
           <Button icon={<SaveOutlined />} onClick={saveVersion}>保存</Button>
           <ProcessWizardNextButton step={definition?.type === "free" ? "发布" : "流程设计"} onClick={goNext} />
@@ -1190,13 +1272,14 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                 {selectedField.options ? (
                   <div className="fd-property-section">
                     <div className="fd-property-section__title">选项设置</div>
-                    <Form.Item label={selectedField.type === "cascader" ? "选项路径（使用 / 分级）" : "可选项"}>
-                      <Select
-                        mode="tags"
-                        value={selectedField.options}
-                        onChange={(value) => updateField({ options: value })}
-                        tokenSeparators={[","]}
-                        open={false}
+                    <Form.Item label={selectedField.type === "cascader" ? "多级选项" : "可选项"}>
+                      <ChoiceOptionsEditor
+                        options={selectedField.options}
+                        hierarchical={selectedField.type === "cascader"}
+                        onChange={(options) => updateField({
+                          options,
+                          defaultValue: sanitizeFieldDefault(selectedField, options),
+                        })}
                       />
                     </Form.Item>
                     <Form.Item label="默认值">{renderDefaultValueEditor(selectedField)}</Form.Item>
@@ -1251,6 +1334,21 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                         />
                       </Form.Item>
                     </div>
+                    <Form.Item label="允许的扩展名" extra="不填写表示允许除危险类型外的常见业务文件；无需输入点号。">
+                      <Select
+                        mode="tags"
+                        tokenSeparators={[",", "，", " "]}
+                        placeholder="例如 pdf、docx、xlsx"
+                        value={selectedField.attachment?.allowedExtensions ?? []}
+                        onChange={(values) => updateField({
+                          attachment: {
+                            ...selectedField.attachment!,
+                            allowedExtensions: [...new Set(values.map((value) => value.trim().replace(/^\./, "").toLowerCase()).filter(Boolean))],
+                          },
+                        })}
+                        options={["pdf", "docx", "xlsx", "xls", "png", "jpg", "zip"].map((value) => ({ value }))}
+                      />
+                    </Form.Item>
                     <div className="fd-switch-row">
                       <div>
                         <Text strong>PDF 页面内嵌展示</Text>
@@ -1263,10 +1361,46 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                             maxSizeMb: selectedField.attachment?.maxSizeMb ?? 100,
                             maxCount: checked ? 1 : selectedField.attachment?.maxCount ?? 20,
                             inlinePdf: checked,
+                            allowedExtensions: selectedField.attachment?.allowedExtensions ?? (checked ? ["pdf"] : []),
+                            excelToPdf: selectedField.attachment?.excelToPdf ?? false,
+                            maxPreviewPages: selectedField.attachment?.maxPreviewPages ?? 1,
                           },
                         })}
                       />
                     </div>
+                    <div className="fd-switch-row">
+                      <div>
+                        <Text strong>Excel 转 PDF 后展示</Text>
+                        <Text type="secondary">上传 xls / xlsx 后由服务端转换；转换完成后不保留原始 Excel。</Text>
+                      </div>
+                      <Switch
+                        disabled={!(selectedField.attachment?.inlinePdf ?? true)}
+                        checked={Boolean(selectedField.attachment?.excelToPdf)}
+                        onChange={(excelToPdf) => updateField({
+                          attachment: {
+                            ...selectedField.attachment!,
+                            inlinePdf: true,
+                            maxCount: 1,
+                            excelToPdf,
+                            maxPreviewPages: selectedField.attachment?.maxPreviewPages ?? 1,
+                            allowedExtensions: excelToPdf
+                              ? [...new Set([...(selectedField.attachment?.allowedExtensions ?? []), "pdf", "xls", "xlsx"])]
+                              : selectedField.attachment?.allowedExtensions ?? ["pdf"],
+                          },
+                        })}
+                      />
+                    </div>
+                    {selectedField.attachment?.excelToPdf ? (
+                      <Form.Item label="转换最大页数" extra="少于此页数时显示实际页数，超过时只生成设定页数。">
+                        <InputNumber
+                          min={1}
+                          max={50}
+                          addonAfter="页"
+                          value={selectedField.attachment?.maxPreviewPages ?? 1}
+                          onChange={(value) => updateField({ attachment: { ...selectedField.attachment!, maxPreviewPages: value ?? 1 } })}
+                        />
+                      </Form.Item>
+                    ) : null}
                     <Alert
                       type="warning"
                       showIcon
@@ -1314,7 +1448,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                               }))}
                               onChange={(value: TableColumnType) => updateColumn(column.id, {
                                 type: value,
-                                options: value === "text" ? undefined : column.options ?? ["选项一", "选项二"],
+                                options: value === "text" ? undefined : column.options ?? makeChoiceOptions(["选项一", "选项二"], `${selectedField.id}.${column.id}`),
                                 defaultValue: value === "checkbox" ? [] : "",
                               })}
                             />
@@ -1331,11 +1465,12 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                         </div>
                         {column.type !== "text" ? (
                           <Form.Item label="可选项">
-                            <Select
-                              mode="tags"
-                              open={false}
-                              value={column.options}
-                              onChange={(value) => updateColumn(column.id, { options: value })}
+                            <ChoiceOptionsEditor
+                              options={column.options ?? []}
+                              onChange={(options) => updateColumn(column.id, {
+                                options,
+                                defaultValue: sanitizeChoiceDefault(column.type, column.defaultValue, options),
+                              })}
                             />
                           </Form.Item>
                         ) : null}
@@ -1344,7 +1479,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                             <Select
                               mode="multiple"
                               value={Array.isArray(column.defaultValue) ? column.defaultValue : []}
-                              options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+                              options={designerChoiceOptionsToAntd(column.options)}
                               onChange={(value) => updateColumn(column.id, { defaultValue: value })}
                               placeholder="可选"
                             />
@@ -1358,7 +1493,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                             <Select
                               allowClear
                               value={typeof column.defaultValue === "string" && column.defaultValue ? column.defaultValue : undefined}
-                              options={(column.options ?? []).map((item) => ({ label: item, value: item }))}
+                              options={designerChoiceOptionsToAntd(column.options)}
                               onChange={(value) => updateColumn(column.id, { defaultValue: value ?? "" })}
                               placeholder="可选"
                             />
@@ -1403,7 +1538,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                               id: makeId("display-condition"),
                               fieldId: displayConditionFieldOptions[0]?.value ?? "",
                               operator: "eq",
-                              value: displayConditionFieldOptions[0]?.choiceOptions?.[0] ?? "",
+                              value: displayConditionFieldOptions[0]?.choiceOptions?.[0]?.id ?? "",
                             }],
                           } : undefined,
                         })}
@@ -1445,7 +1580,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                                   options={displayConditionFieldOptions}
                                   onChange={(fieldId) => {
                                     const nextField = displayConditionFieldOptions.find((field) => field.value === fieldId);
-                                    updateRule({ fieldId, operator: "eq", value: nextField?.choiceOptions?.[0] ?? "" });
+                                    updateRule({ fieldId, operator: "eq", value: nextField?.choiceOptions?.[0]?.id ?? "" });
                                   }}
                                 />
                                 <div>
@@ -1459,7 +1594,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                                       <Select
                                         value={typeof rule.value === "string" ? rule.value || undefined : undefined}
                                         placeholder="选择比较值"
-                                        options={sourceField.choiceOptions.map((value) => ({ value, label: value }))}
+                                        options={sourceField.choiceOptions.map((option) => ({ value: option.id, label: option.label }))}
                                         onChange={(value) => updateRule({ value })}
                                       />
                                     ) : (
@@ -1500,7 +1635,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                                 id: makeId("display-condition"),
                                 fieldId: displayConditionFieldOptions[0]?.value ?? "",
                                 operator: "eq",
-                                value: displayConditionFieldOptions[0]?.choiceOptions?.[0] ?? "",
+                                value: displayConditionFieldOptions[0]?.choiceOptions?.[0]?.id ?? "",
                               }],
                             },
                           })}
@@ -1553,41 +1688,9 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                     <Switch checked={selectedField.exportVisible ?? selectedField.listVisible} onChange={(checked) => updateField({ exportVisible: checked })} />
                   </div>
                   <div className="fd-switch-row">
-                    <div><Text strong>在任务中心显示</Text><Text type="secondary">作为待办的流程关键信息</Text></div>
+                    <div><Text strong>在任务中心显示</Text><Text type="secondary">列名使用字段名称，并按表单顺序自动排列</Text></div>
                     <Switch disabled={selectedField.type === "richtext"} checked={Boolean(selectedField.taskVisible)} onChange={(checked) => updateField({ taskVisible: checked })} />
                   </div>
-                  {selectedField.taskVisible && !isTitleField && (
-                    <div className="fd-task-display-config">
-                      <Form.Item label="任务列表显示名称">
-                        <Input
-                          value={selectedField.taskDisplayName ?? selectedField.label}
-                          onChange={(event) => updateField({ taskDisplayName: event.target.value })}
-                          placeholder={selectedField.label}
-                        />
-                      </Form.Item>
-                      <div className="fd-task-display-config__grid">
-                        <Form.Item label="显示顺序">
-                          <InputNumber
-                            min={1}
-                            max={99}
-                            value={selectedField.taskOrder ?? 1}
-                            onChange={(value) => updateField({ taskOrder: value ?? 1 })}
-                          />
-                        </Form.Item>
-                        <Form.Item label="展开列宽">
-                          <InputNumber
-                            min={100}
-                            max={360}
-                            step={10}
-                            addonAfter="px"
-                            value={selectedField.taskWidth ?? 150}
-                            onChange={(value) => updateField({ taskWidth: value ?? 150 })}
-                          />
-                        </Form.Item>
-                      </div>
-                      <Text type="secondary">选择单个流程时作为独立表格列显示；列较多时任务列表支持横向滚动。</Text>
-                    </div>
-                  )}
                 </div>
               </Form>
             ) : propertyMode === "field" ? (

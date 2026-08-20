@@ -6,8 +6,9 @@ import type { ReviewerProgress, WorkflowTask } from "../data/types";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
-import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../utils/roundDisplay";
-import { isDesignerFieldVisible } from "../utils/designerStorage";
+import { formatRoundLabel } from "../utils/roundDisplay";
+import { isDesignerFieldVisible, type StoredDesignerField, type StoredDesignerTableColumn } from "../utils/designerStorage";
+import { displayDesignerChoiceValue } from "../utils/designerOptions";
 
 const reviewStatusClass: Record<ReviewerProgress["status"], string> = {
   待审核: "pending",
@@ -34,6 +35,16 @@ const printableValue = (value: unknown): string => {
   return value && typeof value === "object" ? "已填写" : "—";
 };
 
+const printableFieldValue = (field: StoredDesignerField, value: unknown) =>
+  ["select", "radio", "checkbox", "cascader"].includes(field.type)
+    ? displayDesignerChoiceValue(field.options, value, { hierarchical: field.type === "cascader" }) || "—"
+    : printableValue(value);
+
+const printableColumnValue = (column: StoredDesignerTableColumn, value: unknown) =>
+  column.type && column.type !== "text"
+    ? displayDesignerChoiceValue(column.options, value) || "—"
+    : printableValue(value);
+
 export function ProcessPrintPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -57,12 +68,17 @@ export function ProcessPrintPage() {
   const tableFields = visibleFields.filter((field) => field.type === "table");
   const attachmentNames = instance.attachmentNames?.length ? instance.attachmentNames : instance.pdfName !== "无附件" ? [instance.pdfName] : [];
   const instanceTasks = tasks.filter((task) => task.instanceId === instance.id);
-  const sortedInstanceTasks = [...instanceTasks].sort((left, right) => left.round - right.round || left.createdAt.localeCompare(right.createdAt, "zh-CN") || left.nodeName.localeCompare(right.nodeName, "zh-CN"));
-  const reviewedInstanceTasks = sortedInstanceTasks.filter((task) =>
-    task.status === "已完成" &&
-    Boolean(task.action) &&
-    Boolean(task.completedAt || task.completedById || task.completedByName),
-  );
+  const reviewedInstanceTasks = instanceTasks
+    .filter((task) =>
+      task.status === "已完成" &&
+      Boolean(task.action) &&
+      Boolean(task.completedAt || task.completedById || task.completedByName),
+    )
+    .sort((left, right) =>
+      (left.completedAt ?? "9999-12-31 23:59").localeCompare(right.completedAt ?? "9999-12-31 23:59", "zh-CN")
+      || left.round - right.round
+      || left.nodeName.localeCompare(right.nodeName, "zh-CN"),
+    );
   const modifiedFieldLabelsByTaskId = new Map(instanceTasks.map((task) => {
     const labels = [
       ...(task.submittedFieldChanges ?? []),
@@ -118,7 +134,7 @@ export function ProcessPrintPage() {
           <table className="print-form-table">
             <tbody>
               {printableFields.length ? printableFields.map((field) => (
-                <tr key={field.id}><th>{field.label}</th><td colSpan={3} className="print-multiline">{printableValue(instance.formValues?.[field.id])}</td></tr>
+                <tr key={field.id}><th>{field.label}</th><td colSpan={3} className="print-multiline">{printableFieldValue(field, instance.formValues?.[field.id])}</td></tr>
               )) : (
                 <><tr><th>标题</th><td colSpan={3}>{instance.title}</td></tr><tr><th>说明</th><td colSpan={3}>{instance.description}</td></tr></>
               )}
@@ -126,7 +142,7 @@ export function ProcessPrintPage() {
           </table>
           {tableFields.map((field) => {
             const rows = Array.isArray(instance.formValues?.[field.id]) ? instance.formValues?.[field.id] as Array<Record<string, unknown>> : [];
-            return <div key={field.id}><h3>{field.label}</h3><table className="print-data-table"><thead><tr>{field.columns?.map((column) => <th key={column.id}>{column.label}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row, index) => <tr key={String(row.key ?? index)}>{field.columns?.map((column) => <td key={column.id}>{printableValue(row[column.id])}</td>)}</tr>) : <tr><td colSpan={Math.max(field.columns?.length ?? 1, 1)}>—</td></tr>}</tbody></table></div>;
+            return <div key={field.id}><h3>{field.label}</h3><table className="print-data-table"><thead><tr>{field.columns?.map((column) => <th key={column.id}>{column.label}</th>)}</tr></thead><tbody>{rows.length ? rows.map((row, index) => <tr key={String(row.key ?? index)}>{field.columns?.map((column) => <td key={column.id}>{printableColumnValue(column, row[column.id])}</td>)}</tr>) : <tr><td colSpan={Math.max(field.columns?.length ?? 1, 1)}>—</td></tr>}</tbody></table></div>;
           })}
         </section>
 
@@ -168,26 +184,6 @@ export function ProcessPrintPage() {
             </table>
           </section>
         ) : null}
-
-        <section className="print-section">
-          <h2>流程流转记录</h2>
-          <ol className="print-history-list">
-            <li><time>{instance.createdAt}</time><div><strong>流程发起</strong><p>{instance.initiator} 发起流程，附件：{attachmentNames.join("、") || "无"}</p></div></li>
-            {Array.from({ length: instance.round }, (_, index) => index + 1).flatMap((round) => {
-              const resubmission = instance.resubmissions?.find((record) => record.round === round);
-              const roundTasks = sortedInstanceTasks.filter((task) => task.round === round && task.status === "已完成");
-              return [
-                ...(resubmission ? [<li key={`history-resubmission-${round}`}><time>{resubmission.submittedAt}</time><div><strong>{formatRoundStartLabel(round)}</strong><p>{resubmission.submittedByName} 重新提交{resubmission.modifiedFields.length ? `，修改字段：${resubmission.modifiedFields.map((field) => field.label).join("、")}` : ""}</p></div></li>] : []),
-                ...roundTasks.map((task) => {
-                  const status = taskReviewStatus(task);
-                  return <li key={`history-${task.id}`}><time>{task.completedAt}</time><div><strong>{prefixWithRound(task.round, `${task.nodeName} · ${status}`)}</strong><p>{task.completedByName ?? "未知处理人"}：{task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写审核意见")}</p></div></li>;
-                }),
-              ];
-            })}
-            {instance.status === "已完成" && <li><time>{instance.updatedAt}</time><div><strong>流程完成</strong><p>流程已满足完成条件。</p></div></li>}
-            {instance.status === "已关闭" && <li><time>{instance.updatedAt}</time><div><strong>流程关闭</strong><p>授权人员关闭流程，未完成待办已取消。</p></div></li>}
-          </ol>
-        </section>
 
         <footer className="process-print-footer">
           <span>打印时间：{new Date().toLocaleString("zh-CN", { hour12: false })}</span>

@@ -167,6 +167,12 @@ describe("流程定义完整生命周期", () => {
     expect(imported.instanceCount).toBe(0);
     expect(imported.versions).toHaveLength(source.versions.length);
     expect(imported.versions.every((version) => version.instanceCount === 0)).toBe(true);
+    const sharedFieldIds = imported.versions.map((version) =>
+      version.snapshot.form.fields.find((field) => field.label === "历史字段 2")?.id,
+    );
+    expect(sharedFieldIds.every(Boolean)).toBe(true);
+    expect(new Set(sharedFieldIds).size).toBe(1);
+    expect(imported.versions[0].basic.visibleRoles).toEqual(source.versions[0].basic.visibleRoles);
   });
 
   it("发布、实例引用和删除保护符合版本规则", () => {
@@ -199,6 +205,80 @@ describe("流程定义完整生命周期", () => {
 });
 
 describe("固定审批流程完整生命周期", () => {
+  it("旧演示实例会按锁定版本统一审核记录与待办节点标识", () => {
+    const instance = instanceById("proc-42")!;
+    const version = definitionById("pdf-review")?.versions.find((item) => item.id === instance.versionId)!;
+    const approvalNodeIds = version.snapshot.flow.nodes
+      .filter((node) => node.data?.kind === "approval")
+      .map((node) => node.id);
+    const qaNode = version.snapshot.flow.nodes.find((node) => node.data?.permissionGroup === "PDF审核_质量_流程权限组")!;
+    const qaTask = prototypeModule.usePrototypeStore.getState().tasks.find((task) =>
+      task.instanceId === instance.id && task.nodeId === qaNode.id && task.status === "待处理",
+    )!;
+
+    expect(instance.reviewers.map((reviewer) => reviewer.key)).toEqual(approvalNodeIds);
+    expect(qaTask).toMatchObject({ permissionGroupId: "PDF审核_质量_流程权限组", defaultAssigneeId: "lina" });
+    setActor("lina");
+    expect(prototypeModule.usePrototypeStore.getState().reviewInstance(instance.id, "pass", "质量审核通过", undefined, undefined, qaTask.id)).toBe(true);
+    expect(instanceById(instance.id)?.reviewers.find((reviewer) => reviewer.key === qaNode.id)).toMatchObject({
+      status: "已通过",
+      name: "林晓",
+    });
+  });
+
+  it("旧持久化数据迁移时同步修复审核记录、待办和默认责任人", () => {
+    const current = instanceById("proc-42")!;
+    const legacyKeyByGroup = new Map([
+      ["PDF审核_研发_流程权限组", "rd"],
+      ["PDF审核_质量_流程权限组", "qa"],
+      ["PDF审核_生产_流程权限组", "production"],
+    ]);
+    const legacy = {
+      ...structuredClone(current),
+      reviewers: current.reviewers.map((reviewer) => ({
+        ...reviewer,
+        key: legacyKeyByGroup.get(reviewer.group) ?? reviewer.key,
+      })),
+    };
+    const qualityTask = prototypeModule.usePrototypeStore.getState().tasks.find((task) =>
+      task.instanceId === current.id && task.permissionGroupId === "PDF审核_质量_流程权限组",
+    )!;
+    const migrated = prototypeModule.normalizePrototypeRuntimeData([legacy], [{
+      ...qualityTask,
+      nodeId: "qa",
+      nodeName: "质量审核",
+      defaultAssigneeId: "current-user",
+    }]);
+    const version = definitionById("pdf-review")?.versions.find((item) => item.id === current.versionId)!;
+    const qaNode = version.snapshot.flow.nodes.find((node) => node.data?.permissionGroup === "PDF审核_质量_流程权限组")!;
+
+    expect(migrated.instances[0].reviewers.some((reviewer) => reviewer.key === "qa")).toBe(false);
+    expect(migrated.instances[0].reviewers.some((reviewer) => reviewer.key === qaNode.id)).toBe(true);
+    expect(migrated.tasks.find((task) => task.nodeId === qaNode.id)).toMatchObject({
+      permissionGroupId: "PDF审核_质量_流程权限组",
+      defaultAssigneeId: "lina",
+    });
+  });
+
+  it("无当前发布版本的历史测试报告仍能按锁定的完整版本处理待办", () => {
+    const definition = definitionById("test-report-review")!;
+    const instance = instanceById("report-12")!;
+    const lockedVersion = definition.versions.find((version) => version.id === instance.versionId)!;
+    const rdNode = lockedVersion.snapshot.flow.nodes.find((node) => node.data?.permissionGroup === "测试报告_研发_流程权限组")!;
+    const rdTask = prototypeModule.usePrototypeStore.getState().tasks.find((task) =>
+      task.instanceId === instance.id && task.nodeId === rdNode.id && task.status === "待处理",
+    )!;
+
+    expect(definition.publishedVersionId).toBeUndefined();
+    expect(lockedVersion.version).toBe("V2");
+    expect(instance.reviewers.map((reviewer) => reviewer.key)).toEqual(
+      lockedVersion.snapshot.flow.nodes.filter((node) => node.data?.kind === "approval").map((node) => node.id),
+    );
+    setActor("zhangwei");
+    expect(prototypeModule.usePrototypeStore.getState().reviewInstance(instance.id, "pass", "研发审核通过", undefined, undefined, rdTask.id)).toBe(true);
+    expect(instanceById(instance.id)?.status).toBe("已完成");
+  });
+
   it("创建、发起前修改、权限校验、通过、驳回、重新提交和完成形成一致链路", () => {
     const definitionBefore = definitionById("pdf-review")!;
     const version = definitionModule.getPublishedVersion(definitionBefore)!;

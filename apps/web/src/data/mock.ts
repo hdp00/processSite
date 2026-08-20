@@ -1,4 +1,4 @@
-import type { ProcessInstance } from "./types";
+import type { LegacyProcessInstance, ProcessInstance } from "./types";
 
 const parallelReviewers = (
   overrides: Partial<Record<"rd" | "qa" | "production", ProcessInstance["reviewers"][number]>> = {},
@@ -29,7 +29,7 @@ const parallelReviewers = (
   },
 ];
 
-export const initialInstances: ProcessInstance[] = [
+export const initialInstances: LegacyProcessInstance[] = [
   {
     id: "proc-42",
     code: "DOC26080042",

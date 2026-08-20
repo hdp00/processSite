@@ -2211,6 +2211,18 @@ paths:
                 file:
                   type: string
                   format: binary
+                definitionId:
+                  type: string
+                  description: 发起前暂存时必填，用于锁定字段策略
+                versionId:
+                  type: string
+                  description: 发起前暂存时必填，不允许回退当前发布版本
+                instanceId:
+                  type: string
+                  description: 已创建实例编辑时使用；与 definitionId/versionId 二选一
+                fieldId:
+                  type: string
+                  description: 表单附件字段稳定标识
                 purpose:
                   type: string
                   enum: [form-field, free-reply]
@@ -3579,6 +3591,22 @@ components:
           type: boolean
           default: false
           description: 为 true 时服务端强制该字段只保留一个附件引用
+        allowedExtensions:
+          type: array
+          description: 允许的小写文件扩展名，不含点号；空数组表示仅应用系统安全黑名单
+          items:
+            type: string
+            pattern: "^[a-z0-9]+$"
+        excelToPdf:
+          type: boolean
+          default: false
+          description: 接受 xls/xlsx 并由隔离的 LibreOffice Headless 服务转换为 PDF；成功后删除原始 Excel
+        maxPreviewPages:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 1
+          description: Excel 转 PDF 最多实际生成的页数
     DesignerFieldDto:
       type: object
       additionalProperties: false
@@ -4676,6 +4704,26 @@ components:
     AttachmentStatus:
       type: string
       enum: [staged, referenced, cleanup-pending]
+    AttachmentConversionDto:
+      type: object
+      required: [kind, status, maxPages]
+      properties:
+        kind:
+          type: string
+          enum: [excel-to-pdf]
+        status:
+          type: string
+          enum: [processing, completed, failed]
+        generatedPages:
+          type: integer
+          minimum: 1
+        maxPages:
+          type: integer
+          minimum: 1
+          maximum: 50
+        error:
+          type: string
+          description: 仅失败时返回经过脱敏的错误摘要
     AttachmentDto:
       type: object
       required: [id, revision, originalName, sizeBytes, contentType, status, uploadedBy, uploadedAt]
@@ -4722,6 +4770,8 @@ components:
           type: string
           format: uri-reference
           readOnly: true
+        conversion:
+          $ref: "#/components/schemas/AttachmentConversionDto"
     EmailOutboxStatus:
       type: string
       enum: [pending, processing, sent, retry-wait, dead-letter]

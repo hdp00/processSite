@@ -23,6 +23,7 @@ import {
 } from "../../state/workflowAccess";
 import type { StoredDesignerField } from "../../utils/designerStorage";
 import { isProcessInstanceCreator } from "../../utils/processInstanceAccess";
+import { compareDomainTimestamps } from "../../utils/domainTime";
 import {
   deleteAttachment,
   getAttachmentRecords,
@@ -50,6 +51,9 @@ const API_BASE = "/api/v1";
 const EMAIL_OUTBOX_KEY = "flowpilot-mock-email-outbox-v1";
 const DEFAULT_MAX_ATTACHMENT_SIZE_MB = 100;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DANGEROUS_ATTACHMENT_EXTENSIONS = new Set([
+  "exe", "dll", "com", "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "msi", "scr", "reg", "lnk",
+]);
 
 interface AttachmentScope {
   instance: ProcessInstance;
@@ -60,6 +64,8 @@ interface AttachmentScope {
 interface ParsedUpload {
   file: File;
   instanceId?: string;
+  definitionId?: string;
+  versionId?: string;
   fieldId?: string;
 }
 
@@ -181,9 +187,7 @@ const canModifyAttachmentField = (
 ) => {
   if (isSuperAdminPersona(actor.id)) return true;
   const tasks = usePrototypeStore.getState().tasks.filter((task) => task.instanceId === instance.id && task.round === instance.round);
-  const hasReviewResult = instance.reviewers.some((reviewer) =>
-    reviewer.status === "已通过" || reviewer.status === "已确认" || reviewer.status === "已驳回",
-  );
+  const hasReviewResult = tasks.some((task) => task.status === "已完成" && Boolean(task.action));
   const initiatorMayEdit = actorOwnsInstance(actor, instance)
     && hasUserPermission(actor.id, "work-launch:发起")
     && (field.inputStage ?? "initiator") !== "reviewer"
@@ -248,8 +252,12 @@ const parseUpload = async (request: Request): Promise<ParsedUpload | Response> =
     });
   }
   const instanceIdValue = String(form.get("instanceId") ?? "").trim() || undefined;
+  const definitionIdValue = String(form.get("definitionId") ?? "").trim() || undefined;
+  const versionIdValue = String(form.get("versionId") ?? "").trim() || undefined;
   const fieldIdValue = String(form.get("fieldId") ?? "").trim() || undefined;
-  if (Boolean(instanceIdValue) !== Boolean(fieldIdValue)) {
+  const hasInstanceScope = Boolean(instanceIdValue);
+  const hasDefinitionScope = Boolean(definitionIdValue || versionIdValue);
+  if ((hasInstanceScope && (!fieldIdValue || hasDefinitionScope)) || (hasDefinitionScope && (!definitionIdValue || !versionIdValue || !fieldIdValue))) {
     return apiProblem(request, 422, "ATTACHMENT_SCOPE_INCOMPLETE", "附件范围不完整", "instanceId 与 fieldId 必须同时提供或同时省略。", {
       errors: [{ path: "instanceId/fieldId", code: "PAIR_REQUIRED", message: "请同时提供实例和字段。" }],
     });
@@ -257,21 +265,46 @@ const parseUpload = async (request: Request): Promise<ParsedUpload | Response> =
   if (!candidate.name.trim()) {
     return apiProblem(request, 422, "ATTACHMENT_NAME_REQUIRED", "文件名无效", "上传文件必须具有有效名称。 ");
   }
-  return { file: candidate, instanceId: instanceIdValue, fieldId: fieldIdValue };
+  return { file: candidate, instanceId: instanceIdValue, definitionId: definitionIdValue, versionId: versionIdValue, fieldId: fieldIdValue };
 };
 
-const validateFile = (
+const validateFile = async (
   request: Request,
   file: File,
   field?: StoredDesignerField,
 ) => {
+  const extension = file.name.toLowerCase().split(".").pop() ?? "";
+  if (DANGEROUS_ATTACHMENT_EXTENSIONS.has(extension)) {
+    return apiProblem(request, 415, "DANGEROUS_ATTACHMENT_TYPE", "文件类型不安全", "系统禁止上传可执行文件、脚本或快捷方式。", {
+      errors: [{ path: "file", code: "DANGEROUS_TYPE", message: `不允许上传 .${extension} 文件。` }],
+    });
+  }
+  const signature = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  const isExecutable = signature[0] === 0x4d && signature[1] === 0x5a;
+  if (isExecutable) {
+    return apiProblem(request, 415, "DANGEROUS_ATTACHMENT_SIGNATURE", "文件内容不安全", "文件内容被识别为 Windows 可执行文件，与文件名无关。 ");
+  }
   const maxSizeMb = field?.attachment?.maxSizeMb ?? DEFAULT_MAX_ATTACHMENT_SIZE_MB;
   if (file.size > maxSizeMb * 1024 * 1024) {
     return apiProblem(request, 413, "ATTACHMENT_TOO_LARGE", "附件超过大小限制", `单个文件不能超过 ${maxSizeMb} MB。`, {
       errors: [{ path: "file", code: "MAX_SIZE", message: `文件大小上限为 ${maxSizeMb} MB。` }],
     });
   }
-  if (field?.attachment?.inlinePdf) {
+  const allowedExtensions = field?.attachment?.allowedExtensions ?? [];
+  if (allowedExtensions.length && !allowedExtensions.includes(extension)) {
+    return apiProblem(request, 415, "ATTACHMENT_EXTENSION_NOT_ALLOWED", "文件格式不支持", `该字段只允许 ${allowedExtensions.join("、")} 文件。`);
+  }
+  const convertibleExcel = Boolean(field?.attachment?.excelToPdf && ["xls", "xlsx"].includes(extension));
+  const hasPdfSignature = String.fromCharCode(...signature.slice(0, 5)) === "%PDF-";
+  const hasZipSignature = signature[0] === 0x50 && signature[1] === 0x4b && signature[2] === 0x03 && signature[3] === 0x04;
+  const hasOleSignature = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every((value, index) => signature[index] === value);
+  if (extension === "pdf" && !hasPdfSignature) {
+    return apiProblem(request, 415, "PDF_SIGNATURE_INVALID", "PDF 内容无效", "文件扩展名为 PDF，但内容签名不是有效的 PDF。 ");
+  }
+  if (convertibleExcel && ((extension === "xlsx" && !hasZipSignature) || (extension === "xls" && !hasOleSignature))) {
+    return apiProblem(request, 415, "EXCEL_SIGNATURE_INVALID", "Excel 内容无效", "文件内容与声明的 Excel 格式不一致。 ");
+  }
+  if (field?.attachment?.inlinePdf && !convertibleExcel) {
     const hasPdfName = file.name.toLowerCase().endsWith(".pdf");
     const hasPdfType = !file.type || file.type.toLowerCase() === "application/pdf";
     if (!hasPdfName || !hasPdfType) {
@@ -283,13 +316,36 @@ const validateFile = (
   return undefined;
 };
 
+const createExcelPreviewPdf = (maxPages: number) => {
+  const text = `Excel preview converted by LibreOffice service (prototype), max pages: ${maxPages}`;
+  const stream = `BT /F1 11 Tf 50 790 Td (${text.replace(/[()\\]/g, "\\$&")}) Tj ET`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let source = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(source.length);
+    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = source.length;
+  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n `).join("\n")}\n`;
+  source += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new Blob([source], { type: "application/pdf" });
+};
+
 const attachmentRecord = (file: File, actor: DomainUser, scope?: { instanceId: string; fieldId: string }): AttachmentRecord => ({
   id: attachmentId(),
   name: file.name,
   size: file.size,
-  contentType: file.type || "application/octet-stream",
+  contentType: file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : file.type || "application/octet-stream",
   uploadedById: actor.id,
   uploadedAt: new Date().toISOString(),
+  lifecycle: scope ? "active" : "temporary",
   ...scope,
 });
 
@@ -381,11 +437,12 @@ const makeDelivery = (
   createdAt: new Date().toISOString(),
 });
 
-const deriveOutboxCandidates = () => {
+const deriveOutboxCandidates = (instanceId?: string) => {
   const { instances, tasks } = usePrototypeStore.getState();
   const candidates: EmailOutboxItem[] = [];
   tasks
-    .filter((task) => task.status === "待处理" || task.status === "已完成")
+    .filter((task) => !instanceId || task.instanceId === instanceId)
+    .filter((task) => task.status === "待处理")
     .forEach((task) => {
       const instance = instances.find((item) => item.id === task.instanceId);
       const version = instance ? resolveLockedVersion(instance) : undefined;
@@ -404,7 +461,7 @@ const deriveOutboxCandidates = () => {
         });
     });
 
-  instances.filter((instance) => instance.status === "已完成").forEach((instance) => {
+  instances.filter((instance) => (!instanceId || instance.id === instanceId) && instance.status === "已完成").forEach((instance) => {
     const version = resolveLockedVersion(instance);
     version?.snapshot.flow.nodes.filter((node) => node.data?.kind === "end").forEach((node) => {
       const notification = node.data?.emailNotification;
@@ -425,7 +482,7 @@ const deriveOutboxCandidates = () => {
   return candidates;
 };
 
-const materializeOutbox = (request: Request) => {
+export const dispatchWorkflowEmailNotifications = (request: Request, instanceId?: string) => {
   const { instances, tasks } = usePrototypeStore.getState();
   const instanceIds = new Set(instances.map((instance) => instance.id));
   const taskIds = new Set(tasks.map((task) => task.id));
@@ -434,7 +491,7 @@ const materializeOutbox = (request: Request) => {
   );
   const byId = new Map(existing.map((item) => [item.id, item]));
   const added: EmailOutboxItem[] = [];
-  deriveOutboxCandidates().forEach((candidate) => {
+  deriveOutboxCandidates(instanceId).forEach((candidate) => {
     if (byId.has(candidate.id)) return;
     byId.set(candidate.id, candidate);
     added.push(candidate);
@@ -487,7 +544,14 @@ const uploadHandler = http.post(`${API_BASE}/attachments`, async ({ request }) =
       if (result instanceof Response) return result;
       scope = result;
     }
-    const validation = validateFile(request, parsed.file, scope?.field);
+    const definitionVersion = parsed.definitionId && parsed.versionId
+      ? useProcessDefinitionStore.getState().definitions.find((item) => item.id === parsed.definitionId)?.versions.find((item) => item.id === parsed.versionId)
+      : undefined;
+    const policyField = scope?.field ?? (definitionVersion && parsed.fieldId ? configuredAttachmentField(definitionVersion, parsed.fieldId) : undefined);
+    if ((parsed.definitionId || parsed.versionId) && !policyField) {
+      return apiProblem(request, 422, "ATTACHMENT_FIELD_INVALID", "附件字段无效", "上传范围不是指定流程版本中的附件字段。 ");
+    }
+    const validation = await validateFile(request, parsed.file, policyField);
     if (validation) return validation;
 
     try {
@@ -507,10 +571,23 @@ const uploadHandler = http.post(`${API_BASE}/attachments`, async ({ request }) =
         }
       }
 
-      const record = attachmentRecord(parsed.file, actor, parsed.instanceId && parsed.fieldId
+      let uploadBlob: Blob = parsed.file;
+      let record = attachmentRecord(parsed.file, actor, parsed.instanceId && parsed.fieldId
         ? { instanceId: parsed.instanceId, fieldId: parsed.fieldId }
         : undefined);
-      await putAttachment({ record, blob: parsed.file });
+      const extension = parsed.file.name.toLowerCase().split(".").pop() ?? "";
+      if (policyField?.attachment?.excelToPdf && ["xls", "xlsx"].includes(extension)) {
+        const maxPages = policyField.attachment.maxPreviewPages ?? 1;
+        uploadBlob = createExcelPreviewPdf(maxPages);
+        record = {
+          ...record,
+          name: parsed.file.name.replace(/\.(xls|xlsx)$/i, ".pdf"),
+          size: uploadBlob.size,
+          contentType: "application/pdf",
+          conversion: { kind: "excel-to-pdf", status: "completed", generatedPages: 1, maxPages },
+        };
+      }
+      await putAttachment({ record, blob: uploadBlob });
       if (scope && parsed.instanceId && parsed.fieldId) {
         const references = [...attachmentValues(scope.instance.formValues?.[parsed.fieldId]), attachmentReference(record)];
         if (!synchronizeInstanceAttachment(parsed.instanceId, scope.version, parsed.fieldId, references, record.size)) {
@@ -646,7 +723,7 @@ const replaceAttachmentHandler = http.put(`${API_BASE}/process-instances/:instan
     if ((parsed.instanceId && parsed.instanceId !== instanceIdValue) || (parsed.fieldId && parsed.fieldId !== fieldIdValue)) {
       return apiProblem(request, 422, "ATTACHMENT_SCOPE_MISMATCH", "附件范围不一致", "路径中的实例/字段与 multipart 表单中的范围不一致。 ");
     }
-    const validation = validateFile(request, parsed.file, scopeResult.field);
+    const validation = await validateFile(request, parsed.file, scopeResult.field);
     if (validation) return validation;
 
     try {
@@ -693,11 +770,11 @@ const emailOutboxHandler = http.get(`${API_BASE}/email-outbox`, async ({ request
   }
   const keyword = (url.searchParams.get("q") ?? "").trim().toLowerCase();
   try {
-    const items = materializeOutbox(request)
+    const items = readStoredOutbox()
       .filter((item) => !status || item.status === status)
       .filter((item) => !keyword || [item.recipientName, item.email, item.instanceId, item.taskId, item.nodeId]
         .some((value) => value?.toLowerCase().includes(keyword)))
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      .sort((left, right) => compareDomainTimestamps(right.createdAt, left.createdAt));
     return apiOk(request, paginate(items, pagination.number, pagination.size));
   } catch (error) {
     return outboxStorageProblem(request, error);
@@ -710,7 +787,7 @@ const emailOutboxDetailHandler = http.get(`${API_BASE}/email-outbox/:deliveryId`
   const authorized = requirePermission(request, "system-monitor:查看");
   if (authorized.response) return authorized.response;
   try {
-    const delivery = materializeOutbox(request).find((item) => item.id === pathParam(params.deliveryId));
+    const delivery = readStoredOutbox().find((item) => item.id === pathParam(params.deliveryId));
     return delivery
       ? apiOk(request, delivery, { headers: { ETag: entityEtag(delivery) } })
       : apiProblem(request, 404, "EMAIL_DELIVERY_NOT_FOUND", "邮件投递记录不存在", "未找到指定的邮件投递记录。 ");
@@ -727,7 +804,7 @@ const retryEmailHandler = http.post(`${API_BASE}/email-outbox/:deliveryId/retry`
 
   return withIdempotency(request, () => {
     try {
-      const items = materializeOutbox(request);
+      const items = readStoredOutbox();
       const delivery = items.find((item) => item.id === pathParam(params.deliveryId));
       if (!delivery) return apiProblem(request, 404, "EMAIL_DELIVERY_NOT_FOUND", "邮件投递记录不存在", "未找到指定的邮件投递记录。 ");
       if (delivery.status === "sent") {

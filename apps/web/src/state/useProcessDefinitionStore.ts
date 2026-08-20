@@ -7,11 +7,13 @@ import {
   cloneCompleteDesignerSnapshot,
   createProcessTitleField,
   ensureProcessTitleField,
-  normalizeStoredCondition,
   type CompleteDesignerSnapshot,
 } from "../utils/designerStorage";
 import { currentUserCan } from "./permissionEngine";
 import type { ImportedProcessDefinition } from "../utils/processDefinitionTransfer";
+import { effectiveGroupMemberIds, useIdentityStore } from "./useIdentityStore";
+import { validateProcessSnapshot } from "../utils/processDefinitionValidation";
+import { nowDomainTimestamp } from "../utils/domainTime";
 
 export type DefinitionType = "approval" | "free";
 export type DefinitionStatus = "未发布" | "已发布" | "已停用";
@@ -104,9 +106,19 @@ interface ProcessDefinitionState {
   resetDefinitions: () => void;
 }
 
-const nowText = () => new Date().toLocaleString("zh-CN", { hour12: false });
+const nowText = nowDomainTimestamp;
 const versionLabel = (value: number) => `V${value}`;
 const createDefinitionId = () => `process-${crypto.randomUUID()}`;
+const currentActorName = () => {
+  if (typeof window === "undefined") return "系统";
+  try {
+    const persisted = JSON.parse(window.localStorage.getItem("flowpilot-prototype-v5") ?? "{}") as { state?: { personaId?: string } };
+    const personaId = persisted.state?.personaId;
+    return useIdentityStore.getState().users.find((user) => user.id === personaId)?.name ?? "系统";
+  } catch {
+    return "系统";
+  }
+};
 
 const emptySnapshot = (): CompleteDesignerSnapshot => ({
   form: { fields: [createProcessTitleField()] },
@@ -124,76 +136,30 @@ const cloneBasic = (config: ProcessBasicConfig): ProcessBasicConfig => ({
 });
 
 const validateSnapshot = (type: DefinitionType, basic: ProcessBasicConfig, snapshot: CompleteDesignerSnapshot): VersionValidation => {
-  const issues: string[] = [];
-  if (!basic.name.trim()) issues.push("流程名称不能为空");
-  if (!basic.instancePrefix.trim()) issues.push("实例编号前缀未配置");
-  if (!basic.starterGroups.length) issues.push("至少选择一个发起流程权限组");
-  if (!basic.closeGroups.length) issues.push("至少选择一个关闭流程权限组");
-  const titleField = snapshot.form.fields.find((field) => field.id === PROCESS_TITLE_FIELD_ID);
-  if (!titleField || titleField.type !== "text") issues.push("初始表单必须包含系统固定的标题文本框");
-  if (titleField?.inputStage === "reviewer") issues.push("标题必须由发起人填写");
-  const fieldIndexById = new Map(snapshot.form.fields.map((field, index) => [field.id, index]));
-  const conditionFieldTypes = new Set(["text", "select", "cascader", "radio", "checkbox"]);
-  const invalidDisplayCondition = snapshot.form.fields.some((field, fieldIndex) => {
-    const condition = normalizeStoredCondition(field.displayCondition);
-    if (!condition) return false;
-    return field.id === PROCESS_TITLE_FIELD_ID || !condition.rules.length || condition.rules.some((rule) => {
-      const sourceIndex = fieldIndexById.get(rule.fieldId);
-      const sourceField = sourceIndex === undefined ? undefined : snapshot.form.fields[sourceIndex];
-      const supported = sourceField?.type === "checkbox"
-        ? ["contains", "not-contains", "empty", "not-empty"]
-        : sourceField?.type === "text"
-          ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
-          : ["eq", "neq", "empty", "not-empty"];
-      return !sourceField || sourceIndex === undefined || sourceIndex >= fieldIndex || !conditionFieldTypes.has(sourceField.type)
-        || !supported.includes(rule.operator)
-        || (!["empty", "not-empty"].includes(rule.operator) && (rule.value === undefined || rule.value === ""));
-    });
-  });
-  if (invalidDisplayCondition) issues.push("初始表单存在无效或未填写完整的字段显示条件");
-  if (type === "free") {
-    if (!basic.assigneeGroups?.length) issues.push("至少选择一个受理流程权限组");
-  } else {
-    const nodes = snapshot.flow.nodes;
-    const approvals = nodes.filter((node) => node.data?.kind === "approval");
-    if (nodes.filter((node) => node.data?.kind === "start").length !== 1 || nodes.filter((node) => node.data?.kind === "end").length !== 1 || !approvals.length) issues.push("审批流程必须包含一个开始、至少一个审批和一个结束节点");
-    if (approvals.some((node) => !node.data?.permissionGroup)) issues.push("所有审批节点都必须选择流程权限组");
-    if (approvals.some((node) => node.data?.allowRepeatedEditing && !node.data.editableFields?.length)) issues.push("允许重复修改的审批节点必须至少配置一个可修改字段");
-    if (!snapshot.flow.edges.length) issues.push("审批流程节点尚未完成连线");
-    const fieldById = new Map(snapshot.form.fields.map((field) => [field.id, field]));
-    if (approvals.some((node) => {
-      const condition = node.data?.activationCondition;
-      return condition ? !condition.rules.length || condition.rules.some((rule) => {
-        const field = fieldById.get(rule.fieldId);
-        const supported = field?.type === "checkbox"
-          ? ["contains", "not-contains", "empty", "not-empty"]
-          : field?.type === "text"
-            ? ["eq", "neq", "gt", "gte", "lt", "lte", "empty", "not-empty"]
-            : ["eq", "neq", "empty", "not-empty"];
-        return !field || !supported.includes(rule.operator) || (!["empty", "not-empty"].includes(rule.operator) && (rule.value === undefined || rule.value === ""));
-      }) : false;
-    })) issues.push("审批节点存在无效或未填写完整的执行条件");
-    const assignedFields = new Set(approvals.flatMap((node) => node.data?.editableFields ?? []));
-    const missingRequiredReviewerFields = snapshot.form.fields.filter((field) =>
-      field.inputStage === "reviewer" && field.required && !assignedFields.has(field.id),
-    );
-    if (missingRequiredReviewerFields.length) issues.push(`审核人必填字段尚未分配审批节点：${missingRequiredReviewerFields.map((field) => field.label).join("、")}`);
-  }
-  return { status: issues.length ? "未通过" : "通过", checkedAt: nowText(), issues };
+  const validation = validateProcessSnapshot(
+    { ...basic, type },
+    snapshot,
+    {
+      workflowGroups: useIdentityStore.getState().workflowGroups,
+      effectiveMemberIds: effectiveGroupMemberIds,
+    },
+  );
+  return { ...validation, checkedAt: nowText() };
 };
 
 const buildVersion = (id: string, label: string, basic: ProcessBasicConfig, snapshot: CompleteDesignerSnapshot, options: Partial<ProcessVersion> = {}): ProcessVersion => {
   const createdAt = options.createdAt ?? nowText();
-  const formFieldCount = snapshot.form.fields.length;
-  const nodeCount = basic.type === "free" ? 0 : snapshot.flow.nodes.length;
+  const normalizedSnapshot = cloneCompleteDesignerSnapshot(snapshot);
+  const formFieldCount = normalizedSnapshot.form.fields.length;
+  const nodeCount = basic.type === "free" ? 0 : normalizedSnapshot.flow.nodes.length;
   return {
     id,
     version: label,
     basedOn: options.basedOn,
     createdAt,
-    createdBy: options.createdBy ?? "当前用户",
+    createdBy: options.createdBy ?? currentActorName(),
     updatedAt: options.updatedAt ?? createdAt,
-    updatedBy: options.updatedBy ?? options.createdBy ?? "当前用户",
+    updatedBy: options.updatedBy ?? options.createdBy ?? currentActorName(),
     firstPublishedAt: options.firstPublishedAt,
     firstPublishedBy: options.firstPublishedBy,
     publishedAt: options.publishedAt,
@@ -207,8 +173,8 @@ const buildVersion = (id: string, label: string, basic: ProcessBasicConfig, snap
     starterGroups: [...basic.starterGroups],
     checksum: `${id.slice(-6).toUpperCase()}-${formFieldCount}F-${nodeCount}N`,
     basic: cloneBasic(basic),
-    snapshot: cloneCompleteDesignerSnapshot(snapshot),
-    validation: validateSnapshot(basic.type, basic, snapshot),
+    snapshot: normalizedSnapshot,
+    validation: validateSnapshot(basic.type, basic, normalizedSnapshot),
   };
 };
 
@@ -237,17 +203,102 @@ const seedSnapshot = (id: string, config: ProcessBasicConfig, fieldCount: number
 
 const publishedSeed = (id: string, label: string, publishedAt: string, createdBy: string, changeNote: string, instanceCount: number, config: ProcessBasicConfig, snapshot: CompleteDesignerSnapshot): ProcessVersion => buildVersion(id, label, config, snapshot, { createdAt: publishedAt, createdBy, updatedAt: publishedAt, updatedBy: createdBy, firstPublishedAt: publishedAt, firstPublishedBy: createdBy, publishedAt, changeNote, instanceCount });
 
-const pdfBasic = basic("PDF 文件审核", "PROC-PDF-001", "approval", "受控 PDF 文件由研发、质量、生产并行审核。", ["PDF审核_文控_流程权限组"], { instancePrefix: "DOC", closeGroups: ["PDF审核_文控_流程权限组"], visibleRoles: ["部门查看员"], visibleUsers: ["lina"] });
-const testBasic = basic("测试报告审核", "PROC-TR-002", "approval", "产品测试报告会签与发布流程。", ["测试报告_发起_流程权限组"], { instancePrefix: "DOC", closeGroups: ["测试报告_发起_流程权限组"], visibleRoles: ["研发经理", "质量经理"] });
-const freeBasic = basic("异常协作事项", "PROC-FREE-003", "free", "按受理人连续流转，可回复、关闭并填写理由后重新打开。", ["自由协作_发起_流程权限组"], { instancePrefix: "ISSUE", closeGroups: ["自由协作_发起_流程权限组"], assigneeGroups: ["自由协作_受理_流程权限组"], visibleRoles: ["部门查看员"] });
+const pdfBasic = basic("PDF 文件审核", "PROC-PDF-001", "approval", "受控 PDF 文件由研发、质量、生产并行审核。", ["PDF审核_文控_流程权限组"], { instancePrefix: "DOC", closeGroups: ["PDF审核_文控_流程权限组"], visibleRoles: ["ROLE-007"], visibleUsers: ["lina"] });
+const testBasic = basic("测试报告审核", "PROC-TR-002", "approval", "产品测试报告会签与发布流程。", ["测试报告_发起_流程权限组"], { instancePrefix: "DOC", closeGroups: ["测试报告_发起_流程权限组"], visibleRoles: ["ROLE-004", "ROLE-005"] });
+const freeBasic = basic("异常协作事项", "PROC-FREE-003", "free", "按受理人连续流转，可回复、关闭并填写理由后重新打开。", ["自由协作_发起_流程权限组"], { instancePrefix: "ISSUE", closeGroups: ["自由协作_发起_流程权限组"], assigneeGroups: ["自由协作_受理_流程权限组"], visibleRoles: ["ROLE-007"] });
 const supplierBasic = basic("供应商变更评审", "PROC-SC-004", "approval", "供应商材料或制程变更的跨部门审批流程。", ["供应商变更_发起_流程权限组"], { instancePrefix: "SC", closeGroups: ["供应商变更_发起_流程权限组"] });
+const testV2Snapshot = (() => {
+  const snapshot = seedSnapshot("test-v2", testBasic, 6, 5);
+  const productionNodeIds = new Set(snapshot.flow.nodes
+    .filter((node) => node.data?.kind === "approval" && node.data.permissionGroup === "测试报告_生产_流程权限组")
+    .map((node) => node.id));
+  return {
+    ...snapshot,
+    flow: {
+      ...snapshot.flow,
+      nodes: snapshot.flow.nodes.filter((node) => !productionNodeIds.has(node.id)),
+      edges: snapshot.flow.edges.filter((edge) => !productionNodeIds.has(edge.source) && !productionNodeIds.has(edge.target)),
+    },
+  };
+})();
 
 const initialDefinitions: ProcessDefinition[] = [
   { id: "pdf-review", code: pdfBasic.code, name: pdfBasic.name, description: pdfBasic.description, type: "approval", disabled: false, publishedVersionId: "pdf-v3", nextVersionNumber: 4, updatedAt: "2026-08-12 16:42", updatedBy: "王敏", instanceCount: 128, versions: [publishedSeed("pdf-v3", "V3", "2026-08-02 14:30", "王敏", "增加质量节点可修改字段并优化并行提醒。", 42, pdfBasic, seedSnapshot("pdf-v3", pdfBasic, 9, 5)), publishedSeed("pdf-v2", "V2", "2026-05-16 10:05", "刘燕", "研发、质量和生产改为同起点并行审核。", 71, pdfBasic, seedSnapshot("pdf-v2", pdfBasic, 8, 5)), publishedSeed("pdf-v1", "V1", "2026-02-12 09:20", "系统管理员", "首次发布。", 15, pdfBasic, seedSnapshot("pdf-v1", pdfBasic, 7, 5))] },
-  { id: "test-report-review", code: testBasic.code, name: testBasic.name, description: testBasic.description, type: "approval", disabled: false, nextVersionNumber: 2, updatedAt: "2026-08-13 09:18", updatedBy: "林晓", instanceCount: 0, versions: [buildVersion("test-report-v1", "V1", testBasic, seedSnapshot("test-v1", testBasic, 5, 0), { createdAt: "2026-08-13 09:18", createdBy: "林晓", updatedAt: "2026-08-13 09:18", updatedBy: "林晓" })] },
+  {
+    id: "test-report-review",
+    code: testBasic.code,
+    name: testBasic.name,
+    description: testBasic.description,
+    type: "approval",
+    disabled: false,
+    nextVersionNumber: 3,
+    updatedAt: "2026-08-13 09:18",
+    updatedBy: "林晓",
+    instanceCount: 2,
+    versions: [
+      buildVersion("test-report-v2", "V2", testBasic, testV2Snapshot, {
+        basedOn: "V1",
+        createdAt: "2026-07-15 10:20",
+        createdBy: "林晓",
+        updatedAt: "2026-08-13 09:18",
+        updatedBy: "林晓",
+        firstPublishedAt: "2026-07-18 14:10",
+        firstPublishedBy: "林晓",
+        lastUnpublishedAt: "2026-08-13 09:18",
+        lastUnpublishedBy: "林晓",
+        lastUnpublishReason: "暂停新测试报告发起，历史实例继续处理。",
+        changeNote: "调整测试报告审核字段并保留历史运行版本。",
+        instanceCount: 1,
+      }),
+      buildVersion("test-report-v1", "V1", testBasic, seedSnapshot("test-v1", testBasic, 5, 5), {
+        createdAt: "2026-04-12 09:30",
+        createdBy: "林晓",
+        updatedAt: "2026-07-18 14:10",
+        updatedBy: "林晓",
+        firstPublishedAt: "2026-04-15 11:00",
+        firstPublishedBy: "林晓",
+        lastUnpublishedAt: "2026-07-18 14:10",
+        lastUnpublishedBy: "林晓",
+        lastUnpublishReason: "切换到 V2。",
+        changeNote: "测试报告审核初始版本。",
+        instanceCount: 1,
+      }),
+    ],
+  },
   { id: "free-collaboration", code: freeBasic.code, name: freeBasic.name, description: freeBasic.description, type: "free", disabled: false, publishedVersionId: "free-v2", nextVersionNumber: 3, updatedAt: "2026-08-10 14:06", updatedBy: "系统管理员", instanceCount: 67, versions: [publishedSeed("free-v2", "V2", "2026-07-30 16:18", "王敏", "增加异常改派；重新打开时恢复初始表单编辑。", 39, freeBasic, seedSnapshot("free-v2", freeBasic, 5, 0)), publishedSeed("free-v1", "V1", "2026-04-08 11:42", "系统管理员", "首次发布自由协作流程。", 28, freeBasic, seedSnapshot("free-v1", freeBasic, 4, 0))] },
   { id: "supplier-change-review", code: supplierBasic.code, name: "供应商变更会签", description: supplierBasic.description, type: "approval", disabled: true, publishedVersionId: "supplier-v2", nextVersionNumber: 3, updatedAt: "2026-07-28 11:25", updatedBy: "赵磊", instanceCount: 21, versions: [publishedSeed("supplier-v2", "V2", "2026-07-28 11:25", "赵磊", "调整评审说明和发起范围，当前没有实例。", 0, { ...supplierBasic, name: "供应商变更会签" }, seedSnapshot("supplier-v2", { ...supplierBasic, name: "供应商变更会签" }, 7, 4)), publishedSeed("supplier-v1", "V1", "2026-07-20 11:25", "赵磊", "首次发布供应商变更评审。", 21, supplierBasic, seedSnapshot("supplier-v1", supplierBasic, 6, 4))] },
 ];
+
+const hasRunnableApprovalTopology = (version: ProcessVersion) => {
+  const approvals = version.snapshot.flow.nodes.filter((node) => node.data?.kind === "approval");
+  return approvals.length > 0 && version.snapshot.flow.edges.length > 0;
+};
+
+const repairBuiltInHistoricalVersions = (definition: ProcessDefinition): ProcessDefinition => {
+  if (definition.id !== "test-report-review") return definition;
+  const fallback = initialDefinitions.find((item) => item.id === definition.id)!;
+  const remaining = [...definition.versions];
+  const requiredVersions = fallback.versions.map((seedVersion) => {
+    const index = remaining.findIndex((version) => version.version === seedVersion.version);
+    const existing = index >= 0 ? remaining.splice(index, 1)[0] : undefined;
+    if (existing && hasRunnableApprovalTopology(existing)) {
+      return { ...existing, instanceCount: Math.max(existing.instanceCount, seedVersion.instanceCount) };
+    }
+    return {
+      ...seedVersion,
+      basic: cloneBasic(seedVersion.basic),
+      snapshot: cloneCompleteDesignerSnapshot(seedVersion.snapshot),
+    };
+  });
+  const versions = [...requiredVersions, ...remaining];
+  const allocated = versions.map((version) => Number(version.version.replace(/\D/g, ""))).filter(Number.isFinite);
+  return {
+    ...definition,
+    versions,
+    nextVersionNumber: Math.max(definition.nextVersionNumber, Math.max(0, ...allocated) + 1),
+    instanceCount: Math.max(definition.instanceCount, fallback.instanceCount),
+  };
+};
 
 const nextSequence = (definitions: ProcessDefinition[]) => Math.max(0, ...definitions.map((definition) => Number(definition.code.match(/(\d+)$/)?.[1] ?? 0))) + 1;
 
@@ -257,7 +308,7 @@ export const canEditVersion = (definition: ProcessDefinition, version: ProcessVe
 export const definitionStatus = (definition: ProcessDefinition): DefinitionStatus => definition.disabled ? "已停用" : definition.publishedVersionId ? "已发布" : "未发布";
 
 const refreshVersion = (version: ProcessVersion, config: ProcessBasicConfig, snapshot: CompleteDesignerSnapshot): ProcessVersion => {
-  const next = buildVersion(version.id, version.version, config, snapshot, { ...version, updatedAt: nowText(), updatedBy: "当前用户" });
+  const next = buildVersion(version.id, version.version, config, snapshot, { ...version, updatedAt: nowText(), updatedBy: currentActorName() });
   return { ...next, firstPublishedAt: version.firstPublishedAt, firstPublishedBy: version.firstPublishedBy, publishedAt: version.publishedAt, lastUnpublishedAt: version.lastUnpublishedAt, lastUnpublishedBy: version.lastUnpublishedBy, instanceCount: version.instanceCount };
 };
 
@@ -273,7 +324,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         const code = `PROC-${type === "approval" ? "AP" : "FREE"}-${String(sequence).padStart(3, "0")}`;
         const config = basic(name.trim(), code, type, description?.trim() || "尚未填写流程说明。", []);
         const firstVersion = buildVersion(`${id}-v1`, "V1", config, emptySnapshot());
-        set({ definitions: [{ id, code, name: config.name, description: config.description, type, disabled: false, nextVersionNumber: 2, versions: [firstVersion], updatedAt: nowText(), updatedBy: "当前用户", instanceCount: 0 }, ...definitions] });
+        set({ definitions: [{ id, code, name: config.name, description: config.description, type, disabled: false, nextVersionNumber: 2, versions: [firstVersion], updatedAt: nowText(), updatedBy: currentActorName(), instanceCount: 0 }, ...definitions] });
         return id;
       },
       copyDefinition: (definitionId) => {
@@ -287,7 +338,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         const code = `PROC-${source.type === "approval" ? "AP" : "FREE"}-${String(sequence).padStart(3, "0")}`;
         const config = cloneBasic({ ...sourceVersion.basic, code, name: `${sourceVersion.basic.name}（副本）` });
         const copiedVersion = buildVersion(`${id}-v1`, "V1", config, sourceVersion.snapshot, { basedOn: `${source.code} / ${sourceVersion.version}` });
-        set({ definitions: [{ id, code, name: config.name, description: config.description, type: source.type, disabled: false, nextVersionNumber: 2, versions: [copiedVersion], updatedAt: nowText(), updatedBy: "当前用户", instanceCount: 0 }, ...definitions] });
+        set({ definitions: [{ id, code, name: config.name, description: config.description, type: source.type, disabled: false, nextVersionNumber: 2, versions: [copiedVersion], updatedAt: nowText(), updatedBy: currentActorName(), instanceCount: 0 }, ...definitions] });
         return id;
       },
       createVersion: (definitionId, sourceVersionId) => {
@@ -299,7 +350,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           if (!source) return definition;
           const label = versionLabel(definition.nextVersionNumber);
           createdId = `${definition.id}-${label.toLowerCase()}-${Date.now()}`;
-          return { ...definition, nextVersionNumber: definition.nextVersionNumber + 1, versions: [buildVersion(createdId, label, source.basic, source.snapshot, { basedOn: source.version }), ...definition.versions], updatedAt: nowText(), updatedBy: "当前用户" };
+          return { ...definition, nextVersionNumber: definition.nextVersionNumber + 1, versions: [buildVersion(createdId, label, source.basic, source.snapshot, { basedOn: source.version }), ...definition.versions], updatedAt: nowText(), updatedBy: currentActorName() };
         }) }));
         return createdId;
       },
@@ -339,7 +390,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           nextVersionNumber: Math.max(0, ...allocated) + 1,
           versions,
           updatedAt: nowText(),
-          updatedBy: "当前用户",
+          updatedBy: currentActorName(),
           instanceCount: 0,
         };
         set({ definitions: [created, ...definitions] });
@@ -353,7 +404,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           const target = definition.versions.find((version) => version.id === versionId);
           if (!target || !canEditVersion(definition, target)) return definition;
           updated = true;
-          return { ...definition, name: definition.publishedVersionId ? definition.name : config.name, description: definition.publishedVersionId ? definition.description : config.description, type: config.type, code: config.code, updatedAt: nowText(), updatedBy: "当前用户", versions: definition.versions.map((version) => version.id === versionId ? refreshVersion(version, config, version.snapshot) : version) };
+          return { ...definition, name: definition.publishedVersionId ? definition.name : config.name, description: definition.publishedVersionId ? definition.description : config.description, type: config.type, code: config.code, updatedAt: nowText(), updatedBy: currentActorName(), versions: definition.versions.map((version) => version.id === versionId ? refreshVersion(version, config, version.snapshot) : version) };
         }) }));
         return updated;
       },
@@ -370,7 +421,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
             form: { ...structuredClone(formSnapshot), fields: ensureProcessTitleField(formSnapshot.fields) },
             systemFields: structuredClone(systemFields),
           };
-          return { ...definition, updatedAt: nowText(), updatedBy: "当前用户", versions: definition.versions.map((version) => version.id === versionId ? refreshVersion(version, version.basic, snapshot) : version) };
+          return { ...definition, updatedAt: nowText(), updatedBy: currentActorName(), versions: definition.versions.map((version) => version.id === versionId ? refreshVersion(version, version.basic, snapshot) : version) };
         }) }));
         return updated;
       },
@@ -383,7 +434,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           if (!target || !canEditVersion(definition, target)) return definition;
           updated = true;
           const snapshot = { ...target.snapshot, flow: structuredClone(flowSnapshot) };
-          return { ...definition, updatedAt: nowText(), updatedBy: "当前用户", versions: definition.versions.map((version) => version.id === versionId ? refreshVersion(version, version.basic, snapshot) : version) };
+          return { ...definition, updatedAt: nowText(), updatedBy: currentActorName(), versions: definition.versions.map((version) => version.id === versionId ? refreshVersion(version, version.basic, snapshot) : version) };
         }) }));
         return updated;
       },
@@ -398,8 +449,8 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           if (checked.validation.status !== "通过") return { ...definition, versions: definition.versions.map((version) => version.id === target.id ? checked : version) };
           published = true;
           const publishedAt = nowText();
-          const released: ProcessVersion = { ...checked, changeNote, firstPublishedAt: checked.firstPublishedAt ?? publishedAt, firstPublishedBy: checked.firstPublishedBy ?? "当前用户", publishedAt, updatedAt: publishedAt, updatedBy: "当前用户" };
-          return { ...definition, name: released.basic.name, description: released.basic.description, type: released.basic.type, publishedVersionId: released.id, updatedAt: publishedAt, updatedBy: "当前用户", versions: definition.versions.map((version) => version.id === released.id ? released : version) };
+          const released: ProcessVersion = { ...checked, changeNote, firstPublishedAt: checked.firstPublishedAt ?? publishedAt, firstPublishedBy: checked.firstPublishedBy ?? currentActorName(), publishedAt, updatedAt: publishedAt, updatedBy: currentActorName() };
+          return { ...definition, name: released.basic.name, description: released.basic.description, type: released.basic.type, publishedVersionId: released.id, updatedAt: publishedAt, updatedBy: currentActorName(), versions: definition.versions.map((version) => version.id === released.id ? released : version) };
         }) }));
         return published;
       },
@@ -413,7 +464,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           if (!target) return definition;
           result = "unpublished";
           const at = nowText();
-          return { ...definition, publishedVersionId: undefined, updatedAt: at, updatedBy: "当前用户", versions: definition.versions.map((version) => version.id === versionId ? { ...version, lastUnpublishedAt: at, lastUnpublishedBy: "当前用户", lastUnpublishReason: reason?.trim() || "未填写原因" } : version) };
+          return { ...definition, publishedVersionId: undefined, updatedAt: at, updatedBy: currentActorName(), versions: definition.versions.map((version) => version.id === versionId ? { ...version, lastUnpublishedAt: at, lastUnpublishedBy: currentActorName(), lastUnpublishReason: reason?.trim() || "未填写原因" } : version) };
         }) }));
         return result;
       },
@@ -423,7 +474,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         return target ? get().publishVersion(definitionId, versionId, target.changeNote || "切换为发布版本") : false;
       },
       deleteVersion: (definitionId, versionId) => {
-        if (!currentUserCan("config-definition:编辑")) return "not-found";
+        if (!currentUserCan("config-definition:删除")) return "not-found";
         const definition = get().definitions.find((item) => item.id === definitionId);
         const target = definition?.versions.find((version) => version.id === versionId);
         if (!definition || !target) return "not-found";
@@ -435,24 +486,24 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           clearDefinitionDesignerArtifacts(definitionId);
           return "definition-deleted";
         }
-        set({ definitions: get().definitions.map((item) => item.id === definitionId ? { ...item, versions: remaining, updatedAt: nowText(), updatedBy: "当前用户" } : item) });
+        set({ definitions: get().definitions.map((item) => item.id === definitionId ? { ...item, versions: remaining, updatedAt: nowText(), updatedBy: currentActorName() } : item) });
         return "deleted";
       },
       deleteDefinition: (definitionId) => {
-        if (!currentUserCan("config-definition:编辑")) return false;
+        if (!currentUserCan("config-definition:删除")) return false;
         const definition = get().definitions.find((item) => item.id === definitionId);
         if (!definition || definition.publishedVersionId || definition.instanceCount > 0 || definition.versions.some((version) => version.instanceCount > 0)) return false;
         set({ definitions: get().definitions.filter((item) => item.id !== definitionId) });
         clearDefinitionDesignerArtifacts(definitionId);
         return true;
       },
-      toggleDefinition: (definitionId) => currentUserCan("config-definition:编辑") && set((state) => ({ definitions: state.definitions.map((definition) => definition.id === definitionId && definition.publishedVersionId ? { ...definition, disabled: !definition.disabled, updatedAt: nowText(), updatedBy: "当前用户" } : definition) })),
+      toggleDefinition: (definitionId) => currentUserCan("config-definition:编辑") && set((state) => ({ definitions: state.definitions.map((definition) => definition.id === definitionId && definition.publishedVersionId ? { ...definition, disabled: !definition.disabled, updatedAt: nowText(), updatedBy: currentActorName() } : definition) })),
       recordInstanceCreated: (definitionId, versionId) => set((state) => ({ definitions: state.definitions.map((definition) => definition.id === definitionId ? { ...definition, instanceCount: definition.instanceCount + 1, versions: definition.versions.map((version) => version.id === versionId ? { ...version, instanceCount: version.instanceCount + 1 } : version) } : definition) })),
       resetDefinitions: () => set({ definitions: initialDefinitions }),
     }),
     {
       name: "flowpilot-process-definitions-v1",
-      version: 13,
+      version: 16,
       migrate: (persisted) => {
         const legacyState = persisted as { definitions?: Array<Record<string, unknown>> };
         if (!legacyState.definitions) return { definitions: initialDefinitions };
@@ -469,12 +520,16 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
               : Array.isArray(legacySource.closerGroups)
                 ? [...legacySource.closerGroups]
                 : [...starterGroups];
-            return { name: source.name ?? String(raw.name ?? "未命名流程"), code: source.code ?? String(raw.code ?? "PROC-UNKNOWN"), instancePrefix: source.instancePrefix ?? "", type: source.type ?? (raw.type as DefinitionType) ?? "approval", description: source.description ?? String(raw.description ?? ""), starterGroups, closeGroups, assigneeGroups: Array.isArray(source.assigneeGroups) ? [...source.assigneeGroups] : source.assigneeGroup ? [source.assigneeGroup] : undefined, visibleRoles: [...(source.visibleRoles ?? [])], visibleUsers: (source.visibleUsers ?? []).map((value) => value === "linxiao" ? "lina" : value) };
+            const visibleRoles = (source.visibleRoles ?? []).flatMap((value) => {
+              const role = useIdentityStore.getState().roles.find((item) => item.id === value || item.name === value);
+              return role ? [role.id] : [];
+            });
+            return { name: source.name ?? String(raw.name ?? "未命名流程"), code: source.code ?? String(raw.code ?? "PROC-UNKNOWN"), instancePrefix: source.instancePrefix ?? "", type: source.type ?? (raw.type as DefinitionType) ?? "approval", description: source.description ?? String(raw.description ?? ""), starterGroups, closeGroups, assigneeGroups: Array.isArray(source.assigneeGroups) ? [...source.assigneeGroups] : source.assigneeGroup ? [source.assigneeGroup] : undefined, visibleRoles, visibleUsers: (source.visibleUsers ?? []).map((value) => value === "linxiao" ? "lina" : value) };
           };
           const normalizeVersion = (item: Record<string, unknown>): ProcessVersion => {
             const config = normalizeBasic(item.basic);
             const snapshot = cloneCompleteDesignerSnapshot(item.snapshot as CompleteDesignerSnapshot | undefined);
-            return buildVersion(String(item.id), String(item.version).toUpperCase(), config, snapshot, { basedOn: item.basedOn as string | undefined, createdAt: String(item.createdAt ?? item.firstPublishedAt ?? item.publishedAt ?? nowText()), createdBy: String(item.createdBy ?? "当前用户"), updatedAt: String(item.updatedAt ?? item.publishedAt ?? nowText()), updatedBy: String(item.updatedBy ?? item.createdBy ?? "当前用户"), firstPublishedAt: (item.firstPublishedAt ?? item.publishedAt) as string | undefined, firstPublishedBy: (item.firstPublishedBy ?? item.createdBy) as string | undefined, publishedAt: item.publishedAt as string | undefined, lastUnpublishedAt: (item.lastUnpublishedAt ?? item.lastWithdrawnAt) as string | undefined, lastUnpublishedBy: (item.lastUnpublishedBy ?? item.lastWithdrawnBy) as string | undefined, lastUnpublishReason: item.lastUnpublishReason as string | undefined, changeNote: String(item.changeNote ?? "历史版本"), instanceCount: Number(item.instanceCount ?? 0) });
+            return buildVersion(String(item.id), String(item.version).toUpperCase(), config, snapshot, { basedOn: item.basedOn as string | undefined, createdAt: String(item.createdAt ?? item.firstPublishedAt ?? item.publishedAt ?? nowText()), createdBy: String(item.createdBy ?? "历史数据"), updatedAt: String(item.updatedAt ?? item.publishedAt ?? nowText()), updatedBy: String(item.updatedBy ?? item.createdBy ?? "历史数据"), firstPublishedAt: (item.firstPublishedAt ?? item.publishedAt) as string | undefined, firstPublishedBy: (item.firstPublishedBy ?? item.createdBy) as string | undefined, publishedAt: item.publishedAt as string | undefined, lastUnpublishedAt: (item.lastUnpublishedAt ?? item.lastWithdrawnAt) as string | undefined, lastUnpublishedBy: (item.lastUnpublishedBy ?? item.lastWithdrawnBy) as string | undefined, lastUnpublishReason: item.lastUnpublishReason as string | undefined, changeNote: String(item.changeNote ?? "历史版本"), instanceCount: Number(item.instanceCount ?? 0) });
           };
           let versions = legacyVersions.map(normalizeVersion);
           let publishedVersionId = (raw.publishedVersionId ?? raw.effectiveVersionId) as string | undefined;
@@ -484,15 +539,15 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
             const withdrawnId = legacyDraft.withdrawnVersionId as string | undefined;
             const targetId = withdrawnId ?? String(legacyDraft.id).replace(/-draft$/, "");
             const oldTarget = versions.find((version) => version.id === withdrawnId);
-            const converted = buildVersion(targetId, String(legacyDraft.version ?? "V1").toUpperCase(), draftBasic, draftSnapshot, { basedOn: legacyDraft.basedOn as string | undefined, createdAt: String(legacyDraft.updatedAt ?? nowText()), createdBy: "当前用户", updatedAt: String(legacyDraft.updatedAt ?? nowText()), updatedBy: "当前用户", instanceCount: oldTarget?.instanceCount ?? 0, firstPublishedAt: oldTarget?.firstPublishedAt, firstPublishedBy: oldTarget?.firstPublishedBy, publishedAt: oldTarget?.publishedAt });
+            const converted = buildVersion(targetId, String(legacyDraft.version ?? "V1").toUpperCase(), draftBasic, draftSnapshot, { basedOn: legacyDraft.basedOn as string | undefined, createdAt: String(legacyDraft.updatedAt ?? nowText()), createdBy: "历史数据", updatedAt: String(legacyDraft.updatedAt ?? nowText()), updatedBy: "历史数据", instanceCount: oldTarget?.instanceCount ?? 0, firstPublishedAt: oldTarget?.firstPublishedAt, firstPublishedBy: oldTarget?.firstPublishedBy, publishedAt: oldTarget?.publishedAt });
             versions = [converted, ...versions.filter((version) => version.id !== targetId)];
             if (withdrawnId) publishedVersionId = undefined;
           }
           if (!versions.length && fallback) versions = fallback.versions.map((version) => ({ ...version, basic: cloneBasic(version.basic), snapshot: cloneCompleteDesignerSnapshot(version.snapshot) }));
           const published = versions.find((version) => version.id === publishedVersionId);
           const allocated = versions.map((version) => Number(version.version.replace(/\D/g, ""))).filter(Number.isFinite);
-          return { id: String(raw.id), code: String(raw.code ?? published?.basic.code ?? versions[0]?.basic.code ?? "PROC-UNKNOWN"), name: published?.basic.name ?? String(raw.name ?? versions[0]?.basic.name ?? "未命名流程"), description: published?.basic.description ?? String(raw.description ?? versions[0]?.basic.description ?? ""), type: (raw.type as DefinitionType) ?? versions[0]?.basic.type ?? "approval", disabled: Boolean(raw.disabled && publishedVersionId), publishedVersionId: versions.some((version) => version.id === publishedVersionId) ? publishedVersionId : undefined, nextVersionNumber: Number(raw.nextVersionNumber ?? Math.max(0, ...allocated) + 1), versions, updatedAt: String(raw.updatedAt ?? nowText()), updatedBy: String(raw.updatedBy ?? "当前用户"), instanceCount: Number(raw.instanceCount ?? versions.reduce((total, version) => total + version.instanceCount, 0)) } satisfies ProcessDefinition;
-        });
+          return { id: String(raw.id), code: String(raw.code ?? published?.basic.code ?? versions[0]?.basic.code ?? "PROC-UNKNOWN"), name: published?.basic.name ?? String(raw.name ?? versions[0]?.basic.name ?? "未命名流程"), description: published?.basic.description ?? String(raw.description ?? versions[0]?.basic.description ?? ""), type: (raw.type as DefinitionType) ?? versions[0]?.basic.type ?? "approval", disabled: Boolean(raw.disabled && publishedVersionId), publishedVersionId: versions.some((version) => version.id === publishedVersionId) ? publishedVersionId : undefined, nextVersionNumber: Number(raw.nextVersionNumber ?? Math.max(0, ...allocated) + 1), versions, updatedAt: String(raw.updatedAt ?? nowText()), updatedBy: String(raw.updatedBy ?? "历史数据"), instanceCount: Number(raw.instanceCount ?? versions.reduce((total, version) => total + version.instanceCount, 0)) } satisfies ProcessDefinition;
+        }).map(repairBuiltInHistoricalVersions);
         return { definitions };
       },
     },

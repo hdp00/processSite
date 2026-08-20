@@ -1,6 +1,7 @@
 import { FileOutlined, TableOutlined } from "@ant-design/icons";
 import { Tooltip } from "antd";
 import type { StoredDesignerField } from "../utils/designerStorage";
+import { displayDesignerChoiceValue } from "../utils/designerOptions";
 
 interface ListFieldValueProps {
   field: StoredDesignerField;
@@ -47,8 +48,20 @@ export function ListFieldValue({ field, value: rawValue }: ListFieldValueProps) 
 
   if (Array.isArray(value)) {
     if (field.type === "cascader") {
-      const text = value.map(String).join(" / ");
-      return <span className="list-field-value" title={text}>{text}</span>;
+      const text = displayDesignerChoiceValue(field.options, value, { hierarchical: true, omitUnknown: true });
+      return text
+        ? <span className="list-field-value" title={text}>{text}</span>
+        : <span className="list-field-value is-empty">—</span>;
+    }
+    if (field.type === "checkbox") {
+      const labels = value.map((item) => displayDesignerChoiceValue(field.options, item, { omitUnknown: true })).filter(Boolean);
+      if (!labels.length) return <span className="list-field-value is-empty">—</span>;
+      return (
+        <div className="list-field-options">
+          {labels.slice(0, 2).map((item, index) => <span key={`${item}-${index}`}>{item}</span>)}
+          {labels.length > 2 ? <small>+{labels.length - 2}</small> : null}
+        </div>
+      );
     }
     return (
       <div className="list-field-options">
@@ -64,7 +77,10 @@ export function ListFieldValue({ field, value: rawValue }: ListFieldValueProps) 
 
   const text = String(value);
   if (field.type === "select" || field.type === "radio") {
-    return <span className="list-field-choice" title={text}>{text}</span>;
+    const label = displayDesignerChoiceValue(field.options, text, { omitUnknown: true });
+    return label
+      ? <span className="list-field-choice" title={label}>{label}</span>
+      : <span className="list-field-value is-empty">—</span>;
   }
   return <span className="list-field-value" title={text}>{text}</span>;
 }

@@ -7,6 +7,7 @@ import type {
   ProcessVersion,
 } from "../state/useProcessDefinitionStore";
 import type { CompleteDesignerSnapshot } from "../utils/designerStorage";
+import { usePrototypeStore } from "../state/usePrototypeStore";
 import { apiDownload, apiRequest, apiResource, createIdempotencyKey, writeApiAccessToken } from "./client";
 import type {
   ApiHealth,
@@ -68,12 +69,17 @@ export const flowPilotApi = {
     login: async (account: string, password: string) => {
       const session = await apiRequest<AuthSession>("/auth/login", { method: "POST", body: { account, password }, ...mutation() });
       writeApiAccessToken(session.accessToken);
+      usePrototypeStore.getState().login(session.user.id);
       return session;
     },
     me: () => apiRequest<DirectoryUser>("/auth/me"),
     logout: async () => {
-      await apiRequest<void>("/auth/logout", { method: "POST", ...mutation() });
-      writeApiAccessToken();
+      try {
+        await apiRequest<void>("/auth/logout", { method: "POST", ...mutation() });
+      } finally {
+        writeApiAccessToken();
+        usePrototypeStore.getState().logout();
+      }
     },
   },
   directory: {
@@ -127,7 +133,7 @@ export const flowPilotApi = {
       apiResource<ProcessLaunchConfig>(`/process-definitions/${encodeURIComponent(definitionId)}/launch-config`),
     get: (definitionId: string) => apiRequest<ProcessDefinition>(`/process-definitions/${encodeURIComponent(definitionId)}`),
     getResource: (definitionId: string) => apiResource<ProcessDefinition>(`/process-definitions/${encodeURIComponent(definitionId)}`),
-    create: (input: { name: string; type: DefinitionType; description?: string }) =>
+    create: (input: { basic: ProcessBasicConfig }) =>
       apiRequest<ProcessDefinitionVersionResult>("/process-definitions", { method: "POST", body: input, ...mutation() }),
     copy: (definitionId: string, sourceVersionId?: string) =>
       apiRequest<ProcessDefinitionVersionResult>(`/process-definitions/${encodeURIComponent(definitionId)}/copies`, { method: "POST", body: { sourceVersionId }, ...mutation() }),
@@ -163,9 +169,9 @@ export const flowPilotApi = {
     getResource: (instanceId: string) => apiResource<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}`),
     create: (input: { definitionId: string; formValues: Record<string, unknown>; copySourceInstanceId?: string; assigneeByNode?: Record<string, string | undefined>; firstAssigneeId?: string; attachmentIds?: string[]; attachmentIdsByField?: Record<string, string[]> }) =>
       apiRequest<ProcessInstanceDetail>("/process-instances", { method: "POST", body: input, ...mutation() }),
-    updateSubmission: (instanceId: string, input: { formValues: Record<string, unknown>; attachmentNames?: string[] }, ifMatch?: string) =>
+    updateSubmission: (instanceId: string, input: { formValues: Record<string, unknown>; attachmentNames?: string[]; attachmentIdsByField?: Record<string, string[]>; assigneeByNode?: Record<string, string> }, ifMatch?: string) =>
       apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/submission`, { method: "PATCH", body: input, ifMatch }),
-    resubmit: (instanceId: string, input: { formValues: Record<string, unknown>; attachmentNames?: string[] }, ifMatch?: string) =>
+    resubmit: (instanceId: string, input: { formValues: Record<string, unknown>; attachmentNames?: string[]; attachmentIdsByField?: Record<string, string[]> }, ifMatch?: string) =>
       apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/resubmissions`, { method: "POST", body: input, ifMatch, ...mutation() }),
     close: (instanceId: string, reason: string, ifMatch?: string) =>
       apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/close`, { method: "POST", body: { reason }, ifMatch, ...mutation() }),
@@ -182,10 +188,10 @@ export const flowPilotApi = {
     listMine: (query: WorkflowTaskQuery = {}) => apiRequest<PageResult<WorkflowTaskListItem>>("/me/workflow-tasks", { query }),
     get: (taskId: string) => apiRequest<WorkflowTaskListItem>(`/workflow-tasks/${encodeURIComponent(taskId)}`),
     getResource: (taskId: string) => apiResource<WorkflowTaskListItem>(`/workflow-tasks/${encodeURIComponent(taskId)}`),
-    decide: (taskId: string, input: { action: "pass" | "confirm" | "reject"; comment?: string; fieldValues?: Record<string, unknown> }, ifMatch?: string) =>
+    decide: (taskId: string, input: { action: "pass" | "confirm" | "reject"; comment?: string; fieldValues?: Record<string, unknown>; attachmentIdsByField?: Record<string, string[]> }, ifMatch?: string) =>
       apiRequest<WorkflowDecisionResult>(`/workflow-tasks/${encodeURIComponent(taskId)}/decision`, { method: "POST", body: input, ifMatch, ...mutation() }),
-    reviseFields: (taskId: string, fieldValues: Record<string, unknown>, comment?: string, ifMatch?: string) =>
-      apiRequest<WorkflowRevisionResult>(`/workflow-tasks/${encodeURIComponent(taskId)}/field-revisions`, { method: "POST", body: { fieldValues, comment }, ifMatch, ...mutation() }),
+    reviseFields: (taskId: string, fieldValues: Record<string, unknown>, comment?: string, ifMatch?: string, attachmentIdsByField?: Record<string, string[]>) =>
+      apiRequest<WorkflowRevisionResult>(`/workflow-tasks/${encodeURIComponent(taskId)}/field-revisions`, { method: "POST", body: { fieldValues, comment, attachmentIdsByField }, ifMatch, ...mutation() }),
   },
   freeFlows: {
     create: async (input: { definitionId: string; title: string; category: string; priority: "普通" | "紧急"; description: string; initialContent: string; attachmentIds?: string[]; assigneeId: string }) => {
@@ -223,10 +229,12 @@ export const flowPilotApi = {
       apiRequest<ProcessInstance>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/reopen`, { method: "POST", body: { reason, assigneeId }, ifMatch, ...mutation() }),
   },
   attachments: {
-    upload: (file: File, input: { instanceId?: string; fieldId?: string } = {}) => {
+    upload: (file: File, input: { instanceId?: string; definitionId?: string; versionId?: string; fieldId?: string } = {}) => {
       const form = new FormData();
       form.set("file", file);
       if (input.instanceId) form.set("instanceId", input.instanceId);
+      if (input.definitionId) form.set("definitionId", input.definitionId);
+      if (input.versionId) form.set("versionId", input.versionId);
       if (input.fieldId) form.set("fieldId", input.fieldId);
       return apiRequest<AttachmentRecord>("/attachments", { method: "POST", body: form, ...mutation(), timeoutMs: 60_000 });
     },

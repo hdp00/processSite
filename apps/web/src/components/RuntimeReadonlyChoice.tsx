@@ -6,6 +6,7 @@ type RuntimeReadonlyChoiceType = "select" | "cascader" | "radio" | "checkbox";
 interface RuntimeReadonlyChoiceOption {
   value: string;
   label: string;
+  children?: RuntimeReadonlyChoiceOption[];
 }
 
 interface RuntimeReadonlyChoiceProps {

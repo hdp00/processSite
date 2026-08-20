@@ -1,5 +1,6 @@
-import type { StoredDesignerField, StoredDesignerTableColumn } from "./designerStorage";
+import { normalizeDesignerFieldValue, type StoredDesignerField, type StoredDesignerTableColumn } from "./designerStorage";
 import { PROCESS_TITLE_FIELD_ID } from "./designerStorage";
+import { flattenDesignerChoiceOptions, normalizeDesignerChoiceValue } from "./designerOptions";
 
 const cloneValue = <T,>(value: T): T => structuredClone(value);
 
@@ -16,6 +17,24 @@ const defaultFieldValue = (field: StoredDesignerField): unknown => {
     }];
   }
   return cloneValue(field.defaultValue ?? "");
+};
+
+const copiedChoiceValue = (field: StoredDesignerField, value: unknown) => {
+  const normalized = normalizeDesignerFieldValue(field, value);
+  const validIds = new Set(flattenDesignerChoiceOptions(field.options).map((option) => option.id));
+  if (field.type === "checkbox") return Array.isArray(normalized) ? normalized.filter((item) => validIds.has(String(item))) : [];
+  if (field.type === "cascader") return Array.isArray(normalized) && normalized.every((item) => validIds.has(String(item)))
+    ? normalized
+    : defaultFieldValue(field);
+  return typeof normalized === "string" && validIds.has(normalized) ? normalized : defaultFieldValue(field);
+};
+
+const copiedColumnValue = (column: StoredDesignerTableColumn, value: unknown) => {
+  if (!column.type || column.type === "text") return cloneValue(value);
+  const validIds = new Set(flattenDesignerChoiceOptions(column.options).map((option) => option.id));
+  const normalized = normalizeDesignerChoiceValue(column.options, value, { multiple: column.type === "checkbox" });
+  if (column.type === "checkbox") return Array.isArray(normalized) ? normalized.filter((item) => validIds.has(String(item))) : [];
+  return typeof normalized === "string" && validIds.has(normalized) ? normalized : defaultColumnValue(column);
 };
 
 const copyTableValue = (
@@ -35,7 +54,7 @@ const copyTableValue = (
         return [
           targetColumn.id,
           sourceColumn?.type === targetColumn.type && sourceCell !== undefined
-            ? cloneValue(sourceCell)
+            ? copiedColumnValue(targetColumn, sourceCell)
             : defaultColumnValue(targetColumn),
         ];
       })),
@@ -63,6 +82,9 @@ export const buildCopiedInstanceInitialValues = (
       return [targetField.id, copyTableValue(targetField, sourceField, sourceValues[targetField.id])];
     }
     const sourceValue = sourceValues[targetField.id];
+    if (["select", "radio", "checkbox", "cascader"].includes(targetField.type)) {
+      return [targetField.id, sourceValue === undefined ? defaultFieldValue(targetField) : copiedChoiceValue(targetField, sourceValue)];
+    }
     return [targetField.id, sourceValue === undefined ? defaultFieldValue(targetField) : cloneValue(sourceValue)];
   }));
 };

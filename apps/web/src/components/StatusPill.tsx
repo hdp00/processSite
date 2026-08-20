@@ -6,6 +6,7 @@ const toneByStatus: Record<string, StatusTone> = {
   审核中: "processing",
   进行中: "processing",
   待审核: "processing",
+  待激活: "neutral",
   驳回待处理: "danger",
   已驳回: "danger",
   失败: "danger",

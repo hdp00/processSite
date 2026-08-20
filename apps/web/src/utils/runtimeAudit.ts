@@ -35,7 +35,10 @@ export const collectRuntimeAuditEvents = (
       resourceId: task.id,
       occurredAt: revision.editedAt,
       summary: `${revision.editedByName}继续修改节点 ${task.nodeName} 的授权字段`,
-      details: { instanceId: task.instanceId, comment: revision.comment, changes: revision.changes },
+      details: {
+        instanceId: task.instanceId,
+        fields: revision.changes.map((change) => ({ fieldId: change.fieldId, label: change.label })),
+      },
     }));
     return result;
   });
@@ -48,7 +51,7 @@ export const collectRuntimeAuditEvents = (
     resourceId: instance.id,
     occurredAt: entry.time,
     summary: `${entry.actor}执行${entry.type}`,
-    details: { content: entry.content, assignee: entry.assignee },
+    details: { assignee: entry.assignee },
   })));
   const resubmissions = instances.flatMap((instance) => (instance.resubmissions ?? []).map((record): AuditEvent => ({
     id: `runtime-resubmission-${instance.id}-r${record.round}`,
@@ -77,7 +80,7 @@ export const collectRuntimeAuditEvents = (
     resourceId: instance.id,
     occurredAt: instance.createdAt,
     summary: `${instance.initiator}创建流程实例 ${instance.code}`,
-    details: { definitionId: instance.definitionId, versionId: instance.versionId, title: instance.title },
+    details: { definitionId: instance.definitionId, versionId: instance.versionId },
   }));
   return [...decisions, ...resubmissions, ...freeFlowEvents, ...creations];
 };

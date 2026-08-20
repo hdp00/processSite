@@ -148,6 +148,15 @@ export interface AttachmentRecord {
   uploadedAt: string;
   instanceId?: string;
   fieldId?: string;
+  lifecycle?: "temporary" | "active" | "cleanup-pending";
+  cleanupAfter?: string;
+  conversion?: {
+    kind: "excel-to-pdf";
+    status: "processing" | "completed" | "failed";
+    generatedPages?: number;
+    maxPages: number;
+    error?: string;
+  };
 }
 
 export interface EmailOutboxItem {

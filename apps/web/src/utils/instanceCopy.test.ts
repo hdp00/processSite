@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { StoredDesignerField } from "./designerStorage";
 import { PROCESS_TITLE_FIELD_ID } from "./designerStorage";
 import { buildCopiedInstanceInitialValues } from "./instanceCopy";
+import { createDesignerChoiceOption, displayDesignerChoiceValue, updateDesignerChoiceOption } from "./designerOptions";
 
 const fields: StoredDesignerField[] = [
   { id: PROCESS_TITLE_FIELD_ID, label: "标题", type: "text", required: true },
@@ -44,5 +45,32 @@ describe("buildCopiedInstanceInitialValues", () => {
     expect(result.summary).toBe("原摘要");
     expect(result.attachment).toEqual([]);
     expect(result.rows).toEqual([{ key: "copy-row-0", same: "保留", changed: [], new: "默认值" }]);
+  });
+
+  it("keeps renamed selections and drops options removed by the target version", () => {
+    const optionA = createDesignerChoiceOption("A");
+    const optionB = createDesignerChoiceOption("B");
+    const optionC = createDesignerChoiceOption("C");
+    const sourceFields: StoredDesignerField[] = [{
+      id: "scope",
+      label: "适用范围",
+      type: "checkbox",
+      options: [optionA, optionB, optionC],
+    }];
+    const targetOptions = updateDesignerChoiceOption([optionA, optionB], optionA.id, { label: "A1" });
+    const targetFields: StoredDesignerField[] = [{
+      ...sourceFields[0],
+      options: targetOptions,
+    }];
+
+    const copied = buildCopiedInstanceInitialValues(
+      targetFields,
+      sourceFields,
+      { scope: [optionA.id, optionC.id] },
+      "原流程",
+    );
+
+    expect(copied.scope).toEqual([optionA.id]);
+    expect(displayDesignerChoiceValue(targetOptions, copied.scope)).toBe("A1");
   });
 });

@@ -12,6 +12,12 @@ import {
   type StoredFlowDesignerSnapshot,
   type StoredNodeCondition,
 } from "./designerStorage";
+import {
+  designerChoiceOptionPaths,
+  displayDesignerChoiceValue,
+  normalizeDesignerChoiceOptions,
+  normalizeDesignerChoiceValue,
+} from "./designerOptions";
 
 interface TransferIdentityContext {
   users: DomainUser[];
@@ -106,16 +112,22 @@ const readableReferences = (values: Array<{ id: string; label: string }>) => {
 const versionStatusText = (definition: ProcessDefinition, version: ProcessVersion) =>
   definition.publishedVersionId === version.id ? "已发布" : version.validation.status === "通过" ? "校验通过" : "校验未通过";
 
-const conditionForExport = (condition: StoredNodeCondition | undefined, fieldNames: Map<string, string>) => condition?.rules.length ? {
+const conditionForExport = (
+  condition: StoredNodeCondition | undefined,
+  fieldNames: Map<string, string>,
+  fieldsById: Map<string, StoredDesignerField>,
+) => condition?.rules.length ? {
   "规则关系": condition.mode === "any" ? "满足任意规则" : "满足全部规则",
   "规则": condition.rules.map((rule) => ({
     "字段": fieldNames.get(rule.fieldId) ?? "未识别字段",
     "比较方式": conditionOperatorLabels[rule.operator],
-    "比较值": displayValue(rule.value),
+    "比较值": ["empty", "not-empty"].includes(rule.operator)
+      ? ""
+      : displayDesignerChoiceValue(fieldsById.get(rule.fieldId)?.options, rule.value) || displayValue(rule.value),
   })),
 } : undefined;
 
-const exportField = (field: StoredDesignerField, fieldNames: Map<string, string>) => {
+const exportField = (field: StoredDesignerField, fieldNames: Map<string, string>, fieldsById: Map<string, StoredDesignerField>) => {
   const base: Record<string, unknown> = {
     "名称": field.label,
     ...(fieldNames.get(field.id) !== field.label ? { "引用名称": fieldNames.get(field.id) } : {}),
@@ -123,7 +135,9 @@ const exportField = (field: StoredDesignerField, fieldNames: Map<string, string>
     "字段说明": field.description ?? "",
     "提示文字": field.placeholder ?? "",
     "必填": Boolean(field.required),
-    "默认值": displayValue(field.defaultValue),
+    "默认值": ["select", "radio", "checkbox", "cascader"].includes(field.type)
+      ? displayDesignerChoiceValue(field.options, field.defaultValue, { hierarchical: field.type === "cascader", separator: field.type === "cascader" ? "/" : "、" })
+      : displayValue(field.defaultValue),
     "输入权限": inputPermissionLabels[normalizeDesignerInputPermission(field)],
     "任务中心显示": Boolean(field.taskVisible),
     "流程清单显示": Boolean(field.listVisible),
@@ -131,22 +145,25 @@ const exportField = (field: StoredDesignerField, fieldNames: Map<string, string>
     "Excel导出": Boolean(field.exportVisible),
   };
   if (field.type === "text") base["多行显示"] = Boolean(field.multiline);
-  if (field.options?.length) base["选项"] = [...field.options];
-  if (field.displayCondition?.rules.length) base["显示条件"] = conditionForExport(field.displayCondition, fieldNames);
+  if (field.options?.length) base["选项"] = field.type === "cascader" ? designerChoiceOptionPaths(field.options) : field.options.map((option) => option.label);
+  if (field.displayCondition?.rules.length) base["显示条件"] = conditionForExport(field.displayCondition, fieldNames, fieldsById);
   if (field.type === "attachment") base["附件设置"] = {
     "最多文件数": field.attachment?.maxCount ?? 20,
     "单个文件上限MB": field.attachment?.maxSizeMb ?? 100,
     "PDF页面内显示": field.attachment?.inlinePdf ?? true,
+    "允许扩展名": (field.attachment?.allowedExtensions ?? []).join("、"),
+    "Excel转PDF": field.attachment?.excelToPdf ?? false,
+    "转换最大页数": field.attachment?.maxPreviewPages ?? 1,
   };
   if (field.type === "table") base["表格列"] = (field.columns ?? []).map((column) => ({
     "名称": column.label,
     "类型": fieldTypeLabels[column.type ?? "text"] ?? column.type ?? "文本框",
     "必填": Boolean(column.required),
-    "默认值": displayValue(column.defaultValue),
+    "默认值": column.type && column.type !== "text" ? displayDesignerChoiceValue(column.options, column.defaultValue) : displayValue(column.defaultValue),
     "列宽": column.width ?? 160,
     "对齐": column.align === "center" ? "居中" : column.align === "right" ? "右对齐" : "左对齐",
     "审核人可输入": Boolean(column.reviewEditable),
-    ...column.options?.length ? { "选项": [...column.options] } : {},
+    ...column.options?.length ? { "选项": column.options.map((option) => option.label) } : {},
   }));
   return base;
 };
@@ -155,14 +172,19 @@ const exportVersion = (
   definition: ProcessDefinition,
   version: ProcessVersion,
   identities: TransferIdentityContext,
+  familyFieldNames: Map<string, string>,
 ) => {
   const groupNames = displayNameMap(identities.workflowGroups);
   const userNames = displayNameMap(identities.users);
   const roleNames = displayNameMap(identities.roles);
-  const fieldNames = readableReferences(version.snapshot.form.fields.map((field) => ({ id: field.id, label: field.label })));
+  const fieldNames = new Map(familyFieldNames);
+  const fieldsById = new Map(version.snapshot.form.fields.map((field) => [field.id, field]));
   version.snapshot.form.fields.forEach((field) => {
     const fieldReference = fieldNames.get(field.id) ?? field.label;
-    field.columns?.forEach((column) => fieldNames.set(`${field.id}.${column.id}`, `${fieldReference} / ${column.label}`));
+    field.columns?.forEach((column) => {
+      const key = `${field.id}.${column.id}`;
+      if (!fieldNames.has(key)) fieldNames.set(key, `${fieldReference} / ${column.label}`);
+    });
   });
   const nodeNames = readableReferences(version.snapshot.flow.nodes.map((node) => ({ id: node.id, label: node.data?.label || "未命名节点" })));
   return {
@@ -181,7 +203,7 @@ const exportVersion = (
       "额外可见用户": displayNames(version.basic.visibleUsers, userNames),
     },
     "初始表单": {
-      "字段": version.snapshot.form.fields.map((field) => exportField(field, fieldNames)),
+      "字段": version.snapshot.form.fields.map((field) => exportField(field, fieldNames, fieldsById)),
       "系统列表字段": version.snapshot.systemFields.map((field) => ({
         "名称": field.label,
         "任务中心显示": field.taskVisible,
@@ -209,7 +231,7 @@ const exportVersion = (
             "处理方式": handlingModeLabels[node.data?.handlingMode ?? "approval"],
             "可修改字段": (node.data?.editableFields ?? []).map((field) => fieldNames.get(field)).filter((name): name is string => Boolean(name)),
             "允许重复修改": Boolean(node.data?.allowRepeatedEditing),
-            "执行条件": conditionForExport(node.data?.activationCondition, fieldNames),
+            "执行条件": conditionForExport(node.data?.activationCondition, fieldNames, fieldsById),
           } : {},
           ...(kind === "approval" || kind === "end") && node.data?.emailNotification ? {
             "邮件通知": {
@@ -233,7 +255,20 @@ const exportVersion = (
 export const createProcessDefinitionExport = (
   definition: ProcessDefinition,
   identities: TransferIdentityContext,
-) => ({
+) => {
+  const uniqueFields = new Map<string, string>();
+  definition.versions.slice().reverse().forEach((version) => version.snapshot.form.fields.forEach((field) => {
+    if (!uniqueFields.has(field.id)) uniqueFields.set(field.id, field.label);
+  }));
+  const familyFieldNames = readableReferences([...uniqueFields].map(([id, label]) => ({ id, label })));
+  definition.versions.slice().reverse().forEach((version) => version.snapshot.form.fields.forEach((field) => {
+    const fieldReference = familyFieldNames.get(field.id) ?? field.label;
+    field.columns?.forEach((column) => {
+      const key = `${field.id}.${column.id}`;
+      if (!familyFieldNames.has(key)) familyFieldNames.set(key, `${fieldReference} / ${column.label}`);
+    });
+  }));
+  return ({
   "文件类型": "FlowPilot 流程定义",
   "格式版本": "1.0",
   "导出时间": new Date().toLocaleString("zh-CN", { hour12: false }),
@@ -244,9 +279,10 @@ export const createProcessDefinitionExport = (
     "原状态": definition.disabled ? "已停用" : definition.publishedVersionId ? "已发布" : "未发布",
     "版本": [...definition.versions]
       .sort((left, right) => Number(left.version.slice(1)) - Number(right.version.slice(1)))
-      .map((version) => exportVersion(definition, version, identities)),
+      .map((version) => exportVersion(definition, version, identities, familyFieldNames)),
   },
-});
+  });
+};
 
 const resolveNames = <T extends { id: string; name: string }>(
   names: string[],
@@ -284,39 +320,82 @@ const importCondition = (
   return rules.length ? { mode: value["规则关系"] === "满足任意规则" ? "any" : "all", rules } : undefined;
 };
 
-const importForm = (value: unknown, warnings: string[]) => {
+interface ImportFieldIdentity {
+  id: string;
+  type: string;
+}
+
+interface ImportFormIdentityRegistry {
+  fields: Map<string, ImportFieldIdentity>;
+  columns: Map<string, ImportFieldIdentity>;
+}
+
+const importForm = (value: unknown, warnings: string[], registry: ImportFormIdentityRegistry) => {
   const source = record(value, "初始表单格式不正确");
   const rawFields = Array.isArray(source["字段"]) ? source["字段"].filter(isRecord) : [];
   const fieldIds = new Map<string, string>();
   const fields = rawFields.map((raw, index): StoredDesignerField => {
     const label = stringValue(raw["名称"], `未命名字段 ${index + 1}`);
     const reference = stringValue(raw["引用名称"], label);
-    const id = label === "标题" && !fieldIds.has("标题") ? PROCESS_TITLE_FIELD_ID : makeId("field");
+    const type = fieldTypeValues[stringValue(raw["类型"])] ?? "text";
+    const previousIdentity = registry.fields.get(reference);
+    const id = label === "标题" && !fieldIds.has("标题")
+      ? PROCESS_TITLE_FIELD_ID
+      : previousIdentity?.type === type
+        ? previousIdentity.id
+        : makeId("field");
+    if (previousIdentity && previousIdentity.type !== type) warnings.push(`字段“${reference}”在不同版本中类型不兼容，已按新字段导入`);
+    registry.fields.set(reference, { id, type });
     fieldIds.set(reference, id);
     if (!fieldIds.has(label)) fieldIds.set(label, id);
-    const type = fieldTypeValues[stringValue(raw["类型"])] ?? "text";
     const columns = type === "table" && Array.isArray(raw["表格列"]) ? raw["表格列"].filter(isRecord).map((column, columnIndex) => {
       const columnLabel = stringValue(column["名称"], `未命名列 ${columnIndex + 1}`);
-      const columnId = makeId("column");
+      const columnType = (fieldTypeValues[stringValue(column["类型"])] ?? "text") as "text" | "radio" | "checkbox" | "select";
+      const columnReference = `${reference} / ${columnLabel}`;
+      const previousColumnIdentity = registry.columns.get(columnReference);
+      const columnId = previousColumnIdentity?.type === columnType ? previousColumnIdentity.id : makeId("column");
+      if (previousColumnIdentity && previousColumnIdentity.type !== columnType) warnings.push(`表格列“${columnReference}”在不同版本中类型不兼容，已按新列导入`);
+      registry.columns.set(columnReference, { id: columnId, type: columnType });
+      const columnOptions = columnType === "text" ? undefined : normalizeDesignerChoiceOptions(column["选项"], `${id}.${columnId}`);
+      const rawColumnDefault = displayValue(column["默认值"]);
+      const columnDefault = columnType === "checkbox"
+        ? normalizeDesignerChoiceValue(columnOptions, Array.isArray(rawColumnDefault) ? rawColumnDefault : String(rawColumnDefault ?? "").split("、").filter(Boolean), { multiple: true })
+        : columnType === "select" || columnType === "radio"
+          ? normalizeDesignerChoiceValue(columnOptions, rawColumnDefault)
+          : rawColumnDefault;
       fieldIds.set(`${reference} / ${columnLabel}`, `${id}.${columnId}`);
       if (!fieldIds.has(`${label} / ${columnLabel}`)) fieldIds.set(`${label} / ${columnLabel}`, `${id}.${columnId}`);
       return {
         id: columnId,
         label: columnLabel,
-        type: (fieldTypeValues[stringValue(column["类型"])] ?? "text") as "text" | "radio" | "checkbox" | "select",
+        type: columnType,
         required: booleanValue(column["必填"]),
-        defaultValue: displayValue(column["默认值"]) as string | string[],
+        defaultValue: columnDefault as string | string[],
         width: typeof column["列宽"] === "number" ? column["列宽"] : 160,
         align: column["对齐"] === "居中" ? "center" as const : column["对齐"] === "右对齐" ? "right" as const : "left" as const,
         reviewEditable: booleanValue(column["审核人可输入"]),
-        options: stringList(column["选项"]),
+        options: columnOptions,
       };
     }) : undefined;
     const attachment = type === "attachment" && isRecord(raw["附件设置"]) ? {
       maxCount: typeof raw["附件设置"]["最多文件数"] === "number" ? raw["附件设置"]["最多文件数"] as number : 20,
       maxSizeMb: typeof raw["附件设置"]["单个文件上限MB"] === "number" ? raw["附件设置"]["单个文件上限MB"] as number : 100,
       inlinePdf: booleanValue(raw["附件设置"]["PDF页面内显示"], true),
+      allowedExtensions: String(displayValue(raw["附件设置"]["允许扩展名"])).split(/[、,，\s]+/).map((value) => value.replace(/^\./, "").toLowerCase()).filter(Boolean),
+      excelToPdf: booleanValue(raw["附件设置"]["Excel转PDF"]),
+      maxPreviewPages: typeof raw["附件设置"]["转换最大页数"] === "number" ? raw["附件设置"]["转换最大页数"] as number : 1,
     } : undefined;
+    const options = ["select", "radio", "checkbox", "cascader"].includes(type)
+      ? normalizeDesignerChoiceOptions(raw["选项"], id, type === "cascader")
+      : undefined;
+    const rawDefault = displayValue(raw["默认值"]);
+    const defaultValue = type === "checkbox"
+      ? normalizeDesignerChoiceValue(options, Array.isArray(rawDefault) ? rawDefault : String(rawDefault ?? "").split("、").filter(Boolean), { multiple: true })
+      : type === "cascader"
+        ? normalizeDesignerChoiceValue(options, Array.isArray(rawDefault) ? rawDefault : String(rawDefault ?? "").split("/").filter(Boolean), { hierarchical: true })
+        : type === "select" || type === "radio"
+          ? normalizeDesignerChoiceValue(options, rawDefault)
+          : rawDefault;
     return {
       id,
       label,
@@ -325,13 +404,13 @@ const importForm = (value: unknown, warnings: string[]) => {
       placeholder: stringValue(raw["提示文字"]),
       multiline: booleanValue(raw["多行显示"]),
       required: booleanValue(raw["必填"]),
-      defaultValue: displayValue(raw["默认值"]) as string | string[],
+      defaultValue: defaultValue as string | string[],
       inputStage: inputPermissionValues[stringValue(raw["输入权限"]) as keyof typeof inputPermissionValues] ?? "initiator",
       taskVisible: booleanValue(raw["任务中心显示"]),
       listVisible: booleanValue(raw["流程清单显示"]),
       queryable: booleanValue(raw["作为查询条件"]),
       exportVisible: booleanValue(raw["Excel导出"]),
-      options: stringList(raw["选项"]),
+      options,
       attachment,
       columns,
     };
@@ -437,12 +516,11 @@ export const parseProcessDefinitionImport = (
   const warnings: string[] = [];
   const groupIds = (value: unknown) => resolveNames(stringList(value), identities.workflowGroups, "流程权限组", warnings);
   const userIds = (value: unknown) => resolveNames(stringList(value), identities.users, "用户", warnings);
-  const roleNames = (value: unknown) => resolveNames(stringList(value), identities.roles, "角色", warnings)
-    .map((id) => identities.roles.find((role) => role.id === id)?.name)
-    .filter((value): value is string => Boolean(value));
+  const roleIds = (value: unknown) => resolveNames(stringList(value), identities.roles, "角色", warnings);
+  const formIdentityRegistry: ImportFormIdentityRegistry = { fields: new Map(), columns: new Map() };
   const versions = rawVersions.map((raw, index): ImportedProcessVersion => {
     const basicSource = record(raw["基本信息"], `第 ${index + 1} 个版本缺少基本信息`);
-    const form = importForm(raw["初始表单"], warnings);
+    const form = importForm(raw["初始表单"], warnings, formIdentityRegistry);
     const versionType: DefinitionType = basicSource["流程类型"] === "自由协作" ? "free" : type;
     const basic: ProcessBasicConfig = {
       name: stringValue(basicSource["流程名称"], name),
@@ -453,7 +531,7 @@ export const parseProcessDefinitionImport = (
       starterGroups: groupIds(basicSource["发起权限组"]),
       closeGroups: groupIds(basicSource["关闭权限组"]),
       assigneeGroups: groupIds(basicSource["审批受理权限组"]),
-      visibleRoles: roleNames(basicSource["额外可见角色"]),
+      visibleRoles: roleIds(basicSource["额外可见角色"]),
       visibleUsers: userIds(basicSource["额外可见用户"]),
     };
     return {

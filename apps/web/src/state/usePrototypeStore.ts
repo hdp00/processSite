@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { initialInstances } from "../data/mock";
 import type {
   FreeFlowEntry,
+  LegacyProcessInstance,
   ProcessInstance,
   WorkflowFieldChange,
   WorkflowTask,
@@ -20,10 +21,12 @@ import {
   normalizeLegacyInstanceNumber,
   resetInstanceNumberSequences,
 } from "../utils/instanceNumber";
-import { applyDesignerFieldVisibility, conditionOperatorLabel, evaluateNodeCondition, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
+import { applyDesignerFieldVisibility, conditionOperatorLabel, evaluateNodeCondition, normalizeDesignerFormValues, PROCESS_TITLE_FIELD_ID, type StoredDesignerField, type StoredDesignerTableColumn } from "../utils/designerStorage";
 import { hasUserPermission } from "./permissionEngine";
 import { resolveLockedProcessVersion } from "./processVersionResolver";
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
+import { displayDesignerChoiceValue } from "../utils/designerOptions";
+import { nowDomainTimestamp } from "../utils/domainTime";
 
 type ReviewAction = "pass" | "confirm" | "reject";
 export type RepeatEditResult = "updated" | "no-changes" | "forbidden";
@@ -31,7 +34,7 @@ export type RuntimeCommandResult =
   | { ok: true }
   | { ok: false; reason: "not-found" | "version-missing" | "forbidden" | "invalid-state" | "locked"; message: string };
 type RepublishChanges = Partial<
-  Pick<ProcessInstance, "title" | "documentCode" | "documentType" | "documentLevel" | "description" | "pdfName">
+  Pick<ProcessInstance, "title" | "documentCode" | "documentType" | "documentLevel" | "description" | "pdfName" | "attachmentIds" | "attachmentIdsByField">
 > & { formValues?: Record<string, unknown>; attachmentNames?: string[] };
 type UnreviewedInstanceChanges = RepublishChanges & {
   assigneeByNode?: Record<string, string | undefined>;
@@ -39,17 +42,6 @@ type UnreviewedInstanceChanges = RepublishChanges & {
 export type PersonaId = string;
 export const SUPER_ADMIN_PERSONA_ID: PersonaId = "superadmin";
 export const isSuperAdminPersona = (personaId: PersonaId) => personaId === SUPER_ADMIN_PERSONA_ID;
-
-export interface FreeFlowCreateInput {
-  title: string;
-  category: string;
-  priority: ProcessInstance["priority"];
-  description: string;
-  initialContent: string;
-  attachmentName?: string;
-  assignee: string;
-  instancePrefix?: string;
-}
 
 export interface FreeFlowInitialChanges {
   title: string;
@@ -97,7 +89,6 @@ interface PrototypeState {
   closeInstance: (id: string, reason: string) => RuntimeCommandResult;
   updateUnreviewedInstance: (id: string, changes: UnreviewedInstanceChanges) => RuntimeCommandResult;
   republishInstance: (id: string, changes: RepublishChanges) => RuntimeCommandResult;
-  createFreeFlow: (input: FreeFlowCreateInput) => string;
   replyFreeFlow: (id: string, content: string) => void;
   transferFreeFlow: (id: string, content: string, nextAssignee: string) => void;
   editFreeFlowReply: (id: string, entryId: string, content: string) => void;
@@ -108,17 +99,7 @@ interface PrototypeState {
   resetDemo: () => void;
 }
 
-const nowText = () =>
-  new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })
-    .format(new Date())
-    .replaceAll("/", "-");
+const nowText = nowDomainTimestamp;
 
 const normalizeTemplateVersion = (value: string) => {
   const matched = value.match(/^v(\d+)/i);
@@ -131,7 +112,7 @@ const currentPersona = (personaId: PersonaId) => {
   return personas.find((item) => item.id === personaId) ?? personas[0];
 };
 
-const legacyDefinitionId = (instance: ProcessInstance) => {
+const legacyDefinitionId = (instance: LegacyProcessInstance) => {
   if (instance.definitionId) return instance.definitionId;
   if (instance.workflowType === "free" || instance.template.includes("自由")) return "free-collaboration";
   if (instance.template.includes("测试报告")) return "test-report-review";
@@ -139,7 +120,7 @@ const legacyDefinitionId = (instance: ProcessInstance) => {
   return "pdf-review";
 };
 
-const resolveInstanceVersion = (instance: ProcessInstance) => {
+const resolveInstanceVersion = (instance: LegacyProcessInstance) => {
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === legacyDefinitionId(instance));
   return resolveLockedProcessVersion(definition, instance);
 };
@@ -168,14 +149,47 @@ const legacyPermissionGroup = (reviewerKey: string, definitionId: string) => {
   return ({ rd: `${prefix}_研发_流程权限组`, qa: `${prefix}_质量_流程权限组`, production: `${prefix}_生产_流程权限组` }[reviewerKey] ?? reviewerKey);
 };
 
+const normalizeInstanceReviewers = (instance: ProcessInstance, version?: ProcessVersion): ProcessInstance => {
+  const approvalNodes = version?.snapshot.flow.nodes.filter((node) => node.data?.kind === "approval" && node.data.permissionGroup) ?? [];
+  if (!approvalNodes.length || instance.workflowType === "free") return instance;
+
+  const definitionId = instance.definitionId ?? legacyDefinitionId(instance);
+  const unmatched = [...instance.reviewers];
+  const reviewers = approvalNodes.map((node) => {
+    const permissionGroupId = node.data?.permissionGroup ?? "";
+    const matchedIndex = unmatched.findIndex((reviewer) =>
+      reviewer.key === node.id
+      || reviewer.group === permissionGroupId
+      || legacyPermissionGroup(reviewer.key, definitionId) === permissionGroupId,
+    );
+    const reviewer = matchedIndex >= 0 ? unmatched.splice(matchedIndex, 1)[0] : undefined;
+    return {
+      key: node.id,
+      name: reviewer?.name ?? "组内共享",
+      group: permissionGroupId || reviewer?.group || "未配置流程权限组",
+      shortGroup: node.data?.label ?? reviewer?.shortGroup ?? "审批",
+      status: reviewer?.status ?? ("待审核" as const),
+      actionAt: reviewer?.actionAt,
+      comment: reviewer?.comment,
+      substitute: reviewer?.substitute,
+      conditionSummary: reviewer?.conditionSummary,
+    };
+  });
+  return { ...instance, reviewers };
+};
+
 const tasksForInstance = (instance: ProcessInstance, version?: ProcessVersion): WorkflowTask[] => {
   const definitionId = instance.definitionId ?? legacyDefinitionId(instance);
   const versionId = instance.versionId ?? version?.id ?? `${definitionId}-${normalizeTemplateVersion(instance.templateVersion).toLowerCase()}`;
   const createdAt = instance.createdAt;
   const approvalNodes = version?.snapshot.flow.nodes.filter((node) => node.data?.kind === "approval" && node.data.permissionGroup) ?? [];
   if (approvalNodes.length) {
-    return approvalNodes.map((node, index) => {
-      const reviewer = instance.reviewers.find((item) => item.key === node.id) ?? instance.reviewers[index];
+    const normalizedInstance = normalizeInstanceReviewers(instance, version);
+    return approvalNodes.map((node) => {
+      const reviewer = normalizedInstance.reviewers.find((item) => item.key === node.id);
+      const completed = reviewer?.status === "已通过" || reviewer?.status === "已确认" || reviewer?.status === "已驳回";
+      const permissionGroupId = node.data?.permissionGroup ?? "";
+      const reviewerAssigneeId = userIdByIdOrName(reviewer?.name);
       return {
         id: `task-${instance.id}-${node.id}-r${instance.round}`,
         instanceId: instance.id,
@@ -183,7 +197,7 @@ const tasksForInstance = (instance: ProcessInstance, version?: ProcessVersion): 
         versionId,
         nodeId: node.id,
         nodeName: node.data?.label ?? "审批",
-        permissionGroupId: node.data?.permissionGroup ?? "",
+        permissionGroupId,
         status: reviewer?.status === "待审核"
           ? "待处理"
           : reviewer?.status === "已跳过"
@@ -191,9 +205,11 @@ const tasksForInstance = (instance: ProcessInstance, version?: ProcessVersion): 
           : reviewer?.status === "已通过" || reviewer?.status === "已确认" || reviewer?.status === "已驳回"
             ? "已完成"
             : "已取消",
-        defaultAssigneeId: instance.designatedReviewerId,
-        completedById: userIdByIdOrName(reviewer?.name),
-        completedByName: reviewer?.status === "已通过" || reviewer?.status === "已确认" || reviewer?.status === "已驳回" ? reviewer.name : undefined,
+        defaultAssigneeId: reviewerAssigneeId && isUserInWorkflowGroup(reviewerAssigneeId, permissionGroupId)
+          ? reviewerAssigneeId
+          : undefined,
+        completedById: completed ? reviewerAssigneeId : undefined,
+        completedByName: completed ? reviewer?.name : undefined,
         action: reviewer?.status === "已通过" ? "通过" : reviewer?.status === "已确认" ? "确认" : reviewer?.status === "已驳回" ? "驳回" : undefined,
         comment: reviewer?.comment,
         createdAt,
@@ -250,6 +266,16 @@ const auditValue = (value: unknown): string => {
   }
 };
 
+const auditFieldValue = (field: StoredDesignerField, value: unknown) =>
+  ["select", "radio", "checkbox", "cascader"].includes(field.type)
+    ? displayDesignerChoiceValue(field.options, value, { hierarchical: field.type === "cascader" }) || "（空）"
+    : auditValue(value);
+
+const auditColumnValue = (column: StoredDesignerTableColumn, value: unknown) =>
+  column.type && column.type !== "text"
+    ? displayDesignerChoiceValue(column.options, value) || "（空）"
+    : auditValue(value);
+
 const sameValue = (left: unknown, right: unknown) => {
   if (Object.is(left, right)) return true;
   try {
@@ -277,7 +303,7 @@ const mergeAuthorizedFieldValues = (
       const after = structuredClone(requestedValues[fieldId]);
       if (sameValue(before, after)) return;
       nextValues[fieldId] = after;
-      changes.push({ fieldId, label: field.label, before: auditValue(before), after: auditValue(after) });
+      changes.push({ fieldId, label: field.label, before: auditFieldValue(field, before), after: auditFieldValue(field, after) });
       return;
     }
     const column = field.columns?.find((item) => item.id === columnId);
@@ -295,18 +321,18 @@ const mergeAuthorizedFieldValues = (
     changes.push({
       fieldId: editableKey,
       label: `${field.label} / ${column.label}`,
-      before: auditValue(before),
-      after: auditValue(after),
+      before: auditColumnValue(column, before),
+      after: auditColumnValue(column, after),
     });
   });
   return { values: nextValues, changes };
 };
 
-const hydrateLegacyInstance = (instance: ProcessInstance): ProcessInstance => {
+const hydrateLegacyInstance = (instance: LegacyProcessInstance): ProcessInstance => {
   const definitionId = legacyDefinitionId(instance);
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);
   const version = definition?.versions.find((item) => item.version === normalizeTemplateVersion(instance.templateVersion));
-  return {
+  const hydrated: ProcessInstance = {
     ...instance,
     currentNode: instance.workflowType === "free" && instance.status === "进行中"
       ? instance.currentAssignee ?? instance.currentNode.replace(/受理中$/, "")
@@ -314,8 +340,8 @@ const hydrateLegacyInstance = (instance: ProcessInstance): ProcessInstance => {
         .replace("等待发布方重新发布", "等待发起方重新提交")
         .replace("等待发布方重新处理", "等待发起方重新提交"),
     definitionId,
-    versionId: instance.versionId ?? version?.id,
-    initiatorId: instance.initiatorId ?? userIdByIdOrName(instance.initiator),
+    versionId: instance.versionId ?? version?.id ?? `legacy-version:${normalizeTemplateVersion(instance.templateVersion)}`,
+    initiatorId: instance.initiatorId ?? userIdByIdOrName(instance.initiator) ?? `legacy-user:${instance.initiator}`,
     currentAssigneeId: instance.currentAssigneeId ?? userIdByIdOrName(instance.currentAssignee),
     participantIds: instance.participantIds ?? (instance.participants ?? []).map(userIdByIdOrName).filter((value): value is string => Boolean(value)),
     formValues: instance.formValues ?? {
@@ -326,10 +352,134 @@ const hydrateLegacyInstance = (instance: ProcessInstance): ProcessInstance => {
     },
     attachmentNames: instance.attachmentNames ?? (instance.pdfName && instance.pdfName !== "无附件" ? [instance.pdfName] : []),
   };
+  return normalizeInstanceReviewers(hydrated, version);
+};
+
+const normalizeTaskForInstance = (
+  task: WorkflowTask,
+  instance: ProcessInstance,
+  version?: ProcessVersion,
+): WorkflowTask | undefined => {
+  const definitionId = instance.definitionId ?? legacyDefinitionId(instance);
+  const approvalNodes = version?.snapshot.flow.nodes.filter((node) => node.data?.kind === "approval" && node.data.permissionGroup) ?? [];
+  if (!approvalNodes.length) return { ...task, definitionId, versionId: instance.versionId ?? task.versionId };
+
+  const legacyGroupId = legacyPermissionGroup(task.nodeId, definitionId);
+  const node = approvalNodes.find((item) => item.id === task.nodeId)
+    ?? approvalNodes.find((item) => item.data?.permissionGroup === task.permissionGroupId)
+    ?? approvalNodes.find((item) => item.data?.permissionGroup === legacyGroupId)
+    ?? approvalNodes.find((item) => item.data?.label === task.nodeName);
+  if (!node) {
+    return task.round === instance.round && (task.status === "待处理" || task.status === "未激活")
+      ? undefined
+      : task;
+  }
+
+  const permissionGroupId = node.data?.permissionGroup ?? task.permissionGroupId;
+  const reviewer = instance.reviewers.find((item) => item.key === node.id);
+  const storedAssignee = findIdentityUser(userIdByIdOrName(task.defaultAssigneeId) ?? "");
+  const reviewerAssignee = findIdentityUser(userIdByIdOrName(reviewer?.name) ?? "");
+  const keepStoredAssignee = Boolean(storedAssignee && (
+    task.status === "已完成"
+    || isUserInWorkflowGroup(storedAssignee.id, permissionGroupId)
+  ));
+  const defaultAssigneeId = keepStoredAssignee
+    ? storedAssignee?.id
+    : reviewerAssignee && isUserInWorkflowGroup(reviewerAssignee.id, permissionGroupId)
+      ? reviewerAssignee.id
+      : undefined;
+  return {
+    ...task,
+    definitionId,
+    versionId: instance.versionId ?? version?.id ?? task.versionId,
+    nodeId: node.id,
+    nodeName: node.data?.label ?? task.nodeName,
+    permissionGroupId,
+    defaultAssigneeId,
+    completedById: task.completedById ?? userIdByIdOrName(task.completedByName),
+  };
+};
+
+const taskStateRank = (task: WorkflowTask) => task.status === "已完成"
+  ? 4
+  : task.status === "待处理"
+    ? 3
+    : task.status === "未激活"
+      ? 2
+      : 1;
+
+const synchronizeInstanceReviewersFromTasks = (
+  instance: ProcessInstance,
+  tasks: WorkflowTask[],
+  version?: ProcessVersion,
+): ProcessInstance => {
+  const normalized = normalizeInstanceReviewers(instance, version);
+  if (!version || normalized.workflowType === "free") return normalized;
+  const currentTasks = tasks.filter((task) => task.instanceId === instance.id && task.round === instance.round);
+  const reviewers = normalized.reviewers.map((reviewer) => {
+    const task = currentTasks.find((item) => item.nodeId === reviewer.key);
+    if (!task) return reviewer;
+    const status = task.status === "已完成"
+      ? task.action === "驳回" ? "已驳回" as const : task.action === "确认" ? "已确认" as const : "已通过" as const
+      : task.status === "已取消"
+        ? "已取消" as const
+        : task.status === "已跳过"
+          ? "已跳过" as const
+          : "待审核" as const;
+    return {
+      ...reviewer,
+      status,
+      name: task.completedByName ?? reviewer.name,
+      actionAt: task.completedAt ?? task.conditionEvaluatedAt ?? reviewer.actionAt,
+      comment: task.comment ?? reviewer.comment,
+      substitute: Boolean(task.completedById && task.defaultAssigneeId && task.completedById !== task.defaultAssigneeId),
+      conditionSummary: task.conditionSummary ?? reviewer.conditionSummary,
+    };
+  });
+  const activeNodeNames = currentTasks.filter((task) => task.status === "待处理").map((task) => task.nodeName);
+  return {
+    ...normalized,
+    reviewers,
+    currentNode: normalized.status === "审核中" && activeNodeNames.length
+      ? activeNodeNames.join(" / ")
+      : normalized.currentNode,
+  };
+};
+
+export const normalizePrototypeRuntimeData = (instances: ProcessInstance[], sourceTasks: WorkflowTask[]) => {
+  const normalizedInstances = instances.map((instance) => normalizeInstanceReviewers(instance, resolveInstanceVersion(instance)));
+  const instanceById = new Map(normalizedInstances.map((instance) => [instance.id, instance]));
+  const taskByNodeAndRound = new Map<string, WorkflowTask>();
+  sourceTasks.forEach((task) => {
+    const instance = instanceById.get(task.instanceId);
+    if (!instance) return;
+    const normalized = normalizeTaskForInstance(task, instance, resolveInstanceVersion(instance));
+    if (!normalized) return;
+    const key = `${normalized.instanceId}:${normalized.round}:${normalized.nodeId}`;
+    const existing = taskByNodeAndRound.get(key);
+    if (!existing || taskStateRank(normalized) > taskStateRank(existing)) taskByNodeAndRound.set(key, normalized);
+  });
+  normalizedInstances.forEach((instance) => {
+    const version = resolveInstanceVersion(instance);
+    tasksForInstance(instance, version).forEach((task) => {
+      const key = `${task.instanceId}:${task.round}:${task.nodeId}`;
+      if (!taskByNodeAndRound.has(key)) taskByNodeAndRound.set(key, task);
+    });
+  });
+  const tasks = [...taskByNodeAndRound.values()];
+  return {
+    tasks,
+    instances: normalizedInstances.map((instance) => synchronizeInstanceReviewersFromTasks(instance, tasks, resolveInstanceVersion(instance))),
+  };
 };
 
 const initialRuntimeInstances = initialInstances.map(hydrateLegacyInstance);
-const initialTasks = initialRuntimeInstances.flatMap((instance) => tasksForInstance(instance, resolveInstanceVersion(instance)));
+const initialRuntimeData = normalizePrototypeRuntimeData(
+  initialRuntimeInstances,
+  initialRuntimeInstances.flatMap((instance) => tasksForInstance(instance, resolveInstanceVersion(instance))),
+);
+const normalizedInitialInstances = initialRuntimeData.instances;
+const initialTasks = initialRuntimeData.tasks;
 
 const findFormValue = (version: ProcessVersion, values: Record<string, unknown>, preferred: string[]) => {
   const field = version.snapshot.form.fields.find((item) =>
@@ -362,12 +512,24 @@ const collectModifiedFieldReferences = (
 const synchronizedAttachmentFields = (version: ProcessVersion, values: Record<string, unknown>) => {
   const attachmentFields = version.snapshot.form.fields.filter((field) => field.type === "attachment");
   if (!attachmentFields.length) return {};
+  const attachmentIdsByField = Object.fromEntries(attachmentFields.map((field) => {
+    const value = values[field.id];
+    const ids = Array.isArray(value) ? value.flatMap((item) => item && typeof item === "object" && "id" in item && item.id ? [String(item.id)] : []) : [];
+    return [field.id, ids];
+  }));
   const attachmentNames = attachmentFields.flatMap((field) => {
     const value = values[field.id];
-    return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+    return Array.isArray(value) ? value.flatMap((item) => {
+      if (typeof item === "string") return item.trim() ? [item] : [];
+      if (item && typeof item === "object" && "name" in item && item.name) return [String(item.name)];
+      return [];
+    }) : [];
   });
+  const attachmentIds = Object.values(attachmentIdsByField).flat();
   return {
     attachmentNames,
+    attachmentIds,
+    attachmentIdsByField,
     pdfName: attachmentNames[0] ?? "无附件",
   };
 };
@@ -433,6 +595,7 @@ const buildApprovalRuntime = (
 };
 
 const reconcileReadyTasks = (runtimeTasks: WorkflowTask[], version: ProcessVersion, instanceId: string, round: number, formValues: Record<string, unknown>, evaluatedAt: string) => {
+  const normalizedFormValues = normalizeDesignerFormValues(version.snapshot.form.fields, formValues);
   const approvalIds = new Set(version.snapshot.flow.nodes.filter((node) => node.data?.kind === "approval").map((node) => node.id));
   let next = runtimeTasks;
   let changed = true;
@@ -445,11 +608,14 @@ const reconcileReadyTasks = (runtimeTasks: WorkflowTask[], version: ProcessVersi
       if (!ready) return task;
       changed = true;
       const node = version.snapshot.flow.nodes.find((item) => item.id === task.nodeId);
-      const evaluation = evaluateNodeCondition(node?.data?.activationCondition, formValues);
+      const evaluation = evaluateNodeCondition(node?.data?.activationCondition, normalizedFormValues);
       if (evaluation.matches) return { ...task, status: "待处理" as const };
       const summary = evaluation.results.map(({ rule, actual }) => {
-        const label = version.snapshot.form.fields.find((field) => field.id === rule.fieldId)?.label ?? rule.fieldId;
-        return `${label} ${conditionOperatorLabel(rule.operator)} ${String(rule.value ?? "")}（实际：${Array.isArray(actual) ? actual.join("、") : String(actual ?? "空")}）`;
+        const sourceField = version.snapshot.form.fields.find((field) => field.id === rule.fieldId);
+        const label = sourceField?.label ?? rule.fieldId;
+        const expectedText = sourceField ? displayDesignerChoiceValue(sourceField.options, rule.value) : String(rule.value ?? "");
+        const actualText = sourceField ? displayDesignerChoiceValue(sourceField.options, actual, { hierarchical: sourceField.type === "cascader" }) : Array.isArray(actual) ? actual.join("、") : String(actual ?? "空");
+        return `${label} ${conditionOperatorLabel(rule.operator)} ${expectedText}（实际：${actualText || "空"}）`;
       }).join("；");
       return { ...task, status: "已跳过" as const, conditionSummary: summary || "条件不满足", conditionEvaluatedAt: evaluatedAt };
     });
@@ -474,7 +640,7 @@ export const usePrototypeStore = create<PrototypeState>()(
     (set, get) => ({
       authenticated: false,
       personaId: "lina",
-      instances: initialRuntimeInstances,
+      instances: normalizedInitialInstances,
       tasks: initialTasks,
       login: (personaId = "lina") => set({ authenticated: true, personaId }),
       logout: () => set({ authenticated: false }),
@@ -496,7 +662,10 @@ export const usePrototypeStore = create<PrototypeState>()(
         const createdAt = nowText();
         const createdId = crypto.randomUUID();
         const prefix = version.basic.instancePrefix || extractInstancePrefix(definition.code) || "FLOW";
-        const formValues = applyDesignerFieldVisibility(version.snapshot.form.fields, input.formValues);
+        const formValues = applyDesignerFieldVisibility(
+          version.snapshot.form.fields,
+          normalizeDesignerFormValues(version.snapshot.form.fields, input.formValues),
+        );
         const approvalRuntime = definition.type === "approval"
           ? buildApprovalRuntime(createdId, definition.id, version, input.assigneeByNode ?? {}, createdAt, formValues)
           : undefined;
@@ -627,7 +796,10 @@ export const usePrototypeStore = create<PrototypeState>()(
               if (skippedTask && reviewer.status === "待审核") return { ...reviewer, status: "已跳过" as const, actionAt: skippedTask.conditionEvaluatedAt, conditionSummary: skippedTask.conditionSummary };
               return reviewer;
             });
-            const allPositive = reviewers.length > 0 && reviewers.every((reviewer) => reviewer.status === "已通过" || reviewer.status === "已确认" || reviewer.status === "已跳过");
+            const runtimeTasks = tasks.filter((item) => item.instanceId === id && item.round === instance.round);
+            const allPositive = runtimeTasks.length > 0 && runtimeTasks.every((runtimeTask) =>
+              runtimeTask.status === "已跳过" || (runtimeTask.status === "已完成" && (runtimeTask.action === "通过" || runtimeTask.action === "确认")),
+            );
             return {
               ...instance,
               ...synchronizedInstanceFields(targetVersion, mergedFormValues),
@@ -735,12 +907,15 @@ export const usePrototypeStore = create<PrototypeState>()(
             && canEditProcessInstanceSubmission(target, actor, isSuperAdminPersona(actor.id)),
           );
           if (!canEdit) return { ok: false, reason: "forbidden", message: "只有流程创建人或超级管理员可以修改发起内容" };
-          const hasReviewAction = target.reviewers.some((reviewer) => reviewer.status === "已通过" || reviewer.status === "已确认" || reviewer.status === "已驳回");
+          const hasReviewAction = state.tasks.some((task) => task.instanceId === id && task.round === target.round && task.status === "已完成" && Boolean(task.action));
           if (target.status !== "审核中") return { ok: false, reason: "invalid-state", message: "流程当前状态不允许修改" };
           if (hasReviewAction) return { ok: false, reason: "locked", message: "已有审核人提交结果，流程内容已经锁定" };
           const { assigneeByNode, ...instanceChanges } = changes;
           const updatedAt = nowText();
-          const nextValues = applyDesignerFieldVisibility(version.snapshot.form.fields, changes.formValues ?? target.formValues ?? {});
+          const nextValues = applyDesignerFieldVisibility(
+            version.snapshot.form.fields,
+            normalizeDesignerFormValues(version.snapshot.form.fields, changes.formValues ?? target.formValues ?? {}),
+          );
           const previousAssignments = Object.fromEntries(state.tasks
             .filter((task) => task.instanceId === id && task.round === target.round && task.defaultAssigneeId)
             .map((task) => [task.nodeId, task.defaultAssigneeId]));
@@ -788,7 +963,10 @@ export const usePrototypeStore = create<PrototypeState>()(
           const previousAssignments = Object.fromEntries(state.tasks
             .filter((task) => task.instanceId === id && task.round === target.round && task.defaultAssigneeId)
             .map((task) => [task.nodeId, task.defaultAssigneeId]));
-          const nextValues = applyDesignerFieldVisibility(version.snapshot.form.fields, changes.formValues ?? target.formValues ?? {});
+          const nextValues = applyDesignerFieldVisibility(
+            version.snapshot.form.fields,
+            normalizeDesignerFormValues(version.snapshot.form.fields, changes.formValues ?? target.formValues ?? {}),
+          );
           const modifiedFields = collectModifiedFieldReferences(version, target.formValues ?? {}, nextValues);
           const freshRuntime = buildApprovalRuntime(target.id, target.definitionId ?? legacyDefinitionId(target), version, previousAssignments, submittedAt, nextValues, nextRound);
           const freshTasks = freshRuntime.tasks;
@@ -830,22 +1008,6 @@ export const usePrototypeStore = create<PrototypeState>()(
           });
           return { ok: true };
         },
-      createFreeFlow: (input) => {
-        const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.type === "free" && getPublishedVersion(item));
-        if (!definition) return "";
-        return get().createProcessInstance({
-          definitionId: definition.id,
-          firstAssigneeId: input.assignee,
-          attachmentNames: input.attachmentName ? [input.attachmentName] : [],
-          formValues: {
-            title: input.title,
-            category: input.category,
-            priority: input.priority,
-            description: input.description,
-            initialContent: input.initialContent,
-          },
-        }) ?? "";
-      },
       replyFreeFlow: (id, content) =>
         set((state) => {
           const persona = currentPersona(state.personaId);
@@ -1079,7 +1241,7 @@ export const usePrototypeStore = create<PrototypeState>()(
       resetDemo: () => {
         resetInstanceNumberSequences();
         set((state) => ({
-          instances: initialRuntimeInstances,
+          instances: normalizedInitialInstances,
           tasks: initialTasks,
           authenticated: true,
           personaId: state.personaId,
@@ -1088,25 +1250,30 @@ export const usePrototypeStore = create<PrototypeState>()(
     }),
     {
       name: "flowpilot-prototype-v5",
-      version: 14,
+      version: 16,
       migrate: (persisted) => {
         const { notices: legacyNotices, ...state } = persisted as PrototypeState & { notices?: unknown };
         void legacyNotices;
-        const existing = (state.instances ?? []).map((instance) => hydrateLegacyInstance({
-          ...instance,
-          code: normalizeLegacyInstanceNumber(instance.code),
-          templateVersion: normalizeTemplateVersion(instance.templateVersion),
-        }));
-        const missingFreeInstances = initialRuntimeInstances.filter(
+        const existing = (state.instances ?? []).map((instance) => {
+          const hydrated = hydrateLegacyInstance({
+            ...instance,
+            code: normalizeLegacyInstanceNumber(instance.code),
+            templateVersion: normalizeTemplateVersion(instance.templateVersion),
+          });
+          const version = resolveInstanceVersion(hydrated);
+          return version ? {
+            ...hydrated,
+            formValues: normalizeDesignerFormValues(version.snapshot.form.fields, hydrated.formValues ?? {}),
+          } : hydrated;
+        });
+        const missingFreeInstances = normalizedInitialInstances.filter(
           (instance) => instance.workflowType === "free" && !existing.some((item) => item.id === instance.id),
         );
-        const instances = [...existing, ...missingFreeInstances];
-        const tasks = Array.isArray(state.tasks) && state.tasks.length
-          ? state.tasks.map((task) => task.definitionId === "test-report-review" && task.permissionGroupId.startsWith("PDF审核_")
-            ? { ...task, permissionGroupId: legacyPermissionGroup(task.nodeId, task.definitionId) }
-            : task)
-          : instances.flatMap((instance) => tasksForInstance(instance, resolveInstanceVersion(instance)));
-        return { ...state, instances, tasks };
+        const runtime = normalizePrototypeRuntimeData(
+          [...existing, ...missingFreeInstances],
+          Array.isArray(state.tasks) ? state.tasks : [],
+        );
+        return { ...state, ...runtime };
       },
     },
   ),

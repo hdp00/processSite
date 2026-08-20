@@ -14,7 +14,7 @@ describe("isProcessInstanceCreator", () => {
   });
 
   it("falls back to the initiator name for legacy instances", () => {
-    const legacyInstance = { ...instance, initiatorId: undefined };
+    const legacyInstance = { ...instance, initiatorId: "" };
     expect(isProcessInstanceCreator(legacyInstance, { id: "user-a", name: "同名用户" })).toBe(true);
   });
 

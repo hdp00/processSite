@@ -41,9 +41,11 @@ import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProc
 import { canPersonaLaunchDefinition, hasPersonaPermission } from "../state/rolePermissions";
 import { canUserViewInstance } from "../state/workflowAccess";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
-import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
+import { normalizeDesignerFieldValue, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
+import { designerChoiceOptionsToAntd } from "../utils/designerOptions";
 import { downloadProcessListXlsx } from "../utils/processExcelExport";
 import { formatRoundLabel } from "../utils/roundDisplay";
+import { getBusinessListColumnWidth, getSystemListColumnWidth } from "../utils/listColumnWidth";
 
 export function ProcessListPage() {
   const { message: messageApi } = App.useApp();
@@ -63,6 +65,12 @@ export function ProcessListPage() {
   const [dateRange, setDateRange] = useState(createDefaultDateRange);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [advancedValues, setAdvancedValues] = useState<Record<string, string>>({});
+  const [appliedFilters, setAppliedFilters] = useState(() => ({
+    keyword: "",
+    status: undefined as InstanceStatus | undefined,
+    dateRange: createDefaultDateRange(),
+    advancedValues: {} as Record<string, string>,
+  }));
   const [exporting, setExporting] = useState(false);
   const canCopyCompleted = hasPersonaPermission(personaId, "work-list:复制新建")
     && canPersonaLaunchDefinition(personaId, definition.id);
@@ -92,6 +100,7 @@ export function ProcessListPage() {
     setDateRange(createDefaultDateRange());
     setAdvancedOpen(false);
     setAdvancedValues({});
+    setAppliedFilters({ keyword: "", status: undefined, dateRange: createDefaultDateRange(), advancedValues: {} });
     form.resetFields();
   }, [definition.id, form]);
 
@@ -100,41 +109,41 @@ export function ProcessListPage() {
       instances.filter((item) => {
         const matchesKeyword = `${item.code}${item.title}${item.documentCode}${item.initiator}`
           .toLowerCase()
-          .includes(keyword.trim().toLowerCase());
+          .includes(appliedFilters.keyword.trim().toLowerCase());
         const matchesAdvanced = queryFields.every((field) => {
-          const query = advancedValues[field.id]?.trim().toLowerCase();
+          const query = appliedFilters.advancedValues[field.id]?.trim().toLowerCase();
           if (!query) return true;
-          const raw = item.formValues?.[field.id];
+          const raw = normalizeDesignerFieldValue(field, item.formValues?.[field.id]);
           const value = Array.isArray(raw) ? raw.join("/") : String(raw ?? "");
           return value.toLowerCase().includes(query);
         });
         return matchesKeyword
-          && (!status || item.status === status)
-          && isDateTimeInRange(item.createdAt, dateRange)
+          && (!appliedFilters.status || item.status === appliedFilters.status)
+          && isDateTimeInRange(item.createdAt, appliedFilters.dateRange)
           && item.definitionId === definition.id
           && canUserViewInstance(personaId, item)
           && matchesAdvanced;
       }),
-    [advancedValues, dateRange, definition.id, instances, keyword, personaId, queryFields, status],
+    [appliedFilters, definition.id, instances, personaId, queryFields],
   );
 
   const dynamicColumns: TableProps<ProcessInstance>["columns"] = listFields.map((field) => ({
     title: field.label,
     key: field.id,
-    width: 160,
+    width: getBusinessListColumnWidth(field),
     ellipsis: true,
     render: (_, record) => <ListFieldValue field={field} value={record.formValues?.[field.id]} />,
   }));
 
   const columns: TableProps<ProcessInstance>["columns"] = [
     ...(showSystemField("code") ? [{
-      title: "实例编号", dataIndex: "code", width: 178,
+      title: "实例编号", dataIndex: "code", width: getSystemListColumnWidth("code", "实例编号"),
       render: (value: string, record: ProcessInstance) => (
         <button className="table-link strong" type="button" onClick={() => navigate(`/processes/${record.id}`)}>{value}</button>
       ),
     }] : []),
     ...(showTitleCell ? [{
-      title: showTitle ? "标题" : "流程名称", dataIndex: "title", width: 310,
+      title: showTitle ? "标题" : "流程名称", dataIndex: "title", width: getSystemListColumnWidth("title", showTitle ? "标题" : "流程名称"),
       render: (value: string, record: ProcessInstance) => (
         <div className="title-cell">
           {showTitle ? <strong>{value}</strong> : null}
@@ -146,19 +155,19 @@ export function ProcessListPage() {
     ...(showSystemField("templateVersion") ? [{
       title: "版本",
       dataIndex: "templateVersion",
-      width: 82,
+      width: getSystemListColumnWidth("templateVersion", "版本"),
       render: (value: string) => <Tag>{value}</Tag>,
     }] : []),
     ...(showSystemField("status") ? [{
       title: "状态",
       dataIndex: "status",
-      width: 120,
+      width: getSystemListColumnWidth("status", "状态"),
       render: (value: InstanceStatus) => <StatusPill status={value} ariaLabel={`流程状态：${value}`} />,
     }] : []),
     ...(showNodeCell ? [{
       title: "当前节点",
       dataIndex: "currentNode",
-      width: 205,
+      width: getSystemListColumnWidth("currentNode", "当前节点"),
       ellipsis: true,
       render: (value: string, record: ProcessInstance) =>
         record.workflowType === "free"
@@ -171,18 +180,18 @@ export function ProcessListPage() {
     ...(showSystemField("initiator") ? [{
       title: "发起人",
       dataIndex: "initiator",
-      width: 108,
+      width: getSystemListColumnWidth("initiator", "发起人"),
       render: (value: string, record: ProcessInstance) => <span>{value}<small className="inline-subtle">{record.department}</small></span>,
     }] : []),
     ...(showSystemField("createdAt") ? [{
       title: "发起时间",
       dataIndex: "createdAt",
-      width: 150,
+      width: getSystemListColumnWidth("createdAt", "发起时间"),
     }] : []),
     ...(showSystemField("updatedAt") ? [{
       title: "更新时间",
       dataIndex: "updatedAt",
-      width: 150,
+      width: getSystemListColumnWidth("updatedAt", "更新时间"),
     }] : []),
     {
       title: "操作",
@@ -236,20 +245,21 @@ export function ProcessListPage() {
     setDateRange(createDefaultDateRange());
     form.resetFields();
     setAdvancedValues({});
+    setAppliedFilters({ keyword: "", status: undefined, dateRange: createDefaultDateRange(), advancedValues: {} });
   };
 
   const exportCurrentQuery = async () => {
     setExporting(true);
     const hideLoading = messageApi.loading("正在查询导出数据并生成 Excel，请稍候…", 0);
     try {
-      const normalizedRange = normalizeDayRange(dateRange);
+      const normalizedRange = normalizeDayRange(appliedFilters.dateRange);
       const dataset = await flowPilotApi.exports.processInstanceData({
         definitionId: definition.id,
         dateFrom: normalizedRange[0].format("YYYY-MM-DD"),
         dateTo: normalizedRange[1].format("YYYY-MM-DD"),
-        q: keyword.trim() || undefined,
-        status,
-        dynamicFilters: advancedValues,
+        q: appliedFilters.keyword.trim() || undefined,
+        status: appliedFilters.status,
+        dynamicFilters: appliedFilters.advancedValues,
       });
       const downloaded = await downloadProcessListXlsx(dataset);
       if (!downloaded) {
@@ -314,7 +324,7 @@ export function ProcessListPage() {
             <Col flex="210px">
               <Form.Item>
                 <Space>
-                  <Button type="primary" icon={<SearchOutlined />}>查询</Button>
+                  <Button type="primary" icon={<SearchOutlined />} onClick={() => setAppliedFilters({ keyword, status, dateRange: normalizeDayRange(dateRange), advancedValues: { ...advancedValues } })}>查询</Button>
                   <Button icon={<ReloadOutlined />} onClick={reset}>重置</Button>
                   <Button
                     type="link"
@@ -341,7 +351,7 @@ export function ProcessListPage() {
                       style={{ width: "100%" }}
                       value={advancedValues[field.id] || undefined}
                       onChange={(value) => setAdvancedValues((current) => ({ ...current, [field.id]: value ?? "" }))}
-                      options={(field.options ?? []).map((value) => ({ value, label: value }))}
+                      options={designerChoiceOptionsToAntd(field.options)}
                     />
                   ) : (
                     <Input
@@ -374,7 +384,7 @@ export function ProcessListPage() {
           dataSource={filtered}
           bordered
           size="middle"
-          scroll={{ x: 1530 }}
+          scroll={{ x: "max-content" }}
           pagination={{ pageSize: 8, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录` }}
           onRow={(record) => ({ onDoubleClick: () => navigate(`/processes/${record.id}`) })}
         />

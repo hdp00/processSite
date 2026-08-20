@@ -17,6 +17,7 @@ import {
   useProcessDefinitionStore,
 } from "../../state/useProcessDefinitionStore";
 import { canPersonaLaunchDefinition } from "../../state/rolePermissions";
+import { compareDomainTimestamps } from "../../utils/domainTime";
 import type { CompleteDesignerSnapshot } from "../../utils/designerStorage";
 import {
   apiNoContent,
@@ -136,7 +137,7 @@ export const definitionHandlers = [
       .filter((item) => !q || `${item.code}${item.name}${item.description}`.toLowerCase().includes(q))
       .filter((item) => !type || item.type === type)
       .filter((item) => !status || item.status === status)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      .sort((left, right) => compareDomainTimestamps(right.updatedAt, left.updatedAt));
     return apiOk(request, paginate(items, pagination.number, pagination.size));
   }),
 
@@ -146,20 +147,29 @@ export const definitionHandlers = [
     return withIdempotency(request, async () => {
       const auth = requirePermission(request, "config-definition:编辑");
       if (auth.response) return auth.response;
-      const body = await parseJsonBody<{ name?: string; type?: DefinitionType; description?: string }>(request);
+      const body = await parseJsonBody<{ basic?: ProcessBasicConfig }>(request);
       if (body instanceof Response) return body;
-      const name = body.name?.trim() ?? "";
-      if (!name || !["approval", "free"].includes(body.type ?? "")) {
+      const name = body.basic?.name?.trim() ?? "";
+      if (!name || !["approval", "free"].includes(body.basic?.type ?? "")) {
         return apiProblem(request, 422, "VALIDATION_FAILED", "流程定义校验失败", "请填写流程名称并选择有效的流程类型。", {
           errors: [
             ...(!name ? [{ path: "name", code: "REQUIRED", message: "流程名称不能为空" }] : []),
-            ...(!["approval", "free"].includes(body.type ?? "") ? [{ path: "type", code: "INVALID_ENUM", message: "流程类型无效" }] : []),
+            ...(!["approval", "free"].includes(body.basic?.type ?? "") ? [{ path: "basic.type", code: "INVALID_ENUM", message: "流程类型无效" }] : []),
           ],
         });
       }
       const duplicated = useProcessDefinitionStore.getState().definitions.some((item) => item.name.trim().toLowerCase() === name.toLowerCase());
       if (duplicated) return apiProblem(request, 409, "DEFINITION_NAME_CONFLICT", "流程名称已存在", "请使用其他流程名称。 ");
-      const definitionId = useProcessDefinitionStore.getState().createDefinition({ name, type: body.type!, description: body.description });
+      const definitionId = useProcessDefinitionStore.getState().createDefinition({ name, type: body.basic!.type, description: body.basic!.description });
+      const created = definitionById(definitionId);
+      const createdVersion = created?.versions[0];
+      if (created && createdVersion) {
+        useProcessDefinitionStore.getState().updateVersionBasic(definitionId, createdVersion.id, {
+          ...body.basic!,
+          name,
+          code: createdVersion.basic.code,
+        });
+      }
       const definition = definitionById(definitionId);
       const version = definition?.versions[0];
       if (!definition || !version) return apiProblem(request, 403, "DEFINITION_CREATE_FORBIDDEN", "无法创建流程定义", "当前用户没有创建流程定义的权限。 ");
@@ -204,7 +214,7 @@ export const definitionHandlers = [
   http.delete(`${API}/process-definitions/:definitionId`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
-    const auth = requirePermission(request, "config-definition:编辑");
+    const auth = requirePermission(request, "config-definition:删除");
     if (auth.response) return auth.response;
     const { definitionId } = routeIds(params);
     const found = requireDefinition(request, definitionId);
@@ -506,7 +516,7 @@ export const definitionHandlers = [
   http.delete(`${API}/process-definitions/:definitionId/versions/:versionId`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
-    const auth = requirePermission(request, "config-definition:编辑");
+    const auth = requirePermission(request, "config-definition:删除");
     if (auth.response) return auth.response;
     const { definitionId, versionId } = routeIds(params);
     const found = requireVersion(request, definitionId, versionId);

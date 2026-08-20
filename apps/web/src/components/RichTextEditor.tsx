@@ -14,7 +14,8 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Button, Space, Tooltip, message } from "antd";
-import { useEffect, useRef, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { getRichMedia, richMediaIdFromSource, richMediaSource, saveRichMedia } from "../utils/richMediaRepository";
 import "./rich-text-editor.css";
 
 const Video = Node.create({
@@ -25,6 +26,11 @@ const Video = Node.create({
     return {
       src: { default: null },
       title: { default: null },
+      mediaId: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-media-id"),
+        renderHTML: (attributes) => attributes.mediaId ? { "data-media-id": attributes.mediaId } : {},
+      },
     };
   },
   parseHTML() {
@@ -34,6 +40,32 @@ const Video = Node.create({
     return ["video", mergeAttributes(HTMLAttributes, { controls: "true" })];
   },
 });
+
+const StoredImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      mediaId: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-media-id"),
+        renderHTML: (attributes) => attributes.mediaId ? { "data-media-id": attributes.mediaId } : {},
+      },
+    };
+  },
+});
+
+const normalizeMediaSourcesForStorage = (documentNode: Document) => {
+  documentNode.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img,video").forEach((node) => {
+    const mediaId = node.getAttribute("data-media-id") ?? richMediaIdFromSource(node.getAttribute("src"));
+    if (mediaId) {
+      node.setAttribute("data-media-id", mediaId);
+      node.setAttribute("src", richMediaSource(mediaId));
+      return;
+    }
+    const source = node.getAttribute("src") ?? "";
+    if (/^(data|blob):/i.test(source)) node.remove();
+  });
+};
 
 export const sanitizeRichText = (html: string) => {
   if (typeof window === "undefined") return html;
@@ -48,7 +80,31 @@ export const sanitizeRichText = (html: string) => {
       }
     });
   });
+  normalizeMediaSourcesForStorage(documentNode);
   return documentNode.body.innerHTML;
+};
+
+const hydrateRichText = async (html: string) => {
+  if (typeof window === "undefined" || !html) return { html, objectUrls: [] as string[] };
+  const documentNode = new DOMParser().parseFromString(html, "text/html");
+  const objectUrls: string[] = [];
+  await Promise.all([...documentNode.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img[data-media-id],video[data-media-id]")].map(async (node) => {
+    const mediaId = node.dataset.mediaId;
+    if (!mediaId) return;
+    try {
+      const record = await getRichMedia(mediaId);
+      if (!record) {
+        node.replaceWith(documentNode.createTextNode(`【媒体文件已不存在：${node.getAttribute("title") ?? mediaId}】`));
+        return;
+      }
+      const objectUrl = URL.createObjectURL(record.blob);
+      objectUrls.push(objectUrl);
+      node.setAttribute("src", objectUrl);
+    } catch {
+      node.replaceWith(documentNode.createTextNode("【媒体文件读取失败】"));
+    }
+  }));
+  return { html: documentNode.body.innerHTML, objectUrls };
 };
 
 interface RichTextEditorProps {
@@ -68,17 +124,24 @@ export function RichTextEditor({
 }: RichTextEditorProps) {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const objectUrlsRef = useRef<string[]>([]);
+  const lastEmittedValueRef = useRef<string | undefined>(undefined);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
   const editor = useEditor({
     immediatelyRender: false,
     editable: !disabled,
     extensions: [
       StarterKit,
-      Image.configure({ allowBase64: true }),
+      StoredImage.configure({ allowBase64: false }),
       Video,
       Placeholder.configure({ placeholder }),
     ],
     content: value || "",
-    onUpdate: ({ editor: currentEditor }) => onChange(sanitizeRichText(currentEditor.getHTML())),
+    onUpdate: ({ editor: currentEditor }) => {
+      const nextValue = sanitizeRichText(currentEditor.getHTML());
+      lastEmittedValueRef.current = nextValue;
+      onChange(nextValue);
+    },
   });
 
   useEffect(() => {
@@ -86,12 +149,23 @@ export function RichTextEditor({
   }, [disabled, editor]);
 
   useEffect(() => {
-    if (editor && value !== editor.getHTML()) {
-      editor.commands.setContent(value || "", { emitUpdate: false });
-    }
+    if (!editor || value === lastEmittedValueRef.current) return;
+    let cancelled = false;
+    void hydrateRichText(value || "").then((hydrated) => {
+      if (cancelled) {
+        hydrated.objectUrls.forEach(URL.revokeObjectURL);
+        return;
+      }
+      objectUrlsRef.current.forEach(URL.revokeObjectURL);
+      objectUrlsRef.current = hydrated.objectUrls;
+      editor.commands.setContent(hydrated.html, { emitUpdate: false });
+    });
+    return () => { cancelled = true; };
   }, [editor, value]);
 
-  const insertMedia = (event: ChangeEvent<HTMLInputElement>, kind: "image" | "video") => {
+  useEffect(() => () => objectUrlsRef.current.forEach(URL.revokeObjectURL), []);
+
+  const insertMedia = async (event: ChangeEvent<HTMLInputElement>, kind: "image" | "video") => {
     const file = event.target.files?.[0];
     if (!file || !editor) return;
     const maxSize = kind === "image" ? 1.5 : 6;
@@ -100,17 +174,22 @@ export function RichTextEditor({
       event.target.value = "";
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const src = String(reader.result ?? "");
+    setUploadingMedia(true);
+    try {
+      const record = await saveRichMedia(file);
+      const src = URL.createObjectURL(record.blob);
+      objectUrlsRef.current.push(src);
       if (kind === "image") {
-        editor.chain().focus().setImage({ src, alt: file.name, title: file.name }).run();
+        editor.chain().focus().insertContent({ type: "image", attrs: { src, alt: file.name, title: file.name, mediaId: record.id } }).run();
       } else {
-        editor.chain().focus().insertContent({ type: "video", attrs: { src, title: file.name } }).run();
+        editor.chain().focus().insertContent({ type: "video", attrs: { src, title: file.name, mediaId: record.id } }).run();
       }
-    };
-    reader.readAsDataURL(file);
-    event.target.value = "";
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "富媒体文件保存失败");
+    } finally {
+      setUploadingMedia(false);
+      event.target.value = "";
+    }
   };
 
   if (!editor) return null;
@@ -129,8 +208,8 @@ export function RichTextEditor({
               const url = window.prompt("请输入链接地址", editor.getAttributes("link").href ?? "https://");
               if (url) editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
             }} /></Tooltip>
-            <Tooltip title="上传图片"><Button type="text" size="small" icon={<PictureOutlined />} onClick={() => imageInputRef.current?.click()} /></Tooltip>
-            <Tooltip title="上传视频"><Button type="text" size="small" icon={<VideoCameraOutlined />} onClick={() => videoInputRef.current?.click()} /></Tooltip>
+            <Tooltip title="上传图片"><Button type="text" size="small" loading={uploadingMedia} icon={<PictureOutlined />} onClick={() => imageInputRef.current?.click()} /></Tooltip>
+            <Tooltip title="上传视频"><Button type="text" size="small" loading={uploadingMedia} icon={<VideoCameraOutlined />} onClick={() => videoInputRef.current?.click()} /></Tooltip>
           </Space>
           <span className="rich-editor__hint">Tiptap · 支持文字、图片、视频和链接</span>
         </div>
@@ -143,5 +222,19 @@ export function RichTextEditor({
 }
 
 export function RichTextContent({ html }: { html: string }) {
-  return <div className="rich-content" dangerouslySetInnerHTML={{ __html: sanitizeRichText(html) }} />;
+  const [hydratedHtml, setHydratedHtml] = useState(() => sanitizeRichText(html));
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrls: string[] = [];
+    void hydrateRichText(sanitizeRichText(html)).then((hydrated) => {
+      objectUrls = hydrated.objectUrls;
+      if (cancelled) objectUrls.forEach(URL.revokeObjectURL);
+      else setHydratedHtml(hydrated.html);
+    });
+    return () => {
+      cancelled = true;
+      objectUrls.forEach(URL.revokeObjectURL);
+    };
+  }, [html]);
+  return <div className="rich-content" dangerouslySetInnerHTML={{ __html: hydratedHtml }} />;
 }

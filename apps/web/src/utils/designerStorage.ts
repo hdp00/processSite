@@ -4,6 +4,11 @@ import {
   loadSystemListFields,
   type SystemListFieldConfig,
 } from "../data/listFieldConfig";
+import {
+  normalizeDesignerChoiceOptions,
+  normalizeDesignerChoiceValue,
+  type DesignerChoiceOption,
+} from "./designerOptions";
 
 export const FORM_DESIGNER_STORAGE_KEY_PREFIX = "flowpilot-form-designer-draft-v2";
 export const FLOW_DESIGNER_STORAGE_KEY_PREFIX = "flowpilot-flow-designer-v2";
@@ -35,7 +40,7 @@ export interface StoredDesignerTableColumn {
   width?: number;
   align?: "left" | "center" | "right";
   reviewEditable?: boolean;
-  options?: string[];
+  options?: DesignerChoiceOption[];
 }
 
 export interface StoredDesignerField {
@@ -49,19 +54,19 @@ export interface StoredDesignerField {
   defaultValue?: string | string[];
   listVisible?: boolean;
   taskVisible?: boolean;
-  taskDisplayName?: string;
-  taskOrder?: number;
-  taskWidth?: number;
   queryable?: boolean;
   exportVisible?: boolean;
   reviewEditable?: boolean;
   inputStage?: DesignerInputPermission;
   displayCondition?: StoredFieldDisplayCondition;
-  options?: string[];
+  options?: DesignerChoiceOption[];
   attachment?: {
     maxSizeMb?: number;
     maxCount?: number;
     inlinePdf?: boolean;
+    allowedExtensions?: string[];
+    excelToPdf?: boolean;
+    maxPreviewPages?: number;
   };
   columns?: StoredDesignerTableColumn[];
 }
@@ -93,6 +98,104 @@ export interface StoredNodeEmailNotification {
 
 export const PROCESS_TITLE_FIELD_ID = "title";
 export type DesignerInputPermission = "initiator" | "both" | "reviewer";
+
+const choiceFieldTypes = new Set(["select", "cascader", "radio", "checkbox"]);
+
+const normalizeConditionExpectedValue = (field: StoredDesignerField | undefined, value: unknown) => {
+  if (!field || !choiceFieldTypes.has(field.type)) return value as string | string[] | undefined;
+  if (field.type === "cascader") {
+    const path = Array.isArray(value) ? value : String(value ?? "").split("/").filter(Boolean);
+    const normalized = normalizeDesignerChoiceValue(field.options, path, { hierarchical: true });
+    return Array.isArray(normalized) ? String(normalized.at(-1) ?? "") : String(normalized ?? "");
+  }
+  return normalizeDesignerChoiceValue(field.options, value) as string | string[];
+};
+
+const normalizeConditionChoiceValues = (
+  condition: StoredNodeCondition | undefined,
+  fields: StoredDesignerField[],
+) => {
+  const normalized = normalizeStoredCondition(condition);
+  if (!normalized) return undefined;
+  const fieldById = new Map(fields.map((field) => [field.id, field]));
+  return {
+    ...normalized,
+    rules: normalized.rules.map((rule) => ({
+      ...rule,
+      value: ["empty", "not-empty"].includes(rule.operator)
+        ? ""
+        : normalizeConditionExpectedValue(fieldById.get(rule.fieldId), rule.value),
+    })),
+  };
+};
+
+const normalizeDesignerFieldOptions = (field: StoredDesignerField): StoredDesignerField => {
+  const options = choiceFieldTypes.has(field.type)
+    ? normalizeDesignerChoiceOptions(field.options, field.id, field.type === "cascader")
+    : field.options;
+  const columns = field.columns?.map((column) => {
+    const columnOptions = column.type && column.type !== "text"
+      ? normalizeDesignerChoiceOptions(column.options, `${field.id}.${column.id}`)
+      : column.options;
+    const defaultValue = column.type === "checkbox"
+      ? normalizeDesignerChoiceValue(columnOptions, column.defaultValue, { multiple: true })
+      : column.type === "select" || column.type === "radio"
+        ? normalizeDesignerChoiceValue(columnOptions, column.defaultValue)
+        : column.defaultValue;
+    return { ...column, options: columnOptions, defaultValue: defaultValue as string | string[] | undefined };
+  });
+  const defaultValue = field.type === "checkbox"
+    ? normalizeDesignerChoiceValue(options, field.defaultValue, { multiple: true })
+    : field.type === "cascader"
+      ? normalizeDesignerChoiceValue(options, field.defaultValue, { hierarchical: true })
+      : field.type === "select" || field.type === "radio"
+        ? normalizeDesignerChoiceValue(options, field.defaultValue)
+        : field.defaultValue;
+  const attachment = field.type === "attachment" ? {
+    maxSizeMb: Math.min(100, Math.max(1, field.attachment?.maxSizeMb ?? 100)),
+    maxCount: field.attachment?.inlinePdf === false ? Math.min(20, Math.max(1, field.attachment?.maxCount ?? 20)) : 1,
+    inlinePdf: field.attachment?.inlinePdf ?? true,
+    allowedExtensions: [...new Set((field.attachment?.allowedExtensions ?? ((field.attachment?.inlinePdf ?? true) ? ["pdf"] : []))
+      .map((extension) => extension.trim().replace(/^\./, "").toLowerCase())
+      .filter(Boolean))],
+    excelToPdf: Boolean(field.attachment?.excelToPdf && (field.attachment?.inlinePdf ?? true)),
+    maxPreviewPages: Math.min(50, Math.max(1, field.attachment?.maxPreviewPages ?? 1)),
+  } : field.attachment;
+  return {
+    ...field,
+    options,
+    columns,
+    defaultValue: defaultValue as string | string[] | undefined,
+    attachment,
+  };
+};
+
+export const normalizeDesignerFieldValue = (field: StoredDesignerField, value: unknown): unknown => {
+  if (field.type === "checkbox") return normalizeDesignerChoiceValue(field.options, value, { multiple: true });
+  if (field.type === "cascader") return normalizeDesignerChoiceValue(field.options, value, { hierarchical: true });
+  if (field.type === "select" || field.type === "radio") return normalizeDesignerChoiceValue(field.options, value);
+  if (field.type === "table" && Array.isArray(value)) {
+    return value.map((row) => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) return row;
+      return Object.fromEntries(Object.entries(row).map(([key, cell]) => {
+        const column = field.columns?.find((item) => item.id === key);
+        if (!column) return [key, cell];
+        if (column.type === "checkbox") return [key, normalizeDesignerChoiceValue(column.options, cell, { multiple: true })];
+        if (column.type === "select" || column.type === "radio") return [key, normalizeDesignerChoiceValue(column.options, cell)];
+        return [key, cell];
+      }));
+    });
+  }
+  return value;
+};
+
+export const normalizeDesignerFormValues = (
+  fields: StoredDesignerField[],
+  values: Record<string, unknown>,
+) => Object.fromEntries(Object.entries(values).map(([fieldId, value]) => {
+  const field = fields.find((item) => item.id === fieldId);
+  return [fieldId, field ? normalizeDesignerFieldValue(field, value) : value];
+}));
 
 const LEGACY_TITLE_DESCRIPTION = "用于任务中心、流程清单和流程详情统一显示此流程实例";
 
@@ -224,18 +327,18 @@ export const readFormDesignerSnapshot = (definitionId: string): StoredFormDesign
     const raw = window.localStorage.getItem(`${FORM_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as Partial<StoredFormDesignerSnapshot>;
-    return Array.isArray(parsed.fields)
-      ? {
-          fields: ensureProcessTitleField(parsed.fields).map((field) => ({
-            ...field,
-            inputStage: normalizeDesignerInputPermission(field),
-            displayCondition: field.id === PROCESS_TITLE_FIELD_ID
-              ? undefined
-              : normalizeStoredCondition(field.displayCondition),
-          })),
-          savedAt: parsed.savedAt,
-        }
-      : undefined;
+    if (!Array.isArray(parsed.fields)) return undefined;
+    const normalizedFields = ensureProcessTitleField(parsed.fields).map(normalizeDesignerFieldOptions);
+    return {
+      fields: normalizedFields.map((field) => ({
+        ...field,
+        inputStage: normalizeDesignerInputPermission(field),
+        displayCondition: field.id === PROCESS_TITLE_FIELD_ID
+          ? undefined
+          : normalizeConditionChoiceValues(field.displayCondition, normalizedFields),
+      })),
+      savedAt: parsed.savedAt,
+    };
   } catch {
     return undefined;
   }
@@ -294,7 +397,8 @@ export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapsho
     systemFields: cloneDefaultSystemListFields(),
   };
   const legacyTitleConfig = snapshot.systemFields.find((field) => String(field.key) === "title");
-  const fields = ensureProcessTitleField(snapshot.form.fields).map((field) => ({
+  const normalizedFields = ensureProcessTitleField(snapshot.form.fields).map(normalizeDesignerFieldOptions);
+  const fields = normalizedFields.map((field) => ({
     ...field,
     exportVisible: field.exportVisible ?? field.listVisible ?? false,
     inputStage: field.id === PROCESS_TITLE_FIELD_ID && normalizeDesignerInputPermission(field) === "reviewer"
@@ -302,7 +406,7 @@ export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapsho
       : normalizeDesignerInputPermission(field),
     displayCondition: field.id === PROCESS_TITLE_FIELD_ID
       ? undefined
-      : normalizeStoredCondition(field.displayCondition),
+      : normalizeConditionChoiceValues(field.displayCondition, normalizedFields),
     ...(field.id === PROCESS_TITLE_FIELD_ID && legacyTitleConfig
       ? { taskVisible: legacyTitleConfig.taskVisible, listVisible: legacyTitleConfig.processListVisible }
       : {}),
@@ -315,6 +419,7 @@ export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapsho
       ...(node.data.kind === "approval" ? {
         handlingMode: node.data.handlingMode ?? "approval",
         allowRepeatedEditing: Boolean(node.data.allowRepeatedEditing && node.data.editableFields?.length),
+        activationCondition: normalizeConditionChoiceValues(node.data.activationCondition, fields),
       } : {}),
       ...(node.data.kind === "approval" || node.data.kind === "end" ? {
         emailNotification: node.data.emailNotification

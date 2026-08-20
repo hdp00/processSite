@@ -19,7 +19,7 @@ const allPermissions = [
   "work-launch:查看", "work-launch:发起",
   "work-task:查看", "work-task:审核", "work-task:驳回",
   "work-list:查看", "work-list:复制新建", "work-list:打印",
-  "config-definition:查看", "config-definition:编辑", "config-definition:发布",
+  "config-definition:查看", "config-definition:编辑", "config-definition:发布", "config-definition:删除",
   "config-form:查看", "config-form:编辑", "config-form:预览",
   "org-user:查看", "org-user:编辑", "org-user:重置密码",
   "org-department:查看", "org-department:编辑",
@@ -34,7 +34,7 @@ const reviewerPermissions = ["work-task:查看", "work-task:审核", "work-task:
 export const defaultRolePermissionMap: Record<string, string[]> = {
   "ROLE-SUPER": allPermissions,
   "ROLE-001": allPermissions,
-  "ROLE-002": ["work-task:查看", "work-list:查看", "work-list:打印", "config-definition:查看", "config-definition:编辑", "config-definition:发布", "config-form:查看", "config-form:编辑", "config-form:预览"],
+  "ROLE-002": ["work-task:查看", "work-list:查看", "work-list:打印", "config-definition:查看", "config-definition:编辑", "config-definition:发布", "config-definition:删除", "config-form:查看", "config-form:编辑", "config-form:预览"],
   "ROLE-003": ["work-launch:查看", "work-launch:发起", "work-task:查看", "work-list:查看", "work-list:复制新建", "work-list:打印"],
   "ROLE-004": reviewerPermissions,
   "ROLE-005": reviewerPermissions,

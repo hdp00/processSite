@@ -3,10 +3,15 @@ import { Alert, Button, Card, Descriptions, Drawer, Input, Modal, Space, Table, 
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
+import { flowPilotApi } from "../api/flowPilotApi";
+import { cacheProcessDefinition, cacheProcessVersion, removeCachedProcessVersion } from "../api/entityCache";
 import { StatusPill } from "../components/StatusPill";
 import { resolveWorkflowGroupLabel, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import { canEditVersion, definitionStatus, getPublishedVersion, getVersionStatus, useProcessDefinitionStore, type ProcessVersion } from "../state/useProcessDefinitionStore";
+import { hasPersonaPermission } from "../state/rolePermissions";
+import { usePrototypeStore } from "../state/usePrototypeStore";
 import { buildFlowLevels, conditionOperatorLabel, normalizeDesignerInputPermission, rejectionHandlingLabel, type StoredDesignerField, type StoredNodeEmailNotification } from "../utils/designerStorage";
+import { displayDesignerChoiceValue, flattenDesignerChoiceOptions } from "../utils/designerOptions";
 import "./process-admin-pages.css";
 
 const fieldTypeLabels: Record<string, string> = {
@@ -20,7 +25,12 @@ const fieldTypeLabels: Record<string, string> = {
   table: "表格",
 };
 
-const valueText = (value?: string | string[]) => Array.isArray(value) ? value.join("、") : value || "—";
+const valueText = (field: StoredDesignerField, value?: string | string[]) => {
+  if (["select", "radio", "checkbox", "cascader"].includes(field.type)) {
+    return displayDesignerChoiceValue(field.options, value, { hierarchical: field.type === "cascader" }) || "—";
+  }
+  return Array.isArray(value) ? value.join("、") : value || "—";
+};
 
 function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
   const fields = version.snapshot.form.fields;
@@ -32,12 +42,16 @@ function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
       {field.description && <p>{field.description}</p>}
       <div className="pa-snapshot-properties">
         <span><small>提示文字</small><strong>{field.placeholder || "—"}</strong></span>
-        <span><small>默认值</small><strong>{valueText(field.defaultValue)}</strong></span>
+        <span><small>默认值</small><strong>{valueText(field, field.defaultValue)}</strong></span>
         <span><small>列表、查询与导出</small><strong>{[field.taskVisible && "任务中心", field.listVisible && "流程清单", field.queryable && "可查询", field.exportVisible && "Excel 导出"].filter(Boolean).join("、") || "不展示"}</strong></span>
         <span><small>输入权限</small><strong>{{ initiator: "发起人", both: "发起人/审核人", reviewer: "审核人" }[normalizeDesignerInputPermission(field)]}</strong></span>
       </div>
-      {field.options?.length ? <div className="pa-snapshot-options"><small>选项</small><Space size={[5, 5]} wrap>{field.options.map((option) => <Tag key={option}>{option}</Tag>)}</Space></div> : null}
-      {field.displayCondition?.rules.length ? <div className="pa-snapshot-options"><small>显示条件</small><span>{field.displayCondition.rules.map((rule) => `${fieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${["empty", "not-empty"].includes(rule.operator) ? "" : String(rule.value ?? "")}`.trim()).join(field.displayCondition.mode === "all" ? " 且 " : " 或 ")}</span></div> : null}
+      {field.options?.length ? <div className="pa-snapshot-options"><small>选项</small><Space size={[5, 5]} wrap>{flattenDesignerChoiceOptions(field.options).map((option) => <Tag key={option.id}>{option.label}</Tag>)}</Space></div> : null}
+      {field.displayCondition?.rules.length ? <div className="pa-snapshot-options"><small>显示条件</small><span>{field.displayCondition.rules.map((rule) => {
+        const sourceField = fields.find((item) => item.id === rule.fieldId);
+        const expected = ["empty", "not-empty"].includes(rule.operator) ? "" : sourceField ? displayDesignerChoiceValue(sourceField.options, rule.value) : String(rule.value ?? "");
+        return `${fieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${expected}`.trim();
+      }).join(field.displayCondition.mode === "all" ? " 且 " : " 或 ")}</span></div> : null}
       {field.type === "attachment" ? <div className="pa-snapshot-options"><small>附件规则</small><span>最多 {field.attachment?.maxCount ?? 20} 个，单文件不超过 {field.attachment?.maxSizeMb ?? 100} MB；PDF {field.attachment?.inlinePdf ? "在页面内展示" : "仅提供下载"}</span></div> : null}
       {field.type === "table" ? <VersionTableColumns field={field} /> : null}
     </article>) : <Alert type="warning" showIcon message="该版本尚未配置初始表单字段" />}
@@ -96,6 +110,7 @@ function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type:
   const fieldLabels = new Map(version.snapshot.form.fields.flatMap((field) => field.type === "table"
     ? (field.columns ?? []).map((column) => [`${field.id}.${column.id}`, `${field.label} / ${column.label}`] as const)
     : [[field.id, field.label] as const]));
+  const conditionFieldsById = new Map(version.snapshot.form.fields.map((field) => [field.id, field]));
 
   return <div className="pa-snapshot-stack">
     <div className="pa-snapshot-heading"><div><ApartmentOutlined /><span><strong>审批流程</strong><small>按该版本保存的节点和连线生成，只读展示</small></span></div><Tag>{nodes.length} 个节点</Tag></div>
@@ -111,7 +126,11 @@ function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type:
               return <article className={`pa-version-flow-node is-${kind}`} key={node.id}>
                 <div className="pa-version-flow-node__title"><span>{kind === "start" ? <PlayCircleOutlined /> : kind === "end" ? <CheckCircleOutlined /> : <ApartmentOutlined />}</span><strong>{node.data?.label || "未命名节点"}</strong></div>
                 {kind === "start" && <p><small>发起权限组</small><span>{resolveWorkflowGroupLabels(workflowGroups, node.data?.permissionGroups ?? []).join("、") || "未配置"}</span></p>}
-                {kind === "approval" && <><p><small>执行权限组</small><span>{node.data?.permissionGroup ? resolveWorkflowGroupLabel(workflowGroups, node.data.permissionGroup) : "未配置"}</span></p><p><small>处理方式</small><span>{node.data?.handlingMode === "confirmation" ? "确认（只能确认，不能驳回）" : "审批（可通过或驳回）"}</span></p><p><small>人员分配</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></p><p><small>可修改字段</small><span>{editableFields.join("、") || "不可修改表单内容"}</span></p><p><small>重复修改</small><span>{node.data?.allowRepeatedEditing ? "允许处理结果提交后继续修改授权字段" : "不允许"}</span></p><p><small>执行条件</small><span>{node.data?.activationCondition?.rules.length ? node.data.activationCondition.rules.map((rule) => `${fieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${["empty", "not-empty"].includes(rule.operator) ? "" : String(rule.value ?? "")}`).join(node.data.activationCondition.mode === "all" ? " 且 " : " 或 ") : "始终执行"}</span></p><p><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></p></>}
+                {kind === "approval" && <><p><small>执行权限组</small><span>{node.data?.permissionGroup ? resolveWorkflowGroupLabel(workflowGroups, node.data.permissionGroup) : "未配置"}</span></p><p><small>处理方式</small><span>{node.data?.handlingMode === "confirmation" ? "确认（只能确认，不能驳回）" : "审批（可通过或驳回）"}</span></p><p><small>人员分配</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></p><p><small>可修改字段</small><span>{editableFields.join("、") || "不可修改表单内容"}</span></p><p><small>重复修改</small><span>{node.data?.allowRepeatedEditing ? "允许处理结果提交后继续修改授权字段" : "不允许"}</span></p><p><small>执行条件</small><span>{node.data?.activationCondition?.rules.length ? node.data.activationCondition.rules.map((rule) => {
+                  const sourceField = conditionFieldsById.get(rule.fieldId);
+                  const expected = ["empty", "not-empty"].includes(rule.operator) ? "" : sourceField ? displayDesignerChoiceValue(sourceField.options, rule.value) : String(rule.value ?? "");
+                  return `${fieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${expected}`.trim();
+                }).join(node.data.activationCondition.mode === "all" ? " 且 " : " 或 ") : "始终执行"}</span></p><p><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></p></>}
                 {kind === "end" && <><p><small>完成条件</small><span>全部前序节点通过、确认或因条件不满足而跳过</span></p><p><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></p></>}
               </article>;
             })}</div>
@@ -129,10 +148,10 @@ export function ProcessVersionsPage() {
   const { definitionId = "" } = useParams<{ definitionId: string }>();
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
-  const createVersion = useProcessDefinitionStore((state) => state.createVersion);
-  const publishVersion = useProcessDefinitionStore((state) => state.publishVersion);
-  const unpublishVersion = useProcessDefinitionStore((state) => state.unpublishVersion);
-  const deleteVersion = useProcessDefinitionStore((state) => state.deleteVersion);
+  const roles = useIdentityStore((state) => state.roles);
+  const users = useIdentityStore((state) => state.users);
+  const personaId = usePrototypeStore((state) => state.personaId);
+  const canDeleteVersion = hasPersonaPermission(personaId, "config-definition:删除");
   const [selected, setSelected] = useState<ProcessVersion>();
   const [unpublishTarget, setUnpublishTarget] = useState<ProcessVersion>();
   const [unpublishReason, setUnpublishReason] = useState("");
@@ -141,12 +160,15 @@ export function ProcessVersionsPage() {
   if (!definition) return <Alert type="error" showIcon message="流程定义不存在" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
 
   const edit = (version: ProcessVersion) => navigate(`/admin/processes/${definition.id}/basic?versionId=${version.id}`);
-  const copy = (version: ProcessVersion) => {
-    const id = createVersion(definition.id, version.id);
-    const created = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definition.id)?.versions.find((item) => item.id === id);
-    if (!created) return message.error("新版本创建失败");
-    message.success(`已从 ${version.version} 的完整快照创建 ${created.version}`);
-    edit(created);
+  const copy = async (version: ProcessVersion) => {
+    try {
+      const created = await flowPilotApi.definitions.createVersion(definition.id, version.id);
+      cacheProcessVersion(definition.id, created);
+      message.success(`已从 ${version.version} 的完整快照创建 ${created.version}`);
+      edit(created);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "新版本创建失败");
+    }
   };
   const publish = (version: ProcessVersion) => {
     if (version.validation.status !== "通过") return message.error("该版本校验未通过，不能发布");
@@ -156,9 +178,16 @@ export function ProcessVersionsPage() {
       content: current ? "切换会原子完成：原版本退出发布，新发起实例立即使用目标版本；运行中实例仍锁定原版本。" : "发布后符合权限的员工可发起该流程。",
       okText: current ? "确认切换" : "确认发布",
       cancelText: "取消",
-      onOk: () => {
-        if (!publishVersion(definition.id, version.id, current ? `从 ${current.version} 切换发布` : "首次发布")) return message.error("发布失败，请重新检查版本校验结果");
-        message.success(`${version.version} 已发布`);
+      onOk: async () => {
+        try {
+          const resource = await flowPilotApi.definitions.versionResource(definition.id, version.id);
+          const result = await flowPilotApi.definitions.publish(definition.id, version.id, current ? `从 ${current.version} 切换发布` : "首次发布", resource.etag);
+          cacheProcessDefinition(result.definition);
+          message.success(`${version.version} 已发布`);
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "发布失败，请重新检查版本校验结果");
+          throw error;
+        }
       },
     });
   };
@@ -173,13 +202,18 @@ export function ProcessVersionsPage() {
       okText: "确认删除",
       okButtonProps: { danger: true },
       cancelText: "取消",
-      onOk: () => {
-        const result = deleteVersion(definition.id, version.id);
-        if (result === "published") return message.error("发布版本必须先取消发布");
-        if (result === "has-instances") return message.error("该版本已有实例，不能删除");
-        if (result === "definition-deleted") { message.success("最后一个版本和流程定义已删除"); navigate("/admin/processes"); return; }
-        if (result !== "deleted") return message.error("版本状态已经变化");
-        message.success(`${version.version} 已删除，版本号不会复用`);
+      onOk: async () => {
+        try {
+          const resource = await flowPilotApi.definitions.versionResource(definition.id, version.id);
+          await flowPilotApi.definitions.removeVersion(definition.id, version.id, resource.etag);
+          removeCachedProcessVersion(definition.id, version.id);
+          const stillExists = useProcessDefinitionStore.getState().definitions.some((item) => item.id === definition.id);
+          message.success(stillExists ? `${version.version} 已删除，版本号不会复用` : "最后一个版本和流程定义已删除");
+          if (!stillExists) navigate("/admin/processes");
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "版本状态已经变化");
+          throw error;
+        }
       },
     });
   };
@@ -201,7 +235,7 @@ export function ProcessVersionsPage() {
           {canEditVersion(definition, record) && <Tooltip title="编辑这个正式版本"><Button type="text" className="pa-icon-button is-primary" icon={<EditOutlined />} onClick={() => edit(record)} /></Tooltip>}
           <Tooltip title="从此版本复制新建下一版本"><Button type="text" className="pa-icon-button is-copy" icon={<CopyOutlined />} onClick={() => copy(record)} /></Tooltip>
           {status === "已发布" ? <Tooltip title="取消发布"><Button type="text" className="pa-icon-button" icon={<PauseCircleOutlined />} onClick={() => unpublish(record)} /></Tooltip> : <Tooltip title={status === "可发布" ? "发布此版本" : "校验通过后才可发布"}><Button type="text" className="pa-icon-button" icon={<RocketOutlined />} disabled={status !== "可发布"} onClick={() => publish(record)} /></Tooltip>}
-          <Tooltip title={record.instanceCount ? "已有实例，不可删除" : status === "已发布" ? "先取消发布才能删除" : "删除版本"}><Button type="text" danger icon={<DeleteOutlined />} disabled={Boolean(record.instanceCount || status === "已发布")} onClick={() => remove(record)} /></Tooltip>
+          {canDeleteVersion && <Tooltip title={record.instanceCount ? "已有实例，不可删除" : status === "已发布" ? "先取消发布才能删除" : "删除版本"}><Button type="text" danger icon={<DeleteOutlined />} disabled={Boolean(record.instanceCount || status === "已发布")} onClick={() => remove(record)} /></Tooltip>}
         </Space>;
       },
     },
@@ -218,7 +252,7 @@ export function ProcessVersionsPage() {
     <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}><div className="table-result-head pa-table-head"><div><strong>版本记录</strong><Tag bordered={false}>{versions.length} 个</Tag></div><Typography.Text type="secondary">任何版本都可复制新建；已有实例的版本永久只读</Typography.Text></div><Table<ProcessVersion> rowKey="id" columns={columns} dataSource={versions} scroll={{ x: 1210 }} pagination={false} rowClassName={(record) => definition.publishedVersionId === record.id ? "pa-effective-row" : ""} /></Card>
     <Drawer title={selected ? `${definition.name} · ${selected.version} 完整快照` : "版本详情"} size="large" open={Boolean(selected)} onClose={() => setSelected(undefined)} extra={selected && canEditVersion(definition, selected) ? <Button type="primary" icon={<EditOutlined />} onClick={() => edit(selected)}>编辑版本</Button> : null}>
       {selected && <Tabs className="pa-version-snapshot-tabs" defaultActiveKey="overview" items={[
-        { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.starterGroups).join("、") || "—", span: 2 }, { key: "closer", label: "关闭权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.closeGroups).join("、") || "—", span: 2 }, ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.assigneeGroups ?? []).join("、") || "—", span: 2 as const }] : []), { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles, ...selected.basic.visibleUsers].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${selected.updatedAt} · ${selected.updatedBy}`, span: 2 }]} />
+        { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.starterGroups).join("、") || "—", span: 2 }, { key: "closer", label: "关闭权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.closeGroups).join("、") || "—", span: 2 }, ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.assigneeGroups ?? []).join("、") || "—", span: 2 as const }] : []), { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles.map((roleId) => roles.find((role) => role.id === roleId)?.name ?? "已删除角色"), ...selected.basic.visibleUsers.map((userId) => users.find((user) => user.id === userId)?.name ?? "已删除用户")].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${selected.updatedAt} · ${selected.updatedBy}`, span: 2 }]} />
           <Alert type={selected.validation.status === "通过" ? "success" : "error"} showIcon message={selected.validation.status === "通过" ? "版本校验通过，可以发布" : "版本校验未通过"} description={selected.validation.issues.length ? selected.validation.issues.join("；") : `自动校验于 ${selected.validation.checkedAt} 完成`} />
           <Timeline items={[{ color: "blue", children: <><strong>创建 {selected.version}</strong><br /><Typography.Text type="secondary">{selected.createdAt} · {selected.createdBy}</Typography.Text></> }, ...(selected.firstPublishedAt ? [{ color: "green", children: <><strong>首次发布</strong><br /><Typography.Text type="secondary">{selected.firstPublishedAt} · {selected.firstPublishedBy}</Typography.Text></> }] : []), ...(selected.lastUnpublishedAt ? [{ color: "gray", children: <><strong>最近取消发布</strong><br /><Typography.Text type="secondary">{selected.lastUnpublishedAt} · {selected.lastUnpublishedBy}<br />原因：{selected.lastUnpublishReason ?? "—"}</Typography.Text></> }] : [])]} />
         </Space> },
@@ -233,11 +267,17 @@ export function ProcessVersionsPage() {
       cancelText="返回"
       okButtonProps={{ disabled: !unpublishReason.trim() }}
       onCancel={() => setUnpublishTarget(undefined)}
-      onOk={() => {
+      onOk={async () => {
         if (!unpublishTarget || !unpublishReason.trim()) return;
-        if (unpublishVersion(definition.id, unpublishTarget.id, unpublishReason) !== "unpublished") return message.error("发布状态已经变化");
-        message.success(`${unpublishTarget.version} 已取消发布`);
-        setUnpublishTarget(undefined);
+        try {
+          const resource = await flowPilotApi.definitions.versionResource(definition.id, unpublishTarget.id);
+          const result = await flowPilotApi.definitions.unpublish(definition.id, unpublishTarget.id, unpublishReason, resource.etag);
+          cacheProcessDefinition(result.definition);
+          message.success(`${unpublishTarget.version} 已取消发布`);
+          setUnpublishTarget(undefined);
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "发布状态已经变化");
+        }
       }}
     >
       <Alert type="warning" showIcon message="取消后流程将没有发布版本" description={unpublishTarget?.instanceCount ? "员工不能发起新实例，已有实例继续按原版本运行；由于已有实例，该版本仍不可编辑。" : "员工不能发起新实例；版本号和完整配置保留，取消后可直接编辑。"} />

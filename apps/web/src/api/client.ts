@@ -40,6 +40,7 @@ const storedPersonaId = () => {
 
 export const readApiAccessToken = () => {
   const token = window.sessionStorage.getItem(API_TOKEN_KEY);
+  if (import.meta.env.VITE_API_MODE === "remote") return token ?? undefined;
   const personaId = storedPersonaId();
   if (token?.startsWith("mock:") && personaId && token !== `mock:${personaId}`) return `mock:${personaId}`;
   if (token) return token;

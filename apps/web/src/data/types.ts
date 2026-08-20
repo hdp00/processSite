@@ -59,15 +59,15 @@ export interface ProcessResubmissionRecord {
 export interface ProcessInstance {
   workflowType?: "approval" | "free";
   id: string;
-  definitionId?: string;
-  versionId?: string;
+  definitionId: string;
+  versionId: string;
   code: string;
   title: string;
   template: string;
   templateVersion: string;
   status: InstanceStatus;
   initiator: string;
-  initiatorId?: string;
+  initiatorId: string;
   department: string;
   createdAt: string;
   updatedAt: string;
@@ -78,12 +78,18 @@ export interface ProcessInstance {
   designatedReviewerId?: string;
   dueText?: string;
   description: string;
-  pdfName: string;
-  pdfSize: string;
-  documentCode: string;
-  documentType: string;
-  documentLevel: string;
-  revision: string;
+  /** @deprecated PDF 文件审核的历史快捷字段；新流程只使用 formValues。 */
+  pdfName?: string;
+  /** @deprecated PDF 文件审核的历史快捷字段；新流程只使用 formValues。 */
+  pdfSize?: string;
+  /** @deprecated 动态表单字段不应继续扩展到通用实例。 */
+  documentCode?: string;
+  /** @deprecated 动态表单字段不应继续扩展到通用实例。 */
+  documentType?: string;
+  /** @deprecated 动态表单字段不应继续扩展到通用实例。 */
+  documentLevel?: string;
+  /** @deprecated 动态表单字段不应继续扩展到通用实例。 */
+  revision?: string;
   productModel?: string;
   testType?: string;
   testConclusion?: string;
@@ -98,8 +104,14 @@ export interface ProcessInstance {
   attachmentIds?: string[];
   attachmentIdsByField?: Record<string, string[]>;
   resubmissions?: ProcessResubmissionRecord[];
+  /** @deprecated 仅作为旧数据与展示快照；审批状态的唯一事实源是 WorkflowTask。 */
   reviewers: ReviewerProgress[];
 }
+
+/** 仅供一次性持久化迁移和内置旧演示数据使用；业务运行时不得继续产生此类型。 */
+export type LegacyProcessInstance = Omit<ProcessInstance, "definitionId" | "versionId" | "initiatorId"> & Partial<
+  Pick<ProcessInstance, "definitionId" | "versionId" | "initiatorId">
+>;
 
 export interface WorkflowTask {
   id: string;

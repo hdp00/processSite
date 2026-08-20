@@ -1,4 +1,3 @@
-import type { ProcessInstance } from "../data/types";
 import type { ProcessDefinition, ProcessVersion } from "./useProcessDefinitionStore";
 
 const normalizedVersionLabel = (value: string) => {
@@ -13,7 +12,7 @@ const normalizedVersionLabel = (value: string) => {
  */
 export const resolveLockedProcessVersion = (
   definition: ProcessDefinition | undefined,
-  instance: Pick<ProcessInstance, "versionId" | "templateVersion">,
+  instance: { versionId?: string; templateVersion: string },
 ): ProcessVersion | undefined => {
   if (!definition) return undefined;
   if (instance.versionId) return definition.versions.find((version) => version.id === instance.versionId);

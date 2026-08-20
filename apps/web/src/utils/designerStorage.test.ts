@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyDesignerFieldVisibility,
+  cloneCompleteDesignerSnapshot,
   ensureProcessTitleField,
   isDesignerFieldVisible,
   normalizeStoredCondition,
@@ -67,5 +68,39 @@ describe("表单字段条件显示", () => {
   it("normalizes legacy or incomplete condition snapshots without crashing", () => {
     expect(normalizeStoredCondition({ mode: "all", rules: undefined } as never)).toEqual({ mode: "all", rules: [] });
     expect(normalizeStoredCondition(undefined)).toBeUndefined();
+  });
+
+  it("migrates legacy option labels, defaults and conditions to the same stable ids", () => {
+    const snapshot = cloneCompleteDesignerSnapshot({
+      form: {
+        fields: [
+          field({
+            id: "result",
+            type: "radio",
+            label: "结果",
+            options: ["通过", "驳回"] as never,
+            defaultValue: "通过",
+          }),
+          field({
+            id: "reason",
+            type: "text",
+            label: "原因",
+            displayCondition: {
+              mode: "all",
+              rules: [{ id: "rule-1", fieldId: "result", operator: "eq", value: "驳回" }],
+            },
+          }),
+        ],
+      },
+      flow: { nodes: [], edges: [] },
+      systemFields: [],
+    });
+    const result = snapshot.form.fields.find((item) => item.id === "result");
+    const reason = snapshot.form.fields.find((item) => item.id === "reason");
+    const pass = result?.options?.find((option) => option.label === "通过");
+    const reject = result?.options?.find((option) => option.label === "驳回");
+
+    expect(result?.defaultValue).toBe(pass?.id);
+    expect(reason?.displayCondition?.rules[0].value).toBe(reject?.id);
   });
 });

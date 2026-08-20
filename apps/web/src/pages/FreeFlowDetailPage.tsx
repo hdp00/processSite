@@ -29,6 +29,8 @@ import {
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
+import { cacheProcessRuntime } from "../api/entityCache";
+import { flowPilotApi } from "../api/flowPilotApi";
 import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
@@ -63,13 +65,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const {
     instances,
     personaId,
-    replyFreeFlow,
-    transferFreeFlow,
-    editFreeFlowReply,
-    updateFreeFlowInitial,
-    forceReassignFreeFlow,
-    closeFreeFlow,
-    reopenFreeFlow,
   } = usePrototypeStore();
   const instance = instanceOverride ?? instances.find((item) => item.id === id);
   const persona = findIdentityUser(personaId);
@@ -80,7 +75,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const hasConfiguredAttachmentField = Boolean(lockedVersion?.snapshot.form.fields.some((field) => field.type === "attachment"));
   const assigneeIds = new Set((lockedVersion?.basic.assigneeGroups ?? []).flatMap(effectiveGroupMemberIds));
   const userOptions = identityUsers.filter((user) => assigneeIds.has(user.id)).map((user) => ({
-    value: user.name,
+    value: user.id,
     label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}`,
   }));
   const isSuperAdmin = isSuperAdminPersona(personaId);
@@ -150,20 +145,21 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
   if (!instance) return null;
 
-  const postReply = () => {
+  const postReply = async () => {
     if (!hasRichContent(replyContent)) return message.warning("请输入回复内容");
-    replyFreeFlow(instance.id, replyContent);
+    cacheProcessRuntime(await flowPilotApi.freeFlows.reply(instance.id, replyContent));
     setReplyContent("");
     message.success("回复已发表，不改变当前受理人");
   };
 
-  const transfer = () => {
+  const transfer = async () => {
     if (!hasRichContent(replyContent)) return message.warning("请填写本次处理内容");
     if (!nextAssignee) return message.warning("请选择下一位受理人");
-    transferFreeFlow(instance.id, replyContent, nextAssignee);
+    const resource = await flowPilotApi.instances.getResource(instance.id);
+    cacheProcessRuntime(await flowPilotApi.freeFlows.transfer(instance.id, replyContent, nextAssignee, resource.etag));
     setReplyContent("");
     setNextAssignee(undefined);
-    message.success(`事项已转交给${nextAssignee}`);
+    message.success(`事项已转交给${findIdentityUser(nextAssignee)?.name ?? "下一位受理人"}`);
   };
 
   const renderSystemEvent = (entry: FreeFlowEntry) => {
@@ -305,16 +301,18 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
         </aside>
       </div>
 
-      <Modal title="编辑我的回复" width={760} open={Boolean(editEntry)} okText="保存修改" onCancel={() => setEditEntry(undefined)} onOk={() => {
+      <Modal title="编辑我的回复" width={760} open={Boolean(editEntry)} okText="保存修改" onCancel={() => setEditEntry(undefined)} onOk={async () => {
         if (!editEntry || !hasRichContent(editContent)) return message.warning("回复内容不能为空");
-        editFreeFlowReply(instance.id, editEntry.id, editContent);
+        const resource = await flowPilotApi.instances.getResource(instance.id);
+        cacheProcessRuntime(await flowPilotApi.freeFlows.editReply(instance.id, editEntry.id, editContent, resource.etag));
         setEditEntry(undefined);
         message.success("回复已更新并保留历史版本");
       }}><RichTextEditor value={editContent} onChange={setEditContent} minHeight={260} /></Modal>
 
-      <Modal title="编辑初始表单" width={800} open={initialEditOpen} okText="保存修改" onCancel={() => setInitialEditOpen(false)} onOk={() => {
+      <Modal title="编辑初始表单" width={800} open={initialEditOpen} okText="保存修改" onCancel={() => setInitialEditOpen(false)} onOk={async () => {
         if (!draftInitial.title.trim() || !hasRichContent(draftInitial.initialContent)) return message.warning("请填写标题和初始说明");
-        updateFreeFlowInitial(instance.id, draftInitial);
+        const resource = await flowPilotApi.instances.getResource(instance.id);
+        cacheProcessRuntime(await flowPilotApi.freeFlows.updateSubmission(instance.id, draftInitial, resource.etag));
         setInitialEditOpen(false);
         message.success("初始表单已更新，修改记录已写入时间线");
       }}>
@@ -330,23 +328,26 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
         </div>
       </Modal>
 
-      <Modal title="关闭事项" open={closeOpen} okText="确认关闭" okButtonProps={{ danger: true }} onCancel={() => setCloseOpen(false)} onOk={() => {
+      <Modal title="关闭事项" open={closeOpen} okText="确认关闭" okButtonProps={{ danger: true }} onCancel={() => setCloseOpen(false)} onOk={async () => {
         if (!closeReason.trim()) return message.warning("请填写关闭理由");
-        closeFreeFlow(instance.id, closeReason);
+        const resource = await flowPilotApi.instances.getResource(instance.id);
+        cacheProcessRuntime(await flowPilotApi.freeFlows.close(instance.id, closeReason, resource.etag));
         setCloseOpen(false); setCloseReason(""); message.success("事项已关闭，操作已进入时间线");
       }}><Input.TextArea rows={4} placeholder="关闭理由（必填）" value={closeReason} onChange={(event) => setCloseReason(event.target.value)} /></Modal>
 
-      <Modal title="重新打开事项" open={reopenOpen} okText="重新打开" onCancel={() => setReopenOpen(false)} onOk={() => {
+      <Modal title="重新打开事项" open={reopenOpen} okText="重新打开" onCancel={() => setReopenOpen(false)} onOk={async () => {
         if (!reopenReason.trim() || !reopenAssignee) return message.warning("请填写理由并指定受理人");
-        reopenFreeFlow(instance.id, reopenReason, reopenAssignee);
+        const resource = await flowPilotApi.instances.getResource(instance.id);
+        cacheProcessRuntime(await flowPilotApi.freeFlows.reopen(instance.id, reopenReason, reopenAssignee, resource.etag));
         setReopenOpen(false); setReopenReason(""); setReopenAssignee(undefined); message.success("事项已重新打开并生成待办");
       }}><div className="free-modal-form"><Alert type="info" showIcon message="重新打开后恢复回复和编辑能力" /><label><span>打开理由</span><Input.TextArea rows={4} value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} /></label><label><span>受理人</span><Select showSearch optionFilterProp="label" value={reopenAssignee} onChange={setReopenAssignee} options={userOptions} /></label></div></Modal>
 
-      <Modal title="异常改派" open={reassignOpen} okText="确认改派" onCancel={() => setReassignOpen(false)} onOk={() => {
+      <Modal title="异常改派" open={reassignOpen} okText="确认改派" onCancel={() => setReassignOpen(false)} onOk={async () => {
         if (!reassignReason.trim() || !reassignAssignee) return message.warning("请填写改派理由并选择新受理人");
-        forceReassignFreeFlow(instance.id, reassignReason, reassignAssignee);
+        const resource = await flowPilotApi.instances.getResource(instance.id);
+        cacheProcessRuntime(await flowPilotApi.freeFlows.reassign(instance.id, reassignReason, reassignAssignee, resource.etag));
         setReassignOpen(false); setReassignReason(""); setReassignAssignee(undefined); message.success("已改派，原待办取消并生成新待办");
-      }}><div className="free-modal-form"><Alert type="warning" showIcon icon={<ExclamationCircleOutlined />} message="仅发起流程权限组可执行" description={`当前受理人：${instance.currentAssignee}。异常改派会写入时间线。`} /><label><span>新受理人</span><Select showSearch optionFilterProp="label" value={reassignAssignee} onChange={setReassignAssignee} options={userOptions.filter((option) => option.value !== instance.currentAssignee)} /></label><label><span>改派理由</span><Input.TextArea rows={4} value={reassignReason} onChange={(event) => setReassignReason(event.target.value)} /></label></div></Modal>
+      }}><div className="free-modal-form"><Alert type="warning" showIcon icon={<ExclamationCircleOutlined />} message="仅发起流程权限组可执行" description={`当前受理人：${instance.currentAssignee}。异常改派会写入时间线。`} /><label><span>新受理人</span><Select showSearch optionFilterProp="label" value={reassignAssignee} onChange={setReassignAssignee} options={userOptions.filter((option) => option.value !== instance.currentAssigneeId)} /></label><label><span>改派理由</span><Input.TextArea rows={4} value={reassignReason} onChange={(event) => setReassignReason(event.target.value)} /></label></div></Modal>
     </div>
   );
 }

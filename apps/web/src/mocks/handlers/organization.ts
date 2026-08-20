@@ -33,7 +33,7 @@ const API = "/api/v1";
 const permissions: PermissionCatalogItem[] = [
   "work-launch:查看", "work-launch:发起", "work-task:查看", "work-task:审核", "work-task:驳回",
   "work-list:查看", "work-list:复制新建", "work-list:打印", "config-definition:查看", "config-definition:编辑",
-  "config-definition:发布", "config-form:查看", "config-form:编辑", "config-form:预览", "org-user:查看",
+  "config-definition:发布", "config-definition:删除", "config-form:查看", "config-form:编辑", "config-form:预览", "org-user:查看",
   "org-user:编辑", "org-user:重置密码", "org-department:查看", "org-department:编辑", "org-role:查看",
   "org-role:编辑", "org-role:授权", "org-group:查看", "org-group:编辑", "system-monitor:查看",
   "system-monitor:导出", "system-audit:查看", "system-audit:导出",

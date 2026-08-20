@@ -38,46 +38,6 @@ const audit = (actorId: string, actorName: string, action: string, instance: Pro
   appendAuditEvent({ category: "instance", action, actorId, actorName, resourceType: "free-flow-instance", resourceId: instance.id, summary, details });
 
 export const freeFlowHandlers = [
-  http.post(`${API}/free-flow-instances`, async ({ request }) => {
-    const simulated = await applyMockScenario(request, true);
-    if (simulated) return simulated;
-    return withIdempotency(request, async () => {
-      const auth = requirePermission(request, "work-launch:发起");
-      if (auth.response) return auth.response;
-      const mismatch = ensureSessionActor(request, auth.actor.id);
-      if (mismatch) return mismatch;
-      const body = await parseJsonBody<{
-        title?: string;
-        category?: string;
-        priority?: "普通" | "紧急";
-        description?: string;
-        initialContent?: string;
-        attachmentName?: string;
-        assigneeId?: string;
-        instancePrefix?: string;
-      }>(request);
-      if (body instanceof Response) return body;
-      const assignee = body.assigneeId ? findIdentityUser(body.assigneeId) : undefined;
-      if (!body.title?.trim() || !body.category?.trim() || !body.description?.trim() || !body.initialContent?.trim() || !assignee) {
-        return apiProblem(request, 422, "VALIDATION_FAILED", "自由协作事项校验失败", "标题、分类、摘要、初始说明和有效受理人均为必填项。 ");
-      }
-      const id = usePrototypeStore.getState().createFreeFlow({
-        title: body.title.trim(),
-        category: body.category.trim(),
-        priority: body.priority === "紧急" ? "紧急" : "普通",
-        description: body.description.trim(),
-        initialContent: body.initialContent,
-        attachmentName: body.attachmentName,
-        assignee: assignee.id,
-        instancePrefix: body.instancePrefix,
-      });
-      const instance = id ? instanceById(id) : undefined;
-      if (!instance) return apiProblem(request, 403, "FREE_FLOW_CREATE_FORBIDDEN", "创建事项失败", "请确认自由协作流程已发布且当前账号具有发起权限。 ");
-      audit(auth.actor.id, auth.actor.name, "create", instance, `创建自由协作事项 ${instance.code}`);
-      return apiOk(request, structuredClone(instance), { status: 201, headers: { Location: `${API}/process-instances/${instance.id}`, ETag: entityEtag(instance) } });
-    });
-  }),
-
   http.post(`${API}/process-instances/:instanceId/free-collaboration/replies`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;

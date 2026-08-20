@@ -38,6 +38,7 @@ import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { AttachmentRecord } from "../api/contracts";
 import type { ProcessInstance } from "../data/types";
 import { flowPilotApi } from "../api/flowPilotApi";
+import { cacheProcessRuntime } from "../api/entityCache";
 import { effectiveGroupMemberIds, resolveWorkflowGroupLabel, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import type { ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
 import {
@@ -45,10 +46,13 @@ import {
   buildFlowLevels,
   ensureProcessTitleField,
   isDesignerFieldVisible,
+  normalizeDesignerFormValues,
+  normalizeDesignerFieldValue,
   rejectionHandlingLabel,
   type StoredDesignerField,
   type StoredDesignerTableColumn,
 } from "../utils/designerStorage";
+import { designerChoiceOptionsToAntd } from "../utils/designerOptions";
 import { buildCopiedInstanceInitialValues } from "../utils/instanceCopy";
 
 type DynamicRow = Record<string, string | string[] | undefined> & { key: string };
@@ -75,7 +79,7 @@ function TableCellEditor({
   value: string | string[] | undefined;
   onChange: (value: string | string[]) => void;
 }) {
-  const options = (column.options ?? []).map((item) => ({ value: item, label: item }));
+  const options = designerChoiceOptionsToAntd(column.options);
   if (column.type === "select") {
     return <Select value={typeof value === "string" ? value : undefined} options={options} placeholder="请选择" onChange={onChange} />;
   }
@@ -161,7 +165,7 @@ function DynamicFieldControl({
   value?: unknown;
   onChange?: (value: unknown) => void;
 }) {
-  const options = (field.options ?? []).map((item) => ({ value: item, label: item }));
+  const options = designerChoiceOptionsToAntd(field.options);
   if (field.type === "richtext") {
     return <RichTextEditor value={typeof value === "string" ? value : ""} onChange={(next) => onChange?.(next)} placeholder={field.placeholder} minHeight={180} />;
   }
@@ -171,18 +175,25 @@ function DynamicFieldControl({
   if (field.type === "checkbox") return <Checkbox.Group value={Array.isArray(value) ? value as string[] : []} options={options} onChange={onChange} />;
   if (field.type === "attachment") {
     const inlinePdf = field.attachment?.inlinePdf ?? true;
+    const excelToPdf = Boolean(field.attachment?.excelToPdf);
+    const allowedExtensions = field.attachment?.allowedExtensions ?? (inlinePdf ? ["pdf"] : []);
     const maxCount = inlinePdf ? 1 : field.attachment?.maxCount ?? 20;
     const uploadProps: UploadProps = {
       multiple: !inlinePdf && maxCount > 1,
       maxCount,
       beforeUpload: (file) => {
         const maxSize = field.attachment?.maxSizeMb ?? 100;
+        const extension = file.name.toLowerCase().split(".").pop() ?? "";
         if (file.size / 1024 / 1024 > maxSize) {
           message.error(`${file.name} 超过 ${maxSize} MB 限制`);
           return Upload.LIST_IGNORE;
         }
-        if (inlinePdf && (!file.name.toLowerCase().endsWith(".pdf") || (file.type && file.type !== "application/pdf"))) {
-          message.error(`${file.name} 不是有效的 PDF 文件`);
+        if (allowedExtensions.length && !allowedExtensions.includes(extension)) {
+          message.error(`${file.name} 的格式不在允许范围内（${allowedExtensions.join("、")}）`);
+          return Upload.LIST_IGNORE;
+        }
+        if (inlinePdf && extension !== "pdf" && !(excelToPdf && ["xls", "xlsx"].includes(extension))) {
+          message.error(`${file.name} 不是有效的 PDF 或可转换 Excel 文件`);
           return Upload.LIST_IGNORE;
         }
         return false;
@@ -196,7 +207,7 @@ function DynamicFieldControl({
       >
         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
         <p className="ant-upload-text">{inlinePdf && Array.isArray(value) && value.length ? "点击或拖拽上传新文件并替换原文件" : "点击或拖拽上传附件"}</p>
-        <p className="ant-upload-hint">{inlinePdf ? "仅保留 1 个文件，继续上传将替换原文件" : `最多 ${maxCount} 个`}，单个不超过 {field.attachment?.maxSizeMb ?? 100} MB{inlinePdf ? "；PDF 可在流程页面预览" : ""}</p>
+        <p className="ant-upload-hint">{inlinePdf ? "仅保留 1 个文件，继续上传将替换原文件" : `最多 ${maxCount} 个`}，单个不超过 {field.attachment?.maxSizeMb ?? 100} MB{excelToPdf ? `；Excel 转为 PDF，最多 ${field.attachment?.maxPreviewPages ?? 1} 页` : inlinePdf ? "；PDF 可在流程页面预览" : ""}</p>
       </Upload.Dragger>
     );
   }
@@ -266,7 +277,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
         ? []
         : field.type === "table"
           ? [createRow(field.columns ?? [])]
-          : field.defaultValue ?? (field.type === "checkbox" ? [] : ""),
+          : normalizeDesignerFieldValue(field, field.defaultValue ?? (field.type === "checkbox" ? [] : "")),
     ]));
   }, [copySource, copySourceVersion, initiatorFields]);
   const watchedValues = Form.useWatch([], form) as DynamicFormValues | undefined;
@@ -276,7 +287,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
 
   const runtimeValues = (values: DynamicFormValues, uploadedByField: Record<string, AttachmentRecord[]>) => applyDesignerFieldVisibility(
     fields,
-    Object.fromEntries(fields.map((field) => {
+    normalizeDesignerFormValues(fields, Object.fromEntries(fields.map((field) => {
       const key = field.id;
       const value = (field.inputStage ?? "initiator") === "reviewer"
         ? field.type === "table" || field.type === "attachment"
@@ -289,7 +300,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
       return [key, value && typeof value === "object" && "toJSON" in value
         ? (value as { toJSON: () => unknown }).toJSON()
         : value];
-    })),
+    }))),
   );
 
   const renderField = (field: StoredDesignerField) => {
@@ -333,7 +344,11 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
         for (const file of files) {
           const source = file.originFileObj;
           if (!source) throw new Error(`无法读取附件“${file.name}”，请重新选择文件`);
-          const record = await flowPilotApi.attachments.upload(source);
+          const record = await flowPilotApi.attachments.upload(source, {
+            definitionId: definition.id,
+            versionId: version.id,
+            fieldId: field.id,
+          });
           records.push(record);
           uploadedRecords.push(record);
         }
@@ -346,7 +361,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
       const attachmentIdsByField = Object.fromEntries(
         Object.entries(uploadedByField).map(([fieldId, records]) => [fieldId, records.map((record) => record.id)]),
       );
-      await flowPilotApi.instances.create({
+      const created = await flowPilotApi.instances.create({
         definitionId: definition.id,
         formValues: values,
         copySourceInstanceId: copySource?.id,
@@ -355,6 +370,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
         attachmentIds: uploadedRecords.map((record) => record.id),
         attachmentIdsByField,
       });
+      cacheProcessRuntime(created.instance, created.tasks);
       setSubmitting(false);
       setConfirmOpen(false);
       setDirty(false);

@@ -2,9 +2,13 @@ import { BranchesOutlined, CheckCircleOutlined, CopyOutlined, DeleteOutlined, Do
 import { Alert, Button, Card, Descriptions, Dropdown, Form, Input, Modal, Select, Space, Table, Tag, Typography, Upload, message, type MenuProps, type TableProps } from "antd";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { flowPilotApi } from "../api/flowPilotApi";
+import { cacheProcessDefinition, removeCachedProcessDefinition } from "../api/entityCache";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import { useIdentityStore } from "../state/useIdentityStore";
+import { hasPersonaPermission } from "../state/rolePermissions";
+import { usePrototypeStore } from "../state/usePrototypeStore";
 import { definitionStatus, getPublishedVersion, useProcessDefinitionStore, type DefinitionStatus, type DefinitionType, type ProcessDefinition, type ProcessVersion } from "../state/useProcessDefinitionStore";
 import { createProcessDefinitionExport, parseProcessDefinitionImport, type ProcessDefinitionImportPreview } from "../utils/processDefinitionTransfer";
 import "./process-admin-pages.css";
@@ -22,13 +26,12 @@ export function ProcessManagementPage() {
   const navigate = useNavigate();
   const [form] = Form.useForm<CreateProcessValues>();
   const definitions = useProcessDefinitionStore((state) => state.definitions);
-  const copyProcessDefinition = useProcessDefinitionStore((state) => state.copyDefinition);
   const importDefinition = useProcessDefinitionStore((state) => state.importDefinition);
-  const toggleDefinition = useProcessDefinitionStore((state) => state.toggleDefinition);
-  const deleteDefinition = useProcessDefinitionStore((state) => state.deleteDefinition);
   const users = useIdentityStore((state) => state.users);
   const roles = useIdentityStore((state) => state.roles);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
+  const personaId = usePrototypeStore((state) => state.personaId);
+  const canDeleteDefinition = hasPersonaPermission(personaId, "config-definition:删除");
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<DefinitionStatus>();
   const [type, setType] = useState<DefinitionType>();
@@ -58,17 +61,23 @@ export function ProcessManagementPage() {
       okText: stopping ? "确认停用" : "确认启用",
       okButtonProps: stopping ? { danger: true } : undefined,
       cancelText: "取消",
-      onOk: () => { toggleDefinition(record.id); message.success(stopping ? "流程已停用" : "流程已重新启用"); },
+      onOk: async () => {
+        const resource = await flowPilotApi.definitions.getResource(record.id);
+        cacheProcessDefinition(await flowPilotApi.definitions.updateAvailability(record.id, stopping, resource.etag));
+        message.success(stopping ? "流程已停用" : "流程已重新启用");
+      },
     });
   };
 
-  const copyDefinition = (record: ProcessDefinition) => {
-    const copiedId = copyProcessDefinition(record.id);
-    const copied = useProcessDefinitionStore.getState().definitions.find((item) => item.id === copiedId);
-    const version = copied?.versions[0];
-    if (!copied || !version) return message.error("复制新建失败");
-    message.success("已复制为新的流程定义和正式 V1，未复制历史实例");
-    navigate(editUrl(copied, version));
+  const copyDefinition = async (record: ProcessDefinition) => {
+    try {
+      const copied = await flowPilotApi.definitions.copy(record.id, record.publishedVersionId ?? record.versions[0]?.id);
+      cacheProcessDefinition(copied.definition);
+      message.success("已复制为新的流程定义和正式 V1，未复制历史实例");
+      navigate(editUrl(copied.definition, copied.version));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "复制新建失败");
+    }
   };
 
   const removeDefinition = (record: ProcessDefinition) => {
@@ -78,7 +87,17 @@ export function ProcessManagementPage() {
       okText: "确认删除",
       okButtonProps: { danger: true },
       cancelText: "取消",
-      onOk: () => { if (!deleteDefinition(record.id)) return message.error("流程已发布或已有实例，不能删除"); message.success("流程定义及其全部无实例版本已删除"); },
+      onOk: async () => {
+        try {
+          const resource = await flowPilotApi.definitions.getResource(record.id);
+          await flowPilotApi.definitions.remove(record.id, resource.etag);
+          removeCachedProcessDefinition(record.id);
+          message.success("流程定义及其全部无实例版本已删除");
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "流程已发布或已有实例，不能删除");
+          throw error;
+        }
+      },
     });
   };
 
@@ -122,7 +141,7 @@ export function ProcessManagementPage() {
     { key: "export", icon: <DownloadOutlined />, label: "导出", onClick: () => exportDefinition(record) },
     { type: "divider" },
     { key: "toggle", icon: record.disabled ? <CheckCircleOutlined /> : <StopOutlined />, label: record.disabled ? "启用流程" : "停用流程", danger: !record.disabled, disabled: !record.publishedVersionId, onClick: () => updateStatus(record) },
-    { key: "delete", icon: <DeleteOutlined />, label: "删除流程", danger: true, disabled: Boolean(record.publishedVersionId || record.instanceCount || record.versions.some((version) => version.instanceCount > 0)), onClick: () => removeDefinition(record) },
+    ...(canDeleteDefinition ? [{ key: "delete", icon: <DeleteOutlined />, label: "删除流程", danger: true, disabled: Boolean(record.publishedVersionId || record.instanceCount || record.versions.some((version) => version.instanceCount > 0)), onClick: () => removeDefinition(record) }] : []),
   ];
 
   const columns: TableProps<ProcessDefinition>["columns"] = [

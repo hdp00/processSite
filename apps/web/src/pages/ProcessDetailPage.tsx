@@ -25,6 +25,7 @@ import {
   Card,
   Cascader,
   Checkbox,
+  Collapse,
   Descriptions,
   Divider,
   Empty,
@@ -46,6 +47,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { flowPilotApi } from "../api/flowPilotApi";
+import { cacheProcessRuntime } from "../api/entityCache";
 import { AppBackButton } from "../components/AppBackButton";
 import { RuntimeReadonlyChoice } from "../components/RuntimeReadonlyChoice";
 import { StatusPill } from "../components/StatusPill";
@@ -56,9 +58,12 @@ import { effectiveGroupMemberIds, findIdentityUser, useIdentityStore } from "../
 import { canUserCloseInstance, canUserProcessTask } from "../state/workflowAccess";
 import { hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { isDesignerFieldVisible, type StoredDesignerField } from "../utils/designerStorage";
+import { isDesignerFieldVisible, normalizeDesignerFormValues, type StoredDesignerField } from "../utils/designerStorage";
+import { designerChoiceOptionsToAntd, displayDesignerChoiceValue } from "../utils/designerOptions";
+import { pdfPreviewBlob, resolveRuntimeAttachments, type RuntimeAttachmentDisplayItem } from "../utils/attachmentDisplay";
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
 import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../utils/roundDisplay";
+import { buildWorkflowProgressStages, type WorkflowProgressStatus } from "../utils/workflowProgress";
 
 const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> = {
   待审核: { icon: <HistoryOutlined /> },
@@ -68,6 +73,9 @@ const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> 
   已取消: { icon: <StopOutlined /> },
   已跳过: { icon: <StopOutlined /> },
 };
+
+const progressStatusIcon = (status: WorkflowProgressStatus) =>
+  status === "待激活" ? <HistoryOutlined /> : reviewMeta[status].icon;
 
 const configuredAttachmentNames = (
   fields: StoredDesignerField[],
@@ -90,11 +98,19 @@ const attachmentItemId = (item: unknown) => item && typeof item === "object" && 
   ? String((item as { id?: unknown }).id ?? "")
   : "";
 
-interface RuntimeAttachmentItem {
-  id?: string;
-  name: string;
-  sourceIndex: number;
-}
+const attachmentIdsByFieldFor = (
+  fields: StoredDesignerField[],
+  values: Record<string, unknown>,
+) => Object.fromEntries(fields
+  .filter((field) => field.type === "attachment")
+  .map((field) => [
+    field.id,
+    Array.isArray(values[field.id])
+      ? (values[field.id] as unknown[]).map(attachmentItemId).filter(Boolean)
+      : [],
+  ]));
+
+type RuntimeAttachmentItem = RuntimeAttachmentDisplayItem;
 
 const inlinePdfEnabled = (field: StoredDesignerField) => field.attachment?.inlinePdf ?? true;
 
@@ -108,17 +124,12 @@ export function ProcessDetailPage() {
     instances,
     tasks,
     personaId,
-    reviewInstance,
-    reviseCompletedTask,
-    closeInstance,
-    updateUnreviewedInstance,
-    republishInstance,
   } = usePrototypeStore();
   const instance = instances.find((item) => item.id === id);
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === instance?.definitionId));
   const lockedVersion = definition?.versions.find((version) => version.id === instance?.versionId);
   const identityUsers = useIdentityStore((state) => state.users);
-  useIdentityStore((state) => state.workflowGroups);
+  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const persona = findIdentityUser(personaId);
   const isSuperAdmin = isSuperAdminPersona(personaId);
   const [comment, setComment] = useState("");
@@ -131,7 +142,10 @@ export function ProcessDetailPage() {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [closeOpen, setCloseOpen] = useState(false);
   const [closeReason, setCloseReason] = useState("");
-  const [dynamicValues, setDynamicValues] = useState<Record<string, unknown>>(instance?.formValues ?? {});
+  const [dynamicValues, setDynamicValues] = useState<Record<string, unknown>>(() => normalizeDesignerFormValues(
+    lockedVersion?.snapshot.form.fields ?? [],
+    instance?.formValues ?? {},
+  ));
   const [draftAssignees, setDraftAssignees] = useState<Record<string, string>>({});
   const [repeatTaskId, setRepeatTaskId] = useState<string>();
   const [repeatComment, setRepeatComment] = useState("");
@@ -140,13 +154,16 @@ export function ProcessDetailPage() {
 
   useEffect(() => {
     if (instance) {
-      setDocumentLevel(instance.documentLevel);
+      setDocumentLevel(instance.documentLevel ?? "");
       setDraftTitle(instance.title);
-      setDraftDocumentCode(instance.documentCode);
-      setDraftDocumentType(instance.documentType);
+      setDraftDocumentCode(instance.documentCode ?? "");
+      setDraftDocumentType(instance.documentType ?? "");
       setDraftDescription(instance.description);
-      setDraftPdfName(instance.pdfName);
-      setDynamicValues(structuredClone(instance.formValues ?? {}));
+      setDraftPdfName(instance.pdfName ?? "无附件");
+      setDynamicValues(normalizeDesignerFormValues(
+        lockedVersion?.snapshot.form.fields ?? [],
+        structuredClone(instance.formValues ?? {}),
+      ));
     }
   }, [
     instance?.attachmentNames,
@@ -158,6 +175,7 @@ export function ProcessDetailPage() {
     instance?.id,
     instance?.pdfName,
     instance?.title,
+    lockedVersion,
   ]);
 
 
@@ -176,7 +194,7 @@ export function ProcessDetailPage() {
   const currentNodeConfig = lockedVersion?.snapshot.flow.nodes.find((node) => node.id === currentTask?.nodeId)?.data;
   const isConfirmationTask = (currentNodeConfig?.handlingMode ?? "approval") === "confirmation";
   const canReview = Boolean(
-    instance?.status === "审核中" && currentReviewer?.status === "待审核" && currentTask,
+    instance?.status === "审核中" && currentTask?.status === "待处理",
   );
   const canReject = canReview && !isConfirmationTask && hasPersonaPermission(personaId, "work-task:驳回");
   const isSubstitute = Boolean(
@@ -188,8 +206,8 @@ export function ProcessDetailPage() {
     && canEditProcessInstanceSubmission(instance, persona, isSuperAdmin),
   );
   const canPrint = hasPersonaPermission(personaId, "work-list:打印");
-  const hasReviewAction = Boolean(instance?.reviewers.some(
-    (reviewer) => reviewer.status === "已通过" || reviewer.status === "已确认" || reviewer.status === "已驳回",
+  const hasReviewAction = Boolean(instance && tasks.some(
+    (task) => task.instanceId === instance.id && task.round === instance.round && task.status === "已完成" && Boolean(task.action),
   ));
   const assignableApprovalNodes = useMemo(
     () => (lockedVersion?.snapshot.flow.nodes ?? []).filter((node) =>
@@ -226,12 +244,12 @@ export function ProcessDetailPage() {
   const canRepublish = Boolean(canEditAsCreator && instance?.status === "驳回待处理");
   const canEditPublishedContent = canEditBeforeReview || canRepublish;
   const editableContentDirty = Boolean(instance && (
-    documentLevel !== instance.documentLevel
+    documentLevel !== (instance.documentLevel ?? "")
     || draftTitle !== instance.title
-    || draftDocumentCode !== instance.documentCode
-    || draftDocumentType !== instance.documentType
+    || draftDocumentCode !== (instance.documentCode ?? "")
+    || draftDocumentType !== (instance.documentType ?? "")
     || draftDescription !== instance.description
-    || draftPdfName !== instance.pdfName
+    || draftPdfName !== (instance.pdfName ?? "无附件")
     || JSON.stringify(dynamicValues) !== JSON.stringify(instance.formValues ?? {})
     || (canEditBeforeReview && JSON.stringify(draftAssignees) !== savedAssigneeSignature)
   ));
@@ -283,7 +301,12 @@ export function ProcessDetailPage() {
         ...(!instance.attachmentNames?.length && draftPdfName && !["无附件", "—"].includes(draftPdfName) ? [draftPdfName] : []),
       ]).filter(Boolean))) : [];
   const hasAttachments = attachmentNames.length > 0;
-  const visibleReviewers = instance.reviewers.filter((reviewer) => reviewer.status !== "已跳过");
+  const progressStages = buildWorkflowProgressStages(
+    lockedVersion.snapshot.flow.nodes,
+    lockedVersion.snapshot.flow.edges,
+    tasks.filter((task) => task.instanceId === instance.id && task.round === instance.round),
+    instance.reviewers,
+  );
   const historyItems = [
     {
       color: "blue",
@@ -369,19 +392,26 @@ export function ProcessDetailPage() {
     setPendingAction(action);
   };
 
-  const confirmReview = () => {
-    if (!pendingAction) return;
-    const saved = reviewInstance(instance.id, pendingAction, comment.trim(), documentLevel, dynamicValues);
-    if (!saved) {
-      message.error("提交失败：任务状态、节点处理方式或操作权限已发生变化");
+  const confirmReview = async () => {
+    if (!pendingAction || !currentTask) return;
+    try {
+      const resource = await flowPilotApi.tasks.getResource(currentTask.id);
+      await flowPilotApi.tasks.decide(currentTask.id, {
+        action: pendingAction,
+        comment: comment.trim(),
+        fieldValues: dynamicValues,
+        attachmentIdsByField: attachmentIdsByFieldFor(attachmentFields, dynamicValues),
+      }, resource.etag);
+      const refreshed = await flowPilotApi.instances.get(instance.id);
+      cacheProcessRuntime(refreshed.instance, refreshed.tasks);
+      message.success(pendingAction === "pass" ? "审核已通过" : pendingAction === "confirm" ? "本节点已确认" : "已驳回，等待发起方处理");
       setPendingAction(null);
-      return;
+      setComment("");
+      allowNextNavigation();
+      navigate("/tasks");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "提交失败：任务状态或操作权限已发生变化");
     }
-    message.success(pendingAction === "pass" ? "审核已通过" : pendingAction === "confirm" ? "本节点已确认" : "已驳回，等待发起方处理");
-    setPendingAction(null);
-    setComment("");
-    allowNextNavigation();
-    navigate("/tasks");
   };
 
   const beginRepeatEditing = (taskId: string) => {
@@ -397,35 +427,42 @@ export function ProcessDetailPage() {
     setDynamicValues(structuredClone(instance.formValues ?? {}));
   };
 
-  const saveRepeatEditing = () => {
+  const saveRepeatEditing = async () => {
     if (!repeatTask) return;
-    const result = reviseCompletedTask(instance.id, repeatTask.id, dynamicValues, repeatComment);
-    if (result === "forbidden") {
-      message.error("保存失败：流程状态或修改权限已发生变化");
-      return;
+    try {
+      const resource = await flowPilotApi.tasks.getResource(repeatTask.id);
+      await flowPilotApi.tasks.reviseFields(
+        repeatTask.id,
+        dynamicValues,
+        repeatComment,
+        resource.etag,
+        attachmentIdsByFieldFor(attachmentFields, dynamicValues),
+      );
+      const refreshed = await flowPilotApi.instances.get(instance.id);
+      cacheProcessRuntime(refreshed.instance, refreshed.tasks);
+      setRepeatTaskId(undefined);
+      setRepeatComment("");
+      message.success("字段修改已保存，原审核结果保持不变");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "保存失败：流程状态或修改权限已发生变化");
     }
-    if (result === "no-changes") {
-      message.info("没有检测到授权字段变化");
-      return;
-    }
-    setRepeatTaskId(undefined);
-    setRepeatComment("");
-    message.success("字段修改已保存，原审核结果保持不变");
   };
 
-  const confirmClose = () => {
+  const confirmClose = async () => {
     if (!closeReason.trim()) {
       message.warning("请填写关闭说明");
       return;
     }
-    const result = closeInstance(instance.id, closeReason.trim());
-    if (!result.ok) {
-      message.error(result.message);
-      return;
+    try {
+      const resource = await flowPilotApi.instances.getResource(instance.id);
+      const closed = await flowPilotApi.instances.close(instance.id, closeReason.trim(), resource.etag);
+      cacheProcessRuntime(closed.instance, closed.tasks);
+      setCloseOpen(false);
+      setCloseReason("");
+      message.success("流程已关闭，未完成待办已取消");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "流程关闭失败");
     }
-    setCloseOpen(false);
-    setCloseReason("");
-    message.success("流程已关闭，未完成待办已取消");
   };
 
   const republish = () => {
@@ -441,27 +478,25 @@ export function ProcessDetailPage() {
       okText: "确认重新提交",
       cancelText: "取消",
       icon: <ReloadOutlined />,
-      onOk: () => {
-        const result = republishInstance(instance.id, {
-          title: dynamicText(["title", "标题"], draftTitle.trim()),
-          documentCode: dynamicText(["documentCode", "文件编号", "报告编号"], draftDocumentCode.trim()),
-          documentType: dynamicText(["documentType", "文件类型", "分类"], draftDocumentType),
-          documentLevel,
-          description: draftDescription.trim(),
-          pdfName: draftPdfName,
-          formValues: dynamicValues,
-          attachmentNames,
-        });
-        if (!result.ok) {
-          message.error(result.message);
-          return;
+      onOk: async () => {
+        try {
+          const resource = await flowPilotApi.instances.getResource(instance.id);
+          const resubmitted = await flowPilotApi.instances.resubmit(instance.id, {
+            formValues: dynamicValues,
+            attachmentNames,
+            attachmentIdsByField: attachmentIdsByFieldFor(attachmentFields, dynamicValues),
+          }, resource.etag);
+          cacheProcessRuntime(resubmitted.instance, resubmitted.tasks);
+          message.success("流程已重新提交，全部分支待办已重新生成");
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "重新提交失败");
+          throw error;
         }
-        message.success("流程已重新提交，全部分支待办已重新生成");
       },
     });
   };
 
-  const saveBeforeReview = () => {
+  const saveBeforeReview = async () => {
     if (!draftTitle.trim()) {
       message.warning("请完善必填表单内容后再保存");
       return;
@@ -474,22 +509,19 @@ export function ProcessDetailPage() {
       message.warning(`请为“${invalidAssigneeNode.data?.label ?? "审批节点"}”选择当前流程权限组内的有效人员`);
       return;
     }
-    const result = updateUnreviewedInstance(instance.id, {
-      title: dynamicText(["title", "标题"], draftTitle.trim()),
-      documentCode: dynamicText(["documentCode", "文件编号", "报告编号"], draftDocumentCode.trim()),
-      documentType: dynamicText(["documentType", "文件类型", "分类"], draftDocumentType),
-      documentLevel,
-      description: draftDescription.trim(),
-      pdfName: draftPdfName,
-      formValues: dynamicValues,
-      attachmentNames,
-      assigneeByNode: draftAssignees,
-    });
-    if (!result.ok) {
-      message.error(result.message);
-      return;
+    try {
+      const resource = await flowPilotApi.instances.getResource(instance.id);
+      const updated = await flowPilotApi.instances.updateSubmission(instance.id, {
+        formValues: dynamicValues,
+        attachmentNames,
+        attachmentIdsByField: attachmentIdsByFieldFor(attachmentFields, dynamicValues),
+        assigneeByNode: draftAssignees,
+      }, resource.etag);
+      cacheProcessRuntime(updated.instance, updated.tasks);
+      message.success("修改已保存，默认审核人员与本轮待办已同步更新");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "保存失败");
     }
-    message.success("修改已保存，默认审核人员与本轮待办已同步更新");
   };
 
   const changedLevel = documentLevel !== instance.documentLevel;
@@ -501,6 +533,9 @@ export function ProcessDetailPage() {
   const displayDynamicValue = (value: unknown, field?: StoredDesignerField) => {
     const resolved = value === undefined || value === null || value === "" ? field?.defaultValue ?? value : value;
     const emptyText = "—";
+    if (field && ["select", "radio", "checkbox", "cascader"].includes(field.type)) {
+      return displayDesignerChoiceValue(field.options, resolved, { hierarchical: field.type === "cascader" }) || emptyText;
+    }
     if (Array.isArray(resolved)) return resolved.join("、") || emptyText;
     if (typeof resolved === "string") return resolved.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || emptyText;
     if (typeof resolved === "number" || typeof resolved === "boolean") return String(resolved);
@@ -519,8 +554,15 @@ export function ProcessDetailPage() {
   };
   const stageAttachment = async (field: StoredDesignerField, file: File) => {
     const isInlinePdf = inlinePdfEnabled(field);
-    if (isInlinePdf && (!file.name.toLowerCase().endsWith(".pdf") || (file.type && file.type !== "application/pdf"))) {
-      message.error("该附件字段只能上传 PDF 文件");
+    const extension = file.name.toLowerCase().split(".").pop() ?? "";
+    const excelToPdf = Boolean(field.attachment?.excelToPdf);
+    const allowedExtensions = field.attachment?.allowedExtensions ?? (isInlinePdf ? ["pdf"] : []);
+    if (allowedExtensions.length && !allowedExtensions.includes(extension)) {
+      message.error(`该附件字段只允许 ${allowedExtensions.join("、")} 文件`);
+      return;
+    }
+    if (isInlinePdf && extension !== "pdf" && !(excelToPdf && ["xls", "xlsx"].includes(extension))) {
+      message.error("该附件字段只能上传 PDF 或配置允许转换的 Excel 文件");
       return;
     }
     const maxSizeMb = field.attachment?.maxSizeMb ?? 100;
@@ -530,9 +572,18 @@ export function ProcessDetailPage() {
     }
     setUploadingAttachmentFieldId(field.id);
     try {
-      const record = isInlinePdf
-        ? await flowPilotApi.attachments.replaceFieldAttachment(instance.id, field.id, file)
-        : await flowPilotApi.attachments.upload(file, { instanceId: instance.id, fieldId: field.id });
+      const currentAttachmentValue = dynamicValues[field.id];
+      const currentCount = Array.isArray(currentAttachmentValue) ? currentAttachmentValue.length : 0;
+      const maxCount = isInlinePdf ? 1 : field.attachment?.maxCount ?? 20;
+      if (!isInlinePdf && currentCount >= maxCount) {
+        message.error(`该字段最多上传 ${maxCount} 个附件`);
+        return;
+      }
+      const record = await flowPilotApi.attachments.upload(file, {
+        definitionId: instance.definitionId,
+        versionId: instance.versionId,
+        fieldId: field.id,
+      });
       const reference = { id: record.id, name: record.name, size: record.size, contentType: record.contentType };
       setDraftPdfName(record.name);
       setDynamicValues((current) => {
@@ -545,7 +596,7 @@ export function ProcessDetailPage() {
           [field.id]: nextValues,
         };
       });
-      message.success(isInlinePdf ? "PDF 已上传并完成替换" : "附件已上传");
+      message.success(isInlinePdf ? "PDF 已暂存，提交后完成替换" : "附件已暂存，提交后生效");
     } catch (error) {
       message.error(error instanceof Error ? error.message : "附件上传失败，请稍后重试");
     } finally {
@@ -581,7 +632,6 @@ export function ProcessDetailPage() {
       onOk: async () => {
         setDeletingAttachmentKey(attachmentKey);
         try {
-          if (attachment.id) await flowPilotApi.attachments.remove(attachment.id);
           setDynamicValues((current) => {
             const rawValue = current[field.id];
             const currentValue: unknown[] = Array.isArray(rawValue) ? rawValue : [];
@@ -593,7 +643,7 @@ export function ProcessDetailPage() {
             }
             return { ...current, [field.id]: nextValue };
           });
-          message.success("附件已删除");
+          message.success("附件已从当前草稿移除，提交后生效");
         } catch (error) {
           message.error(error instanceof Error ? error.message : "附件删除失败");
           throw error;
@@ -611,24 +661,34 @@ export function ProcessDetailPage() {
     const initiatorEditable = canEditPublishedContent && (field.inputStage ?? "initiator") !== "reviewer";
     const reviewerEditing = canReview || Boolean(repeatTask);
     const editable = initiatorEditable || (reviewerEditing && editableFieldIds.has(field.id));
+    const reviewerEditable = reviewerEditing && (
+      editableFieldIds.has(field.id)
+      || [...editableFieldIds].some((fieldId) => fieldId.startsWith(`${field.id}.`))
+    );
     const wide = ["richtext", "attachment", "table"].includes(field.type);
     const itemClassName = `runtime-form-item${wide ? " field-wide" : ""}${editable ? " is-editable" : " is-readonly"}`;
     const item = (control: React.ReactNode) => (
       <Form.Item
         key={field.id}
         className={itemClassName}
-        label={field.label}
+        label={<span className="runtime-form-label">
+          <span>{field.label}</span>
+          {reviewerEditable ? <span className="runtime-editable-hint">本节点可修改</span> : null}
+        </span>}
         extra={field.description || undefined}
       >
         {control}
       </Form.Item>
     );
     if (field.type === "attachment") {
-      const attachments: RuntimeAttachmentItem[] = Array.isArray(value)
-        ? value.map((entry, sourceIndex) => ({ id: attachmentItemId(entry) || undefined, name: attachmentItemName(entry), sourceIndex })).filter((entry) => Boolean(entry.name))
-        : field.id === attachmentFields[0]?.id
-          ? attachmentNames.map((name, sourceIndex) => ({ id: instance.attachmentIdsByField?.[field.id]?.[sourceIndex], name, sourceIndex }))
-          : [];
+      const attachments: RuntimeAttachmentItem[] = resolveRuntimeAttachments({
+        fieldId: field.id,
+        value,
+        fallbackNames: attachmentNames,
+        attachmentIdsByField: instance.attachmentIdsByField,
+        attachmentIds: instance.attachmentIds,
+        primaryField: field.id === attachmentFields[0]?.id,
+      });
       const previewPdf = inlinePdfEnabled(field)
         ? attachments.find((attachment) => attachment.name.toLowerCase().endsWith(".pdf"))
         : undefined;
@@ -658,15 +718,24 @@ export function ProcessDetailPage() {
             <Button loading={uploadingAttachmentFieldId === field.id} icon={<UploadOutlined />}>{inlinePdfEnabled(field) && attachments.length ? "替换 PDF" : attachments.length ? "继续上传" : "上传附件"}</Button>
           </Upload> : null}
         </div>
-        {previewPdf ? <InlinePdfPreview
-          attachmentId={previewPdf.id}
-          fileName={previewPdf.name}
-          title={instance.title}
-          code={instance.code}
-          version={instance.revision || instance.templateVersion}
-          description={instance.description}
-          initiator={instance.initiator}
-          createdAt={instance.createdAt}
+        {previewPdf ? <Collapse
+          className="inline-pdf-collapse"
+          defaultActiveKey={[]}
+          destroyOnHidden
+          items={[{
+            key: "pdf-preview",
+            label: <span className="inline-pdf-collapse-label"><EyeOutlined /> PDF 预览</span>,
+            children: <InlinePdfPreview
+              attachmentId={previewPdf.id}
+              fileName={previewPdf.name}
+              title={instance.title}
+              code={instance.code}
+              version={instance.revision || instance.templateVersion}
+              description={instance.description}
+              initiator={instance.initiator}
+              createdAt={instance.createdAt}
+            />,
+          }]}
         /> : null}
       </div>);
     }
@@ -677,7 +746,7 @@ export function ProcessDetailPage() {
         const cellEditable = initiatorEditable || reviewerOwnsTable || (reviewerEditing && editableFieldIds.has(`${field.id}.${column.id}`));
         const text = displayDynamicValue(cell, field);
         const updateCell = (next: unknown) => updateDynamicValue(field.id, rows.map((item, index) => index === rowIndex ? { ...row, [column.id]: next } : item));
-        const columnOptions = (column.options ?? []).map((option) => ({ value: option, label: option }));
+        const columnOptions = designerChoiceOptionsToAntd(column.options);
         if (!cellEditable && column.type && column.type !== "text") return <RuntimeReadonlyChoice type={column.type} size="small" value={cell} options={columnOptions} />;
         if (column.type === "select") return <Select size="small" value={typeof cell === "string" && cell ? cell : undefined} options={columnOptions} placeholder="未填写" onChange={updateCell} />;
         if (column.type === "radio") return <Radio.Group value={typeof cell === "string" && cell ? cell : undefined} options={columnOptions} onChange={(event) => updateCell(event.target.value)} />;
@@ -691,7 +760,7 @@ export function ProcessDetailPage() {
         <Button size="small" danger disabled={!rows.length} onClick={() => updateDynamicValue(field.id, rows.slice(0, -1))}>删除末行</Button>
       </Space> : reviewerEditing ? <Typography.Text className="table-rule-note" type="secondary">审核节点只能修改授权单元格，不能新增或删除整行。</Typography.Text> : null}</div>);
     }
-    const options = (field.options ?? []).map((option) => ({ value: option, label: option }));
+    const options = designerChoiceOptionsToAntd(field.options);
     if (!editable && ["select", "cascader", "radio", "checkbox"].includes(field.type)) return item(<RuntimeReadonlyChoice type={field.type as "select" | "cascader" | "radio" | "checkbox"} value={resolvedValue} options={options} />);
     if (field.type === "select") return item(<Select value={typeof resolvedValue === "string" && resolvedValue ? resolvedValue : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
     if (field.type === "cascader") return item(<Cascader value={Array.isArray(resolvedValue) ? resolvedValue as string[] : undefined} placeholder="未填写" options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
@@ -831,36 +900,54 @@ export function ProcessDetailPage() {
         />
       )}
 
-      <Card className="progress-card" title="流程进度" extra={<Tag bordered={false}>按实例锁定版本的拓扑推进</Tag>}>
-        <div className={`parallel-flow${visibleReviewers.length ? "" : " is-direct"}`}>
-          <div className="flow-endpoint done"><CheckOutlined /><span>开始<small>{instance.createdAt.slice(5, 16)}</small></span></div>
-          <div className="flow-connector"><span /></div>
-          {visibleReviewers.length ? <>
-            <div className="parallel-branch-wrap">
-              <div className="parallel-label"><ApartmentBadge />处理节点</div>
-              <div className="parallel-branches">
-                {visibleReviewers.map((reviewer) => {
-                  const handlingMode = lockedVersion?.snapshot.flow.nodes.find((node) => node.id === reviewer.key)?.data?.handlingMode ?? "approval";
-                  return (
-                    <div className={`branch-card status-${reviewer.status}`} key={reviewer.key}>
+      <Collapse
+        className="detail-section-collapse progress-collapse"
+        defaultActiveKey={[]}
+        items={[{
+          key: "workflow-progress",
+          label: <div className="detail-collapse-heading"><strong>流程进度</strong><Tag bordered={false}>按实例锁定版本的拓扑推进</Tag></div>,
+          children: <div className="topology-progress">
+          <div className="topology-endpoint is-complete"><CheckOutlined /><span><strong>开始</strong><small>{instance.createdAt.slice(5, 16)}</small></span></div>
+          {progressStages.map((stage) => (
+            <div className="topology-stage-block" key={`progress-stage-${stage.index}`}>
+              <div className="topology-stage-connector"><span /> <small>{stage.parallel ? "进入并行处理" : "进入下一步"}</small></div>
+              <section className="topology-stage">
+                <header>
+                  <span>步骤 {stage.index}</span>
+                  <Tag bordered={false} color={stage.parallel ? "blue" : "default"}>{stage.parallel ? `并行 · ${stage.nodes.length} 个节点` : "顺序处理"}</Tag>
+                </header>
+                <div className={`topology-stage-nodes${stage.parallel ? " is-parallel" : ""}`}>
+                  {stage.nodes.map((node) => {
+                    const permissionGroupName = workflowGroups.find((group) => group.id === node.permissionGroupId)?.name
+                      ?? node.permissionGroupId
+                      ?? "未配置流程权限组";
+                    return <div className={`branch-card status-${node.status}`} key={node.id}>
                       <div className="branch-card-top">
-                        <span className="branch-icon">{reviewMeta[reviewer.status].icon}</span>
-                        <Space size={4}><Tag bordered={false} color={handlingMode === "confirmation" ? "cyan" : "blue"}>{handlingMode === "confirmation" ? "确认" : "审批"}</Tag><StatusPill status={reviewer.status} /></Space>
+                        <span className="branch-icon">{progressStatusIcon(node.status)}</span>
+                        <Space size={4} wrap>
+                          <Tag bordered={false} color={node.handlingMode === "confirmation" ? "cyan" : "blue"}>{node.handlingMode === "confirmation" ? "确认" : "审批"}</Tag>
+                          <StatusPill status={node.status} compact />
+                        </Space>
                       </div>
-                      <strong>{reviewer.shortGroup}</strong>
-                      <Tooltip title={reviewer.group}><small>{reviewer.group}</small></Tooltip>
-                      <div className="branch-person"><UserOutlined /> 默认：{findIdentityUser(tasks.find((task) => task.instanceId === instance.id && task.nodeId === reviewer.key && task.round === instance.round)?.defaultAssigneeId ?? "")?.name ?? "组内共享"}</div>
-                      {reviewer.actionAt && <div className="branch-action">实际：{reviewer.name}{reviewer.substitute && <Tag color="purple">代办</Tag>}</div>}
-                    </div>
-                  );
-                })}
-              </div>
+                      <strong>{node.label}</strong>
+                      <Tooltip title={permissionGroupName}><small>{permissionGroupName}</small></Tooltip>
+                      <div className="branch-predecessors">前序：{node.predecessorLabels.join("、") || "开始"}</div>
+                      <div className="branch-person"><UserOutlined /> 默认：{findIdentityUser(node.defaultAssigneeId ?? "")?.name ?? "组内共享"}</div>
+                      {node.actionAt && node.actualAssigneeName ? <div className="branch-action">实际：{node.actualAssigneeName}{node.substitute && <Tag color="purple">代办</Tag>}</div> : null}
+                    </div>;
+                  })}
+                </div>
+              </section>
             </div>
-            <div className="flow-connector"><span /></div>
-          </> : null}
-          <div className={instance.status === "已完成" ? "flow-endpoint done" : "flow-endpoint"}><CheckOutlined /><span>结束<small>{instance.status === "已完成" ? instance.updatedAt.slice(5, 16) : "等待全部通过或确认"}</small></span></div>
-        </div>
-      </Card>
+          ))}
+          <div className="topology-stage-connector"><span /> <small>满足结束条件</small></div>
+          <div className={`topology-endpoint${instance.status === "已完成" ? " is-complete" : instance.status === "已关闭" ? " is-closed" : ""}`}>
+            <CheckOutlined />
+            <span><strong>结束</strong><small>{instance.status === "已完成" ? instance.updatedAt.slice(5, 16) : instance.status === "已关闭" ? "流程已关闭" : instance.status === "驳回待处理" ? "等待发起方重新提交" : "等待前序节点完成"}</small></span>
+          </div>
+          </div>,
+        }]}
+      />
 
       <div className="detail-workspace is-form-only">
         <div className="form-review-column">
@@ -975,10 +1062,6 @@ export function ProcessDetailPage() {
   );
 }
 
-function ApartmentBadge() {
-  return <span className="parallel-badge"><TeamOutlined /></span>;
-}
-
 function InlinePdfPreview({
   attachmentId,
   fileName,
@@ -1016,7 +1099,7 @@ function InlinePdfPreview({
     void flowPilotApi.attachments.content(attachmentId)
       .then(({ blob }) => {
         if (!active) return;
-        objectUrl = URL.createObjectURL(blob);
+        objectUrl = URL.createObjectURL(pdfPreviewBlob(blob, fileName));
         setSourceUrl(objectUrl);
       })
       .catch((error: unknown) => {
@@ -1034,7 +1117,7 @@ function InlinePdfPreview({
   return (
     <section className="inline-pdf-preview" aria-label={`PDF 预览：${fileName}`}>
       <div className="inline-pdf-toolbar">
-        <div><EyeOutlined /><strong>PDF 页面预览</strong><span>{fileName}</span></div>
+        <div><EyeOutlined /><strong>PDF 页面预览</strong></div>
         <Tag variant="filled" color={sourceUrl ? "blue" : "default"}>{sourceUrl ? "浏览器预览" : "兼容预览"}</Tag>
       </div>
       {loading ? <div className="inline-pdf-loading"><Spin description="正在加载 PDF" /></div> : null}

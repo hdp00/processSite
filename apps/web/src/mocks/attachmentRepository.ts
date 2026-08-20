@@ -84,12 +84,49 @@ export const assignAttachmentsToInstance = async (
         ...item.record,
         instanceId,
         fieldId: fieldByAttachmentId.get(item.record.id),
+        lifecycle: "active" as const,
+        cleanupAfter: undefined,
       },
     }));
   updated.forEach((item) => store.put(item));
   await transactionDone(transaction);
   database.close();
   return updated.map((item) => item.record);
+};
+
+export const reconcileAttachmentsForInstance = async (
+  instanceId: string,
+  attachmentIdsByField: Record<string, string[]>,
+) => {
+  const desiredFieldById = new Map(
+    Object.entries(attachmentIdsByField).flatMap(([fieldId, ids]) => ids.map((id) => [id, fieldId] as const)),
+  );
+  const database = await openDatabase();
+  const transaction = database.transaction(STORE_NAME, "readwrite");
+  const store = transaction.objectStore(STORE_NAME);
+  const all = await requestResult(store.getAll()) as StoredAttachment[];
+  all.forEach((item) => {
+    const desiredField = desiredFieldById.get(item.record.id);
+    if (desiredField) {
+      store.put({
+        ...item,
+        record: { ...item.record, instanceId, fieldId: desiredField, lifecycle: "active" as const, cleanupAfter: undefined },
+      });
+    } else if (item.record.instanceId === instanceId) {
+      store.put({
+        ...item,
+        record: {
+          ...item.record,
+          instanceId: undefined,
+          fieldId: undefined,
+          lifecycle: "cleanup-pending" as const,
+          cleanupAfter: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        },
+      });
+    }
+  });
+  await transactionDone(transaction);
+  database.close();
 };
 
 export const deleteAttachment = async (id: string) => {

@@ -11,6 +11,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
+import { hydrateRemoteApplication } from "../api/remoteHydration";
 import { personas, type PersonaId } from "../state/usePrototypeStore";
 
 interface LoginValues {
@@ -29,6 +30,7 @@ export function LoginPage() {
     setSubmitting(true);
     try {
       await flowPilotApi.auth.login(values.username, values.password);
+      if (import.meta.env.VITE_API_MODE === "remote") await hydrateRemoteApplication();
       message.success("登录成功");
       navigate("/tasks", { replace: true });
     } catch (error) {

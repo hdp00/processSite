@@ -3,12 +3,15 @@ import { Alert, Button, Card, Descriptions, Divider, Form, Input, Modal, Space, 
 import { Fragment, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
+import { cacheProcessDefinition } from "../api/entityCache";
+import { flowPilotApi } from "../api/flowPilotApi";
 import { ProcessWizardPreviousButton } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
 import { resolveWorkflowGroupLabel, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import { getPublishedVersion, getVersionStatus, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { buildFlowLevels, conditionOperatorLabel, rejectionHandlingLabel, type StoredNodeEmailNotification } from "../utils/designerStorage";
+import { displayDesignerChoiceValue } from "../utils/designerOptions";
 import "./process-admin-pages.css";
 
 export function ProcessPublishPage() {
@@ -20,7 +23,6 @@ export function ProcessPublishPage() {
   const version = definition?.versions.find((item) => item.id === versionId);
   const users = useIdentityStore((state) => state.users);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
-  const publishVersion = useProcessDefinitionStore((state) => state.publishVersion);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [changeNote, setChangeNote] = useState("");
@@ -45,6 +47,10 @@ export function ProcessPublishPage() {
     });
     return new Map(entries);
   }, [version]);
+  const conditionFieldsById = useMemo(
+    () => new Map((version?.snapshot.form.fields ?? []).map((field) => [field.id, field])),
+    [version],
+  );
   const emailNotificationText = (notification?: StoredNodeEmailNotification) => {
     if (!notification?.enabled) return "不发送";
     const recipients = [
@@ -67,14 +73,21 @@ export function ProcessPublishPage() {
   const publish = async () => {
     if (!canPublish) return;
     setPublishing(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 450));
-    const result = publishVersion(definition.id, version.id, changeNote.trim() || (current ? `从 ${current.version} 切换到 ${version.version}` : "首次发布"));
-    setPublishing(false);
-    if (!result) return message.error("发布失败：版本校验结果已经变化，请重新检查");
-    const publishedDefinition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definition.id);
-    if (publishedDefinition?.publishedVersionId !== version.id) {
-      return message.error("发布状态未能确认，请返回版本记录后重试");
+    try {
+      const resource = await flowPilotApi.definitions.versionResource(definition.id, version.id);
+      const result = await flowPilotApi.definitions.publish(
+        definition.id,
+        version.id,
+        changeNote.trim() || (current ? `从 ${current.version} 切换到 ${version.version}` : "首次发布"),
+        resource.etag,
+      );
+      cacheProcessDefinition(result.definition);
+    } catch (error) {
+      setPublishing(false);
+      message.error(error instanceof Error ? error.message : "发布失败：版本校验结果已经变化，请重新检查");
+      return;
     }
+    setPublishing(false);
     setConfirmOpen(false);
     message.success(`${version.version} 已发布并生效`);
     navigate(`/admin/processes/${definition.id}/versions`, { replace: true });
@@ -138,7 +151,11 @@ export function ProcessPublishPage() {
                             <div className="pa-publish-node__detail"><small>可修改字段</small><span>{selectedFields.length ? selectedFields.join("、") : "不可修改表单内容"}</span></div>
                             <div className="pa-publish-node__detail"><small>重复修改</small><span>{node.data?.allowRepeatedEditing ? "允许处理结果提交后继续修改授权字段" : "不允许"}</span></div>
                             <div className="pa-publish-node__detail"><small>执行条件</small><span>{node.data?.activationCondition?.rules.length
-                              ? node.data.activationCondition.rules.map((rule) => `${editableFieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${["empty", "not-empty"].includes(rule.operator) ? "" : String(rule.value ?? "")}`).join(node.data.activationCondition.mode === "all" ? " 且 " : " 或 ")
+                              ? node.data.activationCondition.rules.map((rule) => {
+                                const sourceField = conditionFieldsById.get(rule.fieldId);
+                                const expected = ["empty", "not-empty"].includes(rule.operator) ? "" : sourceField ? displayDesignerChoiceValue(sourceField.options, rule.value) : String(rule.value ?? "");
+                                return `${editableFieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${expected}`.trim();
+                              }).join(node.data.activationCondition.mode === "all" ? " 且 " : " 或 ")
                               : "始终执行"}</span></div>
                             <div className="pa-publish-node__detail"><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></div>
                           </> : null}

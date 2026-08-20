@@ -33,6 +33,7 @@ import {
 import type { ProcessInstance, WorkflowTask } from "../data/types";
 import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
 import { useIdentityStore } from "../state/useIdentityStore";
+import { getBusinessListColumnWidth, getSystemListColumnWidth } from "../utils/listColumnWidth";
 import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { formatRoundLabel } from "../utils/roundDisplay";
 import { canUserProcessTask } from "../state/workflowAccess";
@@ -150,13 +151,12 @@ export function TaskCenterPage() {
   });
 
   const selectedTaskFields = selectedVersion?.snapshot.form.fields
-    .filter((field) => field.id !== PROCESS_TITLE_FIELD_ID && field.taskVisible)
-    .sort((left, right) => (left.taskOrder ?? 999) - (right.taskOrder ?? 999)) ?? [];
+    .filter((field) => field.id !== PROCESS_TITLE_FIELD_ID && field.taskVisible) ?? [];
   const dynamicColumns: TableProps<ProcessInstance>["columns"] = selectedVersion
     ? selectedTaskFields.map((field) => ({
-        title: field.taskDisplayName || field.label,
+        title: field.label,
         key: field.id,
-        width: field.taskWidth ?? 160,
+        width: getBusinessListColumnWidth(field),
         ellipsis: true,
         render: (_, record) => (
           <ListFieldValue field={field} value={record.formValues?.[field.id]} />
@@ -184,7 +184,7 @@ export function TaskCenterPage() {
     ...(showSystemField("code") ? [{
       title: "实例编号",
       dataIndex: "code",
-      width: 174,
+      width: getSystemListColumnWidth("code", "实例编号"),
       render: (value: string, record: ProcessInstance) => (
         <button className="table-link strong" type="button" onClick={() => navigate(`/processes/${record.id}`)}>
           {value}
@@ -194,7 +194,7 @@ export function TaskCenterPage() {
     ...(showTitleCell ? [{
       title: showTitle ? "流程与标题" : "所属流程",
       dataIndex: "title",
-      width: 350,
+      width: getSystemListColumnWidth("title", showTitle ? "流程与标题" : "所属流程"),
       render: (value: string, record: ProcessInstance) => (
         <div className="title-cell">
           {recordShowsTitle() ? <strong>{value}</strong> : null}
@@ -213,13 +213,13 @@ export function TaskCenterPage() {
     ...(showSystemField("status") ? [{
       title: "状态",
       dataIndex: "status",
-      width: 110,
+      width: getSystemListColumnWidth("status", "状态"),
       render: (value: string) => <StatusPill status={value} />,
     }] : []),
     ...(showNodeCell ? [{
       title: "当前节点",
       dataIndex: "currentNode",
-      width: 185,
+      width: getSystemListColumnWidth("currentNode", "当前节点"),
       render: (value: string, record: ProcessInstance) => (
         <div className="node-cell">
           <span className="node-pulse" />
@@ -231,17 +231,17 @@ export function TaskCenterPage() {
     ...(showSystemField("initiator") ? [{
       title: "发起人",
       dataIndex: "initiator",
-      width: 108,
+      width: getSystemListColumnWidth("initiator", "发起人"),
       render: (value: string, record: ProcessInstance) => (
         <div className="person-cell"><AvatarText name={value} /><span>{value}<small>{record.department}</small></span></div>
       ),
     }] : []),
-    ...(showSystemField("createdAt") ? [{ title: "发起时间", dataIndex: "createdAt", width: 150 }] : []),
-    ...(showSystemField("updatedAt") ? [{ title: "更新时间", dataIndex: "updatedAt", width: 150 }] : []),
+    ...(showSystemField("createdAt") ? [{ title: "发起时间", dataIndex: "createdAt", width: getSystemListColumnWidth("createdAt", "发起时间") }] : []),
+    ...(showSystemField("updatedAt") ? [{ title: "更新时间", dataIndex: "updatedAt", width: getSystemListColumnWidth("updatedAt", "更新时间") }] : []),
     ...(tab !== "initiated" ? [{
       title: "任务归属",
       dataIndex: "designatedReviewer",
-      width: 135,
+      width: getSystemListColumnWidth("taskOwner", "任务归属"),
       render: (_value?: string, record?: ProcessInstance) => {
         const recordTasks = record ? tasksForRecord(record) : [];
         const task = recordTasks[0];
@@ -397,7 +397,7 @@ export function TaskCenterPage() {
             dataSource={filtered}
             bordered
             size="middle"
-            scroll={{ x: activeTemplate ? 1300 : 1020 }}
+            scroll={{ x: "max-content" }}
             pagination={{ defaultPageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total) => `共 ${total} 项${tab === "initiated" ? "流程" : "任务"}` }}
             locale={{
               emptyText: (
