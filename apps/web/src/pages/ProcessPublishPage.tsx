@@ -6,7 +6,7 @@ import { AppBackButton } from "../components/AppBackButton";
 import { ProcessWizardPreviousButton } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
-import { useIdentityStore } from "../state/useIdentityStore";
+import { resolveWorkflowGroupLabel, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import { getPublishedVersion, getVersionStatus, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { buildFlowLevels, conditionOperatorLabel, rejectionHandlingLabel, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import "./process-admin-pages.css";
@@ -19,6 +19,7 @@ export function ProcessPublishPage() {
   const versionId = searchParams.get("versionId") ?? definition?.versions[0]?.id ?? "";
   const version = definition?.versions.find((item) => item.id === versionId);
   const users = useIdentityStore((state) => state.users);
+  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const publishVersion = useProcessDefinitionStore((state) => state.publishVersion);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -70,8 +71,13 @@ export function ProcessPublishPage() {
     const result = publishVersion(definition.id, version.id, changeNote.trim() || (current ? `从 ${current.version} 切换到 ${version.version}` : "首次发布"));
     setPublishing(false);
     if (!result) return message.error("发布失败：版本校验结果已经变化，请重新检查");
+    const publishedDefinition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definition.id);
+    if (publishedDefinition?.publishedVersionId !== version.id) {
+      return message.error("发布状态未能确认，请返回版本记录后重试");
+    }
     setConfirmOpen(false);
     message.success(`${version.version} 已发布并生效`);
+    navigate(`/admin/processes/${definition.id}/versions`, { replace: true });
   };
 
   return <div className="page-stack pa-page">
@@ -92,9 +98,9 @@ export function ProcessPublishPage() {
             { key: "source", label: "来源版本", children: version.basedOn ?? "首次创建" },
             { key: "type", label: "流程类型", children: definition.type === "approval" ? "固定审批" : "自由协作" },
             { key: "prefix", label: "编号前缀", children: version.basic.instancePrefix || "—" },
-            { key: "starter", label: "发起权限组", children: version.basic.starterGroups.join("、") || "—", span: 2 },
-            { key: "closer", label: "关闭权限组", children: version.basic.closeGroups.join("、") || "—", span: 2 },
-            ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: version.basic.assigneeGroups?.join("、") || "—", span: 2 as const }] : []),
+            { key: "starter", label: "发起权限组", children: resolveWorkflowGroupLabels(workflowGroups, version.basic.starterGroups).join("、") || "—", span: 2 },
+            { key: "closer", label: "关闭权限组", children: resolveWorkflowGroupLabels(workflowGroups, version.basic.closeGroups).join("、") || "—", span: 2 },
+            ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: resolveWorkflowGroupLabels(workflowGroups, version.basic.assigneeGroups ?? []).join("、") || "—", span: 2 as const }] : []),
             { key: "form", label: "初始表单", children: "标题字段由系统固定，其余字段按版本配置", span: 2 },
             { key: "fields", label: "表单字段", children: `${version.snapshot.form.fields.length} 个` },
             { key: "system", label: "系统列表字段", children: `${version.snapshot.systemFields.length} 个配置` },
@@ -124,9 +130,9 @@ export function ProcessPublishPage() {
                             <span>{kind === "start" ? <PlayCircleOutlined /> : kind === "end" ? <CheckCircleOutlined /> : <AuditOutlined />}</span>
                             <strong>{node.data?.label || (kind === "approval" ? "未命名审批节点" : kind === "start" ? "开始" : "结束")}</strong>
                           </div>
-                          {kind === "start" ? <div className="pa-publish-node__detail"><small>发起权限组</small><span>{(node.data?.permissionGroups ?? []).join("、") || "未配置"}</span></div> : null}
+                          {kind === "start" ? <div className="pa-publish-node__detail"><small>发起权限组</small><span>{resolveWorkflowGroupLabels(workflowGroups, node.data?.permissionGroups ?? []).join("、") || "未配置"}</span></div> : null}
                           {kind === "approval" ? <>
-                            <div className="pa-publish-node__detail"><small>执行权限组</small><span>{node.data?.permissionGroup || "未配置"}</span></div>
+                            <div className="pa-publish-node__detail"><small>执行权限组</small><span>{node.data?.permissionGroup ? resolveWorkflowGroupLabel(workflowGroups, node.data.permissionGroup) : "未配置"}</span></div>
                             <div className="pa-publish-node__detail"><small>处理方式</small><span>{node.data?.handlingMode === "confirmation" ? "确认（只能确认，不能驳回）" : "审批（可通过或驳回）"}</span></div>
                             <div className="pa-publish-node__detail"><small>人员分配</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></div>
                             <div className="pa-publish-node__detail"><small>可修改字段</small><span>{selectedFields.length ? selectedFields.join("、") : "不可修改表单内容"}</span></div>

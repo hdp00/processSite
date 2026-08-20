@@ -11,6 +11,7 @@ import {
   type CompleteDesignerSnapshot,
 } from "../utils/designerStorage";
 import { currentUserCan } from "./permissionEngine";
+import type { ImportedProcessDefinition } from "../utils/processDefinitionTransfer";
 
 export type DefinitionType = "approval" | "free";
 export type DefinitionStatus = "未发布" | "已发布" | "已停用";
@@ -89,6 +90,7 @@ interface ProcessDefinitionState {
   createDefinition: (input: CreateDefinitionInput) => string;
   copyDefinition: (definitionId: string) => string | null;
   createVersion: (definitionId: string, sourceVersionId: string) => string | null;
+  importDefinition: (input: ImportedProcessDefinition) => string | null;
   updateVersionBasic: (definitionId: string, versionId: string, basic: ProcessBasicConfig) => boolean;
   updateVersionFormSnapshot: (definitionId: string, versionId: string, snapshot: CompleteDesignerSnapshot["form"], systemFields: CompleteDesignerSnapshot["systemFields"]) => boolean;
   updateVersionFlowSnapshot: (definitionId: string, versionId: string, snapshot: CompleteDesignerSnapshot["flow"]) => boolean;
@@ -300,6 +302,48 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           return { ...definition, nextVersionNumber: definition.nextVersionNumber + 1, versions: [buildVersion(createdId, label, source.basic, source.snapshot, { basedOn: source.version }), ...definition.versions], updatedAt: nowText(), updatedBy: "当前用户" };
         }) }));
         return createdId;
+      },
+      importDefinition: (input) => {
+        if (!currentUserCan("config-definition:编辑") || !input.versions.length) return null;
+        const definitions = get().definitions;
+        const sequence = nextSequence(definitions);
+        const id = createDefinitionId();
+        const code = `PROC-${input.type === "approval" ? "AP" : "FREE"}-${String(sequence).padStart(3, "0")}`;
+        const importedName = definitions.some((definition) => definition.name === input.name)
+          ? `${input.name}（导入）`
+          : input.name;
+        const usedLabels = new Set<string>();
+        const versions = input.versions.map((source, index) => {
+          let label = /^V\d+$/.test(source.version) ? source.version : versionLabel(index + 1);
+          if (usedLabels.has(label)) label = versionLabel(Math.max(index + 1, ...[...usedLabels].map((value) => Number(value.slice(1)) + 1)));
+          usedLabels.add(label);
+          const basicConfig = cloneBasic({
+            ...source.basic,
+            name: importedName,
+            code,
+            type: input.type,
+          });
+          return buildVersion(`${id}-${label.toLowerCase()}-${crypto.randomUUID()}`, label, basicConfig, source.snapshot, {
+            basedOn: `文件导入 · 原 ${source.version}（${source.sourceStatus}）`,
+            changeNote: source.changeNote || "从导入文件创建",
+          });
+        });
+        const allocated = versions.map((version) => Number(version.version.slice(1))).filter(Number.isFinite);
+        const created: ProcessDefinition = {
+          id,
+          code,
+          name: importedName,
+          description: input.description,
+          type: input.type,
+          disabled: false,
+          nextVersionNumber: Math.max(0, ...allocated) + 1,
+          versions,
+          updatedAt: nowText(),
+          updatedBy: "当前用户",
+          instanceCount: 0,
+        };
+        set({ definitions: [created, ...definitions] });
+        return id;
       },
       updateVersionBasic: (definitionId, versionId, config) => {
         if (!currentUserCan("config-definition:编辑")) return false;

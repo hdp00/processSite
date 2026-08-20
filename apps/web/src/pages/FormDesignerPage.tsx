@@ -120,6 +120,7 @@ interface DesignerField {
   label: string;
   description: string;
   placeholder: string;
+  multiline?: boolean;
   required: boolean;
   defaultValue: string | string[];
   listVisible: boolean;
@@ -180,7 +181,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     type: "text",
     label: "文档名称",
     description: "请填写与正式文件一致的完整名称",
-    placeholder: "例如：MTR-320 步进电机装配作业指导书",
+    placeholder: "",
     required: true,
     defaultValue: "MTR-320 步进电机装配作业指导书",
     listVisible: true,
@@ -197,7 +198,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     type: "text",
     label: "文档编号",
     description: "正式流程编号由后台生成，此处为受控文件编号",
-    placeholder: "例如：WI-MTR-320",
+    placeholder: "",
     required: true,
     defaultValue: "WI-MTR-320",
     listVisible: true,
@@ -214,7 +215,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     type: "cascader",
     label: "文档分类",
     description: "按公司文件体系选择所属层级",
-    placeholder: "请选择文档分类",
+    placeholder: "",
     required: true,
     defaultValue: ["质量体系", "作业指导书"],
     listVisible: true,
@@ -232,7 +233,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     type: "select",
     label: "文件级别",
     description: "质量审核节点可根据内容调整",
-    placeholder: "请选择文件级别",
+    placeholder: "",
     required: true,
     defaultValue: "受控文件",
     listVisible: true,
@@ -246,7 +247,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     type: "checkbox",
     label: "适用部门",
     description: "可选择多个适用部门",
-    placeholder: "请选择适用部门",
+    placeholder: "",
     required: true,
     defaultValue: ["研发中心", "质量中心", "生产中心"],
     listVisible: false,
@@ -260,7 +261,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     type: "radio",
     label: "修订类型",
     description: "用于评估本次文件变更范围",
-    placeholder: "请选择修订类型",
+    placeholder: "",
     required: true,
     defaultValue: "局部修订",
     listVisible: true,
@@ -274,7 +275,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     type: "text",
     label: "修订说明",
     description: "概述本次修订内容，详细差异以 PDF 为准",
-    placeholder: "请输入主要变更点",
+    placeholder: "",
     required: true,
     defaultValue: "新增扭矩复检步骤，并统一关键尺寸标注方式。",
     listVisible: false,
@@ -345,7 +346,7 @@ const INITIAL_FIELDS: DesignerField[] = [
     type: "attachment",
     label: "正式审核文件",
     description: "仅上传待审核的正式版本，PDF 将在流程详情页内嵌展示",
-    placeholder: "拖拽或点击上传文件",
+    placeholder: "",
     required: true,
     defaultValue: "WI-MTR-320_装配作业指导书_R07.pdf",
     listVisible: false,
@@ -362,7 +363,8 @@ const createField = (type: FieldType): DesignerField => {
     type,
     label: `新建${typeLabel[type]}`,
     description: "",
-    placeholder: `请输入或选择${typeLabel[type]}`,
+    placeholder: "",
+    multiline: false,
     required: false,
     defaultValue: type === "checkbox" ? [] : "",
     listVisible: false,
@@ -507,7 +509,7 @@ const FieldControl = ({
       <RichTextEditor
         value={typeof value === "string" ? value : fieldDefaultText(field) ?? ""}
         onChange={(nextValue) => onChange?.(nextValue)}
-        placeholder={field.placeholder || "请输入富文本内容"}
+        placeholder={field.placeholder}
         minHeight={interactive ? 180 : 120}
         disabled={!interactive}
       />
@@ -613,10 +615,19 @@ const FieldControl = ({
       </div>
     );
   }
-  return (
+  const textValue = value === undefined ? fieldDefaultText(field) : String(value ?? "");
+  return field.multiline ? (
+    <Input.TextArea
+      disabled={!interactive}
+      value={textValue}
+      onChange={(event) => onChange?.(event.target.value)}
+      placeholder={field.placeholder}
+      autoSize={{ minRows: 3, maxRows: 8 }}
+    />
+  ) : (
     <Input
       disabled={!interactive}
-      value={value === undefined ? fieldDefaultText(field) : String(value ?? "")}
+      value={textValue}
       onChange={(event) => onChange?.(event.target.value)}
       placeholder={field.placeholder}
     />
@@ -628,11 +639,21 @@ interface SortableFieldProps {
   selected: boolean;
   locked?: boolean;
   onSelect: () => void;
+  onPatch: (patch: Partial<DesignerField>) => void;
   onDelete: () => void;
 }
 
-const SortableField = ({ field, selected, locked, onSelect, onDelete }: SortableFieldProps) => {
+const normalizeInlineOptions = (options: string[]) => Array.from(new Set(options.map((item) => item.trim()).filter(Boolean)));
+
+const SortableField = ({ field, selected, locked, onSelect, onPatch, onDelete }: SortableFieldProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: field.id });
+  const updateOptions = (source: string[]) => {
+    const options = normalizeInlineOptions(source);
+    const defaultValue = Array.isArray(field.defaultValue)
+      ? field.defaultValue.filter((item) => options.includes(item))
+      : options.includes(field.defaultValue) ? field.defaultValue : "";
+    onPatch({ options, defaultValue });
+  };
   return (
     <div
       ref={setNodeRef}
@@ -680,7 +701,49 @@ const SortableField = ({ field, selected, locked, onSelect, onDelete }: Sortable
       <div className="fd-field-card__content">
         <div className="fd-field-label">
           {field.required ? <Text type="danger">*</Text> : null}
-          <Text strong>{field.label}</Text>
+          <Input
+            aria-label="字段标题"
+            className="fd-inline-title"
+            value={field.label}
+            maxLength={50}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect();
+            }}
+            onFocus={onSelect}
+            onChange={(event) => onPatch({ label: event.target.value })}
+          />
+        </div>
+        <div className="fd-inline-settings" onClick={(event) => event.stopPropagation()}>
+          {field.options ? (
+            <div className="fd-inline-options">
+              <Text type="secondary">选项</Text>
+              <Select
+                aria-label="字段选项"
+                mode="tags"
+                value={field.options}
+                open={false}
+                tokenSeparators={[",", "，"]}
+                placeholder={field.type === "cascader" ? "输入路径并回车，例如 一级/二级" : "输入选项并回车"}
+                onFocus={onSelect}
+                onChange={updateOptions}
+              />
+            </div>
+          ) : null}
+          <Space size={18} wrap>
+            <Checkbox
+              checked={Boolean(field.required)}
+              disabled={locked}
+              onChange={(event) => onPatch({ required: event.target.checked })}
+            >必填</Checkbox>
+            {field.type === "text" ? (
+              <Checkbox
+                checked={Boolean(field.multiline)}
+                disabled={locked}
+                onChange={(event) => onPatch({ multiline: event.target.checked })}
+              >多行显示</Checkbox>
+            ) : null}
+          </Space>
         </div>
         {field.description ? <Paragraph className="fd-field-description">{field.description}</Paragraph> : null}
         <FieldControl field={field} />
@@ -817,6 +880,18 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     if (!selectedId) return;
     setFields((current) => current.map((field) => (field.id === selectedId
       ? { ...field, ...patch, ...(field.id === PROCESS_TITLE_FIELD_ID ? { queryable: true } : {}) }
+      : field)));
+  };
+
+  const updateFieldById = (id: string, patch: Partial<DesignerField>) => {
+    setFields((current) => current.map((field) => (field.id === id
+      ? {
+          ...field,
+          ...patch,
+          ...(field.id === PROCESS_TITLE_FIELD_ID
+            ? { queryable: true, required: true, multiline: false }
+            : {}),
+        }
       : field)));
   };
 
@@ -1051,6 +1126,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                             setSelectedId(field.id);
                             setPropertyMode("field");
                           }}
+                          onPatch={(patch) => updateFieldById(field.id, patch)}
                           onDelete={() => deleteField(field.id)}
                         />
                       ))}
@@ -1130,6 +1206,19 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                 {["text", "richtext"].includes(selectedField.type) ? (
                   <div className="fd-property-section">
                     <div className="fd-property-section__title">{selectedField.type === "richtext" ? "默认富文本内容" : "默认内容"}</div>
+                    {selectedField.type === "text" ? (
+                      <div className="fd-switch-row">
+                        <div>
+                          <Text strong>多行显示</Text>
+                          <Text type="secondary">适合备注、说明等较长内容；流程标题固定为单行。</Text>
+                        </div>
+                        <Switch
+                          checked={Boolean(selectedField.multiline)}
+                          disabled={isTitleField}
+                          onChange={(checked) => updateField({ multiline: checked })}
+                        />
+                      </div>
+                    ) : null}
                     <Form.Item label="默认值">{renderDefaultValueEditor(selectedField)}</Form.Item>
                   </div>
                 ) : null}
@@ -1385,13 +1474,14 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                                     danger
                                     type="text"
                                     icon={<DeleteOutlined />}
-                                    disabled={selectedDisplayCondition.rules.length === 1}
                                     aria-label="删除显示条件"
                                     onClick={() => updateField({
-                                      displayCondition: {
-                                        ...selectedDisplayCondition,
-                                        rules: selectedDisplayCondition.rules.filter((item) => item.id !== rule.id),
-                                      },
+                                      displayCondition: selectedDisplayCondition.rules.length === 1
+                                        ? undefined
+                                        : {
+                                            ...selectedDisplayCondition,
+                                            rules: selectedDisplayCondition.rules.filter((item) => item.id !== rule.id),
+                                          },
                                     })}
                                   />
                                 </div>

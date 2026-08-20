@@ -1303,6 +1303,15 @@
   gap: 6px;
 }
 
+.pa-import-warning-list {
+  display: grid;
+  gap: 4px;
+  max-height: 190px;
+  margin-top: 6px;
+  overflow: auto;
+  color: #7a4b00;
+}
+
 .pa-snapshot-stack {
   display: flex;
   flex-direction: column;

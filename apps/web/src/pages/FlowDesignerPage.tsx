@@ -68,7 +68,7 @@ import {
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
-import { useIdentityStore } from "../state/useIdentityStore";
+import { resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import {
   canEditVersion,
   getVersionStatus,
@@ -376,7 +376,7 @@ const createGenericDraft = (starterGroups: string[]): Pick<StoredDraft, "nodes" 
       data: {
         kind: "start",
         label: "流程发起",
-        description: "填写初始表单并提交",
+        description: "",
         permissionGroups: starterGroups,
         editableFields: [],
       },
@@ -388,7 +388,7 @@ const createGenericDraft = (starterGroups: string[]): Pick<StoredDraft, "nodes" 
       data: {
         kind: "approval",
         label: "审批节点",
-        description: "配置流程权限组和可修改字段",
+        description: "",
         specifyAssignee: true,
         editableFields: [],
         handlingMode: "approval",
@@ -403,7 +403,7 @@ const createGenericDraft = (starterGroups: string[]): Pick<StoredDraft, "nodes" 
       data: {
         kind: "end",
         label: "流程结束",
-        description: "全部前置节点通过或确认后结束",
+        description: "",
         editableFields: [],
         emailNotification: defaultEmailNotification("end"),
       },
@@ -478,11 +478,12 @@ const readStoredDraft = (
 };
 
 const ProcessNode = ({ data, selected }: NodeProps<DesignerNode>) => {
+  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const meta = kindMeta[data.kind];
   const showTarget = data.kind !== "start";
   const showSource = data.kind !== "end";
   const groups = data.kind === "start" ? data.permissionGroups : data.permissionGroup ? [data.permissionGroup] : [];
-  const groupLabel = groups?.join("、");
+  const groupLabel = resolveWorkflowGroupLabels(workflowGroups, groups ?? []).join("、");
 
   return (
     <div className={`process-node process-node--${data.kind} ${selected ? "is-selected" : ""}`}>
@@ -930,7 +931,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
         data: {
           kind,
           label: kind === "approval" ? "新审批节点" : kindMeta[kind].label,
-          description: kindMeta[kind].description,
+          description: "",
           permissionGroup: undefined,
           permissionGroups: kind === "start" ? starterGroups : undefined,
           specifyAssignee: kind === "approval",

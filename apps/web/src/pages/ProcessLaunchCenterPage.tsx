@@ -10,6 +10,7 @@ import { Button, Card, Empty, Space, Tag, Typography } from "antd";
 import { useMemo, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { canPersonaLaunchDefinition } from "../state/rolePermissions";
+import { resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import "./launch-pages.css";
@@ -77,6 +78,7 @@ export function ProcessLaunchCenterPage() {
   const navigate = useNavigate();
   const personaId = usePrototypeStore((state) => state.personaId);
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
+  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const availableDefinitions = useMemo(
     () => managedDefinitions.flatMap((managed, index) => {
       const effective = getPublishedVersion(managed);
@@ -90,13 +92,13 @@ export function ProcessLaunchCenterPage() {
         description: effective.basic.description,
         categoryLabel: managed.type === "approval" ? "固定审批" : "自由流程",
         version: effective.version,
-        permissionGroups: effective.basic.starterGroups,
+        permissionGroups: resolveWorkflowGroupLabels(workflowGroups, effective.basic.starterGroups),
         icon: preset?.icon ?? (managed.type === "approval" ? <SafetyCertificateOutlined /> : <MessageOutlined />),
         tone: preset?.tone ?? (["blue", "cyan", "purple", "amber"] as const)[index % 4],
         route: `/launch/${managed.id}`,
       }];
     }),
-    [managedDefinitions, personaId],
+    [managedDefinitions, personaId, workflowGroups],
   );
 
   return (

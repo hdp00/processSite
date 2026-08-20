@@ -320,7 +320,33 @@
 }
 
 .start-progress-card .ant-steps-item-description {
-  font-size: 9px !important;
+  max-width: none !important;
+  font-size: 11px !important;
+  line-height: 1.55;
+}
+
+.start-flow-route {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #68758a;
+}
+
+.start-flow-route > span {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.start-flow-route i {
+  flex: 0 0 auto;
+  color: #8b98aa;
+  font-style: normal;
+}
+
+.start-flow-route > span > span {
+  overflow-wrap: anywhere;
 }
 
 .process-start-layout {

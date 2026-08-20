@@ -387,7 +387,53 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
+}
+
+.fd-inline-title.ant-input {
+  min-width: 0;
+  padding: 5px 8px;
+  color: #1f2937;
+  border-color: transparent;
+  background: transparent;
+  font-weight: 600;
+}
+
+.fd-inline-title.ant-input:hover,
+.fd-inline-title.ant-input:focus {
+  border-color: #aeb8ec;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(64, 86, 214, 0.08);
+}
+
+.fd-inline-settings {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #edf0f5;
+  border-radius: 8px;
+  background: #fafbfe;
+}
+
+.fd-inline-options {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  grid-template-columns: auto minmax(220px, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.fd-inline-options .ant-select {
+  width: 100%;
+}
+
+.fd-inline-settings > .ant-space {
+  min-height: 32px;
+  align-items: center;
 }
 
 .fd-field-description.ant-typography {

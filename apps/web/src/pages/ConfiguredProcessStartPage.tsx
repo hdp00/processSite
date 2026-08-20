@@ -38,10 +38,11 @@ import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { AttachmentRecord } from "../api/contracts";
 import type { ProcessInstance } from "../data/types";
 import { flowPilotApi } from "../api/flowPilotApi";
-import { effectiveGroupMemberIds, useIdentityStore } from "../state/useIdentityStore";
+import { effectiveGroupMemberIds, resolveWorkflowGroupLabel, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import type { ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
 import {
   applyDesignerFieldVisibility,
+  buildFlowLevels,
   ensureProcessTitleField,
   isDesignerFieldVisible,
   rejectionHandlingLabel,
@@ -162,10 +163,10 @@ function DynamicFieldControl({
 }) {
   const options = (field.options ?? []).map((item) => ({ value: item, label: item }));
   if (field.type === "richtext") {
-    return <RichTextEditor value={typeof value === "string" ? value : ""} onChange={(next) => onChange?.(next)} placeholder={field.placeholder || "请输入内容"} minHeight={180} />;
+    return <RichTextEditor value={typeof value === "string" ? value : ""} onChange={(next) => onChange?.(next)} placeholder={field.placeholder} minHeight={180} />;
   }
-  if (field.type === "select") return <Select value={typeof value === "string" ? value : undefined} options={options} placeholder={field.placeholder || "请选择"} onChange={onChange} />;
-  if (field.type === "cascader") return <Cascader value={Array.isArray(value) ? value as string[] : undefined} options={options} placeholder={field.placeholder || "请选择"} onChange={onChange} />;
+  if (field.type === "select") return <Select value={typeof value === "string" ? value : undefined} options={options} placeholder={field.placeholder} onChange={onChange} />;
+  if (field.type === "cascader") return <Cascader value={Array.isArray(value) ? value as string[] : undefined} options={options} placeholder={field.placeholder} onChange={onChange} />;
   if (field.type === "radio") return <Radio.Group value={value} options={options} onChange={(event) => onChange?.(event.target.value)} />;
   if (field.type === "checkbox") return <Checkbox.Group value={Array.isArray(value) ? value as string[] : []} options={options} onChange={onChange} />;
   if (field.type === "attachment") {
@@ -200,21 +201,40 @@ function DynamicFieldControl({
     );
   }
   if (field.type === "table") return <ConfiguredTableInput field={field} value={Array.isArray(value) ? value as DynamicRow[] : undefined} onChange={onChange as ((value: DynamicRow[]) => void) | undefined} />;
-  return <Input value={typeof value === "string" ? value : ""} placeholder={field.placeholder || "请输入"} maxLength={500} onChange={(event) => onChange?.(event.target.value)} />;
+  if (field.type === "text" && field.multiline) {
+    return <Input.TextArea value={typeof value === "string" ? value : ""} placeholder={field.placeholder} maxLength={2000} autoSize={{ minRows: 3, maxRows: 8 }} onChange={(event) => onChange?.(event.target.value)} />;
+  }
+  return <Input value={typeof value === "string" ? value : ""} placeholder={field.placeholder} maxLength={500} onChange={(event) => onChange?.(event.target.value)} />;
 }
 
 export function ConfiguredProcessStartPage({ definition, version, copySource, copySourceVersion }: ConfiguredProcessStartPageProps) {
   const navigate = useNavigate();
   const identityUsers = useIdentityStore((state) => state.users);
-  useIdentityStore((state) => state.workflowGroups);
+  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
+  const starterGroupLabels = resolveWorkflowGroupLabels(workflowGroups, version.basic.starterGroups);
+  const assigneeGroupLabels = resolveWorkflowGroupLabels(workflowGroups, version.basic.assigneeGroups ?? []);
   const formSnapshot = version.snapshot.form;
   const flowSnapshot = version.snapshot.flow;
   const fields = ensureProcessTitleField(formSnapshot.fields);
   const initiatorFields = fields.filter((field) => (field.inputStage ?? "initiator") !== "reviewer");
-  const approvalNodes = useMemo(
-    () => flowSnapshot.nodes.filter((node) => node.data?.kind === "approval" && node.data.label),
-    [flowSnapshot],
-  );
+  const approvalStages = useMemo(() => {
+    const nodeById = new Map(flowSnapshot.nodes.map((node) => [node.id, node]));
+    return buildFlowLevels(flowSnapshot.nodes, flowSnapshot.edges)
+      .map((level) => level.flatMap((nodeId) => {
+        const node = nodeById.get(nodeId);
+        return node?.data?.kind === "approval" && node.data.label ? [node] : [];
+      }))
+      .filter((level) => level.length > 0);
+  }, [flowSnapshot]);
+  const approvalNodes = useMemo(() => approvalStages.flat(), [approvalStages]);
+  const approvalStageText = useMemo(() => approvalStages.map((stage, index) => {
+    const nodeText = stage.map((node) => {
+      const handling = node.data?.handlingMode === "confirmation" ? "确认" : "审批";
+      const conditional = node.data?.activationCondition?.rules.length ? " · 条件执行" : "";
+      return `${node.data?.label}（${handling}${conditional}）`;
+    }).join("、");
+    return `阶段${index + 1}${stage.length > 1 ? "（并行）" : ""}：${nodeText}`;
+  }), [approvalStages]);
   const peopleOptions = (groupIds: string[]) => {
     const memberIds = new Set(groupIds.flatMap(effectiveGroupMemberIds));
     return identityUsers
@@ -358,7 +378,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
           <Divider type="vertical" />
           <div>
             <strong>{version.basic.name}</strong>
-            <span>{version.version} · {version.basic.starterGroups.join("、")}</span>
+            <span>{version.version} · {starterGroupLabels.join("、")}</span>
           </div>
         </div>
         <Button type="primary" icon={<SendOutlined />} onClick={() => form.submit()}>提交</Button>
@@ -386,10 +406,19 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
                 { title: "手动关闭", description: "允许填写理由后重开" },
               ]
             : [
-                { title: "填写并提交", description: version.basic.starterGroups.join("、") },
+                { title: "填写并提交", description: starterGroupLabels.join("、") },
                 {
                   title: approvalNodes.length > 0 && approvalNodes.every((node) => node.data?.handlingMode === "confirmation") ? "流程确认" : "流程处理",
-                  description: approvalNodes.map((node) => `${node.data?.label}${node.data?.handlingMode === "confirmation" ? "（确认）" : "（审批）"}`).join(" / ") || "按当前拓扑",
+                  description: approvalStageText.length ? (
+                    <span className="start-flow-route" title={approvalStageText.join(" → ")}>
+                      {approvalStageText.map((stage, index) => (
+                        <span key={stage}>
+                          {index > 0 ? <i aria-hidden="true">→</i> : null}
+                          <span>{stage}</span>
+                        </span>
+                      ))}
+                    </span>
+                  ) : "按当前拓扑",
                 },
                 { title: "流程结束", description: "全部前置节点通过或确认" },
               ]}
@@ -429,14 +458,14 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
                           <Select showSearch optionFilterProp="label" placeholder="搜索符合权限组的人员" options={peopleOptions(node.data?.permissionGroup ? [node.data.permissionGroup] : [])} />
                         </Form.Item>
                       )}
-                      <span className="start-permission-name"><TeamOutlined /> {node.data?.permissionGroup || "尚未配置流程权限组"}</span>
+                      <span className="start-permission-name"><TeamOutlined /> {node.data?.permissionGroup ? resolveWorkflowGroupLabel(workflowGroups, node.data.permissionGroup) : "尚未配置流程权限组"}</span>
                     </div>
                   ))}
                 </div>
               </Card>
             ) : (
               <Card className="approval-card start-reviewer-card" title="首位受理人" extra={<TeamOutlined />}>
-                <Alert type="info" showIcon message="受理后可继续选择下一位受理人" description={`候选人来自：${version.basic.assigneeGroups?.join("、") || "尚未配置受理流程权限组"}`} />
+                <Alert type="info" showIcon message="受理后可继续选择下一位受理人" description={`候选人来自：${assigneeGroupLabels.join("、") || "尚未配置受理流程权限组"}`} />
                 <Form.Item name="firstAssignee" label="选择受理人" rules={[{ required: true, message: "请选择首位受理人" }]}>
                   <Select showSearch optionFilterProp="label" placeholder="搜索并选择首位受理人" options={peopleOptions(version.basic.assigneeGroups ?? [])} />
                 </Form.Item>

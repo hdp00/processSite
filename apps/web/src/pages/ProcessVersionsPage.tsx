@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { StatusPill } from "../components/StatusPill";
-import { useIdentityStore } from "../state/useIdentityStore";
+import { resolveWorkflowGroupLabel, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import { canEditVersion, definitionStatus, getPublishedVersion, getVersionStatus, useProcessDefinitionStore, type ProcessVersion } from "../state/useProcessDefinitionStore";
 import { buildFlowLevels, conditionOperatorLabel, normalizeDesignerInputPermission, rejectionHandlingLabel, type StoredDesignerField, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import "./process-admin-pages.css";
@@ -57,6 +57,7 @@ function VersionTableColumns({ field }: { field: StoredDesignerField }) {
 
 function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type: "approval" | "free" }) {
   const users = useIdentityStore((state) => state.users);
+  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const emailNotificationText = (notification?: StoredNodeEmailNotification) => {
     if (!notification?.enabled) return "不发送";
     const recipients = [
@@ -81,7 +82,7 @@ function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type:
     ];
     return <div className="pa-snapshot-stack">
       <div className="pa-snapshot-heading"><div><TeamOutlined /><span><strong>自由协作规则</strong><small>该流程类型无需设计审批拓扑</small></span></div></div>
-      <div className="pa-snapshot-group"><small>受理流程权限组</small><Space wrap>{version.basic.assigneeGroups?.length ? version.basic.assigneeGroups.map((group) => <Tag color="purple" key={group}>{group}</Tag>) : <Typography.Text type="danger">未配置</Typography.Text>}</Space></div>
+      <div className="pa-snapshot-group"><small>受理流程权限组</small><Space wrap>{version.basic.assigneeGroups?.length ? version.basic.assigneeGroups.map((group) => <Tag color="purple" key={group}>{resolveWorkflowGroupLabel(workflowGroups, group)}</Tag>) : <Typography.Text type="danger">未配置</Typography.Text>}</Space></div>
       <div className="pa-snapshot-rule-grid">{rules.map(([title, detail]) => <div key={title}><CheckCircleOutlined /><span><strong>{title}</strong><small>{detail}</small></span></div>)}</div>
     </div>;
   }
@@ -109,8 +110,8 @@ function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type:
               const editableFields = (node.data?.editableFields ?? []).map((id) => fieldLabels.get(id) ?? id);
               return <article className={`pa-version-flow-node is-${kind}`} key={node.id}>
                 <div className="pa-version-flow-node__title"><span>{kind === "start" ? <PlayCircleOutlined /> : kind === "end" ? <CheckCircleOutlined /> : <ApartmentOutlined />}</span><strong>{node.data?.label || "未命名节点"}</strong></div>
-                {kind === "start" && <p><small>发起权限组</small><span>{node.data?.permissionGroups?.join("、") || "未配置"}</span></p>}
-                {kind === "approval" && <><p><small>执行权限组</small><span>{node.data?.permissionGroup || "未配置"}</span></p><p><small>处理方式</small><span>{node.data?.handlingMode === "confirmation" ? "确认（只能确认，不能驳回）" : "审批（可通过或驳回）"}</span></p><p><small>人员分配</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></p><p><small>可修改字段</small><span>{editableFields.join("、") || "不可修改表单内容"}</span></p><p><small>重复修改</small><span>{node.data?.allowRepeatedEditing ? "允许处理结果提交后继续修改授权字段" : "不允许"}</span></p><p><small>执行条件</small><span>{node.data?.activationCondition?.rules.length ? node.data.activationCondition.rules.map((rule) => `${fieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${["empty", "not-empty"].includes(rule.operator) ? "" : String(rule.value ?? "")}`).join(node.data.activationCondition.mode === "all" ? " 且 " : " 或 ") : "始终执行"}</span></p><p><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></p></>}
+                {kind === "start" && <p><small>发起权限组</small><span>{resolveWorkflowGroupLabels(workflowGroups, node.data?.permissionGroups ?? []).join("、") || "未配置"}</span></p>}
+                {kind === "approval" && <><p><small>执行权限组</small><span>{node.data?.permissionGroup ? resolveWorkflowGroupLabel(workflowGroups, node.data.permissionGroup) : "未配置"}</span></p><p><small>处理方式</small><span>{node.data?.handlingMode === "confirmation" ? "确认（只能确认，不能驳回）" : "审批（可通过或驳回）"}</span></p><p><small>人员分配</small><span>{node.data?.specifyAssignee ? "发起时可指定；组内仍可代办" : "组内任一成员可处理"}</span></p><p><small>可修改字段</small><span>{editableFields.join("、") || "不可修改表单内容"}</span></p><p><small>重复修改</small><span>{node.data?.allowRepeatedEditing ? "允许处理结果提交后继续修改授权字段" : "不允许"}</span></p><p><small>执行条件</small><span>{node.data?.activationCondition?.rules.length ? node.data.activationCondition.rules.map((rule) => `${fieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${["empty", "not-empty"].includes(rule.operator) ? "" : String(rule.value ?? "")}`).join(node.data.activationCondition.mode === "all" ? " 且 " : " 或 ") : "始终执行"}</span></p><p><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></p></>}
                 {kind === "end" && <><p><small>完成条件</small><span>全部前序节点通过、确认或因条件不满足而跳过</span></p><p><small>邮件通知</small><span>{emailNotificationText(node.data?.emailNotification)}</span></p></>}
               </article>;
             })}</div>
@@ -127,6 +128,7 @@ export function ProcessVersionsPage() {
   const navigate = useNavigate();
   const { definitionId = "" } = useParams<{ definitionId: string }>();
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
+  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const createVersion = useProcessDefinitionStore((state) => state.createVersion);
   const publishVersion = useProcessDefinitionStore((state) => state.publishVersion);
   const unpublishVersion = useProcessDefinitionStore((state) => state.unpublishVersion);
@@ -209,14 +211,14 @@ export function ProcessVersionsPage() {
   return <div className="page-stack pa-page">
     <Card className="pa-config-head" bordered={false}>
       <div className="pa-config-head__main"><AppBackButton onClick={() => navigate("/admin/processes")} /><div><Space size={10} wrap><Typography.Title level={3}>{definition.name}</Typography.Title><StatusPill status={definitionStatus(definition)} /></Space><Typography.Text type="secondary">{definition.code} · 流程定义与版本记录</Typography.Text></div></div>
-      <Space><Button icon={<CheckCircleOutlined />} onClick={() => published ? setSelected(published) : message.info("当前没有发布版本")}>查看发布版本</Button></Space>
+      <Button icon={<CheckCircleOutlined />} onClick={() => published ? setSelected(published) : message.info("当前没有发布版本")}>查看发布版本</Button>
     </Card>
     <div className="pa-version-stats"><Card bordered={false}><span className="pa-stat-icon"><HistoryOutlined /></span><span><small>正式版本</small><strong>{versions.length}</strong></span></Card><Card bordered={false}><span className="pa-stat-icon is-green"><RocketOutlined /></span><span><small>当前发布</small><strong>{published?.version ?? "无"}</strong></span></Card><Card bordered={false}><span className="pa-stat-icon is-orange"><SafetyCertificateOutlined /></span><span><small>校验通过</small><strong>{versions.filter((item) => item.validation.status === "通过").length}</strong></span></Card></div>
     <Alert type="info" showIcon message="流程定义负责入口，版本保存完整配置" description="名称相同的各版本共用一个员工侧菜单。每个版本独立保存基本信息、表单、列表字段、流程图和规则；发布只是把流程定义的发布指针切换到一个校验通过版本。" />
     <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}><div className="table-result-head pa-table-head"><div><strong>版本记录</strong><Tag bordered={false}>{versions.length} 个</Tag></div><Typography.Text type="secondary">任何版本都可复制新建；已有实例的版本永久只读</Typography.Text></div><Table<ProcessVersion> rowKey="id" columns={columns} dataSource={versions} scroll={{ x: 1210 }} pagination={false} rowClassName={(record) => definition.publishedVersionId === record.id ? "pa-effective-row" : ""} /></Card>
     <Drawer title={selected ? `${definition.name} · ${selected.version} 完整快照` : "版本详情"} size="large" open={Boolean(selected)} onClose={() => setSelected(undefined)} extra={selected && canEditVersion(definition, selected) ? <Button type="primary" icon={<EditOutlined />} onClick={() => edit(selected)}>编辑版本</Button> : null}>
       {selected && <Tabs className="pa-version-snapshot-tabs" defaultActiveKey="overview" items={[
-        { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: selected.basic.starterGroups.join("、") || "—", span: 2 }, { key: "closer", label: "关闭权限组", children: selected.basic.closeGroups.join("、") || "—", span: 2 }, ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: selected.basic.assigneeGroups?.join("、") || "—", span: 2 as const }] : []), { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles, ...selected.basic.visibleUsers].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${selected.updatedAt} · ${selected.updatedBy}`, span: 2 }]} />
+        { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.starterGroups).join("、") || "—", span: 2 }, { key: "closer", label: "关闭权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.closeGroups).join("、") || "—", span: 2 }, ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.assigneeGroups ?? []).join("、") || "—", span: 2 as const }] : []), { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles, ...selected.basic.visibleUsers].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${selected.updatedAt} · ${selected.updatedBy}`, span: 2 }]} />
           <Alert type={selected.validation.status === "通过" ? "success" : "error"} showIcon message={selected.validation.status === "通过" ? "版本校验通过，可以发布" : "版本校验未通过"} description={selected.validation.issues.length ? selected.validation.issues.join("；") : `自动校验于 ${selected.validation.checkedAt} 完成`} />
           <Timeline items={[{ color: "blue", children: <><strong>创建 {selected.version}</strong><br /><Typography.Text type="secondary">{selected.createdAt} · {selected.createdBy}</Typography.Text></> }, ...(selected.firstPublishedAt ? [{ color: "green", children: <><strong>首次发布</strong><br /><Typography.Text type="secondary">{selected.firstPublishedAt} · {selected.firstPublishedBy}</Typography.Text></> }] : []), ...(selected.lastUnpublishedAt ? [{ color: "gray", children: <><strong>最近取消发布</strong><br /><Typography.Text type="secondary">{selected.lastUnpublishedAt} · {selected.lastUnpublishedBy}<br />原因：{selected.lastUnpublishReason ?? "—"}</Typography.Text></> }] : [])]} />
         </Space> },

@@ -7,13 +7,6 @@ import {
 
 export const FORM_DESIGNER_STORAGE_KEY_PREFIX = "flowpilot-form-designer-draft-v2";
 export const FLOW_DESIGNER_STORAGE_KEY_PREFIX = "flowpilot-flow-designer-v2";
-export const DESIGNER_VERSION_SNAPSHOT_KEY_PREFIX = "flowpilot-designer-version-snapshot-v1";
-
-interface DesignerArtifacts {
-  form: string | null;
-  flow: string | null;
-  systemFields: string | null;
-}
 
 export interface CompleteDesignerSnapshot {
   form: StoredFormDesignerSnapshot;
@@ -27,51 +20,10 @@ const workingArtifactKeys = (definitionId: string) => ({
   systemFields: `${SYSTEM_LIST_FIELDS_STORAGE_KEY_PREFIX}:${definitionId}`,
 });
 
-const versionArtifactKey = (definitionId: string, versionId: string) =>
-  `${DESIGNER_VERSION_SNAPSHOT_KEY_PREFIX}:${definitionId}:${versionId}`;
-
-export function saveDesignerVersionSnapshot(definitionId: string, versionId: string) {
-  if (typeof window === "undefined") return;
-  const keys = workingArtifactKeys(definitionId);
-  const snapshot: DesignerArtifacts = {
-    form: window.localStorage.getItem(keys.form),
-    flow: window.localStorage.getItem(keys.flow),
-    systemFields: window.localStorage.getItem(keys.systemFields),
-  };
-  window.localStorage.setItem(versionArtifactKey(definitionId, versionId), JSON.stringify(snapshot));
-}
-
-export function restoreDesignerVersionSnapshot(definitionId: string, versionId: string) {
-  if (typeof window === "undefined") return false;
-  try {
-    const raw = window.localStorage.getItem(versionArtifactKey(definitionId, versionId));
-    if (!raw) return false;
-    const snapshot = JSON.parse(raw) as DesignerArtifacts;
-    const keys = workingArtifactKeys(definitionId);
-    (["form", "flow", "systemFields"] as const).forEach((kind) => {
-      const value = snapshot[kind];
-      if (typeof value === "string") window.localStorage.setItem(keys[kind], value);
-      else window.localStorage.removeItem(keys[kind]);
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function removeDesignerVersionSnapshot(definitionId: string, versionId: string) {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(versionArtifactKey(definitionId, versionId));
-}
-
 export function clearDefinitionDesignerArtifacts(definitionId: string) {
   if (typeof window === "undefined") return;
   const keys = workingArtifactKeys(definitionId);
   Object.values(keys).forEach((key) => window.localStorage.removeItem(key));
-  const snapshotPrefix = `${DESIGNER_VERSION_SNAPSHOT_KEY_PREFIX}:${definitionId}:`;
-  Object.keys(window.localStorage)
-    .filter((key) => key.startsWith(snapshotPrefix))
-    .forEach((key) => window.localStorage.removeItem(key));
 }
 
 export interface StoredDesignerTableColumn {
@@ -92,6 +44,7 @@ export interface StoredDesignerField {
   label: string;
   description?: string;
   placeholder?: string;
+  multiline?: boolean;
   required?: boolean;
   defaultValue?: string | string[];
   listVisible?: boolean;
@@ -155,7 +108,8 @@ export const createProcessTitleField = (): StoredDesignerField => ({
   type: "text",
   label: "标题",
   description: "",
-  placeholder: "请输入标题",
+  placeholder: "",
+  multiline: false,
   required: true,
   defaultValue: "",
   listVisible: true,
@@ -174,6 +128,7 @@ export const ensureProcessTitleField = (fields?: StoredDesignerField[]): StoredD
     ...source[titleIndex],
     id: PROCESS_TITLE_FIELD_ID,
     type: "text",
+    multiline: false,
     required: true,
     queryable: true,
     listVisible: source[titleIndex].listVisible ?? true,

@@ -698,6 +698,7 @@ export function ProcessDetailPage() {
     if (field.type === "radio") return item(<Radio.Group value={resolvedValue || undefined} options={options} onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
     if (field.type === "checkbox") return item(<Checkbox.Group value={Array.isArray(resolvedValue) ? resolvedValue as string[] : []} options={options} onChange={(next) => updateDynamicValue(field.id, next)} />);
     if (field.type === "richtext") return item(<Input.TextArea readOnly={!editable} value={String(resolvedValue ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()} placeholder="未填写" onChange={(event) => updateDynamicValue(field.id, event.target.value)} autoSize={{ minRows: 4, maxRows: 10 }} />);
+    if (field.type === "text" && field.multiline) return item(<Input.TextArea readOnly={!editable} value={String(resolvedValue ?? "")} placeholder="未填写" autoSize={{ minRows: 3, maxRows: 10 }} onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
     return item(<Input readOnly={!editable} value={String(resolvedValue ?? "")} placeholder="未填写" onChange={(event) => updateDynamicValue(field.id, event.target.value)} />);
   };
 

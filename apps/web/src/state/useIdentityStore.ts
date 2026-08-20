@@ -288,7 +288,18 @@ export const isUserInWorkflowGroup = (userId: string, groupIdOrName: string) =>
 
 export const workflowGroupLabel = (groupIdOrName: string) =>
   useIdentityStore.getState().workflowGroups.find((group) => group.id === groupIdOrName || group.name === groupIdOrName)?.name
-  ?? groupIdOrName;
+  ?? "未识别流程权限组";
+
+export const resolveWorkflowGroupLabel = (
+  groups: WorkflowPermissionGroup[],
+  groupIdOrName: string,
+) => groups.find((group) => group.id === groupIdOrName || group.name === groupIdOrName)?.name
+  ?? "未识别流程权限组";
+
+export const resolveWorkflowGroupLabels = (
+  groups: WorkflowPermissionGroup[],
+  groupIdsOrNames: string[],
+) => groupIdsOrNames.map((group) => resolveWorkflowGroupLabel(groups, group));
 
 export const workflowPermissionGroupOptions = (purpose?: WorkflowGroupPurpose) =>
   useIdentityStore.getState().workflowGroups

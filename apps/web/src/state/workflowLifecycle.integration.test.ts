@@ -32,6 +32,7 @@ const storage = new MemoryStorage();
 let definitionModule: typeof import("./useProcessDefinitionStore");
 let prototypeModule: typeof import("./usePrototypeStore");
 let identityModule: typeof import("./useIdentityStore");
+let transferModule: typeof import("../utils/processDefinitionTransfer");
 
 const setActor = (personaId: string) => {
   prototypeModule.usePrototypeStore.setState({ personaId, authenticated: true });
@@ -50,6 +51,7 @@ beforeAll(async () => {
   definitionModule = await import("./useProcessDefinitionStore");
   prototypeModule = await import("./usePrototypeStore");
   identityModule = await import("./useIdentityStore");
+  transferModule = await import("../utils/processDefinitionTransfer");
 });
 
 beforeEach(() => {
@@ -140,6 +142,31 @@ describe("流程定义完整生命周期", () => {
     expect(copied.versions[0].basedOn).toBe(`${source.code} / ${sourceVersion.version}`);
     expect(copied.versions[0].snapshot).toEqual(sourceVersion.snapshot);
     expect(copied.versions[0].snapshot).not.toBe(sourceVersion.snapshot);
+  });
+
+  it("流程定义使用显示文本导出并按同名主数据安全导入", () => {
+    const source = definitionById("pdf-review")!;
+    const identities = identityModule.useIdentityStore.getState();
+    const exported = transferModule.createProcessDefinitionExport(source, identities);
+    const json = JSON.stringify(exported, null, 2);
+
+    expect(json).toContain('"文件类型": "FlowPilot 流程定义"');
+    expect(json).toContain('"流程名称": "PDF 文件审核"');
+    expect(json).not.toContain("pdf-v3");
+    expect(json).not.toContain('"id"');
+    expect(json).not.toContain('"code"');
+
+    const preview = transferModule.parseProcessDefinitionImport(json, identities);
+    expect(preview.warnings).toEqual([]);
+    expect(preview.definition.versions).toHaveLength(source.versions.length);
+    const importedId = definitionModule.useProcessDefinitionStore.getState().importDefinition(preview.definition)!;
+    const imported = definitionById(importedId)!;
+
+    expect(imported.name).toBe("PDF 文件审核（导入）");
+    expect(imported.publishedVersionId).toBeUndefined();
+    expect(imported.instanceCount).toBe(0);
+    expect(imported.versions).toHaveLength(source.versions.length);
+    expect(imported.versions.every((version) => version.instanceCount === 0)).toBe(true);
   });
 
   it("发布、实例引用和删除保护符合版本规则", () => {
