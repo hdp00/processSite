@@ -2195,87 +2195,17 @@ button {
   font-size: 12px;
 }
 
-.inline-pdf-preview {
-  overflow: hidden;
-  margin-top: 0;
-  border: 1px solid #e2e6ed;
-  border-radius: 8px;
-  background: #f6f7f9;
-}
-
-.inline-pdf-collapse {
-  overflow: hidden;
+.runtime-attachment-field > .inline-pdf-frame,
+.runtime-attachment-field > .inline-pdf-loading,
+.runtime-attachment-field > .inline-pdf-error,
+.runtime-attachment-field > .inline-pdf-empty {
   margin-top: 10px;
-  border-color: #dfe5ee;
+}
+
+.runtime-attachment-field > .inline-pdf-frame {
+  overflow: hidden;
+  border: 1px solid #dfe5ee;
   border-radius: 8px;
-  background: #fff;
-}
-
-.inline-pdf-collapse > .ant-collapse-item > .ant-collapse-header {
-  min-height: 42px;
-  align-items: center;
-  padding: 9px 12px;
-}
-
-.inline-pdf-collapse .ant-collapse-content-box {
-  padding: 8px;
-  background: #f6f7f9;
-}
-
-.inline-pdf-collapse-label {
-  display: inline-flex;
-  max-width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 7px;
-  color: #334058;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.inline-pdf-collapse-label > .anticon {
-  color: #d64b50;
-}
-
-.inline-pdf-toolbar {
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 6px 10px;
-  border-bottom: 1px solid #dfe3ea;
-  background: #fff;
-}
-
-.inline-pdf-toolbar > div {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.inline-pdf-toolbar .anticon {
-  color: #d64b50;
-  font-size: 15px;
-}
-
-.inline-pdf-toolbar strong {
-  flex: 0 0 auto;
-  color: #2f3b52;
-  font-size: 12px;
-}
-
-.inline-pdf-toolbar .ant-tag {
-  flex: 0 0 auto;
-  margin: 0;
-}
-
-.inline-pdf-stage {
-  max-height: 590px;
-  overflow: auto;
-  padding: 12px;
-  background: radial-gradient(circle at 50% 0, #f2f3f6, #e2e5ea);
 }
 
 .inline-pdf-frame {
@@ -2291,109 +2221,20 @@ button {
   display: grid;
   min-height: 260px;
   place-items: center;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
   background: #f7f8fa;
 }
 
 .inline-pdf-error {
-  margin: 20px;
+  margin-bottom: 0;
 }
 
-.inline-pdf-sheet {
-  position: relative;
-  width: min(100%, 720px);
-  min-height: 520px;
-  margin: 0 auto;
-  padding: 38px 48px 54px;
-  color: #303744;
-  background: #fff;
-  box-shadow: 0 10px 30px rgba(35, 42, 55, 0.18);
-  font-family: "SimSun", serif;
-}
-
-.inline-pdf-sheet header {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  border: 1px solid #59606c;
-}
-
-.inline-pdf-sheet header > div {
-  display: flex;
-  min-height: 58px;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  padding: 7px;
-  border-right: 1px solid #59606c;
-}
-
-.inline-pdf-sheet header > div:last-child {
-  border-right: 0;
-}
-
-.inline-pdf-sheet header small {
-  margin-top: 4px;
-  color: #616875;
-  font-size: 9px;
-}
-
-.inline-pdf-sheet h2 {
-  margin: 26px 0 17px;
-  color: #202632;
-  font-size: 20px;
-  text-align: center;
-}
-
-.inline-pdf-meta {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 4px;
-  border-top: 1px solid #a7abb3;
-  border-bottom: 1px solid #a7abb3;
-  font-size: 10px;
-}
-
-.inline-pdf-sheet section {
-  margin-top: 22px;
-}
-
-.inline-pdf-sheet section h3 {
-  margin: 0 0 7px;
-  font-size: 13px;
-}
-
-.inline-pdf-sheet section p {
-  margin: 0;
-  font-size: 10px;
-  line-height: 1.9;
-}
-
-.inline-pdf-placeholder-lines {
-  display: grid;
-  gap: 10px;
-  margin-top: 25px;
-}
-
-.inline-pdf-placeholder-lines i {
-  display: block;
-  height: 1px;
-  background: #d5d8de;
-}
-
-.inline-pdf-placeholder-lines i:nth-child(3n) {
-  width: 76%;
-}
-
-.inline-pdf-stamp {
-  position: absolute;
-  right: 42px;
-  bottom: 32px;
-  padding: 8px 14px;
-  border: 2px solid rgba(201, 57, 61, 0.45);
-  color: rgba(201, 57, 61, 0.58);
-  font-family: sans-serif;
-  font-size: 13px;
-  font-weight: 750;
-  transform: rotate(-7deg);
+.inline-pdf-empty {
+  padding: 28px 16px;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  background: #f8fafc;
 }
 
 .table-rule-note.ant-typography {

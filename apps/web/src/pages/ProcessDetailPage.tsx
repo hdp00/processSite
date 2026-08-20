@@ -60,7 +60,7 @@ import { hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { isDesignerFieldVisible, normalizeDesignerFormValues, type StoredDesignerField } from "../utils/designerStorage";
 import { designerChoiceOptionsToAntd, displayDesignerChoiceValue } from "../utils/designerOptions";
-import { pdfPreviewBlob, resolveRuntimeAttachments, type RuntimeAttachmentDisplayItem } from "../utils/attachmentDisplay";
+import { pdfPreviewBlob, resolveRuntimeAttachmentNames, resolveRuntimeAttachments, shouldReplaceUploadedAttachment, type RuntimeAttachmentDisplayItem } from "../utils/attachmentDisplay";
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
 import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../utils/roundDisplay";
 import { buildWorkflowProgressStages, type WorkflowProgressStatus } from "../utils/workflowProgress";
@@ -76,17 +76,6 @@ const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> 
 
 const progressStatusIcon = (status: WorkflowProgressStatus) =>
   status === "待激活" ? <HistoryOutlined /> : reviewMeta[status].icon;
-
-const configuredAttachmentNames = (
-  fields: StoredDesignerField[],
-  values: Record<string, unknown>,
-) => fields
-  .filter((field) => field.type === "attachment")
-  .flatMap((field) => {
-    const value = values[field.id];
-    return Array.isArray(value) ? value.map(attachmentItemName) : [];
-  })
-  .filter((name) => name.trim() && !["无附件", "—"].includes(name));
 
 const attachmentItemName = (item: unknown) => typeof item === "string"
   ? item
@@ -113,6 +102,46 @@ const attachmentIdsByFieldFor = (
 type RuntimeAttachmentItem = RuntimeAttachmentDisplayItem;
 
 const inlinePdfEnabled = (field: StoredDesignerField) => field.attachment?.inlinePdf ?? true;
+
+interface PdfPreviewUrlCacheEntry {
+  promise: Promise<string>;
+  references: number;
+  releaseTimer?: number;
+}
+
+const PDF_PREVIEW_URL_RELEASE_DELAY_MS = 10_000;
+const pdfPreviewUrlCache = new Map<string, PdfPreviewUrlCacheEntry>();
+
+const acquirePdfPreviewUrl = (attachmentId: string, fileName: string) => {
+  let entry = pdfPreviewUrlCache.get(attachmentId);
+  if (!entry) {
+    const promise = flowPilotApi.attachments.content(attachmentId)
+      .then(({ blob }) => URL.createObjectURL(pdfPreviewBlob(blob, fileName)));
+    entry = { promise, references: 0 };
+    pdfPreviewUrlCache.set(attachmentId, entry);
+    void promise.catch(() => {
+      if (pdfPreviewUrlCache.get(attachmentId) === entry) pdfPreviewUrlCache.delete(attachmentId);
+    });
+  }
+  if (entry.releaseTimer !== undefined) {
+    window.clearTimeout(entry.releaseTimer);
+    entry.releaseTimer = undefined;
+  }
+  entry.references += 1;
+  const leasedEntry = entry;
+  return {
+    promise: leasedEntry.promise,
+    release: () => {
+      leasedEntry.references = Math.max(0, leasedEntry.references - 1);
+      if (leasedEntry.references > 0 || leasedEntry.releaseTimer !== undefined) return;
+      leasedEntry.releaseTimer = window.setTimeout(() => {
+        if (leasedEntry.references > 0 || pdfPreviewUrlCache.get(attachmentId) !== leasedEntry) return;
+        pdfPreviewUrlCache.delete(attachmentId);
+        void leasedEntry.promise.then(URL.revokeObjectURL).catch(() => undefined);
+      }, PDF_PREVIEW_URL_RELEASE_DELAY_MS);
+    },
+  };
+};
 
 type PendingAction = "pass" | "confirm" | "reject" | null;
 
@@ -151,6 +180,7 @@ export function ProcessDetailPage() {
   const [repeatComment, setRepeatComment] = useState("");
   const [uploadingAttachmentFieldId, setUploadingAttachmentFieldId] = useState<string>();
   const [deletingAttachmentKey, setDeletingAttachmentKey] = useState<string>();
+  const [expandedPdfFieldIds, setExpandedPdfFieldIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (instance) {
@@ -292,14 +322,14 @@ export function ProcessDetailPage() {
 
   const attachmentFields = lockedVersion.snapshot.form.fields.filter((field) => field.type === "attachment");
   const hasConfiguredAttachmentField = attachmentFields.length > 0;
-  const hasDynamicAttachmentValues = attachmentFields.some((field) => Object.prototype.hasOwnProperty.call(dynamicValues, field.id));
-  const dynamicAttachmentNames = configuredAttachmentNames(attachmentFields, dynamicValues);
-  const attachmentNames = hasConfiguredAttachmentField ? Array.from(new Set((hasDynamicAttachmentValues
-    ? dynamicAttachmentNames
-    : [
-        ...(instance.attachmentNames ?? []),
-        ...(!instance.attachmentNames?.length && draftPdfName && !["无附件", "—"].includes(draftPdfName) ? [draftPdfName] : []),
-      ]).filter(Boolean))) : [];
+  const attachmentNames = resolveRuntimeAttachmentNames({
+    fields: attachmentFields,
+    values: dynamicValues,
+    fallbackNames: [
+      ...(instance.attachmentNames ?? []),
+      ...(!instance.attachmentNames?.length && draftPdfName ? [draftPdfName] : []),
+    ],
+  });
   const hasAttachments = attachmentNames.length > 0;
   const progressStages = buildWorkflowProgressStages(
     lockedVersion.snapshot.flow.nodes,
@@ -310,7 +340,7 @@ export function ProcessDetailPage() {
   const historyItems = [
     {
       color: "blue",
-      children: <HistoryItem title="流程发起" person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} detail={hasAttachments ? `提交附件：${attachmentNames.join("、")}` : "提交初始表单"} />,
+      children: <HistoryItem title="流程发起" person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} detail="提交初始表单" />,
     },
     ...Array.from({ length: instance.round }, (_, index) => index + 1).flatMap((round) => {
       const resubmission = instance.resubmissions?.find((record) => record.round === round);
@@ -575,7 +605,8 @@ export function ProcessDetailPage() {
       const currentAttachmentValue = dynamicValues[field.id];
       const currentCount = Array.isArray(currentAttachmentValue) ? currentAttachmentValue.length : 0;
       const maxCount = isInlinePdf ? 1 : field.attachment?.maxCount ?? 20;
-      if (!isInlinePdf && currentCount >= maxCount) {
+      const replaceExisting = shouldReplaceUploadedAttachment(isInlinePdf, field.attachment?.maxCount);
+      if (!replaceExisting && currentCount >= maxCount) {
         message.error(`该字段最多上传 ${maxCount} 个附件`);
         return;
       }
@@ -588,7 +619,7 @@ export function ProcessDetailPage() {
       setDraftPdfName(record.name);
       setDynamicValues((current) => {
         const existing = Array.isArray(current[field.id]) ? current[field.id] as unknown[] : [];
-        const nextValues = isInlinePdf
+        const nextValues = replaceExisting
           ? [reference]
           : [...existing.filter((item) => attachmentItemId(item) !== record.id), reference];
         return {
@@ -596,7 +627,7 @@ export function ProcessDetailPage() {
           [field.id]: nextValues,
         };
       });
-      message.success(isInlinePdf ? "PDF 已暂存，提交后完成替换" : "附件已暂存，提交后生效");
+      message.success(replaceExisting ? "附件已暂存，保存后完成替换" : "附件已暂存，保存后生效");
     } catch (error) {
       message.error(error instanceof Error ? error.message : "附件上传失败，请稍后重试");
     } finally {
@@ -692,6 +723,8 @@ export function ProcessDetailPage() {
       const previewPdf = inlinePdfEnabled(field)
         ? attachments.find((attachment) => attachment.name.toLowerCase().endsWith(".pdf"))
         : undefined;
+      const pdfExpanded = Boolean(previewPdf && expandedPdfFieldIds.includes(field.id));
+      const replaceExisting = shouldReplaceUploadedAttachment(inlinePdfEnabled(field), field.attachment?.maxCount);
       return item(<div className="runtime-attachment-field">
         <div className="attachment-field-control">
           {attachments.length ? <div className="attachment-field-list">
@@ -700,6 +733,14 @@ export function ProcessDetailPage() {
               return <div key={attachmentKey}>
                 <PaperClipOutlined />
                 <strong title={attachment.name}>{attachment.name}</strong>
+                {previewPdf === attachment ? <Button
+                  type="link"
+                  size="small"
+                  icon={<EyeOutlined />}
+                  onClick={() => setExpandedPdfFieldIds((current) => current.includes(field.id)
+                    ? current.filter((fieldId) => fieldId !== field.id)
+                    : [...current, field.id])}
+                >{pdfExpanded ? "收起" : "查看"}</Button> : null}
                 <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => void downloadAttachment(attachment)}>下载</Button>
                 {editable ? <Button
                   className="attachment-delete-button"
@@ -715,28 +756,10 @@ export function ProcessDetailPage() {
             })}
           </div> : <div className="runtime-empty-control">未上传附件</div>}
           {editable ? <Upload showUploadList={false} beforeUpload={(file) => { void stageAttachment(field, file); return Upload.LIST_IGNORE; }}>
-            <Button loading={uploadingAttachmentFieldId === field.id} icon={<UploadOutlined />}>{inlinePdfEnabled(field) && attachments.length ? "替换 PDF" : attachments.length ? "继续上传" : "上传附件"}</Button>
+            <Button loading={uploadingAttachmentFieldId === field.id} icon={<UploadOutlined />}>{attachments.length && replaceExisting ? "替换附件" : attachments.length ? "继续上传" : "上传附件"}</Button>
           </Upload> : null}
         </div>
-        {previewPdf ? <Collapse
-          className="inline-pdf-collapse"
-          defaultActiveKey={[]}
-          destroyOnHidden
-          items={[{
-            key: "pdf-preview",
-            label: <span className="inline-pdf-collapse-label"><EyeOutlined /> PDF 预览</span>,
-            children: <InlinePdfPreview
-              attachmentId={previewPdf.id}
-              fileName={previewPdf.name}
-              title={instance.title}
-              code={instance.code}
-              version={instance.revision || instance.templateVersion}
-              description={instance.description}
-              initiator={instance.initiator}
-              createdAt={instance.createdAt}
-            />,
-          }]}
-        /> : null}
+        {previewPdf && pdfExpanded ? <InlinePdfPreview attachmentId={previewPdf.id} fileName={previewPdf.name} /> : null}
       </div>);
     }
     if (field.type === "table") {
@@ -1065,21 +1088,9 @@ export function ProcessDetailPage() {
 function InlinePdfPreview({
   attachmentId,
   fileName,
-  title,
-  code,
-  version,
-  description,
-  initiator,
-  createdAt,
 }: {
   attachmentId?: string;
   fileName: string;
-  title: string;
-  code: string;
-  version: string;
-  description: string;
-  initiator: string;
-  createdAt: string;
 }) {
   const [sourceUrl, setSourceUrl] = useState<string>();
   const [loading, setLoading] = useState(Boolean(attachmentId));
@@ -1093,14 +1104,16 @@ function InlinePdfPreview({
       return;
     }
     let active = true;
-    let objectUrl: string | undefined;
+    let displayFrame: number | undefined;
     setLoading(true);
     setLoadError(undefined);
-    void flowPilotApi.attachments.content(attachmentId)
-      .then(({ blob }) => {
+    const lease = acquirePdfPreviewUrl(attachmentId, fileName);
+    void lease.promise
+      .then((objectUrl) => {
         if (!active) return;
-        objectUrl = URL.createObjectURL(pdfPreviewBlob(blob, fileName));
-        setSourceUrl(objectUrl);
+        displayFrame = window.requestAnimationFrame(() => {
+          if (active) setSourceUrl(objectUrl);
+        });
       })
       .catch((error: unknown) => {
         if (active) setLoadError(error instanceof Error ? error.message : "PDF 内容加载失败");
@@ -1110,40 +1123,15 @@ function InlinePdfPreview({
       });
     return () => {
       active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (displayFrame !== undefined) window.cancelAnimationFrame(displayFrame);
+      lease.release();
     };
-  }, [attachmentId]);
+  }, [attachmentId, fileName]);
 
-  return (
-    <section className="inline-pdf-preview" aria-label={`PDF 预览：${fileName}`}>
-      <div className="inline-pdf-toolbar">
-        <div><EyeOutlined /><strong>PDF 页面预览</strong></div>
-        <Tag variant="filled" color={sourceUrl ? "blue" : "default"}>{sourceUrl ? "浏览器预览" : "兼容预览"}</Tag>
-      </div>
-      {loading ? <div className="inline-pdf-loading"><Spin description="正在加载 PDF" /></div> : null}
-      {loadError ? <Alert className="inline-pdf-error" type="warning" showIcon title="PDF 暂时无法显示" description={loadError} /> : null}
-      {sourceUrl ? <iframe className="inline-pdf-frame" src={sourceUrl} title={`PDF 文件：${fileName}`} /> : !loading && !loadError ? <div className="inline-pdf-stage">
-        <article className="inline-pdf-sheet">
-          <header>
-            <div><span className="pdf-company">FlowPilot</span><small>公司内部受控文件</small></div>
-            <div><b>{code}</b><small>版本 {version || "—"}</small></div>
-          </header>
-          <h2>{title}</h2>
-          <div className="inline-pdf-meta"><span>编制：{initiator}</span><span>提交时间：{createdAt}</span></div>
-          <section>
-            <h3>文件说明</h3>
-            <p>{description || "本文件通过 FlowPilot 流程提交审核，具体正文内容在正式系统中由 PDF 文件服务加载。"}</p>
-          </section>
-          <section>
-            <h3>审核范围</h3>
-            <p>研发、质量及生产相关人员依据当前发布版本的流程定义完成审核，并在流程记录中保留处理结果。</p>
-          </section>
-          <div className="inline-pdf-placeholder-lines"><i /><i /><i /><i /><i /><i /></div>
-          <div className="inline-pdf-stamp">受控文件</div>
-        </article>
-      </div> : null}
-    </section>
-  );
+  if (loading) return <div className="inline-pdf-loading"><Spin description="正在加载 PDF" /></div>;
+  if (loadError) return <Alert className="inline-pdf-error" type="warning" showIcon title="PDF 暂时无法显示" description={loadError} />;
+  if (!sourceUrl) return <Empty className="inline-pdf-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前演示附件未保存文件内容" />;
+  return <iframe className="inline-pdf-frame" src={sourceUrl} title={`PDF 文件：${fileName}`} />;
 }
 
 function HistoryItem({ title, person, time, detail }: { title: string; person: string; time: string; detail: string }) {

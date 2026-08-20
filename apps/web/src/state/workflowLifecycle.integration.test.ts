@@ -279,6 +279,63 @@ describe("固定审批流程完整生命周期", () => {
     expect(instanceById(instance.id)?.status).toBe("已完成");
   });
 
+  it("审核节点开启重复修改后可再次替换单文件附件", () => {
+    const store = definitionModule.useProcessDefinitionStore.getState();
+    const definition = definitionById("pdf-review")!;
+    const source = definitionModule.getPublishedVersion(definition)!;
+    const versionId = store.createVersion(definition.id, source.id)!;
+    const form = structuredClone(source.snapshot.form);
+    const attachment = {
+      id: "review-attachment",
+      type: "attachment" as const,
+      label: "测试附件",
+      required: false,
+      inputStage: "reviewer" as const,
+      attachment: {
+        inlinePdf: false,
+        maxCount: 1,
+        maxSizeMb: 100,
+        allowedExtensions: ["pdf"],
+        excelToPdf: false,
+        maxPreviewPages: 1,
+      },
+    };
+    form.fields.push(attachment);
+    const flow = structuredClone(source.snapshot.flow);
+    const reviewNode = flow.nodes.find((node) => node.data?.permissionGroup?.includes("研发"))!;
+    reviewNode.data = {
+      ...reviewNode.data,
+      editableFields: [attachment.id],
+      allowRepeatedEditing: true,
+    };
+    flow.nodes.filter((node) => node.id !== reviewNode.id && node.data?.kind === "approval").forEach((node) => {
+      node.data = { ...node.data, editableFields: [], allowRepeatedEditing: false };
+    });
+
+    expect(store.updateVersionFormSnapshot(definition.id, versionId, form, source.snapshot.systemFields)).toBe(true);
+    expect(store.updateVersionFlowSnapshot(definition.id, versionId, flow)).toBe(true);
+    expect(store.publishVersion(definition.id, versionId, "重复修改附件测试")).toBe(true);
+
+    setActor("wangmin");
+    const instanceId = prototypeModule.usePrototypeStore.getState().createProcessInstance({
+      definitionId: definition.id,
+      formValues: { title: "ADT 测试报告", [attachment.id]: [] },
+    })!;
+    const task = prototypeModule.usePrototypeStore.getState().tasks.find((item) =>
+      item.instanceId === instanceId && item.nodeId === reviewNode.id,
+    )!;
+    setActor("zhangwei");
+    expect(prototypeModule.usePrototypeStore.getState().reviewInstance(instanceId, "pass", "首次上传", undefined, {
+      title: "ADT 测试报告",
+      [attachment.id]: [{ id: "attachment-v1", name: "ADT-v1.pdf" }],
+    }, task.id)).toBe(true);
+    expect(prototypeModule.usePrototypeStore.getState().reviseCompletedTask(instanceId, task.id, {
+      title: "ADT 测试报告",
+      [attachment.id]: [{ id: "attachment-v2", name: "ADT-v2.pdf" }],
+    }, "替换附件")).toBe("updated");
+    expect(instanceById(instanceId)?.formValues?.[attachment.id]).toEqual([{ id: "attachment-v2", name: "ADT-v2.pdf" }]);
+  });
+
   it("创建、发起前修改、权限校验、通过、驳回、重新提交和完成形成一致链路", () => {
     const definitionBefore = definitionById("pdf-review")!;
     const version = definitionModule.getPublishedVersion(definitionBefore)!;

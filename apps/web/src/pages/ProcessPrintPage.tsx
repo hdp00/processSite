@@ -1,4 +1,4 @@
-import { FilePdfOutlined, PrinterOutlined } from "@ant-design/icons";
+import { PaperClipOutlined, PrinterOutlined } from "@ant-design/icons";
 import { Button, Empty } from "antd";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
@@ -9,6 +9,7 @@ import { findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
 import { formatRoundLabel } from "../utils/roundDisplay";
 import { isDesignerFieldVisible, type StoredDesignerField, type StoredDesignerTableColumn } from "../utils/designerStorage";
 import { displayDesignerChoiceValue } from "../utils/designerOptions";
+import { resolveRuntimeAttachmentNames } from "../utils/attachmentDisplay";
 
 const reviewStatusClass: Record<ReviewerProgress["status"], string> = {
   待审核: "pending",
@@ -66,7 +67,15 @@ export function ProcessPrintPage() {
   const visibleFields = version?.snapshot.form.fields.filter((field) => isDesignerFieldVisible(field, instance.formValues ?? {})) ?? [];
   const printableFields = visibleFields.filter((field) => !["attachment", "table"].includes(field.type));
   const tableFields = visibleFields.filter((field) => field.type === "table");
-  const attachmentNames = instance.attachmentNames?.length ? instance.attachmentNames : instance.pdfName !== "无附件" ? [instance.pdfName] : [];
+  const attachmentFields = visibleFields.filter((field) => field.type === "attachment");
+  const attachmentNames = resolveRuntimeAttachmentNames({
+    fields: attachmentFields,
+    values: instance.formValues,
+    fallbackNames: [
+      ...(instance.attachmentNames ?? []),
+      ...(!instance.attachmentNames?.length && instance.pdfName ? [instance.pdfName] : []),
+    ],
+  });
   const instanceTasks = tasks.filter((task) => task.instanceId === instance.id);
   const reviewedInstanceTasks = instanceTasks
     .filter((task) =>
@@ -146,10 +155,10 @@ export function ProcessPrintPage() {
           })}
         </section>
 
-        <section className="print-section">
+        {attachmentFields.length ? <section className="print-section">
           <h2>附件清单</h2>
-          {attachmentNames.length ? attachmentNames.map((name) => <div className="print-file-row" key={name}><FilePdfOutlined /><div><strong>{name}</strong><span>仅列出附件名称，附件正文不随流程打印</span></div></div>) : <p className="print-empty-text">无附件</p>}
-        </section>
+          {attachmentNames.length ? attachmentNames.map((name) => <div className="print-file-row" key={name}><PaperClipOutlined /><div><strong>{name}</strong><span>仅列出附件名称，附件正文不随流程打印</span></div></div>) : <p className="print-empty-text">无附件</p>}
+        </section> : null}
 
         {reviewedInstanceTasks.length ? (
           <section className="print-section">
