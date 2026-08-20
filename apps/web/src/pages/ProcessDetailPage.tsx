@@ -56,6 +56,7 @@ import type { ReviewerProgress } from "../data/types";
 import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
 import { effectiveGroupMemberIds, findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
 import { canUserCloseInstance, canUserProcessTask } from "../state/workflowAccess";
+import { createClientUuid } from "../utils/clientId";
 import { hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { isDesignerFieldVisible, normalizeDesignerFormValues, type StoredDesignerField } from "../utils/designerStorage";
@@ -778,8 +779,8 @@ export function ProcessDetailPage() {
         return <Input size="small" value={text === "—" ? "" : text} onChange={(event) => updateCell(event.target.value)} />;
       } }))} />
       {reviewerEditing && field.inputStage === "reviewer" && editableFieldIds.has(field.id) ? <Space className="fd-row-actions">
-        <Button size="small" onClick={() => updateDynamicValue(field.id, [...rows, { key: crypto.randomUUID(), ...Object.fromEntries((field.columns ?? []).map((column) => [column.id, column.defaultValue ?? (column.type === "checkbox" ? [] : "")])) }])}>新增行</Button>
-        <Button size="small" disabled={!rows.length} onClick={() => updateDynamicValue(field.id, [...rows, { ...rows[rows.length - 1], key: crypto.randomUUID() }])}>复制末行</Button>
+        <Button size="small" onClick={() => updateDynamicValue(field.id, [...rows, { key: createClientUuid(), ...Object.fromEntries((field.columns ?? []).map((column) => [column.id, column.defaultValue ?? (column.type === "checkbox" ? [] : "")])) }])}>新增行</Button>
+        <Button size="small" disabled={!rows.length} onClick={() => updateDynamicValue(field.id, [...rows, { ...rows[rows.length - 1], key: createClientUuid() }])}>复制末行</Button>
         <Button size="small" danger disabled={!rows.length} onClick={() => updateDynamicValue(field.id, rows.slice(0, -1))}>删除末行</Button>
       </Space> : reviewerEditing ? <Typography.Text className="table-rule-note" type="secondary">审核节点只能修改授权单元格，不能新增或删除整行。</Typography.Text> : null}</div>);
     }

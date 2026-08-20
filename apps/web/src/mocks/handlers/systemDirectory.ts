@@ -10,6 +10,7 @@ import type {
 import {
   ROLE_PERMISSION_STORAGE_KEY,
   hasUserPermission,
+  readStoredRolePermissions,
 } from "../../state/permissionEngine";
 import {
   effectiveGroupMemberIds,
@@ -24,7 +25,10 @@ import {
 import { useProcessDefinitionStore } from "../../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../../state/usePrototypeStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
+import { createClientUuid } from "../../utils/clientId";
+import { deriveWorkflowGroupStatistics } from "../../state/workflowGroupStatistics";
 import { clearAttachments } from "../attachmentRepository";
+import { clearRichMedia } from "../../utils/richMediaRepository";
 import { MOCK_API_BASE_URL } from "../apiBase";
 import {
   apiNoContent,
@@ -82,6 +86,28 @@ const userDto = (user: DomainUser): DirectoryUser => {
   };
 };
 
+const sessionDto = (
+  user: DomainUser,
+  operator: DomainUser = user,
+  impersonation?: AuthSession["impersonation"],
+): AuthSession => {
+  const roleIds = [...(user.roleIds ?? [])];
+  const permissionMap = readStoredRolePermissions();
+  const permissions = user.builtIn
+    ? [...(permissionMap["ROLE-SUPER"] ?? [])]
+    : [...new Set(roleIds.flatMap((roleId) => permissionMap[roleId] ?? []))];
+  return {
+    user: userDto(user),
+    operatorUser: userDto(operator),
+    roleIds,
+    permissions,
+    superAdmin: Boolean(user.builtIn),
+    operatorSuperAdmin: Boolean(operator.builtIn),
+    impersonation,
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  };
+};
+
 const roleDto = (role: DomainRole): DomainRole => ({
   ...role,
   members: [...role.members],
@@ -89,15 +115,22 @@ const roleDto = (role: DomainRole): DomainRole => ({
   users: useIdentityStore.getState().users.filter((user) => user.roleIds?.includes(role.id)).length,
 });
 
-const groupDto = (group: WorkflowPermissionGroup): WorkflowPermissionGroup => ({
-  ...group,
-  processes: [...group.processes],
-  purposes: [...group.purposes],
-  directMembers: [...group.directMembers],
-  linkedRoles: [...group.linkedRoles],
-  directMemberUserIds: [...(group.directMemberUserIds ?? [])],
-  linkedRoleIds: [...(group.linkedRoleIds ?? [])],
-});
+const groupDto = (group: WorkflowPermissionGroup): WorkflowPermissionGroup => {
+  const derived = deriveWorkflowGroupStatistics(
+    group,
+    useProcessDefinitionStore.getState().definitions,
+    usePrototypeStore.getState().tasks,
+  );
+  return {
+    ...derived,
+    processes: [...derived.processes],
+    purposes: [...group.purposes],
+    directMembers: [...group.directMembers],
+    linkedRoles: [...group.linkedRoles],
+    directMemberUserIds: [...(group.directMemberUserIds ?? [])],
+    linkedRoleIds: [...(group.linkedRoleIds ?? [])],
+  };
+};
 
 const paramValue = (value: string | readonly string[] | undefined) =>
   Array.isArray(value) ? value[0] ?? "" : String(value ?? "");
@@ -300,7 +333,7 @@ const mockResetHandler = http.post(`${API_ROOT}/mock/reset`, async ({ request })
     useProcessDefinitionStore.getState().resetDefinitions();
     useIdentityStore.getState().resetIdentity();
     useOrganizationStore.getState().resetOrganization();
-    if ("indexedDB" in window) await clearAttachments();
+    if ("indexedDB" in window) await Promise.all([clearAttachments(), clearRichMedia()]);
     resetMockApiRuntime();
     auditIdentity(actor, "mock.reset", "mock-runtime", "global", "Mock 演示数据已重置");
     return apiOk(request, { reset: true as const });
@@ -338,10 +371,10 @@ const loginHandler = http.post(`${API_ROOT}/auth/login`, async ({ request }) => 
     useIdentityStore.getState().setUsers((users) => users.map((item) => item.id === user.id ? signedIn : item));
     usePrototypeStore.getState().login(signedIn.id);
     const session: AuthSession = {
+      ...sessionDto(signedIn),
       accessToken: `mock:${signedIn.id}`,
       tokenType: "Bearer",
       expiresIn: 3_600,
-      user: userDto(signedIn),
     };
     auditAuthentication("auth.login", signedIn.id, `${signedIn.name} 登录系统`, signedIn);
     return apiOk(request, session);
@@ -353,7 +386,71 @@ const meHandler = http.get(`${API_ROOT}/auth/me`, async ({ request }) => {
   if (scenario) return scenario;
   const authenticated = requireActor(request);
   if (authenticated.response) return authenticated.response;
-  return entityResponse(request, userDto(authenticated.actor));
+  return entityResponse(request, sessionDto(
+    authenticated.actor,
+    authenticated.operator,
+    usePrototypeStore.getState().impersonation,
+  ));
+});
+
+const impersonationCandidatesHandler = http.get(`${API_ROOT}/auth/impersonation/candidates`, async ({ request }) => {
+  const scenario = await scenarioResponse(request);
+  if (scenario) return scenario;
+  const authenticated = requireActor(request);
+  if (authenticated.response) return authenticated.response;
+  if (!authenticated.operator.builtIn) return apiProblem(request, 403, "IMPERSONATION_NOT_ALLOWED", "不允许模拟身份", "只有真实登录的系统内置超级管理员可以模拟身份。 ");
+  const paging = pageQuery(request, 20);
+  if ("response" in paging) return paging.response;
+  const q = (new URL(request.url).searchParams.get("q") ?? "").trim().toLowerCase();
+  const users = useIdentityStore.getState().users
+    .filter((user) => !user.builtIn && user.status === "启用")
+    .filter((user) => !q || `${user.account}${user.name}${user.email}`.toLowerCase().includes(q))
+    .map(userDto);
+  return apiOk(request, paginate(users, paging.number, paging.size));
+});
+
+const impersonationStartHandler = http.post(`${API_ROOT}/auth/impersonation`, async ({ request }) => {
+  const scenario = await scenarioResponse(request, true);
+  if (scenario) return scenario;
+  return withIdempotency(request, async () => {
+    const authenticated = requireActor(request);
+    if (authenticated.response) return authenticated.response;
+    if (!authenticated.operator.builtIn) return apiProblem(request, 403, "IMPERSONATION_NOT_ALLOWED", "不允许模拟身份", "只有真实登录的系统内置超级管理员可以模拟身份。 ");
+    if (usePrototypeStore.getState().impersonation) return apiProblem(request, 409, "IMPERSONATION_ALREADY_ACTIVE", "模拟身份已经生效", "请先退出当前模拟身份。 ");
+    const body = await parseJsonBody<{ targetUserId?: string; reason?: string }>(request);
+    if (body instanceof Response) return body;
+    const target = body.targetUserId ? findIdentityUser(body.targetUserId) : undefined;
+    if (!target || target.builtIn || target.status !== "启用") return apiProblem(request, 422, "IMPERSONATION_TARGET_INVALID", "模拟用户无效", "请选择一个启用的非内置用户。 ");
+    if (!body.reason?.trim()) return validationProblem(request, [issue("reason", "REQUIRED", "请输入模拟身份原因。")]);
+    const startedAt = new Date().toISOString();
+    const impersonation = {
+      id: createClientUuid(),
+      operatorUserId: authenticated.operator.id,
+      targetUserId: target.id,
+      reason: body.reason.trim(),
+      startedAt,
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    };
+    const session = sessionDto(target, authenticated.operator, impersonation);
+    usePrototypeStore.getState().applyAuthSession(session);
+    appendAuditEvent({ category: "authentication", action: "auth.impersonation-started", actorId: target.id, actorName: target.name, operatorId: authenticated.operator.id, operatorName: authenticated.operator.name, impersonationId: impersonation.id, resourceType: "session", resourceId: impersonation.id, summary: `${authenticated.operator.name} 开始模拟 ${target.name}`, details: { reason: impersonation.reason } });
+    return apiOk(request, session);
+  });
+});
+
+const impersonationStopHandler = http.delete(`${API_ROOT}/auth/impersonation`, async ({ request }) => {
+  const scenario = await scenarioResponse(request, true);
+  if (scenario) return scenario;
+  return withIdempotency(request, async () => {
+    const authenticated = requireActor(request);
+    if (authenticated.response) return authenticated.response;
+    if (!authenticated.operator.builtIn) return apiProblem(request, 403, "IMPERSONATION_NOT_ALLOWED", "不允许模拟身份", "只有真实登录的系统内置超级管理员可以结束模拟身份。 ");
+    const active = usePrototypeStore.getState().impersonation;
+    const session = sessionDto(authenticated.operator);
+    if (active) appendAuditEvent({ category: "authentication", action: "auth.impersonation-stopped", actorId: authenticated.actor.id, actorName: authenticated.actor.name, operatorId: authenticated.operator.id, operatorName: authenticated.operator.name, impersonationId: active.id, resourceType: "session", resourceId: active.id, summary: `${authenticated.operator.name} 结束模拟身份` });
+    usePrototypeStore.getState().applyAuthSession(session);
+    return apiOk(request, session);
+  });
 });
 
 const logoutHandler = http.post(`${API_ROOT}/auth/logout`, async ({ request }) => {
@@ -472,7 +569,7 @@ const userCreateHandler = http.post(`${API_ROOT}/users`, async ({ request }) => 
     if (errors.length) return validationProblem(request, errors);
 
     const created: DomainUser = {
-      id: `USR-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`,
+      id: `USR-${createClientUuid()}`,
       account: account ?? "",
       email: email ?? "",
       password: password ?? "",
@@ -589,7 +686,7 @@ const resetPasswordHandler = http.post(`${API_ROOT}/users/:userId/reset-password
   if (!current) return notFound(request, "用户");
   if (current.builtIn) return immutableBuiltIn(request, "超级管理员账号密码");
   return withIdempotency(request, () => {
-    const temporaryPassword = `T-${(globalThis.crypto?.randomUUID?.() ?? String(Date.now())).replaceAll("-", "").slice(0, 10)}`;
+    const temporaryPassword = `T-${createClientUuid().replaceAll("-", "").slice(0, 10)}`;
     useIdentityStore.getState().setUsers((users) => users.map((user) => user.id === current.id ? { ...user, password: temporaryPassword } : user));
     auditIdentity(authorized.actor, "user.password-reset", "user", current.id, `已重置 ${current.name} 的密码`, { passwordReset: true });
     return apiOk(request, { temporaryPassword });
@@ -813,7 +910,7 @@ const groupCreateHandler = http.post(`${API_ROOT}/workflow-permission-groups`, a
 
     const groups = useIdentityStore.getState().workflowGroups;
     const record: WorkflowPermissionGroup = {
-      id: `workflow-group-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`,
+      id: `workflow-group-${createClientUuid()}`,
       code: nextNumeric(groups.map((group) => group.code), "PG-"),
       name: name ?? "",
       processes: [],
@@ -893,7 +990,8 @@ const groupDeleteHandler = http.delete(`${API_ROOT}/workflow-permission-groups/:
   if (!current) return notFound(request, "流程权限组");
   const revisionProblem = checkIfMatch(request, groupDto(current));
   if (revisionProblem) return revisionProblem;
-  if (current.referenced || current.processes.length) return apiProblem(request, 409, "WORKFLOW_GROUP_REFERENCED", "流程权限组已被引用", "请先从流程定义和节点配置中解除全部引用。 ");
+  const currentStats = groupDto(current);
+  if (currentStats.referenced || currentStats.processes.length) return apiProblem(request, 409, "WORKFLOW_GROUP_REFERENCED", "流程权限组已被引用", "请先从流程定义和节点配置中解除全部引用。 ");
   useIdentityStore.getState().setWorkflowGroups((groups) => groups.filter((group) => group.id !== current.id));
   auditIdentity(authorized.actor, "workflow-group.deleted", "workflow-permission-group", current.id, `流程权限组 ${current.name} 已删除`, { before: groupDto(current) });
   return apiNoContent(request);
@@ -906,6 +1004,9 @@ export const systemDirectoryHandlers = [
   mockResetHandler,
   loginHandler,
   meHandler,
+  impersonationCandidatesHandler,
+  impersonationStartHandler,
+  impersonationStopHandler,
   logoutHandler,
   directorySnapshotHandler,
   usersListHandler,

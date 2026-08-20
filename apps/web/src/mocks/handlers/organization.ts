@@ -14,6 +14,7 @@ import {
 } from "../../state/rolePermissions";
 import { effectiveGroupMemberIds, useIdentityStore } from "../../state/useIdentityStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
+import { createClientUuid } from "../../utils/clientId";
 import {
   apiNoContent,
   apiOk,
@@ -53,6 +54,7 @@ const departments = () => {
     status: item.status,
     memberCount: users.filter((user) => user.department.includes(item.key)).length,
     sortOrder: item.sort,
+    description: item.description,
   }));
 };
 
@@ -64,6 +66,7 @@ const positions = () => {
     description: item.description,
     status: item.status,
     memberCount: users.filter((user) => user.jobTitle === item.name).length,
+    sortOrder: item.sort,
   }));
 };
 
@@ -107,14 +110,14 @@ export const organizationHandlers = [
     return withIdempotency(request, async () => {
       const auth = requirePermission(request, "org-department:编辑");
       if (auth.response) return auth.response;
-      const body = await parseJsonBody<{ name?: string; parentId?: string; sortOrder?: number }>(request);
+      const body = await parseJsonBody<{ name?: string; parentId?: string; sortOrder?: number; description?: string }>(request);
       if (body instanceof Response) return body;
       const current = departments();
       const name = body.name?.trim() ?? "";
       const parent = body.parentId ? current.find((item) => item.id === body.parentId) : undefined;
       if (!name || (body.parentId && !parent)) return apiProblem(request, 422, "VALIDATION_FAILED", "部门数据无效", "请填写部门名称并选择有效上级部门。 ");
       if (current.some((item) => item.parentId === body.parentId && item.name === name)) return apiProblem(request, 409, "DEPARTMENT_NAME_CONFLICT", "同级部门名称已存在", "请使用其他部门名称。 ");
-      const record: DepartmentRecord = { id: globalThis.crypto.randomUUID(), name, parentId: parent?.id, path: parent ? `${parent.path} / ${name}` : name, status: "启用", memberCount: 0, sortOrder: body.sortOrder ?? current.length * 10 };
+      const record: DepartmentRecord = { id: createClientUuid(), name, parentId: parent?.id, path: parent ? `${parent.path} / ${name}` : name, status: "启用", memberCount: 0, sortOrder: body.sortOrder ?? current.length * 10, description: body.description?.trim() ?? "" };
       useOrganizationStore.getState().setDepartments((items) => [...items, {
         key: record.id,
         name: record.name,
@@ -125,7 +128,7 @@ export const organizationHandlers = [
         status: record.status,
         users: 0,
         referenced: false,
-        description: "",
+        description: record.description ?? "",
       }]);
       audit(auth.actor.id, auth.actor.name, "create-department", "department", record.id, `创建部门 ${record.path}`);
       return apiOk(request, record, { status: 201, headers: { ETag: entityEtag(record) } });
@@ -149,7 +152,7 @@ export const organizationHandlers = [
     if (!record) return apiProblem(request, 404, "DEPARTMENT_NOT_FOUND", "部门不存在", "未找到指定部门。 ");
     const conflict = checkIfMatch(request, record, true);
     if (conflict) return conflict;
-    const body = await parseJsonBody<Partial<Pick<DepartmentRecord, "name" | "status" | "sortOrder">>>(request);
+    const body = await parseJsonBody<Partial<Pick<DepartmentRecord, "name" | "status" | "sortOrder" | "description">>>(request);
     if (body instanceof Response) return body;
     const updated: DepartmentRecord = { ...record, ...body, name: body.name?.trim() || record.name };
     useOrganizationStore.getState().setDepartments((items) => items.map((item) => item.key === record.id ? {
@@ -157,6 +160,7 @@ export const organizationHandlers = [
       name: updated.name,
       status: updated.status,
       sort: updated.sortOrder,
+      description: updated.description ?? item.description,
     } : item));
     const departmentById = new Map(useOrganizationStore.getState().departments.map((item) => [item.key, item]));
     useIdentityStore.getState().setUsers((users) => users.map((user) => {
@@ -195,20 +199,20 @@ export const organizationHandlers = [
     return withIdempotency(request, async () => {
       const auth = requirePermission(request, "org-department:编辑");
       if (auth.response) return auth.response;
-      const body = await parseJsonBody<{ name?: string; description?: string }>(request);
+      const body = await parseJsonBody<{ name?: string; description?: string; sortOrder?: number }>(request);
       if (body instanceof Response) return body;
       const current = positions();
       const name = body.name?.trim() ?? "";
       if (!name) return apiProblem(request, 422, "POSITION_NAME_REQUIRED", "职务名称不能为空", "请填写职务名称。 ");
       if (current.some((item) => item.name === name)) return apiProblem(request, 409, "POSITION_NAME_CONFLICT", "职务名称已存在", "请使用其他职务名称。 ");
-      const record: PositionRecord = { id: globalThis.crypto.randomUUID(), name, description: body.description?.trim() ?? "", status: "启用", memberCount: 0 };
+      const record: PositionRecord = { id: createClientUuid(), name, description: body.description?.trim() ?? "", status: "启用", memberCount: 0, sortOrder: body.sortOrder ?? Math.max(0, ...useOrganizationStore.getState().jobTitles.map((item) => item.sort)) + 10 };
       useOrganizationStore.getState().setJobTitles((items) => [...items, {
         id: record.id,
         name: record.name,
         description: record.description,
         status: record.status,
         users: 0,
-        sort: Math.max(0, ...items.map((item) => item.sort)) + 10,
+        sort: record.sortOrder ?? Math.max(0, ...items.map((item) => item.sort)) + 10,
       }]);
       audit(auth.actor.id, auth.actor.name, "create-position", "position", record.id, `创建职务 ${record.name}`);
       return apiOk(request, record, { status: 201, headers: { ETag: entityEtag(record) } });
@@ -232,7 +236,7 @@ export const organizationHandlers = [
     if (!record) return apiProblem(request, 404, "POSITION_NOT_FOUND", "职务不存在", "未找到指定职务。 ");
     const conflict = checkIfMatch(request, record, true);
     if (conflict) return conflict;
-    const body = await parseJsonBody<Partial<Pick<PositionRecord, "name" | "description" | "status">>>(request);
+    const body = await parseJsonBody<Partial<Pick<PositionRecord, "name" | "description" | "status" | "sortOrder">>>(request);
     if (body instanceof Response) return body;
     const updated: PositionRecord = { ...record, ...body, name: body.name?.trim() || record.name };
     useOrganizationStore.getState().setJobTitles((items) => items.map((item) => item.id === record.id ? {
@@ -240,6 +244,7 @@ export const organizationHandlers = [
       name: updated.name,
       description: updated.description,
       status: updated.status,
+      sort: updated.sortOrder ?? item.sort,
     } : item));
     if (updated.name !== record.name) {
       useIdentityStore.getState().setUsers((users) => users.map((user) =>
@@ -300,6 +305,12 @@ export const organizationHandlers = [
     const map = readStoredRolePermissions();
     map[roleId] = keys;
     window.localStorage.setItem(ROLE_PERMISSION_STORAGE_KEY, JSON.stringify({ ...defaultRolePermissionMap, ...map }));
+    const pagePermissions = new Set(keys.map((key) => key.split(":")[0])).size;
+    useIdentityStore.getState().setRoles((roles) => roles.map((item) => item.id === roleId ? {
+      ...item,
+      pagePermissions,
+      actionPermissions: keys.length,
+    } : item));
     notifyRolePermissionsChanged();
     audit(auth.actor.id, auth.actor.name, "update-role-permissions", "role", roleId, `更新角色 ${role.name} 的权限`);
     return apiOk(request, keys, { headers: { ETag: entityEtag(keys) } });

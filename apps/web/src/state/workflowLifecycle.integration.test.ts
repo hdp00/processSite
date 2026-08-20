@@ -63,6 +63,31 @@ beforeEach(() => {
 });
 
 describe("流程定义完整生命周期", () => {
+  it("流程定义和各版本实例数由实际流程实例统一核算", () => {
+    const instances = prototypeModule.usePrototypeStore.getState().instances;
+    definitionModule.useProcessDefinitionStore.getState().definitions.forEach((definition) => {
+      expect(definition.instanceCount).toBe(instances.filter((instance) => instance.definitionId === definition.id).length);
+      definition.versions.forEach((version) => {
+        expect(version.instanceCount).toBe(instances.filter((instance) => instance.versionId === version.id).length);
+      });
+    });
+
+    definitionModule.useProcessDefinitionStore.setState((state) => ({
+      definitions: state.definitions.map((definition) => definition.id === "pdf-review"
+        ? {
+            ...definition,
+            instanceCount: 128,
+            versions: definition.versions.map((version, index) => ({ ...version, instanceCount: [42, 71, 15][index] })),
+          }
+        : definition),
+    }));
+    definitionModule.useProcessDefinitionStore.getState().synchronizeInstanceCounts(instances);
+
+    const repaired = definitionById("pdf-review")!;
+    expect(repaired.instanceCount).toBe(5);
+    expect(Object.fromEntries(repaired.versions.map((version) => [version.version, version.instanceCount]))).toEqual({ V3: 5, V2: 0, V1: 0 });
+  });
+
   it("创建全新定义时生成独立 V1，且不会继承示例配置", () => {
     const definitionId = definitionModule.useProcessDefinitionStore.getState().createDefinition({
       name: "固件发布单",
@@ -173,6 +198,22 @@ describe("流程定义完整生命周期", () => {
     expect(sharedFieldIds.every(Boolean)).toBe(true);
     expect(new Set(sharedFieldIds).size).toBe(1);
     expect(imported.versions[0].basic.visibleRoles).toEqual(source.versions[0].basic.visibleRoles);
+  });
+
+  it("普通 HTTP 环境缺少 randomUUID 时仍可导入完整流程定义", () => {
+    const source = definitionById("pdf-review")!;
+    const identities = identityModule.useIdentityStore.getState();
+    const json = JSON.stringify(transferModule.createProcessDefinitionExport(source, identities));
+    const nativeCrypto = globalThis.crypto;
+    vi.stubGlobal("crypto", { getRandomValues: nativeCrypto.getRandomValues.bind(nativeCrypto) });
+    try {
+      const preview = transferModule.parseProcessDefinitionImport(json, identities);
+      const importedId = definitionModule.useProcessDefinitionStore.getState().importDefinition(preview.definition);
+      expect(importedId).toBeTruthy();
+      expect(definitionById(importedId!)?.versions).toHaveLength(source.versions.length);
+    } finally {
+      vi.stubGlobal("crypto", nativeCrypto);
+    }
   });
 
   it("发布、实例引用和删除保护符合版本规则", () => {

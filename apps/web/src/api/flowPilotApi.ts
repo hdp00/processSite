@@ -8,6 +8,7 @@ import type {
 } from "../state/useProcessDefinitionStore";
 import type { CompleteDesignerSnapshot } from "../utils/designerStorage";
 import { usePrototypeStore } from "../state/usePrototypeStore";
+import { useIdentityStore } from "../state/useIdentityStore";
 import { apiDownload, apiRequest, apiResource, createIdempotencyKey, writeApiAccessToken } from "./client";
 import type {
   ApiHealth,
@@ -57,13 +58,33 @@ export interface WorkflowTaskQuery extends PageQuery {
 
 const mutation = () => ({ idempotencyKey: createIdempotencyKey() });
 
+const applySession = (session: AuthSession) => {
+  writeApiAccessToken(session.accessToken ?? readCurrentToken());
+  const sessionUsers = [session.operatorUser, session.user].filter((user): user is DirectoryUser => Boolean(user));
+  useIdentityStore.getState().setUsers((users) => {
+    const byId = new Map(users.map((user) => [user.id, user]));
+    sessionUsers.forEach((user) => {
+      const current = byId.get(user.id);
+      byId.set(user.id, { ...current, ...user, password: current?.password ?? "" });
+    });
+    return [...byId.values()];
+  });
+  usePrototypeStore.getState().applyAuthSession(session);
+  return session;
+};
+
+const readCurrentToken = () => window.sessionStorage.getItem("flowpilot-api-access-token") ?? undefined;
+
 export const flowPilotApi = {
   system: {
     health: () => apiRequest<ApiHealth>("/health"),
     getMockSettings: () => apiRequest<MockApiSettings>("/mock/settings"),
     updateMockSettings: (settings: Partial<MockApiSettings>) =>
       apiRequest<MockApiSettings>("/mock/settings", { method: "PATCH", body: settings }),
-    resetDemo: () => apiRequest<{ reset: true }>("/mock/reset", { method: "POST", ...mutation() }),
+    resetDemo: () => apiRequest<{ reset: true }>(
+      import.meta.env.VITE_API_MODE === "remote" ? "/system/demo-data/reset" : "/mock/reset",
+      { method: "POST", ...mutation() },
+    ),
   },
   auth: {
     login: async (account: string, password: string) => {
@@ -71,14 +92,27 @@ export const flowPilotApi = {
         ? { loginName: account, password }
         : { account, password };
       const session = await apiRequest<AuthSession>("/auth/login", { method: "POST", body, ...mutation() });
-      writeApiAccessToken(session.accessToken);
-      usePrototypeStore.getState().login(session.user.id);
-      return session;
+      return applySession(session);
     },
     me: async () => {
       const session = await apiRequest<AuthSession | DirectoryUser>("/auth/me");
-      return "user" in session ? session.user : session;
+      const normalized: AuthSession = "user" in session
+        ? session
+        : { user: session, operatorUser: session };
+      return applySession(normalized);
     },
+    impersonationCandidates: (query: PageQuery = {}) =>
+      apiRequest<PageResult<DirectoryUser>>("/auth/impersonation/candidates", { query }),
+    startImpersonation: async (targetUserId: string, reason: string) => applySession(
+      await apiRequest<AuthSession>("/auth/impersonation", {
+        method: "POST",
+        body: { targetUserId, reason },
+        ...mutation(),
+      }),
+    ),
+    stopImpersonation: async () => applySession(
+      await apiRequest<AuthSession>("/auth/impersonation", { method: "DELETE", ...mutation() }),
+    ),
     logout: async () => {
       try {
         await apiRequest<void>("/auth/logout", { method: "POST", ...mutation() });
@@ -93,6 +127,7 @@ export const flowPilotApi = {
     users: (query: PageQuery & { status?: "启用" | "停用"; hasEmail?: boolean } = {}) =>
       apiRequest<PageResult<DirectoryUser>>("/users", { query }),
     user: (userId: string) => apiRequest<DirectoryUser>(`/users/${encodeURIComponent(userId)}`),
+    userResource: (userId: string) => apiResource<DirectoryUser>(`/users/${encodeURIComponent(userId)}`),
     createUser: (input: Omit<DomainUser, "id" | "lastLogin">) =>
       apiRequest<DirectoryUser>("/users", { method: "POST", body: input, ...mutation() }),
     updateUser: (userId: string, patch: Partial<DomainUser>, ifMatch?: string) =>
@@ -102,13 +137,15 @@ export const flowPilotApi = {
     resetPassword: (userId: string) =>
       apiRequest<{ temporaryPassword: string }>(`/users/${encodeURIComponent(userId)}/reset-password`, { method: "POST", ...mutation() }),
     roles: (query: PageQuery = {}) => apiRequest<PageResult<DomainRole>>("/roles", { query }),
+    roleResource: (roleId: string) => apiResource<DomainRole>(`/roles/${encodeURIComponent(roleId)}`),
     createRole: (input: Omit<DomainRole, "id" | "code" | "pagePermissions" | "actionPermissions" | "users">) =>
       apiRequest<DomainRole>("/roles", { method: "POST", body: input, ...mutation() }),
     updateRole: (roleId: string, patch: Partial<DomainRole>, ifMatch?: string) =>
       apiRequest<DomainRole>(`/roles/${encodeURIComponent(roleId)}`, { method: "PATCH", body: patch, ifMatch }),
     groups: (query: PageQuery & { purpose?: string } = {}) =>
       apiRequest<PageResult<WorkflowPermissionGroup>>("/workflow-permission-groups", { query }),
-    createGroup: (input: Omit<WorkflowPermissionGroup, "id" | "code" | "updatedAt">) =>
+    groupResource: (groupId: string) => apiResource<WorkflowPermissionGroup>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`),
+    createGroup: (input: Pick<WorkflowPermissionGroup, "name" | "purposes" | "directMembers" | "linkedRoles" | "status">) =>
       apiRequest<WorkflowPermissionGroup>("/workflow-permission-groups", { method: "POST", body: input, ...mutation() }),
     updateGroup: (groupId: string, patch: Partial<WorkflowPermissionGroup>, ifMatch?: string) =>
       apiRequest<WorkflowPermissionGroup>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`, { method: "PATCH", body: patch, ifMatch }),
@@ -116,12 +153,12 @@ export const flowPilotApi = {
   organization: {
     departments: (q?: string) => apiRequest<DepartmentRecord[]>("/departments", { query: { q } }),
     department: (departmentId: string) => apiResource<DepartmentRecord>(`/departments/${encodeURIComponent(departmentId)}`),
-    createDepartment: (input: { name: string; parentId?: string; sortOrder?: number }) => apiRequest<DepartmentRecord>("/departments", { method: "POST", body: input, ...mutation() }),
+    createDepartment: (input: { name: string; parentId?: string; sortOrder?: number; description?: string }) => apiRequest<DepartmentRecord>("/departments", { method: "POST", body: input, ...mutation() }),
     updateDepartment: (departmentId: string, patch: Partial<DepartmentRecord>, ifMatch: string) => apiRequest<DepartmentRecord>(`/departments/${encodeURIComponent(departmentId)}`, { method: "PATCH", body: patch, ifMatch }),
     removeDepartment: (departmentId: string, ifMatch: string) => apiRequest<void>(`/departments/${encodeURIComponent(departmentId)}`, { method: "DELETE", ifMatch }),
     positions: () => apiRequest<PositionRecord[]>("/positions"),
     position: (positionId: string) => apiResource<PositionRecord>(`/positions/${encodeURIComponent(positionId)}`),
-    createPosition: (input: { name: string; description?: string }) => apiRequest<PositionRecord>("/positions", { method: "POST", body: input, ...mutation() }),
+    createPosition: (input: { name: string; description?: string; sortOrder?: number }) => apiRequest<PositionRecord>("/positions", { method: "POST", body: input, ...mutation() }),
     updatePosition: (positionId: string, patch: Partial<PositionRecord>, ifMatch: string) => apiRequest<PositionRecord>(`/positions/${encodeURIComponent(positionId)}`, { method: "PATCH", body: patch, ifMatch }),
     removePosition: (positionId: string, ifMatch: string) => apiRequest<void>(`/positions/${encodeURIComponent(positionId)}`, { method: "DELETE", ifMatch }),
     permissionCatalog: () => apiRequest<PermissionCatalogItem[]>("/permissions"),
@@ -133,6 +170,8 @@ export const flowPilotApi = {
   },
   definitions: {
     launchable: () => apiRequest<LaunchableProcessDefinition[]>("/me/launchable-process-definitions"),
+    visible: (query: PageQuery = {}) =>
+      apiRequest<PageResult<ProcessDefinitionListItem>>("/me/visible-process-definitions", { query }),
     list: (query: PageQuery & { type?: DefinitionType; status?: string } = {}) =>
       apiRequest<PageResult<ProcessDefinitionListItem>>("/process-definitions", { query }),
     launchConfig: (definitionId: string) =>

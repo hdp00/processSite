@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { cloneDefaultSystemListFields } from "../data/listFieldConfig";
+import type { ProcessInstance } from "../data/types";
 import {
   PROCESS_TITLE_FIELD_ID,
   clearDefinitionDesignerArtifacts,
@@ -14,6 +15,7 @@ import type { ImportedProcessDefinition } from "../utils/processDefinitionTransf
 import { effectiveGroupMemberIds, useIdentityStore } from "./useIdentityStore";
 import { validateProcessSnapshot } from "../utils/processDefinitionValidation";
 import { nowDomainTimestamp } from "../utils/domainTime";
+import { createClientUuid } from "../utils/clientId";
 
 export type DefinitionType = "approval" | "free";
 export type DefinitionStatus = "未发布" | "已发布" | "已停用";
@@ -102,13 +104,13 @@ interface ProcessDefinitionState {
   deleteVersion: (definitionId: string, versionId: string) => DeleteVersionResult;
   deleteDefinition: (definitionId: string) => boolean;
   toggleDefinition: (definitionId: string) => void;
-  recordInstanceCreated: (definitionId: string, versionId: string) => void;
+  synchronizeInstanceCounts: (instances: Pick<ProcessInstance, "definitionId" | "versionId">[]) => void;
   resetDefinitions: () => void;
 }
 
 const nowText = nowDomainTimestamp;
 const versionLabel = (value: number) => `V${value}`;
-const createDefinitionId = () => `process-${crypto.randomUUID()}`;
+const createDefinitionId = () => `process-${createClientUuid()}`;
 const currentActorName = () => {
   if (typeof window === "undefined") return "系统";
   try {
@@ -223,7 +225,7 @@ const testV2Snapshot = (() => {
 })();
 
 const initialDefinitions: ProcessDefinition[] = [
-  { id: "pdf-review", code: pdfBasic.code, name: pdfBasic.name, description: pdfBasic.description, type: "approval", disabled: false, publishedVersionId: "pdf-v3", nextVersionNumber: 4, updatedAt: "2026-08-12 16:42", updatedBy: "王敏", instanceCount: 128, versions: [publishedSeed("pdf-v3", "V3", "2026-08-02 14:30", "王敏", "增加质量节点可修改字段并优化并行提醒。", 42, pdfBasic, seedSnapshot("pdf-v3", pdfBasic, 9, 5)), publishedSeed("pdf-v2", "V2", "2026-05-16 10:05", "刘燕", "研发、质量和生产改为同起点并行审核。", 71, pdfBasic, seedSnapshot("pdf-v2", pdfBasic, 8, 5)), publishedSeed("pdf-v1", "V1", "2026-02-12 09:20", "系统管理员", "首次发布。", 15, pdfBasic, seedSnapshot("pdf-v1", pdfBasic, 7, 5))] },
+  { id: "pdf-review", code: pdfBasic.code, name: pdfBasic.name, description: pdfBasic.description, type: "approval", disabled: false, publishedVersionId: "pdf-v3", nextVersionNumber: 4, updatedAt: "2026-08-12 16:42", updatedBy: "王敏", instanceCount: 5, versions: [publishedSeed("pdf-v3", "V3", "2026-08-02 14:30", "王敏", "增加质量节点可修改字段并优化并行提醒。", 5, pdfBasic, seedSnapshot("pdf-v3", pdfBasic, 9, 5)), publishedSeed("pdf-v2", "V2", "2026-05-16 10:05", "刘燕", "研发、质量和生产改为同起点并行审核。", 0, pdfBasic, seedSnapshot("pdf-v2", pdfBasic, 8, 5)), publishedSeed("pdf-v1", "V1", "2026-02-12 09:20", "系统管理员", "首次发布。", 0, pdfBasic, seedSnapshot("pdf-v1", pdfBasic, 7, 5))] },
   {
     id: "test-report-review",
     code: testBasic.code,
@@ -265,8 +267,8 @@ const initialDefinitions: ProcessDefinition[] = [
       }),
     ],
   },
-  { id: "free-collaboration", code: freeBasic.code, name: freeBasic.name, description: freeBasic.description, type: "free", disabled: false, publishedVersionId: "free-v2", nextVersionNumber: 3, updatedAt: "2026-08-10 14:06", updatedBy: "系统管理员", instanceCount: 67, versions: [publishedSeed("free-v2", "V2", "2026-07-30 16:18", "王敏", "增加异常改派；重新打开时恢复初始表单编辑。", 39, freeBasic, seedSnapshot("free-v2", freeBasic, 5, 0)), publishedSeed("free-v1", "V1", "2026-04-08 11:42", "系统管理员", "首次发布自由协作流程。", 28, freeBasic, seedSnapshot("free-v1", freeBasic, 4, 0))] },
-  { id: "supplier-change-review", code: supplierBasic.code, name: "供应商变更会签", description: supplierBasic.description, type: "approval", disabled: true, publishedVersionId: "supplier-v2", nextVersionNumber: 3, updatedAt: "2026-07-28 11:25", updatedBy: "赵磊", instanceCount: 21, versions: [publishedSeed("supplier-v2", "V2", "2026-07-28 11:25", "赵磊", "调整评审说明和发起范围，当前没有实例。", 0, { ...supplierBasic, name: "供应商变更会签" }, seedSnapshot("supplier-v2", { ...supplierBasic, name: "供应商变更会签" }, 7, 4)), publishedSeed("supplier-v1", "V1", "2026-07-20 11:25", "赵磊", "首次发布供应商变更评审。", 21, supplierBasic, seedSnapshot("supplier-v1", supplierBasic, 6, 4))] },
+  { id: "free-collaboration", code: freeBasic.code, name: freeBasic.name, description: freeBasic.description, type: "free", disabled: false, publishedVersionId: "free-v2", nextVersionNumber: 3, updatedAt: "2026-08-10 14:06", updatedBy: "系统管理员", instanceCount: 2, versions: [publishedSeed("free-v2", "V2", "2026-07-30 16:18", "王敏", "增加异常改派；重新打开时恢复初始表单编辑。", 0, freeBasic, seedSnapshot("free-v2", freeBasic, 5, 0)), publishedSeed("free-v1", "V1", "2026-04-08 11:42", "系统管理员", "首次发布自由协作流程。", 2, freeBasic, seedSnapshot("free-v1", freeBasic, 4, 0))] },
+  { id: "supplier-change-review", code: supplierBasic.code, name: "供应商变更会签", description: supplierBasic.description, type: "approval", disabled: true, publishedVersionId: "supplier-v2", nextVersionNumber: 3, updatedAt: "2026-07-28 11:25", updatedBy: "赵磊", instanceCount: 0, versions: [publishedSeed("supplier-v2", "V2", "2026-07-28 11:25", "赵磊", "调整评审说明和发起范围，当前没有实例。", 0, { ...supplierBasic, name: "供应商变更会签" }, seedSnapshot("supplier-v2", { ...supplierBasic, name: "供应商变更会签" }, 7, 4)), publishedSeed("supplier-v1", "V1", "2026-07-20 11:25", "赵磊", "首次发布供应商变更评审。", 0, supplierBasic, seedSnapshot("supplier-v1", supplierBasic, 6, 4))] },
 ];
 
 const hasRunnableApprovalTopology = (version: ProcessVersion) => {
@@ -374,7 +376,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
             code,
             type: input.type,
           });
-          return buildVersion(`${id}-${label.toLowerCase()}-${crypto.randomUUID()}`, label, basicConfig, source.snapshot, {
+          return buildVersion(`${id}-${label.toLowerCase()}-${createClientUuid()}`, label, basicConfig, source.snapshot, {
             basedOn: `文件导入 · 原 ${source.version}（${source.sourceStatus}）`,
             changeNote: source.changeNote || "从导入文件创建",
           });
@@ -498,7 +500,29 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         return true;
       },
       toggleDefinition: (definitionId) => currentUserCan("config-definition:编辑") && set((state) => ({ definitions: state.definitions.map((definition) => definition.id === definitionId && definition.publishedVersionId ? { ...definition, disabled: !definition.disabled, updatedAt: nowText(), updatedBy: currentActorName() } : definition) })),
-      recordInstanceCreated: (definitionId, versionId) => set((state) => ({ definitions: state.definitions.map((definition) => definition.id === definitionId ? { ...definition, instanceCount: definition.instanceCount + 1, versions: definition.versions.map((version) => version.id === versionId ? { ...version, instanceCount: version.instanceCount + 1 } : version) } : definition) })),
+      synchronizeInstanceCounts: (instances) => set((state) => {
+        const definitionCounts = new Map<string, number>();
+        const versionCounts = new Map<string, number>();
+        instances.forEach((instance) => {
+          definitionCounts.set(instance.definitionId, (definitionCounts.get(instance.definitionId) ?? 0) + 1);
+          const versionKey = `${instance.definitionId}:${instance.versionId}`;
+          versionCounts.set(versionKey, (versionCounts.get(versionKey) ?? 0) + 1);
+        });
+        let changed = false;
+        const definitions = state.definitions.map((definition) => {
+          const instanceCount = definitionCounts.get(definition.id) ?? 0;
+          const versions = definition.versions.map((version) => {
+            const versionInstanceCount = versionCounts.get(`${definition.id}:${version.id}`) ?? 0;
+            if (version.instanceCount === versionInstanceCount) return version;
+            return { ...version, instanceCount: versionInstanceCount };
+          });
+          const versionCountsChanged = versions.some((version, index) => version !== definition.versions[index]);
+          if (definition.instanceCount === instanceCount && !versionCountsChanged) return definition;
+          changed = true;
+          return { ...definition, instanceCount, versions };
+        });
+        return changed ? { definitions } : state;
+      }),
       resetDefinitions: () => set({ definitions: initialDefinitions }),
     }),
     {

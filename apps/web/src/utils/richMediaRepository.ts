@@ -1,3 +1,5 @@
+import { createClientUuid } from "./clientId";
+
 const DATABASE_NAME = "flowpilot-rich-media";
 const DATABASE_VERSION = 1;
 const STORE_NAME = "media";
@@ -47,7 +49,7 @@ const withStore = async <T>(
 
 export const saveRichMedia = async (file: File) => {
   const record: StoredRichMedia = {
-    id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    id: createClientUuid(),
     name: file.name,
     contentType: file.type || "application/octet-stream",
     size: file.size,
@@ -63,10 +65,14 @@ export const getRichMedia = (id: string) => withStore<StoredRichMedia | undefine
   (store) => store.get(id),
 );
 
+export const clearRichMedia = async () => {
+  if (typeof indexedDB === "undefined") return;
+  await withStore("readwrite", (store) => store.clear());
+};
+
 export const richMediaSource = (id: string) => `flowpilot-media:${id}`;
 
 export const richMediaIdFromSource = (source: string | null | undefined) => {
   const matched = source?.match(/^flowpilot-media:([\w-]+)$/);
   return matched?.[1];
 };
-

@@ -18,6 +18,7 @@ import {
   normalizeDesignerChoiceOptions,
   normalizeDesignerChoiceValue,
 } from "./designerOptions";
+import { createClientUuid } from "./clientId";
 
 interface TransferIdentityContext {
   users: DomainUser[];
@@ -90,7 +91,7 @@ const nameList = (value: unknown) => typeof value === "string" && value ? [value
 const valueList = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string | number | boolean => ["string", "number", "boolean"].includes(typeof item)) : [];
 const displayValue = (value: unknown) => Array.isArray(value) ? valueList(value) : typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? value : "";
 const unique = <T,>(values: T[]) => [...new Set(values)];
-const makeId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
+const makeId = (prefix: string) => `${prefix}-${createClientUuid()}`;
 
 const displayNameMap = (values: Array<{ id: string; name: string }>) => new Map(values.map((value) => [value.id, value.name]));
 const displayNames = (values: string[] | undefined, names: Map<string, string>) => unique((values ?? []).flatMap((value) => {

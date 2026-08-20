@@ -27,6 +27,8 @@ import { resolveLockedProcessVersion } from "./processVersionResolver";
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
 import { displayDesignerChoiceValue } from "../utils/designerOptions";
 import { nowDomainTimestamp } from "../utils/domainTime";
+import { createClientUuid } from "../utils/clientId";
+import type { AuthSession, ImpersonationContext } from "../api/contracts";
 
 type ReviewAction = "pass" | "confirm" | "reject";
 export type RepeatEditResult = "updated" | "no-changes" | "forbidden";
@@ -78,9 +80,15 @@ export const personas: Array<{
 interface PrototypeState {
   authenticated: boolean;
   personaId: PersonaId;
+  operatorUserId: PersonaId;
+  sessionPermissions: string[];
+  sessionSuperAdmin: boolean;
+  operatorSuperAdmin: boolean;
+  impersonation?: ImpersonationContext;
   instances: ProcessInstance[];
   tasks: WorkflowTask[];
   login: (personaId?: PersonaId) => void;
+  applyAuthSession: (session: AuthSession) => void;
   logout: () => void;
   switchPersona: (personaId: PersonaId) => void;
   createProcessInstance: (input: CreateProcessInstanceInput) => string | null;
@@ -640,10 +648,39 @@ export const usePrototypeStore = create<PrototypeState>()(
     (set, get) => ({
       authenticated: false,
       personaId: "lina",
+      operatorUserId: "lina",
+      sessionPermissions: [],
+      sessionSuperAdmin: false,
+      operatorSuperAdmin: false,
+      impersonation: undefined,
       instances: normalizedInitialInstances,
       tasks: initialTasks,
-      login: (personaId = "lina") => set({ authenticated: true, personaId }),
-      logout: () => set({ authenticated: false }),
+      login: (personaId = "lina") => set({
+        authenticated: true,
+        personaId,
+        operatorUserId: personaId,
+        sessionPermissions: [],
+        sessionSuperAdmin: isSuperAdminPersona(personaId),
+        operatorSuperAdmin: isSuperAdminPersona(personaId),
+        impersonation: undefined,
+      }),
+      applyAuthSession: (session) => set({
+        authenticated: true,
+        personaId: session.user.id,
+        operatorUserId: session.operatorUser?.id ?? session.user.id,
+        sessionPermissions: [...(session.permissions ?? [])],
+        sessionSuperAdmin: session.superAdmin ?? isSuperAdminPersona(session.user.id),
+        operatorSuperAdmin: session.operatorSuperAdmin
+          ?? isSuperAdminPersona(session.operatorUser?.id ?? session.user.id),
+        impersonation: session.impersonation,
+      }),
+      logout: () => set({
+        authenticated: false,
+        sessionPermissions: [],
+        sessionSuperAdmin: false,
+        operatorSuperAdmin: false,
+        impersonation: undefined,
+      }),
       switchPersona: (personaId) => set({ personaId }),
       createProcessInstance: (input) => {
         const state = get();
@@ -660,7 +697,7 @@ export const usePrototypeStore = create<PrototypeState>()(
         if (!actor || !definition || !version || !canStart || !hasUserPermission(actor.id, "work-launch:发起")) return null;
 
         const createdAt = nowText();
-        const createdId = crypto.randomUUID();
+        const createdId = createClientUuid();
         const prefix = version.basic.instancePrefix || extractInstancePrefix(definition.code) || "FLOW";
         const formValues = applyDesignerFieldVisibility(
           version.snapshot.form.fields,
@@ -723,11 +760,12 @@ export const usePrototypeStore = create<PrototypeState>()(
           attachmentIdsByField: structuredClone(input.attachmentIdsByField ?? {}),
           resubmissions: definition.type === "approval" ? [] : undefined,
         };
+        const instances = [created, ...state.instances];
         set({
-          instances: [created, ...state.instances],
+          instances,
           tasks: [...(approvalRuntime?.tasks ?? []), ...state.tasks],
         });
-        useProcessDefinitionStore.getState().recordInstanceCreated(definition.id, version.id);
+        useProcessDefinitionStore.getState().synchronizeInstanceCounts(instances);
         return createdId;
       },
       reviewInstance: (id, action, comment, documentLevel, fieldChanges, taskId) => {
@@ -849,7 +887,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           tasks: current.tasks.map((item) => item.id === task.id ? {
             ...item,
             fieldRevisions: [...(item.fieldRevisions ?? []), {
-              id: `revision-${crypto.randomUUID()}`,
+              id: `revision-${createClientUuid()}`,
               editedById: actor.id,
               editedByName: actor.name,
               editedAt,
@@ -1245,12 +1283,18 @@ export const usePrototypeStore = create<PrototypeState>()(
           tasks: initialTasks,
           authenticated: true,
           personaId: state.personaId,
+          operatorUserId: state.operatorUserId,
+          sessionPermissions: state.sessionPermissions,
+          sessionSuperAdmin: state.sessionSuperAdmin,
+          operatorSuperAdmin: state.operatorSuperAdmin,
+          impersonation: state.impersonation,
         }));
+        useProcessDefinitionStore.getState().synchronizeInstanceCounts(normalizedInitialInstances);
       },
     }),
     {
       name: "flowpilot-prototype-v5",
-      version: 16,
+      version: 17,
       migrate: (persisted) => {
         const { notices: legacyNotices, ...state } = persisted as PrototypeState & { notices?: unknown };
         void legacyNotices;
@@ -1273,8 +1317,19 @@ export const usePrototypeStore = create<PrototypeState>()(
           [...existing, ...missingFreeInstances],
           Array.isArray(state.tasks) ? state.tasks : [],
         );
-        return { ...state, ...runtime };
+        return {
+          ...state,
+          operatorUserId: state.operatorUserId ?? state.personaId ?? "lina",
+          sessionPermissions: Array.isArray(state.sessionPermissions) ? state.sessionPermissions : [],
+          sessionSuperAdmin: state.sessionSuperAdmin ?? isSuperAdminPersona(state.personaId ?? ""),
+          operatorSuperAdmin: state.operatorSuperAdmin
+            ?? isSuperAdminPersona(state.operatorUserId ?? state.personaId ?? ""),
+          impersonation: state.impersonation,
+          ...runtime,
+        };
       },
     },
   ),
 );
+
+useProcessDefinitionStore.getState().synchronizeInstanceCounts(usePrototypeStore.getState().instances);

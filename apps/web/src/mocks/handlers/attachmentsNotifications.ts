@@ -25,6 +25,7 @@ import {
 import type { StoredDesignerField } from "../../utils/designerStorage";
 import { isProcessInstanceCreator } from "../../utils/processInstanceAccess";
 import { compareDomainTimestamps } from "../../utils/domainTime";
+import { createClientUuid } from "../../utils/clientId";
 import {
   deleteAttachment,
   getAttachmentRecords,
@@ -103,7 +104,7 @@ const scenarioOf = (request: Request): MockScenario => {
 };
 
 const attachmentId = () =>
-  `attachment-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
+  `attachment-${createClientUuid()}`;
 
 const resolveLockedVersion = (instance: ProcessInstance) => {
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === instance.definitionId);

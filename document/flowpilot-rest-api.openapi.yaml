@@ -114,6 +114,75 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /auth/impersonation/candidates:
+    get:
+      tags: [Authentication]
+      operationId: listImpersonationCandidates
+      summary: 查询允许被模拟的启用用户
+      description: 仅真实登录操作者为系统内置超级管理员时可用；权限判断不能使用当前模拟用户。
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+      responses:
+        "200":
+          description: 可模拟用户分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /auth/impersonation:
+    post:
+      tags: [Authentication]
+      operationId: startImpersonation
+      summary: 以指定用户身份继续当前会话
+      description: 仅真实登录的系统内置超级管理员可执行。后续权限和数据范围按目标用户计算，审计同时记录真实操作者和生效用户。
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartImpersonationRequest"
+      responses:
+        "200":
+          description: 模拟身份已生效
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [Authentication]
+      operationId: stopImpersonation
+      summary: 结束模拟身份并恢复真实操作者
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: 已恢复真实操作者身份
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /users:
     get:
       tags: [Users]
@@ -1061,6 +1130,27 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/LaunchableProcessDefinitionDto"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /me/visible-process-definitions:
+    get:
+      tags: [ProcessDefinitions]
+      operationId: listMyVisibleProcessDefinitions
+      summary: 获取当前用户界面渲染所需的可见流程定义和版本快照
+      description: 只返回当前发布版本，以及当前用户可见实例实际锁定的历史版本；不得返回未发布且未被可见实例引用的草稿版本。
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: 当前用户可见流程定义分页结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisibleProcessDefinitionPage"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -2856,6 +2946,9 @@ components:
         - EXPORT_NOT_READY
         - EXPORT_EXPIRED
         - RATE_LIMITED
+        - IMPERSONATION_NOT_ALLOWED
+        - IMPERSONATION_TARGET_INVALID
+        - IMPERSONATION_ALREADY_ACTIVE
     ValidationIssueDto:
       type: object
       required: [code, message]
@@ -2921,9 +3014,11 @@ components:
           maxLength: 200
     SessionDto:
       type: object
-      required: [user, roleIds, permissions, superAdmin]
+      required: [user, operatorUser, roleIds, permissions, superAdmin, operatorSuperAdmin]
       properties:
         user:
+          $ref: "#/components/schemas/UserDto"
+        operatorUser:
           $ref: "#/components/schemas/UserDto"
         roleIds:
           type: array
@@ -2938,6 +3033,46 @@ components:
             type: string
         superAdmin:
           type: boolean
+          description: 当前生效用户是否为超级管理员
+        operatorSuperAdmin:
+          type: boolean
+          description: 建立登录会话的真实操作者是否为系统内置超级管理员
+        impersonation:
+          $ref: "#/components/schemas/ImpersonationContextDto"
+        expiresAt:
+          type: string
+          format: date-time
+    StartImpersonationRequest:
+      type: object
+      additionalProperties: false
+      required: [targetUserId, reason]
+      properties:
+        targetUserId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: 客户端自动生成的模拟身份切换来源说明，用于审计留痕
+    ImpersonationContextDto:
+      type: object
+      required: [id, operatorUserId, targetUserId, reason, startedAt, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        operatorUserId:
+          type: string
+          format: uuid
+        targetUserId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
         expiresAt:
           type: string
           format: date-time
@@ -3987,6 +4122,26 @@ components:
             $ref: "#/components/schemas/ProcessDefinitionDto"
         meta:
           $ref: "#/components/schemas/PageMeta"
+    VisibleProcessDefinitionDto:
+      allOf:
+        - $ref: "#/components/schemas/ProcessDefinitionDto"
+        - type: object
+          required: [versions]
+          properties:
+            versions:
+              type: array
+              items:
+                $ref: "#/components/schemas/ProcessVersionDto"
+    VisibleProcessDefinitionPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/VisibleProcessDefinitionDto"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
     CreateProcessDefinitionRequest:
       type: object
       additionalProperties: false
@@ -4324,6 +4479,12 @@ components:
           enum: [pending, passed, confirmed, rejected, cancelled, skipped]
         actor:
           $ref: "#/components/schemas/UserRef"
+        operator:
+          description: 模拟身份期间建立登录会话的真实操作者；未模拟时与 actor 相同或省略
+          $ref: "#/components/schemas/UserRef"
+        impersonationId:
+          type: string
+          format: uuid
         actionAt:
           type: string
           format: date-time

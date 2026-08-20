@@ -82,4 +82,37 @@ describe("REST API contract boundary", () => {
     await expect(flowPilotApi.definitions.remove(created.definition.id))
       .rejects.toMatchObject({ status: 403, problem: { code: "PERMISSION_DENIED" } });
   });
+
+  it("keeps the real super administrator while authorizing as the impersonated user", async () => {
+    const { flowPilotApi } = await import("../api/flowPilotApi");
+    const { usePrototypeStore } = await import("../state/usePrototypeStore");
+    await flowPilotApi.auth.login("superadmin", "1");
+
+    const candidates = await flowPilotApi.auth.impersonationCandidates({ page: 1, pageSize: 100 });
+    expect(candidates.items.some((user) => user.id === "lina")).toBe(true);
+    expect(candidates.items.some((user) => user.id === "superadmin")).toBe(false);
+
+    const impersonated = await flowPilotApi.auth.startImpersonation("lina", "验证质量审核人数据范围");
+    expect(impersonated).toMatchObject({
+      user: { id: "lina" },
+      operatorUser: { id: "superadmin" },
+      operatorSuperAdmin: true,
+      superAdmin: false,
+    });
+    expect(impersonated.permissions).not.toContain("org-user:编辑");
+    expect(usePrototypeStore.getState()).toMatchObject({
+      personaId: "lina",
+      operatorUserId: "superadmin",
+      operatorSuperAdmin: true,
+    });
+
+    await expect(flowPilotApi.directory.users()).rejects.toMatchObject({
+      status: 403,
+      problem: { code: "PERMISSION_DENIED" },
+    });
+
+    const restored = await flowPilotApi.auth.stopImpersonation();
+    expect(restored.user.id).toBe("superadmin");
+    expect(usePrototypeStore.getState().impersonation).toBeUndefined();
+  });
 });

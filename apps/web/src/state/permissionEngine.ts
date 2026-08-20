@@ -56,6 +56,24 @@ export function readStoredRolePermissions(): Record<string, string[]> {
 }
 
 export function hasUserPermission(userId: string, permission: string) {
+  if (import.meta.env.VITE_API_MODE === "remote") {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem("flowpilot-prototype-v5") ?? "{}") as {
+        state?: {
+          authenticated?: boolean;
+          personaId?: string;
+          sessionPermissions?: string[];
+          sessionSuperAdmin?: boolean;
+        };
+      };
+      const session = stored.state;
+      if (session?.authenticated && session.personaId === userId) {
+        return Boolean(session.sessionSuperAdmin || session.sessionPermissions?.includes(permission));
+      }
+    } catch {
+      return false;
+    }
+  }
   if (userId === "superadmin") return true;
   const user = findIdentityUser(userId);
   if (!user || user.status !== "启用") return false;

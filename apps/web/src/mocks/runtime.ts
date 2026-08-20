@@ -10,10 +10,16 @@ import type {
 import type { DomainUser } from "../state/useIdentityStore";
 import { findIdentityUser } from "../state/useIdentityStore";
 import { hasUserPermission } from "../state/permissionEngine";
+import { createClientUuid } from "../utils/clientId";
+import { usePrototypeStore } from "../state/usePrototypeStore";
+import {
+  LOCAL_AUDIT_STORAGE_KEY,
+  readLocalAuditEvents,
+  writeLocalAuditEvents,
+} from "../utils/localAuditRepository";
 
 const SETTINGS_KEY = "flowpilot-mock-api-settings-v1";
 const IDEMPOTENCY_KEY = "flowpilot-mock-api-idempotency-v1";
-const AUDIT_KEY = "flowpilot-mock-api-audit-v1";
 const MAX_IDEMPOTENCY_RECORDS = 100;
 const MAX_AUDIT_RECORDS = 500;
 
@@ -67,11 +73,22 @@ export const writeMockApiSettings = (patch: Partial<MockApiSettings>) => {
 export const resetMockApiRuntime = () => {
   window.localStorage.removeItem(SETTINGS_KEY);
   window.localStorage.removeItem(IDEMPOTENCY_KEY);
-  window.localStorage.removeItem(AUDIT_KEY);
+  window.localStorage.removeItem(LOCAL_AUDIT_STORAGE_KEY);
+  window.localStorage.removeItem("flowpilot-role-permissions-v1");
+  window.localStorage.removeItem("flowpilot-mock-email-outbox-v1");
+  const resetPrefixes = [
+    "flowpilot-form-designer-draft-v2-",
+    "flowpilot-flow-designer-v2-",
+    "flowpilot-system-list-fields-v1:",
+    "flowpilot-task-center-flow-v1:",
+  ];
+  Object.keys(window.localStorage)
+    .filter((key) => resetPrefixes.some((prefix) => key.startsWith(prefix)))
+    .forEach((key) => window.localStorage.removeItem(key));
 };
 
 export const requestIdOf = (request: Request) =>
-  request.headers.get("X-Request-Id") || globalThis.crypto?.randomUUID?.() || `trace-${Date.now()}`;
+  request.headers.get("X-Request-Id") || `trace-${createClientUuid()}`;
 
 export const apiOk = <T>(request: Request, data: T, init: ResponseInit = {}) => {
   const requestId = requestIdOf(request);
@@ -139,14 +156,20 @@ const bearerActorId = (request: Request) => {
   return token?.startsWith("mock:") ? token.slice(5) : request.headers.get("X-Actor-Id") ?? undefined;
 };
 
-export type AuthResult = { actor: DomainUser; response?: never } | { actor?: never; response: Response };
+export type AuthResult = { actor: DomainUser; operator: DomainUser; response?: never } | { actor?: never; operator?: never; response: Response };
 
 export const requireActor = (request: Request): AuthResult => {
   const actorId = bearerActorId(request);
   if (!actorId) return { response: apiProblem(request, 401, "AUTHENTICATION_REQUIRED", "需要登录", "请先登录后再访问该接口。") };
-  const actor = findIdentityUser(actorId);
-  if (!actor || actor.status !== "启用") return { response: apiProblem(request, 401, "SESSION_INVALID", "会话无效", "当前账号不存在、已停用或会话已经失效。") };
-  return { actor };
+  const operator = findIdentityUser(actorId);
+  if (!operator || operator.status !== "启用") return { response: apiProblem(request, 401, "SESSION_INVALID", "会话无效", "当前账号不存在、已停用或会话已经失效。") };
+  const session = usePrototypeStore.getState();
+  const effectiveId = session.impersonation && session.operatorUserId === operator.id
+    ? session.personaId
+    : operator.id;
+  const actor = findIdentityUser(effectiveId);
+  if (!actor || actor.status !== "启用") return { response: apiProblem(request, 401, "SESSION_INVALID", "会话无效", "当前模拟用户不存在、已停用或会话已经失效。") };
+  return { actor, operator };
 };
 
 export const requirePermission = (request: Request, permission: string): AuthResult => {
@@ -248,31 +271,28 @@ export const withIdempotency = async (request: Request, operation: () => Promise
       body: await response.clone().text(),
       createdAt: new Date().toISOString(),
     };
-    window.localStorage.setItem(IDEMPOTENCY_KEY, JSON.stringify([record, ...records].slice(0, MAX_IDEMPOTENCY_RECORDS)));
+    const latestRecords = readIdempotencyRecords().filter((item) => !(item.scope === scope && item.key === key));
+    window.localStorage.setItem(IDEMPOTENCY_KEY, JSON.stringify([record, ...latestRecords].slice(0, MAX_IDEMPOTENCY_RECORDS)));
   }
   return response;
 };
 
 export const appendAuditEvent = (event: Omit<AuditEvent, "id" | "occurredAt"> & { occurredAt?: string }) => {
-  let current: AuditEvent[] = [];
-  try {
-    current = JSON.parse(window.localStorage.getItem(AUDIT_KEY) ?? "[]") as AuditEvent[];
-  } catch {
-    current = [];
-  }
+  const current = readLocalAuditEvents();
+  const session = usePrototypeStore.getState();
+  const operator = session.impersonation ? findIdentityUser(session.operatorUserId) : undefined;
   const next: AuditEvent = {
     ...event,
-    id: globalThis.crypto?.randomUUID?.() ?? `audit-${Date.now()}`,
+    ...(session.impersonation && event.actorId === session.personaId ? {
+      operatorId: operator?.id,
+      operatorName: operator?.name,
+      impersonationId: session.impersonation.id,
+    } : {}),
+    id: createClientUuid(),
     occurredAt: event.occurredAt ?? new Date().toISOString(),
   };
-  window.localStorage.setItem(AUDIT_KEY, JSON.stringify([next, ...current].slice(0, MAX_AUDIT_RECORDS)));
+  writeLocalAuditEvents([next, ...current].slice(0, MAX_AUDIT_RECORDS));
   return next;
 };
 
-export const readAuditEvents = () => {
-  try {
-    return JSON.parse(window.localStorage.getItem(AUDIT_KEY) ?? "[]") as AuditEvent[];
-  } catch {
-    return [];
-  }
-};
+export const readAuditEvents = readLocalAuditEvents;

@@ -24,6 +24,10 @@ export const cacheProcessVersion = (definitionId: string, version: ProcessVersio
         : [structuredClone(version), ...definition.versions],
       updatedAt: version.updatedAt,
       updatedBy: version.updatedBy,
+      nextVersionNumber: Math.max(
+        definition.nextVersionNumber,
+        Number(version.version.match(/\d+/)?.[0] ?? 0) + 1,
+      ),
     } : definition),
   }));
 };
@@ -43,13 +47,17 @@ export const removeCachedProcessVersion = (definitionId: string, versionId: stri
 };
 
 export const cacheProcessRuntime = (instance: ProcessInstance, tasks?: WorkflowTask[]) => {
-  usePrototypeStore.setState((state) => ({
-    instances: state.instances.some((item) => item.id === instance.id)
+  usePrototypeStore.setState((state) => {
+    const instances = state.instances.some((item) => item.id === instance.id)
       ? state.instances.map((item) => item.id === instance.id ? structuredClone(instance) : item)
-      : [structuredClone(instance), ...state.instances],
-    tasks: tasks ? [
-      ...state.tasks.filter((task) => task.instanceId !== instance.id),
-      ...structuredClone(tasks),
-    ] : state.tasks,
-  }));
+      : [structuredClone(instance), ...state.instances];
+    return {
+      instances,
+      tasks: tasks ? [
+        ...state.tasks.filter((task) => task.instanceId !== instance.id),
+        ...structuredClone(tasks),
+      ] : state.tasks,
+    };
+  });
+  useProcessDefinitionStore.getState().synchronizeInstanceCounts(usePrototypeStore.getState().instances);
 };

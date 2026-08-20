@@ -17,6 +17,9 @@ import {
   useProcessDefinitionStore,
 } from "../../state/useProcessDefinitionStore";
 import { canPersonaLaunchDefinition } from "../../state/rolePermissions";
+import { hasUserPermission } from "../../state/permissionEngine";
+import { usePrototypeStore } from "../../state/usePrototypeStore";
+import { canUserViewDefinition, canUserViewInstance } from "../../state/workflowAccess";
 import { compareDomainTimestamps } from "../../utils/domainTime";
 import type { CompleteDesignerSnapshot } from "../../utils/designerStorage";
 import { MOCK_API_BASE_URL } from "../apiBase";
@@ -31,6 +34,7 @@ import {
   pageQuery,
   paginate,
   parseJsonBody,
+  requireActor,
   requirePermission,
   withIdempotency,
 } from "../runtime";
@@ -120,6 +124,30 @@ export const definitionHandlers = [
         }] : [];
       });
     return apiOk(request, items);
+  }),
+
+  http.get(`${API}/me/visible-process-definitions`, async ({ request }) => {
+    const simulated = await applyMockScenario(request);
+    if (simulated) return simulated;
+    const auth = requireActor(request);
+    if (auth.response) return auth.response;
+    if (!hasUserPermission(auth.actor.id, "work-list:查看") && !hasUserPermission(auth.actor.id, "work-launch:查看")) {
+      return apiProblem(request, 403, "PERMISSION_DENIED", "没有操作权限", "当前账号没有流程清单或流程发起查看权限。 ");
+    }
+    const pagination = pageQuery(request);
+    if ("response" in pagination) return pagination.response;
+    const visibleInstances = usePrototypeStore.getState().instances.filter((instance) => canUserViewInstance(auth.actor.id, instance));
+    const visibleVersionIds = new Set(visibleInstances.map((instance) => instance.versionId).filter(Boolean));
+    const items = useProcessDefinitionStore.getState().definitions
+      .filter((definition) => canUserViewDefinition(auth.actor.id, definition.id) || visibleInstances.some((instance) => instance.definitionId === definition.id))
+      .map((definition) => ({
+        ...definition,
+        versions: definition.versions.filter((version) =>
+          version.id === definition.publishedVersionId || visibleVersionIds.has(version.id)),
+      }))
+      .map(definitionListItem)
+      .sort((left, right) => compareDomainTimestamps(right.updatedAt, left.updatedAt));
+    return apiOk(request, paginate(items, pagination.number, pagination.size));
   }),
 
   http.get(`${API}/process-definitions`, async ({ request }) => {

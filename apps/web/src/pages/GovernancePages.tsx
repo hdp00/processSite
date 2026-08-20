@@ -73,20 +73,16 @@ import {
 } from "../state/useOrganizationStore";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { readAuditEvents } from "../mocks/runtime";
+import { readLocalAuditEvents } from "../utils/localAuditRepository";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
 import { collectRuntimeAuditEvents } from "../utils/runtimeAudit";
+import { deriveAllWorkflowGroupStatistics } from "../state/workflowGroupStatistics";
+import { flowPilotApi } from "../api/flowPilotApi";
+import type { AuditEvent } from "../api/contracts";
 import "./governance-pages.css";
 
 type EnableStatus = "启用" | "停用";
 type JobTitle = string;
-
-const roleOptions = ["超级管理员", "系统管理员", "流程管理员", "文控专员", "研发审核员", "质量审核员", "生产审核员", "只读观察员"];
-const assignableRoleOptions = roleOptions.filter((role) => role !== "超级管理员");
-const peopleNames = [
-  "王敏", "张伟", "林晓", "赵磊", "陈晨", "刘洋", "周宁", "孙悦", "吴昊", "徐洁", "杨帆", "胡静",
-  "高远", "许诺", "郑宇", "唐薇", "韩松", "曹颖", "冯浩", "邓琳", "蒋峰", "沈佳", "袁博", "程雪",
-];
 
 const departmentByIndex = [
   { value: ["rd", "rd-software"], path: "研发 / 软件" },
@@ -159,6 +155,7 @@ export function UserManagementPage() {
   const confirmEditorClose = useCloseEditorConfirmation();
   const users = useIdentityStore((state) => state.users);
   const setUsers = useIdentityStore((state) => state.setUsers);
+  const roles = useIdentityStore((state) => state.roles);
   const jobTitles = useOrganizationStore((state) => state.jobTitles);
   const departments = useOrganizationStore((state) => state.departments);
   const departmentOptions = useMemo(() => departmentCascaderOptions(departments), [departments]);
@@ -175,7 +172,37 @@ export function UserManagementPage() {
     description: "离开后，当前用户编辑内容将丢失。",
   });
 
+  const cacheUser = (user: Omit<UserRecord, "password">) => setUsers((rows) => {
+    const current = rows.find((item) => item.id === user.id);
+    const next = { ...current, ...user, password: current?.password ?? "" } as UserRecord;
+    return current ? rows.map((item) => item.id === user.id ? next : item) : [next, ...rows];
+  });
+  const changeUserStatus = async (record: UserRecord) => {
+    try {
+      const resource = await flowPilotApi.directory.userResource(record.id);
+      const updated = await flowPilotApi.directory.updateUserStatus(
+        record.id,
+        record.status === "启用" ? "停用" : "启用",
+        resource.etag ?? "*",
+      );
+      cacheUser(updated);
+      message.success(`账号已${updated.status}`);
+    } catch {
+      message.error("账号状态更新失败，请刷新后重试");
+    }
+  };
+  const resetUserPassword = async (record: UserRecord) => {
+    try {
+      const result = await flowPilotApi.directory.resetPassword(record.id);
+      message.success(`已为 ${record.name} 生成临时密码：${result.temporaryPassword}`);
+    } catch {
+      message.error("密码重置失败，请稍后重试");
+    }
+  };
+
   const activeJobTitles = jobTitles.filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
+  const roleOptions = roles.map((role) => role.name);
+  const assignableRoleOptions = roles.filter((role) => !role.builtIn && role.status === "启用").map((role) => role.name);
   const managerTitleName = jobTitles.find((item) => item.id === "JOB-001")?.name;
   const drawerJobTitle = drawerUser !== "new" ? drawerUser?.jobTitle : undefined;
   const selectableJobTitles = jobTitles
@@ -218,12 +245,9 @@ export function UserManagementPage() {
         <Space size={4}>
           <Tooltip title={record.builtIn ? "系统内置账号不可编辑" : "编辑用户"}><Button disabled={record.builtIn} type="text" aria-label={`编辑用户：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>
           <Tooltip title={record.status === "启用" ? "停用账号" : "启用账号"}>
-            <Popconfirm disabled={record.builtIn} title={`确认${record.status === "启用" ? "停用" : "启用"} ${record.name}？`} onConfirm={() => {
-              setUsers((rows) => rows.map((item) => item.id === record.id ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item));
-              message.success(`账号已${record.status === "启用" ? "停用" : "启用"}`);
-            }}><Button disabled={record.builtIn} type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}用户：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm>
+            <Popconfirm disabled={record.builtIn} title={`确认${record.status === "启用" ? "停用" : "启用"} ${record.name}？`} onConfirm={() => void changeUserStatus(record)}><Button disabled={record.builtIn} type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}用户：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm>
           </Tooltip>
-          <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : "重置密码"}><Popconfirm disabled={record.builtIn} title="生成临时密码并立即生效？" onConfirm={() => { setUsers((rows) => rows.map((item) => item.id === record.id ? { ...item, password: "a" } : item)); message.success(`已为 ${record.name} 重置密码：a`); }}><Button disabled={record.builtIn} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} /></Popconfirm></Tooltip>
+          <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : "重置密码"}><Popconfirm disabled={record.builtIn} title="生成临时密码并立即生效？" onConfirm={() => void resetUserPassword(record)}><Button disabled={record.builtIn} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} /></Popconfirm></Tooltip>
         </Space>
       ),
     },
@@ -260,15 +284,22 @@ export function UserManagementPage() {
           message={drawerUser === "new" ? "部门、职务与角色相互独立" : "密码和账号状态使用列表操作维护"}
           description={drawerUser === "new" ? "邮箱用于流程通知；经理职务不会自动获得管理权限，一个用户可拥有多个角色。" : "编辑页维护用户基本资料（含通知邮箱）、部门、职务和角色；密码及账号状态仍通过列表操作处理。"}
         />
-        <Form form={form} layout="vertical" requiredMark="optional" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => {
+        <Form form={form} layout="vertical" requiredMark="optional" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
           const path = values.department.length === 1 ? departmentOptions.find((item) => item.value === values.department[0])?.label : `${departmentOptions.find((item) => item.value === values.department[0])?.label} / ${departmentOptions.find((item) => item.value === values.department[0])?.children?.find((item) => item.value === values.department[1])?.label}`;
-          if (drawerUser === "new") {
-            const created: UserRecord = { id: `USR-${crypto.randomUUID()}`, account: values.account, email: String(values.email).trim(), password: values.password, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用", lastLogin: "从未登录" };
-            setUsers((rows) => [created, ...rows]);
-            message.success("用户已创建");
-          } else if (drawerUser) {
-            setUsers((rows) => rows.map((item) => item.id === drawerUser.id ? { ...item, account: values.account, email: String(values.email).trim(), name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles } : item));
-            message.success("用户信息已保存");
+          try {
+            if (drawerUser === "new") {
+              const created = await flowPilotApi.directory.createUser({ account: values.account, email: String(values.email).trim(), password: values.password, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用" });
+              cacheUser(created);
+              message.success("用户已创建");
+            } else if (drawerUser) {
+              const resource = await flowPilotApi.directory.userResource(drawerUser.id);
+              const updated = await flowPilotApi.directory.updateUser(drawerUser.id, { account: values.account, email: String(values.email).trim(), name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles }, resource.etag);
+              cacheUser(updated);
+              message.success("用户信息已保存");
+            }
+          } catch {
+            message.error("用户保存失败，请检查输入或刷新后重试");
+            return;
           }
           setEditorDirty(false);
           setDrawerUser(null);
@@ -304,11 +335,19 @@ export function UserManagementPage() {
 export function DepartmentManagementPage() {
   const confirmEditorClose = useCloseEditorConfirmation();
   const [section, setSection] = useState<"departments" | "jobTitles">("departments");
-  const departments = useOrganizationStore((state) => state.departments);
+  const storedDepartments = useOrganizationStore((state) => state.departments);
   const setDepartments = useOrganizationStore((state) => state.setDepartments);
-  const jobTitles = useOrganizationStore((state) => state.jobTitles);
+  const storedJobTitles = useOrganizationStore((state) => state.jobTitles);
   const setJobTitles = useOrganizationStore((state) => state.setJobTitles);
-  const setIdentityUsers = useIdentityStore((state) => state.setUsers);
+  const identityUsers = useIdentityStore((state) => state.users);
+  const departments = useMemo(() => storedDepartments.map((department) => {
+    const users = identityUsers.filter((user) => user.department.includes(department.key)).length;
+    return { ...department, users, referenced: users > 0 };
+  }), [identityUsers, storedDepartments]);
+  const jobTitles = useMemo(() => storedJobTitles.map((jobTitle) => ({
+    ...jobTitle,
+    users: identityUsers.filter((user) => user.jobTitle === jobTitle.name).length,
+  })), [identityUsers, storedJobTitles]);
   const [selectedKey, setSelectedKey] = useState("rd");
   const [editor, setEditor] = useState<{ mode: "new-root" | "new-child" | "edit"; record?: DepartmentRecord } | null>(null);
   const [jobTitleEditor, setJobTitleEditor] = useState<JobTitleRecord | "new" | null>(null);
@@ -320,6 +359,82 @@ export function DepartmentManagementPage() {
     title: "组织信息尚未保存",
     description: "离开后，当前部门或职务的编辑内容将丢失。",
   });
+
+  const cacheDepartment = (record: import("../api/contracts").DepartmentRecord) => setDepartments((rows) => {
+    const current = rows.find((item) => item.key === record.id);
+    const next: DepartmentRecord = {
+      key: record.id,
+      name: record.name,
+      path: record.path,
+      level: record.parentId ? 2 : 1,
+      parentKey: record.parentId,
+      sort: record.sortOrder,
+      status: record.status,
+      users: record.memberCount,
+      referenced: record.memberCount > 0,
+      description: record.description ?? current?.description ?? "",
+    };
+    return current ? rows.map((item) => item.key === record.id ? next : item) : [...rows, next];
+  });
+  const cachePosition = (record: import("../api/contracts").PositionRecord) => setJobTitles((rows) => {
+    const current = rows.find((item) => item.id === record.id);
+    const next: JobTitleRecord = {
+      id: record.id,
+      name: record.name,
+      description: record.description,
+      status: record.status,
+      users: record.memberCount,
+      sort: record.sortOrder ?? current?.sort ?? (rows.length + 1) * 10,
+    };
+    return current ? rows.map((item) => item.id === record.id ? next : item) : [...rows, next];
+  });
+  const changeDepartmentStatus = async (record: DepartmentRecord) => {
+    try {
+      const resource = await flowPilotApi.organization.department(record.key);
+      cacheDepartment(await flowPilotApi.organization.updateDepartment(
+        record.key,
+        { status: record.status === "启用" ? "停用" : "启用" },
+        resource.etag ?? "*",
+      ));
+      message.success(`部门已${record.status === "启用" ? "停用" : "启用"}`);
+    } catch {
+      message.error("部门状态更新失败，请刷新后重试");
+    }
+  };
+  const deleteDepartment = async (record: DepartmentRecord) => {
+    try {
+      const resource = await flowPilotApi.organization.department(record.key);
+      await flowPilotApi.organization.removeDepartment(record.key, resource.etag ?? "*");
+      setDepartments((rows) => rows.filter((item) => item.key !== record.key));
+      setSelectedKey("rd");
+      message.success("未引用部门已删除");
+    } catch {
+      message.error("部门删除失败，请确认没有用户或下级部门引用");
+    }
+  };
+  const changePositionStatus = async (record: JobTitleRecord) => {
+    try {
+      const resource = await flowPilotApi.organization.position(record.id);
+      cachePosition(await flowPilotApi.organization.updatePosition(
+        record.id,
+        { status: record.status === "启用" ? "停用" : "启用" },
+        resource.etag ?? "*",
+      ));
+      message.success(`职务已${record.status === "启用" ? "停用" : "启用"}`);
+    } catch {
+      message.error("职务状态更新失败，请刷新后重试");
+    }
+  };
+  const deletePosition = async (record: JobTitleRecord) => {
+    try {
+      const resource = await flowPilotApi.organization.position(record.id);
+      await flowPilotApi.organization.removePosition(record.id, resource.etag ?? "*");
+      setJobTitles((rows) => rows.filter((item) => item.id !== record.id));
+      message.success("职务已删除");
+    } catch {
+      message.error("职务删除失败，请确认没有用户引用");
+    }
+  };
 
   const selected = departments.find((item) => item.key === selectedKey) ?? departments[0];
   const treeData = departments.filter((item) => item.level === 1).sort((a, b) => a.sort - b.sort).map((root) => ({
@@ -355,8 +470,8 @@ export function DepartmentManagementPage() {
       align: "center",
       render: (_, record) => <Space size={4}>
         <Tooltip title="编辑职务"><Button type="text" aria-label={`编辑职务：${record.name}`} icon={<EditOutlined />} onClick={() => openJobTitleEditor(record)} /></Tooltip>
-        <Tooltip title={record.status === "启用" ? "停用职务" : "启用职务"}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}职务：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => { setJobTitles((rows) => rows.map((item) => item.id === record.id ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item)); message.success(`职务已${record.status === "启用" ? "停用" : "启用"}`); }} /></Tooltip>
-        <Tooltip title={record.users ? "已有用户使用，不能删除" : "删除职务"}><Popconfirm disabled={record.users > 0} title="确认删除这个职务？" onConfirm={() => { setJobTitles((rows) => rows.filter((item) => item.id !== record.id)); message.success("职务已删除"); }}><Button type="text" danger disabled={record.users > 0} icon={<DeleteOutlined />} /></Popconfirm></Tooltip>
+        <Tooltip title={record.status === "启用" ? "停用职务" : "启用职务"}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}职务：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => void changePositionStatus(record)} /></Tooltip>
+        <Tooltip title={record.users ? "已有用户使用，不能删除" : "删除职务"}><Popconfirm disabled={record.users > 0} title="确认删除这个职务？" onConfirm={() => void deletePosition(record)}><Button type="text" danger disabled={record.users > 0} icon={<DeleteOutlined />} /></Popconfirm></Tooltip>
       </Space>,
     },
   ];
@@ -396,8 +511,8 @@ export function DepartmentManagementPage() {
             <div className="gov-section-title">维护规则</div>
             <Alert type={selected.referenced ? "warning" : "success"} showIcon message={selected.referenced ? "该部门已有用户或历史流程引用，不允许删除" : "当前部门尚未被引用，可以删除"} description="停用后不能再分配给新用户；现有用户与历史数据仍保留该部门路径，待管理员完成迁移。" />
             <Space>
-              <Popconfirm title={`确认${selected.status === "启用" ? "停用" : "启用"}此部门？`} onConfirm={() => { setDepartments((rows) => rows.map((item) => item.key === selected.key ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item)); message.success(`部门已${selected.status === "启用" ? "停用" : "启用"}`); }}><Button icon={selected.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />}>{selected.status === "启用" ? "停用部门" : "启用部门"}</Button></Popconfirm>
-              <Popconfirm disabled={selected.referenced} title="确认删除此部门？" onConfirm={() => { setDepartments((rows) => rows.filter((item) => item.key !== selected.key)); setSelectedKey("rd"); message.success("未引用部门已删除"); }}><Button danger disabled={selected.referenced} icon={<DeleteOutlined />}>删除部门</Button></Popconfirm>
+              <Popconfirm title={`确认${selected.status === "启用" ? "停用" : "启用"}此部门？`} onConfirm={() => void changeDepartmentStatus(selected)}><Button icon={selected.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />}>{selected.status === "启用" ? "停用部门" : "启用部门"}</Button></Popconfirm>
+              <Popconfirm disabled={selected.referenced} title="确认删除此部门？" onConfirm={() => void deleteDepartment(selected)}><Button danger disabled={selected.referenced} icon={<DeleteOutlined />}>删除部门</Button></Popconfirm>
             </Space>
           </div>
         </Card>
@@ -411,23 +526,23 @@ export function DepartmentManagementPage() {
       </>}
       <Drawer width={520} open={section === "departments" && editor !== null} onClose={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })} title={editor?.mode === "edit" ? "编辑部门" : editor?.mode === "new-child" ? `在“${selected.name}”下新增二级部门` : "新增一级部门"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
         {editor?.mode === "new-child" && selected.level === 2 ? <Alert type="error" showIcon message="二级部门不能继续添加下级" /> : null}
-        <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => {
-          if (editor?.mode === "edit") {
-            setDepartments((rows) => rows.map((item) => item.key === selected.key ? { ...item, name: values.name, path: item.parentKey ? `${rows.find((parent) => parent.key === item.parentKey)?.name} / ${values.name}` : values.name, sort: values.sort, status: values.status ? "启用" : "停用", description: values.description } : item));
-            const parentName = selected.parentKey ? departments.find((item) => item.key === selected.parentKey)?.name : undefined;
-            setIdentityUsers((users) => users.map((user) => user.department.includes(selected.key) ? {
-              ...user,
-              departmentPath: parentName ? `${parentName} / ${values.name}` : user.department.length > 1
-                ? `${values.name} / ${departments.find((item) => item.key === user.department[1])?.name ?? user.departmentPath.split(" / ").at(-1)}`
-                : values.name,
-            } : user));
-            message.success("部门信息已保存");
-          } else {
-            const isChild = editor?.mode === "new-child";
-            const key = `dept-${Date.now()}`;
-            setDepartments((rows) => [...rows, { key, name: values.name, path: isChild ? `${selected.name} / ${values.name}` : values.name, level: isChild ? 2 : 1, parentKey: isChild ? selected.key : undefined, sort: values.sort, status: values.status ? "启用" : "停用", users: 0, referenced: false, description: values.description }]);
-            setSelectedKey(key);
-            message.success("部门已创建");
+        <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
+          try {
+            if (editor?.mode === "edit") {
+              const resource = await flowPilotApi.organization.department(selected.key);
+              const saved = await flowPilotApi.organization.updateDepartment(selected.key, { name: values.name, sortOrder: values.sort, status: values.status ? "启用" : "停用", description: values.description }, resource.etag ?? "*");
+              cacheDepartment(saved);
+              message.success("部门信息已保存");
+            } else {
+              const isChild = editor?.mode === "new-child";
+              const saved = await flowPilotApi.organization.createDepartment({ name: values.name, parentId: isChild ? selected.key : undefined, sortOrder: values.sort, description: values.description });
+              cacheDepartment(saved);
+              setSelectedKey(saved.id);
+              message.success("部门已创建");
+            }
+          } catch {
+            message.error("部门保存失败，请检查名称或刷新后重试");
+            return;
           }
           setEditorDirty(false);
           setEditor(null);
@@ -440,17 +555,19 @@ export function DepartmentManagementPage() {
       </Drawer>
       <Drawer width={520} open={section === "jobTitles" && jobTitleEditor !== null} onClose={() => confirmEditorClose(editorDirty, "职务信息", () => { setEditorDirty(false); setJobTitleEditor(null); })} title={jobTitleEditor === "new" ? "新增职务" : "编辑职务"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "职务信息", () => { setEditorDirty(false); setJobTitleEditor(null); })}>取消</Button><Button type="primary" onClick={() => jobTitleForm.submit()}>保存</Button></Space>}>
         {jobTitleEditor !== "new" && jobTitleEditor?.users ? <Alert className="gov-drawer-alert" type="info" showIcon message={`当前有 ${jobTitleEditor.users} 名用户使用该职务`} description="可以修改名称、排序、状态和说明；名称修改后所有关联用户同步显示新名称，但该职务不能直接删除。" /> : null}
-        <Form form={jobTitleForm} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => {
-          if (jobTitleEditor === "new") {
-            const sequence = Math.max(0, ...jobTitles.map((item) => Number(item.id.match(/\d+$/)?.[0] ?? 0))) + 1;
-            setJobTitles((rows) => [...rows, { id: `JOB-${String(sequence).padStart(3, "0")}`, name: values.name.trim(), sort: values.sort, status: values.status ? "启用" : "停用", users: 0, description: values.description }]);
-            message.success("职务已新增");
-          } else if (jobTitleEditor) {
-            setJobTitles((rows) => rows.map((item) => item.id === jobTitleEditor.id ? { ...item, name: values.name.trim(), sort: values.sort, status: values.status ? "启用" : "停用", description: values.description } : item));
-            if (jobTitleEditor.name !== values.name.trim()) {
-              setIdentityUsers((users) => users.map((user) => user.jobTitle === jobTitleEditor.name ? { ...user, jobTitle: values.name.trim() } : user));
+        <Form form={jobTitleForm} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
+          try {
+            if (jobTitleEditor === "new") {
+              cachePosition(await flowPilotApi.organization.createPosition({ name: values.name.trim(), description: values.description, sortOrder: values.sort }));
+              message.success("职务已新增");
+            } else if (jobTitleEditor) {
+              const resource = await flowPilotApi.organization.position(jobTitleEditor.id);
+              cachePosition(await flowPilotApi.organization.updatePosition(jobTitleEditor.id, { name: values.name.trim(), description: values.description, status: values.status ? "启用" : "停用", sortOrder: values.sort }, resource.etag ?? "*"));
+              message.success("职务信息已保存");
             }
-            message.success("职务信息已保存");
+          } catch {
+            message.error("职务保存失败，请检查名称或刷新后重试");
+            return;
           }
           setEditorDirty(false);
           setJobTitleEditor(null);
@@ -469,37 +586,6 @@ export function DepartmentManagementPage() {
 }
 
 type RoleRecord = DomainRole;
-const ROLE_STORAGE_KEY = "flowpilot-governance-roles-v1";
-const superAdminRole: RoleRecord = {
-  id: "ROLE-SUPER",
-  name: "超级管理员",
-  code: "super_admin",
-  description: "系统内置最高权限角色；权限不可修改，不参与流程权限组成员计算。",
-  pagePermissions: 11,
-  actionPermissions: 37,
-  users: 1,
-  status: "启用",
-  members: [],
-  builtIn: true,
-};
-const initialRoles: RoleRecord[] = [
-  superAdminRole,
-  { id: "ROLE-001", name: "系统管理员", code: "system_admin", description: "维护用户、角色、权限及系统参数", pagePermissions: 19, actionPermissions: 43, users: 3, status: "启用", members: ["王敏", "林晓", "赵磊"] },
-  { id: "ROLE-002", name: "流程管理员", code: "workflow_admin", description: "创建、配置、发布和停用流程", pagePermissions: 8, actionPermissions: 21, users: 7, status: "启用", members: ["王敏", "陈晨", "刘洋", "周宁", "孙悦", "吴昊", "徐洁"] },
-  { id: "ROLE-003", name: "文控专员", code: "document_controller", description: "发起、重新提交与关闭受控文件流程", pagePermissions: 6, actionPermissions: 14, users: 12, status: "启用", members: peopleNames.slice(0, 12) },
-  { id: "ROLE-004", name: "研发审核员", code: "rd_reviewer", description: "系统页面权限；具体流程处理资格由流程权限组决定", pagePermissions: 4, actionPermissions: 7, users: 64, status: "启用", members: peopleNames.slice(2, 14) },
-  { id: "ROLE-005", name: "质量审核员", code: "quality_reviewer", description: "质量审核相关页面和动作权限", pagePermissions: 4, actionPermissions: 7, users: 35, status: "启用", members: peopleNames.slice(5, 17) },
-  { id: "ROLE-006", name: "生产审核员", code: "production_reviewer", description: "生产审核相关页面和动作权限", pagePermissions: 4, actionPermissions: 7, users: 89, status: "启用", members: peopleNames.slice(8, 20) },
-  { id: "ROLE-007", name: "只读观察员", code: "readonly_observer", description: "可查看被授权的流程，无处理权限", pagePermissions: 3, actionPermissions: 2, users: 28, status: "启用", members: peopleNames.slice(10, 22) },
-];
-
-function nextRoleIdentity(roles: RoleRecord[]) {
-  const sequence = Math.max(0, ...roles.map((role) => Number(role.id.match(/\d+$/)?.[0] ?? 0))) + 1;
-  return {
-    id: `ROLE-${String(sequence).padStart(3, "0")}`,
-    code: `role_${String(sequence).padStart(4, "0")}`,
-  };
-}
 
 export function RoleManagementPage() {
   const confirmEditorClose = useCloseEditorConfirmation();
@@ -522,9 +608,23 @@ export function RoleManagementPage() {
     title: "角色信息尚未保存",
     description: "离开后，角色资料和成员选择的修改将丢失。",
   });
-  useEffect(() => {
-    window.localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(roles));
-  }, [roles]);
+  const cacheRole = (record: RoleRecord) => setRoles((rows) =>
+    rows.some((item) => item.id === record.id)
+      ? rows.map((item) => item.id === record.id ? record : item)
+      : [...rows, record]);
+  const changeRoleStatus = async (record: RoleRecord) => {
+    try {
+      const resource = await flowPilotApi.directory.roleResource(record.id);
+      cacheRole(await flowPilotApi.directory.updateRole(
+        record.id,
+        { status: record.status === "启用" ? "停用" : "启用" },
+        resource.etag,
+      ));
+      message.success(`角色已${record.status === "启用" ? "停用" : "启用"}`);
+    } catch {
+      message.error("角色状态更新失败，请刷新后重试");
+    }
+  };
   const filtered = roles.filter((role) => `${role.name}${role.description}`.toLowerCase().includes(keyword.toLowerCase()));
   const configuredRoleJobTitles = organizationJobTitles.filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
   const roleMemberCandidates = identityUsers.filter((user) => !user.builtIn).map((user) => ({
@@ -558,7 +658,7 @@ export function RoleManagementPage() {
     { title: "动作权限", dataIndex: "actionPermissions", width: 105, render: (value: number) => <strong>{value}</strong> },
     { title: "用户数", dataIndex: "users", width: 110, render: (value: number, record) => record.builtIn ? <Tag bordered={false}>1 个内置账号</Tag> : <Button type="link" className="gov-count-link" onClick={() => { setMemberRole(record); setMemberKeyword(""); }}>{value} 人</Button> },
     { title: "状态", dataIndex: "status", width: 88, render: (status: EnableStatus) => <StatusTag status={status} /> },
-    { title: "操作", fixed: "right", width: 146, align: "center", render: (_, record) => <Space size={4}><Tooltip title={record.builtIn ? "系统内置角色不可编辑" : "编辑角色"}><Button disabled={record.builtIn} type="text" aria-label="编辑角色" icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip><Tooltip title={record.builtIn ? "查看全部权限（只读）" : "配置权限"}><Button type="text" aria-label={record.builtIn ? "查看超级管理员权限" : "配置权限"} icon={record.builtIn ? <LockOutlined /> : <SafetyCertificateOutlined />} onClick={() => navigate(`/admin/permissions?roleId=${encodeURIComponent(record.id)}`)} /></Tooltip><Tooltip title={record.builtIn ? "系统内置角色不可停用" : record.status === "启用" ? "停用" : "启用"}><Button disabled={record.builtIn} type="text" aria-label={record.status === "启用" ? "停用角色" : "启用角色"} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => { setRoles((rows) => rows.map((item) => item.id === record.id ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item)); message.success(`角色已${record.status === "启用" ? "停用" : "启用"}`); }} /></Tooltip></Space> },
+    { title: "操作", fixed: "right", width: 146, align: "center", render: (_, record) => <Space size={4}><Tooltip title={record.builtIn ? "系统内置角色不可编辑" : "编辑角色"}><Button disabled={record.builtIn} type="text" aria-label="编辑角色" icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip><Tooltip title={record.builtIn ? "查看全部权限（只读）" : "配置权限"}><Button type="text" aria-label={record.builtIn ? "查看超级管理员权限" : "配置权限"} icon={record.builtIn ? <LockOutlined /> : <SafetyCertificateOutlined />} onClick={() => navigate(`/admin/permissions?roleId=${encodeURIComponent(record.id)}`)} /></Tooltip><Tooltip title={record.builtIn ? "系统内置角色不可停用" : record.status === "启用" ? "停用" : "启用"}><Button disabled={record.builtIn} type="text" aria-label={record.status === "启用" ? "停用角色" : "启用角色"} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => void changeRoleStatus(record)} /></Tooltip></Space> },
   ];
   return (
     <div className="page-stack gov-page">
@@ -569,13 +669,20 @@ export function RoleManagementPage() {
         <Table<RoleRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 940 }} pagination={{ pageSize: 10, showSizeChanger: false }} />
       </Card>
       <Drawer width={620} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "角色信息", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增角色" : "编辑角色"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "角色信息", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
-        <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => {
-          if (editor === "new") setRoles((rows) => {
-            const identity = nextRoleIdentity(rows);
-            return [...rows, { ...identity, name: values.name.trim(), description: values.description, status: values.status ? "启用" : "停用", members: editingMembers, memberUserIds: identityUsers.filter((user) => editingMembers.includes(user.name)).map((user) => user.id), users: editingMembers.length, pagePermissions: 0, actionPermissions: 0 }];
-          });
-          else if (editor) setRoles((rows) => rows.map((item) => item.id === editor.id ? { ...item, name: values.name.trim(), description: values.description, status: values.status ? "启用" : "停用", members: editingMembers, memberUserIds: identityUsers.filter((user) => editingMembers.includes(user.name)).map((user) => user.id), users: editingMembers.length } : item));
-          message.success("角色已保存"); setEditorDirty(false); setEditor(null);
+        <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
+          const patch = { name: values.name.trim(), description: values.description, status: values.status ? "启用" as const : "停用" as const, members: editingMembers };
+          try {
+            if (editor === "new") cacheRole(await flowPilotApi.directory.createRole(patch));
+            else if (editor) {
+              const resource = await flowPilotApi.directory.roleResource(editor.id);
+              cacheRole(await flowPilotApi.directory.updateRole(editor.id, patch, resource.etag));
+            }
+            message.success("角色已保存");
+          } catch {
+            message.error("角色保存失败，请检查名称或刷新后重试");
+            return;
+          }
+          setEditorDirty(false); setEditor(null);
         }}>
           <Form.Item name="name" label="角色名称" rules={[
             { required: true, whitespace: true, message: "请输入角色名称" },
@@ -689,13 +796,8 @@ function readRolePermissionMap(): RolePermissionMap {
   }
 }
 
-function writeRolePermissionMap(value: RolePermissionMap) {
-  window.localStorage.setItem(ROLE_PERMISSION_STORAGE_KEY, JSON.stringify(value));
-}
-
 function readStoredRoles(): RoleRecord[] {
-  const roles = useIdentityStore.getState().roles;
-  return roles.length ? roles : initialRoles;
+  return useIdentityStore.getState().roles;
 }
 
 function summarizePermissions(grants: Iterable<string>) {
@@ -710,10 +812,6 @@ function applyRolePermissionStats(roles: RoleRecord[], permissionMap: RolePermis
   return roles.map((role) => ({ ...role, ...summarizePermissions(permissionMap[role.id] ?? []) }));
 }
 
-function loadRolesWithPermissionStats() {
-  return applyRolePermissionStats(readStoredRoles(), readRolePermissionMap());
-}
-
 function permissionSetsEqual(left: Iterable<string>, right: Iterable<string>) {
   const leftValues = new Set(left);
   const rightValues = new Set(right);
@@ -722,12 +820,16 @@ function permissionSetsEqual(left: Iterable<string>, right: Iterable<string>) {
 
 export function PermissionManagementPage() {
   const setIdentityRoles = useIdentityStore((state) => state.setRoles);
+  const identityRoles = useIdentityStore((state) => state.roles);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [availableRoles] = useState(loadRolesWithPermissionStats);
+  const [permissionsByRole, setPermissionsByRole] = useState(readRolePermissionMap);
+  const availableRoles = useMemo(
+    () => applyRolePermissionStats(identityRoles, permissionsByRole),
+    [identityRoles, permissionsByRole],
+  );
   const requestedRoleId = searchParams.get("roleId");
   const initialRoleId = availableRoles.some((role) => role.id === requestedRoleId) ? requestedRoleId! : "ROLE-002";
   const [roleId, setRoleId] = useState(initialRoleId);
-  const [permissionsByRole, setPermissionsByRole] = useState(readRolePermissionMap);
   const [granted, setGranted] = useState(() => new Set(permissionsByRole[initialRoleId] ?? []));
   const [pendingRoleId, setPendingRoleId] = useState<string | null>(null);
   const currentRole = availableRoles.find((role) => role.id === roleId) ?? availableRoles[0];
@@ -743,6 +845,18 @@ export function PermissionManagementPage() {
     event.preventDefault();
     event.returnValue = "";
   }, [isDirty]));
+  useEffect(() => {
+    let cancelled = false;
+    void flowPilotApi.organization.rolePermissions(roleId).then((resource) => {
+      if (cancelled) return;
+      const normalized = normalizeRolePermissionList(resource.data);
+      setPermissionsByRole((current) => ({ ...current, [roleId]: normalized }));
+      setGranted(new Set(normalized));
+    }).catch(() => {
+      if (!cancelled) message.error("角色权限加载失败，请刷新后重试");
+    });
+    return () => { cancelled = true; };
+  }, [roleId]);
   const toggle = (key: string, checked: boolean) => setGranted((current) => {
     if (isBuiltInRole) return current;
     const next = new Set(current);
@@ -773,20 +887,24 @@ export function PermissionManagementPage() {
     }
     switchRole(nextRoleId);
   };
-  const persistPermissions = () => {
+  const persistPermissions = async () => {
     if (isBuiltInRole) return permissionsByRole;
-    const nextPermissionMap = { ...permissionsByRole, [roleId]: Array.from(granted) };
+    const resource = await flowPilotApi.organization.rolePermissions(roleId);
+    const saved = await flowPilotApi.organization.updateRolePermissions(roleId, Array.from(granted), resource.etag ?? "*");
+    const nextPermissionMap = { ...permissionsByRole, [roleId]: saved };
     setPermissionsByRole(nextPermissionMap);
-    writeRolePermissionMap(nextPermissionMap);
     const rolesWithStats = applyRolePermissionStats(readStoredRoles(), nextPermissionMap);
-    window.localStorage.setItem(ROLE_STORAGE_KEY, JSON.stringify(rolesWithStats));
     setIdentityRoles(rolesWithStats);
     notifyRolePermissionsChanged();
     return nextPermissionMap;
   };
-  const savePermissions = () => {
-    persistPermissions();
-    message.success(`${currentRole.name} 的权限已保存`);
+  const savePermissions = async () => {
+    try {
+      await persistPermissions();
+      message.success(`${currentRole.name} 的权限已保存`);
+    } catch {
+      message.error("权限保存失败，请刷新后重试");
+    }
   };
   return (
     <div className="page-stack gov-page">
@@ -814,7 +932,7 @@ export function PermissionManagementPage() {
         footer={[
           <Button key="cancel" onClick={() => setPendingRoleId(null)}>取消</Button>,
           <Button key="discard" danger onClick={() => { if (pendingRoleId) switchRole(pendingRoleId); setPendingRoleId(null); }}>放弃修改并切换</Button>,
-          <Button key="save" type="primary" onClick={() => { const nextMap = persistPermissions(); if (pendingRoleId) switchRole(pendingRoleId, nextMap); setPendingRoleId(null); }}>保存并切换</Button>,
+          <Button key="save" type="primary" onClick={() => { void persistPermissions().then((nextMap) => { if (pendingRoleId) switchRole(pendingRoleId, nextMap); setPendingRoleId(null); }).catch(() => message.error("权限保存失败，请刷新后重试")); }}>保存并切换</Button>,
         ]}
       >
         <Typography.Paragraph>你修改了“{currentRole.name}”的权限。切换角色前请选择如何处理这些修改。</Typography.Paragraph>
@@ -828,7 +946,7 @@ export function PermissionManagementPage() {
         footer={[
           <Button key="stay" onClick={() => blocker.state === "blocked" && blocker.reset()}>留在当前页</Button>,
           <Button key="discard" danger onClick={() => blocker.state === "blocked" && blocker.proceed()}>放弃修改并离开</Button>,
-          <Button key="save" type="primary" onClick={() => { persistPermissions(); if (blocker.state === "blocked") blocker.proceed(); }}>保存并离开</Button>,
+          <Button key="save" type="primary" onClick={() => { void persistPermissions().then(() => { if (blocker.state === "blocked") blocker.proceed(); }).catch(() => message.error("权限保存失败，请刷新后重试")); }}>保存并离开</Button>,
         ]}
       >
         <Typography.Paragraph>“{currentRole.name}”存在未保存的权限修改。直接离开会丢失这些修改。</Typography.Paragraph>
@@ -850,8 +968,14 @@ function effectiveMembers(group: Pick<GroupRecord, "directMembers" | "linkedRole
 
 export function WorkflowPermissionGroupsPage() {
   const confirmEditorClose = useCloseEditorConfirmation();
-  const groups = useIdentityStore((state) => state.workflowGroups);
+  const storedGroups = useIdentityStore((state) => state.workflowGroups);
   const setGroups = useIdentityStore((state) => state.setWorkflowGroups);
+  const definitions = useProcessDefinitionStore((state) => state.definitions);
+  const tasks = usePrototypeStore((state) => state.tasks);
+  const groups = useMemo(
+    () => deriveAllWorkflowGroupStatistics(storedGroups, definitions, tasks),
+    [definitions, storedGroups, tasks],
+  );
   const identityUsers = useIdentityStore((state) => state.users);
   const identityRoles = useIdentityStore((state) => state.roles);
   const [keyword, setKeyword] = useState("");
@@ -869,6 +993,23 @@ export function WorkflowPermissionGroupsPage() {
     title: "流程权限组尚未保存",
     description: "离开后，权限组用途、直接成员和关联角色的修改将丢失。",
   });
+  const cacheGroup = (record: GroupRecord) => setGroups((rows) =>
+    rows.some((item) => item.id === record.id)
+      ? rows.map((item) => item.id === record.id ? record : item)
+      : [...rows, record]);
+  const changeGroupStatus = async (record: GroupRecord) => {
+    try {
+      const resource = await flowPilotApi.directory.groupResource(record.id);
+      cacheGroup(await flowPilotApi.directory.updateGroup(
+        record.id,
+        { status: record.status === "启用" ? "停用" : "启用" },
+        resource.etag,
+      ));
+      message.success(`权限组已${record.status === "启用" ? "停用" : "启用"}`);
+    } catch {
+      message.error("权限组状态更新失败，请刷新后重试");
+    }
+  };
   const filtered = groups.filter((group) => `${group.name}${group.id}`.toLowerCase().includes(keyword.toLowerCase()) && (!process || group.processes.includes(process)) && (!status || group.status === status));
   const directMembers = identityUsers.filter((user) => directMemberUserIds.includes(user.id)).map((user) => user.name);
   const linkedRoles = identityRoles.filter((role) => linkedRoleIds.includes(role.id)).map((role) => role.name);
@@ -895,17 +1036,31 @@ export function WorkflowPermissionGroupsPage() {
     { title: "有效成员", key: "effective", width: 112, render: (_, record) => <Button className="gov-count-link" type="link" onClick={() => setPreview(record)}>{effectiveMembers(record).length} 人</Button> },
     { title: "状态", dataIndex: "status", width: 118, align: "center", render: (value: EnableStatus) => <StatusTag status={value} /> },
     { title: "更新时间", dataIndex: "updatedAt", width: 150 },
-    { title: "操作", fixed: "right", width: 142, align: "center", render: (_, record) => <Space size={4}><Tooltip title="编辑"><Button type="text" aria-label={`编辑权限组：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip><Tooltip title="有效成员预览"><Button type="text" aria-label={`预览有效成员：${record.name}`} icon={<EyeOutlined />} onClick={() => setPreview(record)} /></Tooltip><Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => { setGroups((rows) => rows.map((item) => item.id === record.id ? { ...item, status: item.status === "启用" ? "停用" : "启用" } : item)); message.success(`权限组已${record.status === "启用" ? "停用" : "启用"}`); }}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}权限组：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip></Space> },
+    { title: "操作", fixed: "right", width: 142, align: "center", render: (_, record) => <Space size={4}><Tooltip title="编辑"><Button type="text" aria-label={`编辑权限组：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip><Tooltip title="有效成员预览"><Button type="text" aria-label={`预览有效成员：${record.name}`} icon={<EyeOutlined />} onClick={() => setPreview(record)} /></Tooltip><Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => void changeGroupStatus(record)}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}权限组：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip></Space> },
   ];
   return (
     <div className="page-stack gov-page">
       {workflowGroupEditorGuard}
       <Alert type="info" showIcon message="成员变化立即影响运行中的待办" description="直接成员和关联角色成员合并去重后形成有效成员。允许用途决定权限组可出现的设计位置，已引用流程由系统自动统计；停用权限组不影响已运行流程，引用后不可删除。" />
-      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--groups"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="权限组名称或编号" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>已引用流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={["PDF审核", "测试报告审核", "自由协作"].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={["启用", "停用"].map((value) => ({ value }))} /></label><div className="gov-filter-actions"><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); }}>重置</Button></div></div></Card>
+      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--groups"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="权限组名称或编号" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>已引用流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={[...new Set(groups.flatMap((group) => group.processes))].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={["启用", "停用"].map((value) => ({ value }))} /></label><div className="gov-filter-actions"><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); }}>重置</Button></div></div></Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程权限组" count={filtered.length} extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增权限组</Button>} /><Table<GroupRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 个权限组` }} /></Card>
       <Drawer width={720} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增流程权限组" : "编辑流程权限组"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存并立即生效</Button></Space>}>
         {editor !== "new" && editor?.openTasks ? <Alert className="gov-drawer-alert" type="warning" showIcon message={`当前有 ${editor.openTasks} 项运行待办`} description="保存后，新增成员立即获得处理资格；被移除成员将立即失去尚未处理的待办资格。" /> : null}
-        <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={(values) => { const processes = editor === "new" ? [] : editor!.processes; const nextCode = `PG-${String(Math.max(0, ...groups.map((group) => Number(group.code.match(/\d+$/)?.[0] ?? 0))) + 1).padStart(4, "0")}`; const record: GroupRecord = { id: editor === "new" ? `workflow-group-${crypto.randomUUID()}` : editor!.id, code: editor === "new" ? nextCode : editor!.code, name: values.name, processes, purposes: values.purposes, directMembers, linkedRoles, directMemberUserIds, linkedRoleIds, status: values.status ? "启用" : "停用", referenced: processes.length > 0, openTasks: editor === "new" ? 0 : editor!.openTasks, updatedAt: new Date().toLocaleString("zh-CN", { hour12: false }) }; setGroups((rows) => editor === "new" ? [...rows, record] : rows.map((item) => item.id === record.id ? record : item)); message.success("流程权限组已保存，成员资格已立即更新"); setEditorDirty(false); setEditor(null); }}>
+        <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
+          try {
+            if (editor === "new") {
+              cacheGroup(await flowPilotApi.directory.createGroup({ name: values.name, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用" }));
+            } else if (editor) {
+              const resource = await flowPilotApi.directory.groupResource(editor.id);
+              cacheGroup(await flowPilotApi.directory.updateGroup(editor.id, { name: values.name, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用" }, resource.etag));
+            }
+            message.success("流程权限组已保存，成员资格已立即更新");
+          } catch {
+            message.error("流程权限组保存失败，请检查引用或刷新后重试");
+            return;
+          }
+          setEditorDirty(false); setEditor(null);
+        }}>
           <div className="gov-form-grid"><Form.Item name="name" label="权限组名称" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="status" label="状态" valuePropName="checked"><Switch checkedChildren="启用" unCheckedChildren="停用" /></Form.Item></div>
           <div className="gov-group-editor-section gov-group-reference-section">
             <div className="gov-section-title"><span><ApartmentOutlined />已引用流程</span><Tag>{editor !== "new" && editor ? editor.processes.length : 0} 个</Tag></div>
@@ -1036,22 +1191,48 @@ const auditActionLabels: Record<string, string> = {
 export function AuditLogPage() {
   const instances = usePrototypeStore((state) => state.instances);
   const tasks = usePrototypeStore((state) => state.tasks);
+  const debugMode = import.meta.env.VITE_API_MODE === "mock";
+  const [remoteAuditEvents, setRemoteAuditEvents] = useState<AuditEvent[]>([]);
   const [keyword, setKeyword] = useState("");
   const [module, setModule] = useState<string>();
   const [result, setResult] = useState<AuditResult>();
   const [dateRange, setDateRange] = useState(createDefaultDateRange);
   const [appliedFilters, setAppliedFilters] = useState(() => ({ keyword: "", module: undefined as string | undefined, result: undefined as AuditResult | undefined, dateRange: createDefaultDateRange() }));
   const [detail, setDetail] = useState<AuditRecord | null>(null);
+  useEffect(() => {
+    if (debugMode) return;
+    let cancelled = false;
+    const load = async () => {
+      const items: AuditEvent[] = [];
+      for (let pageNumber = 1; ; pageNumber += 1) {
+        const result = await flowPilotApi.audit.events({ page: pageNumber, pageSize: 100 });
+        items.push(...result.items);
+        if (pageNumber >= result.page.totalPages) break;
+      }
+      if (!cancelled) setRemoteAuditEvents(items);
+    };
+    void load().catch(() => {
+      if (!cancelled) {
+        setRemoteAuditEvents([]);
+        message.error("审计日志加载失败，请稍后重试");
+      }
+    });
+    return () => { cancelled = true; };
+  }, [debugMode]);
   const auditRows = useMemo(() => {
     const eventsById = new Map(
-      [...readAuditEvents(), ...collectRuntimeAuditEvents(instances, tasks)].map((event) => [event.id, event]),
+      (debugMode
+        ? [...readLocalAuditEvents(), ...collectRuntimeAuditEvents(instances, tasks)]
+        : remoteAuditEvents).map((event) => [event.id, event]),
     );
     return Array.from(eventsById.values()).map((event): AuditRecord => {
       const actor = event.actorId ? findIdentityUser(event.actorId) : undefined;
       const details = event.details ? JSON.stringify(event.details, null, 2) : "—";
       return {
         id: event.id,
-        operator: event.actorName ?? actor?.name ?? "系统",
+        operator: event.operatorName && event.operatorName !== event.actorName
+          ? `${event.operatorName} → ${event.actorName ?? actor?.name ?? "未知用户"}`
+          : event.actorName ?? actor?.name ?? "系统",
         department: actor?.departmentPath ?? "系统",
         module: auditModuleLabels[event.category] ?? event.category,
         object: event.summary,
@@ -1065,7 +1246,7 @@ export function AuditLogPage() {
         detail: event.summary,
       };
     }).sort((left, right) => Date.parse(right.time.replace(" ", "T")) - Date.parse(left.time.replace(" ", "T")));
-  }, [instances, tasks]);
+  }, [debugMode, instances, remoteAuditEvents, tasks]);
   const filtered = auditRows.filter((row) => `${row.operator}${row.object}${row.objectId}${row.ip}`.toLowerCase().includes(appliedFilters.keyword.toLowerCase()) && (!appliedFilters.module || row.module === appliedFilters.module) && (!appliedFilters.result || row.result === appliedFilters.result) && isDateTimeInRange(row.time, appliedFilters.dateRange));
   const columns: TableProps<AuditRecord>["columns"] = [
     { title: "时间", dataIndex: "time", width: 170, fixed: "left" },

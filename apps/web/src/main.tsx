@@ -4,7 +4,6 @@ import App from "./App";
 import { writeApiAccessToken } from "./api/client";
 import { flowPilotApi } from "./api/flowPilotApi";
 import { hydrateRemoteApplication } from "./api/remoteHydration";
-import { usePrototypeStore } from "./state/usePrototypeStore";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
@@ -22,11 +21,11 @@ const bootstrap = async () => {
     await startMockApi();
   } else {
     try {
-      const user = await flowPilotApi.auth.me();
-      usePrototypeStore.getState().login(user.id);
+      await flowPilotApi.auth.me();
       await hydrateRemoteApplication();
     } catch {
       writeApiAccessToken();
+      const { usePrototypeStore } = await import("./state/usePrototypeStore");
       usePrototypeStore.getState().logout();
     }
   }

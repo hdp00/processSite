@@ -16,6 +16,7 @@ import {
   UserOutlined,
 } from "@ant-design/icons";
 import {
+  Alert,
   Avatar,
   Button,
   Divider,
@@ -26,11 +27,15 @@ import {
   Space,
   Tag,
   Typography,
+  message,
   type MenuProps,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { flowPilotApi } from "../api/flowPilotApi";
+import { ApiError } from "../api/client";
+import { hydrateRemoteApplication } from "../api/remoteHydration";
+import type { DirectoryUser } from "../api/contracts";
 import { ROLE_PERMISSIONS_CHANGED_EVENT, canPersonaAccessLaunch, hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
@@ -57,10 +62,16 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [permissionRevision, setPermissionRevision] = useState(0);
+  const [impersonationCandidates, setImpersonationCandidates] = useState<DirectoryUser[]>([]);
+  const [switchingPersona, setSwitchingPersona] = useState(false);
   const {
     personaId,
+    operatorUserId,
+    operatorSuperAdmin,
+    impersonation,
     switchPersona,
   } = usePrototypeStore();
+  const debugMode = import.meta.env.VITE_API_MODE === "mock";
 
   const identityUser = useIdentityStore((state) => state.users.find((user) => user.id === personaId));
   const persona = identityUser
@@ -74,6 +85,85 @@ export function AppShell() {
     window.addEventListener(ROLE_PERMISSIONS_CHANGED_EVENT, refreshPermissions);
     return () => window.removeEventListener(ROLE_PERMISSIONS_CHANGED_EVENT, refreshPermissions);
   }, []);
+  useEffect(() => {
+    if (debugMode || !operatorSuperAdmin) return;
+    const loadCandidates = async () => {
+      const users: DirectoryUser[] = [];
+      for (let page = 1; ; page += 1) {
+        const result = await flowPilotApi.auth.impersonationCandidates({ page, pageSize: 100 });
+        users.push(...result.items);
+        if (page >= result.page.totalPages) return users;
+      }
+    };
+    void loadCandidates()
+      .then(setImpersonationCandidates)
+      .catch(() => setImpersonationCandidates([]));
+  }, [debugMode, operatorSuperAdmin]);
+
+  const finishIdentitySwitch = async () => {
+    await hydrateRemoteApplication();
+    setPermissionRevision((value) => value + 1);
+    navigate("/tasks", { replace: true });
+  };
+
+  const selectPersona = async (targetUserId: PersonaId) => {
+    if (debugMode) {
+      switchPersona(targetUserId);
+      return;
+    }
+    if (targetUserId === operatorUserId) {
+      if (!impersonation) return;
+      setSwitchingPersona(true);
+      try {
+        await flowPilotApi.auth.stopImpersonation();
+        await finishIdentitySwitch();
+        message.success("已恢复超级管理员身份");
+      } catch (error) {
+        message.error(error instanceof ApiError ? error.message : "恢复身份失败");
+      } finally {
+        setSwitchingPersona(false);
+      }
+      return;
+    }
+    setSwitchingPersona(true);
+    let restoredPreviousIdentity = false;
+    try {
+      if (impersonation) {
+        await flowPilotApi.auth.stopImpersonation();
+        restoredPreviousIdentity = true;
+      }
+      await flowPilotApi.auth.startImpersonation(
+        targetUserId,
+        `通过顶栏模拟身份选择器直接切换至 ${targetUserId}`,
+      );
+      await finishIdentitySwitch();
+    } catch (error) {
+      if (restoredPreviousIdentity) await finishIdentitySwitch();
+      message.error(error instanceof ApiError ? error.message : "切换模拟身份失败");
+    } finally {
+      setSwitchingPersona(false);
+    }
+  };
+
+  const personaOptions = debugMode
+    ? personas.map((item) => ({
+      value: item.id,
+      label: `${item.name} · ${item.role}`,
+      searchText: `${item.id} ${item.name} ${item.role}`,
+    }))
+    : impersonationCandidates.map((user) => ({
+      value: user.id,
+      label: `${user.name} · ${user.roles.join("、") || user.jobTitle}`,
+      searchText: `${user.account} ${user.name} ${user.roles.join(" ")} ${user.jobTitle}`,
+    }));
+  if (!debugMode && operatorSuperAdmin && !personaOptions.some((option) => option.value === operatorUserId)) {
+    const operator = useIdentityStore.getState().users.find((user) => user.id === operatorUserId);
+    personaOptions.unshift({
+      value: operatorUserId,
+      label: `${operator?.name ?? "超级管理员"} · ${operator?.roles.join("、") || "系统内置"}`,
+      searchText: `${operator?.account ?? operatorUserId} ${operator?.name ?? "超级管理员"} ${operator?.roles.join(" ") || "系统内置"}`,
+    });
+  }
   const selectedDefinitionId = new URLSearchParams(location.search).get("definitionId");
   const managedProcessDefinition = managedDefinitions.find((item) => item.id === selectedDefinitionId);
   const selectedProcessDefinitionId = selectedDefinitionId
@@ -157,16 +247,29 @@ export function AppShell() {
     [canInitiate, managedDefinitions, permissionRevision, personaId],
   );
 
+  const resetDemoData = async () => {
+    try {
+      await flowPilotApi.system.resetDemo();
+      if (!debugMode) {
+        await flowPilotApi.auth.me();
+        await hydrateRemoteApplication();
+      }
+      navigate("/tasks", { replace: true });
+      message.success("演示数据已重置");
+    } catch (error) {
+      message.error(error instanceof ApiError ? error.message : "重置演示数据失败");
+    }
+  };
+
   const userMenu: MenuProps["items"] = [
-    {
+    ...(debugMode || operatorSuperAdmin ? [{
       key: "reset",
       icon: <ReloadOutlined />,
       label: "重置演示数据",
       onClick: () => {
-        void flowPilotApi.system.resetDemo();
+        void resetDemoData();
       },
-    },
-    { type: "divider" },
+    }, { type: "divider" as const }] : []),
     {
       key: "logout",
       icon: <LogoutOutlined />,
@@ -219,21 +322,21 @@ export function AppShell() {
             <Typography.Title level={4}>{meta.title}</Typography.Title>
           </div>
           <Space size={12}>
-            <div className="persona-switcher">
+            {(debugMode || operatorSuperAdmin) && <div className="persona-switcher">
               <SwapOutlined />
-              <span>演示身份</span>
+              <span>{debugMode ? "演示身份" : "模拟身份"}</span>
               <Select
                 variant="borderless"
                 value={personaId}
+                loading={switchingPersona}
+                showSearch
+                optionFilterProp="searchText"
                 popupMatchSelectWidth={220}
-                onChange={(value: PersonaId) => switchPersona(value)}
-                options={personas.map((item) => ({
-                  value: item.id,
-                  label: `${item.name} · ${item.role}`,
-                }))}
+                onChange={(value: PersonaId) => void selectPersona(value)}
+                options={personaOptions}
               />
-            </div>
-            <Divider type="vertical" />
+            </div>}
+            {(debugMode || operatorSuperAdmin) && <Divider type="vertical" />}
             <Dropdown menu={{ items: userMenu }} trigger={["click"]}>
               <button className="user-button" type="button">
                 <Avatar className="user-avatar">{persona.name.slice(-1)}</Avatar>
@@ -247,6 +350,16 @@ export function AppShell() {
         </Header>
 
         <Content className={`app-content${isDesignerRoute ? " is-designer-content" : ""}`}>
+          {!debugMode && impersonation && (
+            <Alert
+              className="impersonation-alert"
+              type="warning"
+              showIcon
+              message={`正在以 ${persona.name} 的身份操作`}
+              description="权限与数据范围按模拟用户计算；审计记录会同时保留真实操作者和当前模拟用户。"
+              action={<Button size="small" loading={switchingPersona} onClick={() => void selectPersona(operatorUserId)}>退出模拟</Button>}
+            />
+          )}
           <Outlet />
         </Content>
       </Layout>

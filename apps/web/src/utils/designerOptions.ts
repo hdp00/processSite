@@ -1,3 +1,5 @@
+import { createClientUuid } from "./clientId";
+
 export interface DesignerChoiceOption {
   id: string;
   label: string;
@@ -25,9 +27,7 @@ const stableHash = (value: string) => {
 const stableOptionId = (scope: string, path: string) => `option-${stableHash(`${scope}:${path}`)}`;
 
 export const createDesignerChoiceOption = (label: string): DesignerChoiceOption => ({
-  id: typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? `option-${crypto.randomUUID()}`
-    : `option-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  id: `option-${createClientUuid()}`,
   label,
 });
 

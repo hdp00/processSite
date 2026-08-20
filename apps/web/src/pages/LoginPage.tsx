@@ -13,6 +13,10 @@ import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { hydrateRemoteApplication } from "../api/remoteHydration";
 import { personas, type PersonaId } from "../state/usePrototypeStore";
+import {
+  readLastSuccessfulLoginUsername,
+  saveLastSuccessfulLoginUsername,
+} from "../utils/lastLoginUsername";
 
 interface LoginValues {
   username: string;
@@ -23,14 +27,19 @@ interface LoginValues {
 export function LoginPage() {
   const navigate = useNavigate();
   const [form] = Form.useForm<LoginValues>();
+  const debugMode = import.meta.env.VITE_API_MODE === "mock";
+  const [initialUsername] = useState(() =>
+    readLastSuccessfulLoginUsername() || (debugMode ? "lina" : ""));
   const [submitting, setSubmitting] = useState(false);
-  const [demoPersona, setDemoPersona] = useState<PersonaId>("lina");
+  const [demoPersona, setDemoPersona] = useState<PersonaId>(() =>
+    personas.find((item) => item.id === initialUsername)?.id ?? "lina");
 
   const submit = async (values: LoginValues) => {
     setSubmitting(true);
     try {
       await flowPilotApi.auth.login(values.username, values.password);
       if (import.meta.env.VITE_API_MODE === "remote") await hydrateRemoteApplication();
+      saveLastSuccessfulLoginUsername(values.username);
       message.success("登录成功");
       navigate("/tasks", { replace: true });
     } catch (error) {
@@ -94,7 +103,9 @@ export function LoginPage() {
           <Form<LoginValues>
             form={form}
             layout="vertical"
-            initialValues={{ username: "lina", password: "1", remember: true }}
+            initialValues={debugMode
+              ? { username: initialUsername, password: "1", remember: true }
+              : { username: initialUsername, password: "", remember: true }}
             onFinish={submit}
             requiredMark={false}
           >
@@ -109,7 +120,7 @@ export function LoginPage() {
               label="密码"
               name="password"
               rules={[{ required: true, message: "请输入密码" }]}
-              extra="首版允许单字符密码；生产系统仍会进行不可逆哈希存储。"
+              extra={debugMode ? "Debug 演示密码允许使用单字符。" : undefined}
             >
               <Input.Password size="large" prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
             </Form.Item>
@@ -132,19 +143,25 @@ export function LoginPage() {
             </Button>
           </Form>
 
-          <div className="demo-login">
+          {debugMode && <div className="demo-login">
             <div className="demo-login-title"><span />选择演示身份<span /></div>
             <Space.Compact block>
               <Select
                 value={demoPersona}
+                showSearch
+                optionFilterProp="searchText"
                 onChange={(value: PersonaId) => fillDemo(value)}
-                options={personas.map((item) => ({ value: item.id, label: `${item.name} · ${item.role}` }))}
+                options={personas.map((item) => ({
+                  value: item.id,
+                  label: `${item.name} · ${item.role}`,
+                  searchText: `${item.id} ${item.name} ${item.role}`,
+                }))}
                 style={{ flex: 1 }}
               />
               <Button onClick={() => fillDemo(demoPersona)}>填入账号</Button>
             </Space.Compact>
             <Typography.Text type="secondary">演示密码均为：1</Typography.Text>
-          </div>
+          </div>}
         </div>
       </section>
     </main>

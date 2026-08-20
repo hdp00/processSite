@@ -78,6 +78,24 @@ const commitAttachmentReferences = async (
   if (attachmentIdsByField) await reconcileAttachmentsForInstance(instanceId, attachmentIdsByField);
 };
 
+const synchronizeInstanceAttachmentReferences = (
+  instanceId: string,
+  attachmentIdsByField?: Record<string, string[]>,
+) => {
+  if (!attachmentIdsByField) return;
+  const normalized = Object.fromEntries(
+    Object.entries(attachmentIdsByField).map(([fieldId, ids]) => [fieldId, [...ids]]),
+  );
+  const attachmentIds = [...new Set(Object.values(normalized).flat())];
+  usePrototypeStore.setState((state) => ({
+    instances: state.instances.map((instance) => instance.id === instanceId ? {
+      ...instance,
+      attachmentIds,
+      attachmentIdsByField: normalized,
+    } : instance),
+  }));
+};
+
 const instanceDetail = (instance: ProcessInstance): ProcessInstanceDetail => ({
   instance: structuredClone(instance),
   tasks: structuredClone(usePrototypeStore.getState().tasks.filter((task) => task.instanceId === instance.id)),
@@ -274,6 +292,7 @@ export const instanceTaskHandlers = [
     const result = usePrototypeStore.getState().updateUnreviewedInstance(found.instance.id, { formValues: body.formValues, attachmentNames: body.attachmentNames, assigneeByNode: body.assigneeByNode });
     if (!result.ok) return apiProblem(request, result.reason === "forbidden" ? 403 : 409, "INSTANCE_UPDATE_REJECTED", "流程修改失败", result.message);
     await commitAttachmentReferences(found.instance.id, body.attachmentIdsByField);
+    synchronizeInstanceAttachmentReferences(found.instance.id, body.attachmentIdsByField);
     const updated = instanceById(found.instance.id)!;
     auditInstance(auth.actor.id, auth.actor.name, "update-submission", updated, `修改未审核流程 ${updated.code}`);
     dispatchWorkflowEmailNotifications(request, updated.id);
@@ -304,6 +323,7 @@ export const instanceTaskHandlers = [
       const result = usePrototypeStore.getState().republishInstance(found.instance.id, { formValues: body.formValues, attachmentNames: body.attachmentNames });
       if (!result.ok) return apiProblem(request, result.reason === "forbidden" ? 403 : 409, "RESUBMISSION_FORBIDDEN", "无法重新提交", result.message);
       await commitAttachmentReferences(found.instance.id, body.attachmentIdsByField);
+      synchronizeInstanceAttachmentReferences(found.instance.id, body.attachmentIdsByField);
       const updated = instanceById(found.instance.id)!;
       if (updated.status === "驳回待处理") return apiProblem(request, 409, "RESUBMISSION_FORBIDDEN", "无法重新提交", "当前账号没有重新提交权限或版本状态已经变化。 ");
       auditInstance(auth.actor.id, auth.actor.name, "resubmit", updated, `重新提交流程 ${updated.code}，第 ${updated.round} 轮`);
@@ -404,6 +424,7 @@ export const instanceTaskHandlers = [
       const saved = usePrototypeStore.getState().reviewInstance(instance.id, body.action, body.comment?.trim() ?? "", undefined, body.fieldValues, task.id);
       if (!saved) return apiProblem(request, 409, "TASK_DECISION_REJECTED", "任务处理失败", "任务状态、节点处理方式或权限已经变化。 ");
       await commitAttachmentReferences(instance.id, body.attachmentIdsByField);
+      synchronizeInstanceAttachmentReferences(instance.id, body.attachmentIdsByField);
       const updatedInstance = instanceById(instance.id)!;
       const updatedTask = taskById(task.id)!;
       const changedTasks = usePrototypeStore.getState().tasks.filter((item) => item.instanceId === instance.id && beforeTaskIds.get(item.id) !== item.status);
@@ -441,6 +462,7 @@ export const instanceTaskHandlers = [
       if (result === "forbidden") return apiProblem(request, 409, "REPEAT_EDIT_FORBIDDEN", "不允许继续修改", "节点未开启重复修改、当前用户不是实际处理人，或流程已驳回/关闭。 ");
       if (result === "no-changes") return apiProblem(request, 409, "NO_FIELD_CHANGES", "没有字段变化", "提交内容与当前值一致。 ");
       await commitAttachmentReferences(instance.id, body.attachmentIdsByField);
+      synchronizeInstanceAttachmentReferences(instance.id, body.attachmentIdsByField);
       const updatedInstance = instanceById(instance.id)!;
       const updatedTask = taskById(task.id)!;
       appendAuditEvent({ category: "task", action: "revise-fields", actorId: auth.actor.id, actorName: auth.actor.name, resourceType: "workflow-task", resourceId: task.id, summary: `继续修改节点 ${task.nodeName} 的授权字段`, details: { instanceId: instance.id, comment: body.comment } });

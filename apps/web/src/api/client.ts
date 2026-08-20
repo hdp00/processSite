@@ -1,4 +1,5 @@
 import type { ApiEnvelope, ApiProblemDetails } from "./contracts";
+import { createClientUuid } from "../utils/clientId";
 
 type QueryValue = string | number | boolean | null | undefined | Array<string | number | boolean>;
 
@@ -28,11 +29,11 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 
 const apiBaseUrl = () => (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
 
-const storedPersonaId = () => {
+const storedMockSession = () => {
   try {
     const raw = window.localStorage.getItem("flowpilot-prototype-v5");
-    const parsed = raw ? JSON.parse(raw) as { state?: { authenticated?: boolean; personaId?: string } } : undefined;
-    return parsed?.state?.authenticated ? parsed.state.personaId : undefined;
+    const parsed = raw ? JSON.parse(raw) as { state?: { authenticated?: boolean; personaId?: string; operatorUserId?: string; impersonation?: unknown } } : undefined;
+    return parsed?.state?.authenticated ? parsed.state : undefined;
   } catch {
     return undefined;
   }
@@ -41,7 +42,9 @@ const storedPersonaId = () => {
 export const readApiAccessToken = () => {
   const token = window.sessionStorage.getItem(API_TOKEN_KEY);
   if (import.meta.env.VITE_API_MODE === "remote") return token ?? undefined;
-  const personaId = storedPersonaId();
+  const session = storedMockSession();
+  const personaId = session?.personaId;
+  if (session?.impersonation && session.operatorUserId) return `mock:${session.operatorUserId}`;
   if (token?.startsWith("mock:") && personaId && token !== `mock:${personaId}`) return `mock:${personaId}`;
   if (token) return token;
   return personaId ? `mock:${personaId}` : undefined;
@@ -53,7 +56,7 @@ export const writeApiAccessToken = (token?: string) => {
 };
 
 export const createIdempotencyKey = () =>
-  globalThis.crypto?.randomUUID?.() ?? `idempotency-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  `idempotency-${createClientUuid()}`;
 
 const requestUrl = (path: string, query?: object) => {
   const url = new URL(`${apiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`, window.location.origin);
@@ -95,7 +98,7 @@ async function performApiRequest<T>(path: string, options: ApiRequestOptions = {
     ...requestInit
   } = options;
   const controller = new AbortController();
-  const requestId = globalThis.crypto?.randomUUID?.() ?? `request-${Date.now()}`;
+  const requestId = `request-${createClientUuid()}`;
   const timeout = window.setTimeout(() => controller.abort(new DOMException("REST API 请求超时", "TimeoutError")), timeoutMs);
   const abortFromCaller = () => controller.abort(signal?.reason);
   signal?.addEventListener("abort", abortFromCaller, { once: true });

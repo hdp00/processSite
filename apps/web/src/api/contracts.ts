@@ -71,11 +71,27 @@ export interface AuthSession {
   accessToken?: string;
   tokenType?: "Bearer";
   expiresIn?: number;
+  /** 当前请求实际生效的用户；所有权限和数据范围均以此用户为准。 */
   user: DirectoryUser;
+  /** 建立登录会话的真实操作者；模拟身份期间不会改变。 */
+  operatorUser?: DirectoryUser;
   roleIds?: string[];
   permissions?: string[];
+  /** 当前生效用户是否为超级管理员。 */
   superAdmin?: boolean;
+  /** 真实操作者是否允许发起和结束模拟身份。 */
+  operatorSuperAdmin?: boolean;
+  impersonation?: ImpersonationContext;
   expiresAt?: string;
+}
+
+export interface ImpersonationContext {
+  id: string;
+  operatorUserId: string;
+  targetUserId: string;
+  reason: string;
+  startedAt: string;
+  expiresAt: string;
 }
 
 export interface ProcessDefinitionListItem extends ProcessDefinition {
@@ -185,6 +201,9 @@ export interface AuditEvent {
   action: string;
   actorId?: string;
   actorName?: string;
+  operatorId?: string;
+  operatorName?: string;
+  impersonationId?: string;
   resourceType: string;
   resourceId: string;
   occurredAt: string;
@@ -206,6 +225,7 @@ export interface DepartmentRecord {
   status: "启用" | "停用";
   memberCount: number;
   sortOrder: number;
+  description?: string;
 }
 
 export interface PositionRecord {
@@ -214,6 +234,7 @@ export interface PositionRecord {
   description: string;
   status: "启用" | "停用";
   memberCount: number;
+  sortOrder?: number;
 }
 
 export interface PermissionCatalogItem {
