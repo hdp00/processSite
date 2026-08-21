@@ -59,6 +59,7 @@ const publicUser = (user: DomainUser): DirectoryUser => ({
   account: user.account,
   email: user.email,
   name: user.name,
+  authenticationMode: user.authenticationMode,
   department: [...user.department],
   departmentPath: user.departmentPath,
   jobTitle: user.jobTitle,

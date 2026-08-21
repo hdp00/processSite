@@ -25,7 +25,6 @@ import {
   Menu,
   Select,
   Space,
-  Tag,
   Typography,
   message,
   type MenuProps,
@@ -46,6 +45,7 @@ import {
 } from "../state/usePrototypeStore";
 import { useIdentityStore } from "../state/useIdentityStore";
 import { canUserViewDefinition } from "../state/workflowAccess";
+import { buildDebugPersonaOptions } from "../utils/personaOptions";
 
 const { Header, Sider, Content } = Layout;
 
@@ -85,7 +85,8 @@ export function AppShell() {
     || isSuperAdminPersona(personaId)
   );
 
-  const identityUser = useIdentityStore((state) => state.users.find((user) => user.id === personaId));
+  const identityUsers = useIdentityStore((state) => state.users);
+  const identityUser = identityUsers.find((user) => user.id === personaId);
   const persona = identityUser
     ? { id: identityUser.id, name: identityUser.name, role: identityUser.roles.join("、") || identityUser.jobTitle }
     : personas.find((item) => item.id === personaId) ?? personas[2];
@@ -157,12 +158,12 @@ export function AppShell() {
     }
   };
 
+  const debugPersonaOptions = useMemo(
+    () => buildDebugPersonaOptions(identityUsers),
+    [identityUsers],
+  );
   const personaOptions = debugMode
-    ? personas.map((item) => ({
-      value: item.id,
-      label: `${item.name} · ${item.role}`,
-      searchText: `${item.id} ${item.name} ${item.role}`,
-    }))
+    ? debugPersonaOptions
     : impersonationCandidates.map((user) => ({
       value: user.id,
       label: `${user.name} · ${user.roles.join("、") || user.jobTitle}`,
@@ -292,18 +293,14 @@ export function AppShell() {
     <Layout className="app-layout">
       <Sider className="app-sider" width={248} theme="dark">
         <button className="brand" type="button" onClick={() => navigate("/tasks")}>
-          <span className="brand-mark">FP</span>
-          <span>
-            <strong>FlowPilot</strong>
-            <small>流程审核中心</small>
+          <span className="brand-lockup">
+            <span className="moons-wordmark" aria-label="MOONS'">
+              <span className="moons-wordmark-name" aria-hidden="true">MOONS</span>
+              <span className="moons-wordmark-apostrophe" aria-hidden="true">&apos;</span>
+            </span>
+            <small>FlowPilot · 流程审核中心</small>
           </span>
         </button>
-
-        <div className="tenant-chip">
-          <span className="tenant-dot" />
-          <span>公司内网 · 生产环境</span>
-          <Tag bordered={false}>原型</Tag>
-        </div>
 
         <div className="app-menu-scroll">
           <Menu

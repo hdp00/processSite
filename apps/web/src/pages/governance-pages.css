@@ -603,9 +603,17 @@
 .gov-permission-page strong { color: #283651; font-size: 12px; }
 
 .gov-permission-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
+  display: grid;
+  grid-template-columns: repeat(3, 104px);
+  align-items: center;
+  justify-content: start;
+  gap: 4px;
+}
+
+.gov-permission-actions .ant-checkbox-wrapper {
+  min-height: 24px;
+  margin-inline-start: 0;
+  white-space: nowrap;
 }
 
 .gov-composition {

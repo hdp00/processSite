@@ -63,8 +63,7 @@ button {
 .brand {
   width: calc(100% - 36px);
   display: flex;
-  align-items: center;
-  gap: 12px;
+  align-items: flex-start;
   margin: 24px 18px 20px;
   padding: 0;
   border: 0;
@@ -74,69 +73,54 @@ button {
   cursor: pointer;
 }
 
-.brand-mark {
-  display: inline-grid;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 12px;
-  color: #fff;
-  background: linear-gradient(145deg, #5d7cff, #3157d5);
-  box-shadow: 0 8px 22px rgba(49, 87, 213, 0.32);
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: -0.5px;
-}
-
-.brand > span:last-child,
-.login-brand > span:last-child {
+.brand-lockup {
   display: flex;
+  min-width: 0;
   flex-direction: column;
-  line-height: 1.2;
+  align-items: flex-start;
 }
 
-.brand strong,
-.login-brand strong {
-  font-size: 18px;
-  letter-spacing: 0.1px;
+.moons-wordmark {
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+  padding-bottom: 8px;
+  color: #fff;
+  line-height: 1;
+}
+
+.moons-wordmark::after {
+  position: absolute;
+  bottom: 0;
+  left: 1px;
+  width: 36px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6f86ff, #53b9ed);
+  content: "";
+}
+
+.moons-wordmark-name {
+  font-family: "Segoe UI Variable Display", "Segoe UI", Arial, sans-serif;
+  font-size: 27px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+}
+
+.moons-wordmark-apostrophe {
+  margin: -3px 0 0 2px;
+  color: #77b8f3;
+  font-family: Arial, sans-serif;
+  font-size: 21px;
+  font-weight: 900;
 }
 
 .brand small,
 .login-brand small {
-  margin-top: 4px;
+  margin-top: 8px;
   color: rgba(255, 255, 255, 0.62);
   font-size: 11px;
-  letter-spacing: 1.8px;
-}
-
-.tenant-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 16px 18px;
-  padding: 9px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 9px;
-  color: rgba(255, 255, 255, 0.66);
-  background: rgba(255, 255, 255, 0.045);
-  font-size: 12px;
-}
-
-.tenant-chip .ant-tag {
-  margin-inline-start: auto;
-  margin-inline-end: 0;
-  color: #aebdff;
-  background: rgba(74, 103, 222, 0.2);
-}
-
-.tenant-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #3ac99b;
-  box-shadow: 0 0 0 4px rgba(58, 201, 155, 0.13);
+  letter-spacing: 1.1px;
 }
 
 .app-menu.ant-menu {
@@ -146,7 +130,7 @@ button {
 
 .app-menu-scroll {
   position: absolute;
-  top: 154px;
+  top: 100px;
   right: 0;
   bottom: 64px;
   left: 0;
@@ -375,14 +359,26 @@ button {
   position: relative;
   z-index: 1;
   display: flex;
-  align-items: center;
-  gap: 13px;
+  align-items: flex-start;
 }
 
-.brand-mark-large {
+.login-brand .moons-wordmark {
+  padding-bottom: 10px;
+}
+
+.login-brand .moons-wordmark::after {
   width: 46px;
-  height: 46px;
-  flex-basis: 46px;
+  height: 4px;
+}
+
+.login-brand .moons-wordmark-name {
+  font-size: 33px;
+  letter-spacing: 1.2px;
+}
+
+.login-brand .moons-wordmark-apostrophe {
+  margin-top: -4px;
+  font-size: 25px;
 }
 
 .login-hero-copy {
@@ -528,34 +524,6 @@ button {
   width: 100%;
   height: 48px !important;
   box-shadow: 0 10px 24px rgba(49, 87, 213, 0.23);
-}
-
-.demo-login {
-  margin-top: 30px;
-  padding-top: 24px;
-  border-top: 1px solid #eceef2;
-}
-
-.demo-login-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 13px;
-  color: #8a92a3;
-  font-size: 11px;
-  text-align: center;
-}
-
-.demo-login-title span {
-  height: 1px;
-  flex: 1;
-  background: #eceef2;
-}
-
-.demo-login > .ant-typography {
-  display: block;
-  margin-top: 8px;
-  font-size: 11px;
 }
 
 /* Shared pages */
@@ -2717,18 +2685,6 @@ button {
     margin-bottom: 18px;
   }
 
-  .brand-mark {
-    border-radius: 13px;
-    background: linear-gradient(145deg, #6e89ff, #3659e3 70%);
-    box-shadow: 0 10px 28px rgba(54, 89, 227, 0.38), inset 0 1px rgba(255, 255, 255, 0.24);
-  }
-
-  .tenant-chip {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.055);
-    box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
-  }
-
   .app-menu .ant-menu-item,
   .app-menu .ant-menu-submenu-title {
     font-weight: 520;
@@ -3093,16 +3049,6 @@ button {
     box-shadow: none;
   }
 
-  .brand-mark {
-    border-radius: 10px;
-    background: #4566e8;
-    box-shadow: none;
-  }
-
-  .tenant-chip {
-    box-shadow: none;
-  }
-
   .app-menu .ant-menu-item,
   .app-menu .ant-menu-submenu-title {
     font-weight: 540;
@@ -3431,7 +3377,6 @@ button {
   /* Small secondary copy must keep WCAG AA contrast on light surfaces. */
   .ant-typography.ant-typography-secondary,
   .login-card .ant-form-item-extra,
-  .demo-login-title,
   .user-copy small,
   .task-flow-item__copy small,
   .person-cell small {

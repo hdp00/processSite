@@ -7,17 +7,17 @@ test("未登录访问受保护页面会回到登录页 @smoke", async ({ page })
   await expect(page.getByRole("heading", { name: "登录流程中心" })).toBeVisible();
 });
 
-test("登录表单展示必填校验并拒绝错误凭据", async ({ page }) => {
+test("Debug 登录页固定超级管理员并拒绝错误凭据", async ({ page }) => {
   test.skip(!isMockTarget, "错误凭据断言只适用于本地 Mock API。");
   await gotoApp(page, "login");
 
-  await page.getByLabel("账号").fill("");
+  await expect(page.getByLabel("账号")).toHaveValue("superadmin");
+  await expect(page.getByLabel("账号")).toHaveAttribute("readonly", "");
+  await expect(page.getByRole("combobox", { name: "切换演示身份" })).toHaveCount(0);
   await page.getByLabel("密码").fill("");
   await page.locator("button.login-submit").click();
-  await expect(page.getByText("请输入账号", { exact: true })).toBeVisible();
   await expect(page.getByText("请输入密码", { exact: true })).toBeVisible();
 
-  await page.getByLabel("账号").fill("lina");
   await page.getByLabel("密码").fill("wrong-password");
   await page.locator("button.login-submit").click();
   await expect(page.getByText("账号或密码错误。", { exact: true })).toBeVisible();

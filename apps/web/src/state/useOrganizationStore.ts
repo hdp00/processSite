@@ -35,6 +35,11 @@ interface OrganizationState {
   resetOrganization: () => void;
 }
 
+const requiredProductionDepartments: DepartmentRecord[] = [
+  { key: "production-line1", name: "一车间", path: "生产 / 一车间", level: 2, parentKey: "production", sort: 10, status: "启用", users: 54, referenced: true, description: "生产一车间现场执行。" },
+  { key: "production-line2", name: "二车间", path: "生产 / 二车间", level: 2, parentKey: "production", sort: 20, status: "启用", users: 54, referenced: true, description: "生产二车间现场执行。" },
+];
+
 export const initialDepartments: DepartmentRecord[] = [
   { key: "rd", name: "研发", path: "研发", level: 1, sort: 10, status: "启用", users: 72, referenced: true, description: "负责产品设计、软件与硬件开发。" },
   { key: "rd-software", name: "软件", path: "研发 / 软件", level: 2, parentKey: "rd", sort: 10, status: "启用", users: 36, referenced: true, description: "嵌入式与平台软件开发。" },
@@ -44,6 +49,7 @@ export const initialDepartments: DepartmentRecord[] = [
   { key: "quality-system", name: "体系", path: "质量 / 体系", level: 2, parentKey: "quality", sort: 10, status: "启用", users: 15, referenced: true, description: "质量体系文件与内审。" },
   { key: "quality-iqc", name: "来料检验", path: "质量 / 来料检验", level: 2, parentKey: "quality", sort: 20, status: "启用", users: 26, referenced: true, description: "供应商来料检验。" },
   { key: "production", name: "生产", path: "生产", level: 1, sort: 30, status: "启用", users: 108, referenced: true, description: "生产计划与现场执行。" },
+  ...requiredProductionDepartments,
   { key: "document", name: "文控", path: "文控", level: 1, sort: 40, status: "启用", users: 8, referenced: true, description: "受控文件发布与流程发起。" },
 ];
 
@@ -61,6 +67,12 @@ const rebuildDepartmentPaths = (departments: DepartmentRecord[]) => departments.
   return { ...department, path: parent ? `${parent.name} / ${department.name}` : department.name };
 });
 
+const restoreRequiredDepartments = (departments: DepartmentRecord[]) => rebuildDepartmentPaths([
+  ...departments,
+  ...requiredProductionDepartments.filter((required) =>
+    !departments.some((department) => department.key === required.key)),
+]);
+
 export const useOrganizationStore = create<OrganizationState>()(
   persist(
     (set) => ({
@@ -72,7 +84,17 @@ export const useOrganizationStore = create<OrganizationState>()(
     }),
     {
       name: "flowpilot-organization-domain-v1",
-      version: 1,
+      version: 2,
+      migrate: (persisted) => {
+        const state = persisted as Partial<OrganizationState>;
+        return {
+          ...state,
+          departments: restoreRequiredDepartments(
+            Array.isArray(state.departments) ? state.departments : initialDepartments,
+          ),
+          jobTitles: Array.isArray(state.jobTitles) ? state.jobTitles : initialJobTitles,
+        };
+      },
     },
   ),
 );
@@ -88,4 +110,3 @@ export const departmentCascaderOptions = (departments: DepartmentRecord[]) => de
       .sort((left, right) => left.sort - right.sort)
       .map((child) => ({ value: child.key, label: child.name })),
   }));
-

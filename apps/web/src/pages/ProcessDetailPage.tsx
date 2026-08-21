@@ -341,7 +341,7 @@ export function ProcessDetailPage() {
   const historyItems = [
     {
       color: "blue",
-      children: <HistoryItem title="流程发起" person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} detail="提交初始表单" />,
+      children: <HistoryItem title="流程发起" person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} />,
     },
     ...Array.from({ length: instance.round }, (_, index) => index + 1).flatMap((round) => {
       const resubmission = instance.resubmissions?.find((record) => record.round === round);
@@ -1135,12 +1135,12 @@ function InlinePdfPreview({
   return <iframe className="inline-pdf-frame" src={sourceUrl} title={`PDF 文件：${fileName}`} />;
 }
 
-function HistoryItem({ title, person, time, detail }: { title: string; person: string; time: string; detail: string }) {
+function HistoryItem({ title, person, time, detail }: { title: string; person: string; time: string; detail?: string }) {
   return (
     <div className="history-item">
       <div><strong>{title}</strong><span>{time}</span></div>
       <small>{person}</small>
-      <p>{detail}</p>
+      {detail ? <p>{detail}</p> : null}
     </div>
   );
 }

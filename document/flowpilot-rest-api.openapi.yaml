@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: FlowPilot REST API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     FlowPilot 内网流程平台首版 REST API 契约。
 
@@ -67,6 +67,7 @@ paths:
       tags: [Authentication]
       operationId: login
       summary: 登录并建立会话
+      description: 后端根据用户记录中的 authenticationMode 选择域认证或本地密码认证；客户端不能指定认证方式。域服务不可用时不得回退本地密码。
       security: []
       requestBody:
         required: true
@@ -87,6 +88,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "429":
           $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /auth/logout:
     post:
@@ -141,7 +144,7 @@ paths:
       tags: [Authentication]
       operationId: startImpersonation
       summary: 以指定用户身份继续当前会话
-      description: 仅真实登录的系统内置超级管理员可执行。后续权限和数据范围按目标用户计算，审计同时记录真实操作者和生效用户。
+      description: 仅真实登录的系统内置超级管理员可执行。该命令跳过目标用户的域或本地密码认证，不接收目标凭据，直接返回目标身份已生效的会话；后续权限和数据范围按目标用户计算，审计同时记录真实操作者和生效用户。
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -216,6 +219,10 @@ paths:
           description: 收件人选择器可只查询已维护邮箱的用户
           schema:
             type: boolean
+        - name: authenticationMode
+          in: query
+          schema:
+            $ref: "#/components/schemas/AuthenticationMode"
       responses:
         "200":
           description: 用户分页结果
@@ -286,8 +293,8 @@ paths:
     patch:
       tags: [Users]
       operationId: updateUser
-      summary: 修改用户资料、部门、职务和角色
-      description: 超级管理员账号不可修改。账号状态和密码由专用命令修改。
+      summary: 修改用户资料、登录方式、部门、职务和角色
+      description: 超级管理员账号不可修改。账号状态由专用命令修改；切换为密码登录时必须在同一请求中设置新密码，切换为域登录时清除本地密码散列并使现存会话失效。
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
@@ -365,6 +372,7 @@ paths:
       tags: [Users]
       operationId: resetUserPassword
       summary: 管理员重置用户密码
+      description: 只允许密码登录用户；域登录用户返回 AUTHENTICATION_MODE_CONFLICT。
       parameters:
         - $ref: "#/components/parameters/UserId"
         - $ref: "#/components/parameters/IfMatch"
@@ -2845,6 +2853,12 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/ProblemDetails"
+    ServiceUnavailable:
+      description: 域认证等必需外部依赖当前不可用
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
     PayloadTooLarge:
       description: 文件超过字段或系统限制
       content:
@@ -2946,6 +2960,8 @@ components:
         - EXPORT_NOT_READY
         - EXPORT_EXPIRED
         - RATE_LIMITED
+        - DOMAIN_AUTHENTICATION_UNAVAILABLE
+        - AUTHENTICATION_MODE_CONFLICT
         - IMPERSONATION_NOT_ALLOWED
         - IMPERSONATION_TARGET_INVALID
         - IMPERSONATION_ALREADY_ACTIVE
@@ -2983,6 +2999,10 @@ components:
     EnabledStatus:
       type: string
       enum: [enabled, disabled]
+    AuthenticationMode:
+      type: string
+      enum: [domain, password]
+      description: 普通用户默认 domain；系统内置超级管理员固定为 password
     UserRef:
       type: object
       required: [id, name]
@@ -3046,6 +3066,7 @@ components:
       type: object
       additionalProperties: false
       required: [targetUserId, reason]
+      description: 目标用户认证由服务端明确跳过；请求不得包含目标用户密码或客户端控制的跳过认证开关。
       properties:
         targetUserId:
           type: string
@@ -3079,7 +3100,23 @@ components:
     CreateUserRequest:
       type: object
       additionalProperties: false
-      required: [loginName, name, email, departmentId, positionId, roleIds, initialPassword, status]
+      required: [loginName, name, email, departmentId, positionId, roleIds, authenticationMode, status]
+      allOf:
+        - if:
+            required: [authenticationMode]
+            properties:
+              authenticationMode:
+                const: password
+          then:
+            required: [initialPassword]
+        - if:
+            required: [authenticationMode]
+            properties:
+              authenticationMode:
+                const: domain
+          then:
+            not:
+              required: [initialPassword]
       properties:
         loginName:
           type: string
@@ -3104,16 +3141,22 @@ components:
           items:
             type: string
             format: uuid
+        authenticationMode:
+          allOf:
+            - $ref: "#/components/schemas/AuthenticationMode"
+          default: domain
         initialPassword:
           type: string
           minLength: 1
           maxLength: 200
+          description: 仅 authenticationMode=password 时必填；域登录不得提交
         status:
           $ref: "#/components/schemas/EnabledStatus"
     UpdateUserRequest:
       type: object
       additionalProperties: false
       minProperties: 1
+      description: 后端结合用户当前状态校验登录方式变化；只有从 domain 切换到 password 时要求 newPassword，保持现有 password 模式不要求重复设置密码。
       properties:
         name:
           type: string
@@ -3134,6 +3177,13 @@ components:
           items:
             type: string
             format: uuid
+        authenticationMode:
+          $ref: "#/components/schemas/AuthenticationMode"
+        newPassword:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: 仅从域登录切换到密码登录时使用，不返回、不展示已有密码
     SetStatusRequest:
       type: object
       additionalProperties: false
@@ -3152,7 +3202,7 @@ components:
           maxLength: 200
     UserDto:
       type: object
-      required: [id, revision, loginName, name, email, status, department, position, roles, superAdmin, createdAt, updatedAt]
+      required: [id, revision, loginName, name, email, authenticationMode, status, department, position, roles, superAdmin, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -3167,6 +3217,8 @@ components:
         email:
           type: string
           format: email
+        authenticationMode:
+          $ref: "#/components/schemas/AuthenticationMode"
         status:
           $ref: "#/components/schemas/EnabledStatus"
         department:

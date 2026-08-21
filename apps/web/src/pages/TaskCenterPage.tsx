@@ -140,7 +140,9 @@ export function TaskCenterPage() {
     version?.snapshot.form.fields.find((field) => field.id === PROCESS_TITLE_FIELD_ID)?.taskVisible ?? true;
   const recordShowsTitle = () => activeTemplate ? titleVisibleForVersion(selectedVersion) : true;
   const showTitle = activeTemplate ? titleVisibleForVersion(selectedVersion) : true;
-  const showTitleCell = showTitle || showSystemField("template") || showSystemField("templateVersion");
+  const showFlowNameUnderTitle = !activeTemplate && tab !== "initiated";
+  const showVersionUnderTitle = Boolean(activeTemplate && showSystemField("templateVersion"));
+  const showTitleCell = showTitle || showFlowNameUnderTitle || showVersionUnderTitle;
   const showNodeCell = showSystemField("currentNode") || showSystemField("round");
   const filtered = source.filter((item) => {
     const matchesKeyword = `${item.code}${item.title}${item.initiator}`
@@ -198,11 +200,11 @@ export function TaskCenterPage() {
       render: (value: string, record: ProcessInstance) => (
         <div className="title-cell">
           {recordShowsTitle() ? <strong>{value}</strong> : null}
-          {(showSystemField("template") || showSystemField("templateVersion")) ? (
+          {(showFlowNameUnderTitle || showVersionUnderTitle) ? (
             <span>
               {[
-                showSystemField("template") ? record.template : "",
-                showSystemField("templateVersion") ? record.templateVersion : "",
+                showFlowNameUnderTitle ? record.template : "",
+                showVersionUnderTitle ? record.templateVersion : "",
               ].filter(Boolean).join(" · ")}
             </span>
           ) : null}

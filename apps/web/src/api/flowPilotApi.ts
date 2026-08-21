@@ -135,9 +135,9 @@ export const flowPilotApi = {
       apiRequest<PageResult<DirectoryUser>>("/users", { query }),
     user: (userId: string) => apiRequest<DirectoryUser>(`/users/${encodeURIComponent(userId)}`),
     userResource: (userId: string) => apiResource<DirectoryUser>(`/users/${encodeURIComponent(userId)}`),
-    createUser: (input: Omit<DomainUser, "id" | "lastLogin">) =>
+    createUser: (input: Omit<DomainUser, "id" | "lastLogin" | "password"> & { password?: string }) =>
       apiRequest<DirectoryUser>("/users", { method: "POST", body: input, ...mutation() }),
-    updateUser: (userId: string, patch: Partial<DomainUser>, ifMatch?: string) =>
+    updateUser: (userId: string, patch: Partial<DomainUser> & { newPassword?: string }, ifMatch?: string) =>
       apiRequest<DirectoryUser>(`/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: patch, ifMatch }),
     updateUserStatus: (userId: string, status: "启用" | "停用", ifMatch: string) =>
       apiRequest<DirectoryUser>(`/users/${encodeURIComponent(userId)}/status`, { method: "PUT", body: { status }, ifMatch }),

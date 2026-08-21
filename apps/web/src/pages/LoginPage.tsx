@@ -6,13 +6,12 @@ import {
   SafetyCertificateOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Button, Checkbox, Form, Input, message, Select, Space, Tag, Typography } from "antd";
+import { Button, Checkbox, Form, Input, message, Tag, Typography } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { hydrateRemoteApplication } from "../api/remoteHydration";
-import { personas, type PersonaId } from "../state/usePrototypeStore";
 import {
   readLastSuccessfulLoginUsername,
   saveLastSuccessfulLoginUsername,
@@ -30,10 +29,8 @@ export function LoginPage() {
   const [form] = Form.useForm<LoginValues>();
   const debugMode = isBrowserMockMode;
   const [initialUsername] = useState(() =>
-    readLastSuccessfulLoginUsername() || (debugMode ? "lina" : ""));
+    debugMode ? "superadmin" : readLastSuccessfulLoginUsername());
   const [submitting, setSubmitting] = useState(false);
-  const [demoPersona, setDemoPersona] = useState<PersonaId>(() =>
-    personas.find((item) => item.id === initialUsername)?.id ?? "lina");
 
   const submit = async (values: LoginValues) => {
     setSubmitting(true);
@@ -50,19 +47,16 @@ export function LoginPage() {
     }
   };
 
-  const fillDemo = (personaId: PersonaId) => {
-    setDemoPersona(personaId);
-    form.setFieldsValue({ username: personaId, password: "1", remember: true });
-  };
-
   return (
     <main className="login-page">
       <section className="login-story">
         <div className="login-brand">
-          <span className="brand-mark brand-mark-large">FP</span>
-          <span>
-            <strong>FlowPilot</strong>
-            <small>企业流程审核中心</small>
+          <span className="brand-lockup">
+            <span className="moons-wordmark" aria-label="MOONS'">
+              <span className="moons-wordmark-name" aria-hidden="true">MOONS</span>
+              <span className="moons-wordmark-apostrophe" aria-hidden="true">&apos;</span>
+            </span>
+            <small>FlowPilot · 企业流程审核中心</small>
           </span>
         </div>
 
@@ -98,7 +92,9 @@ export function LoginPage() {
           <div className="login-card-heading">
             <Typography.Text type="secondary">欢迎回来</Typography.Text>
             <Typography.Title level={2}>登录流程中心</Typography.Title>
-            <Typography.Paragraph type="secondary">使用公司本地账号进入系统</Typography.Paragraph>
+            <Typography.Paragraph type="secondary">
+              {debugMode ? "使用超级管理员进入演示环境" : "使用公司账号进入系统"}
+            </Typography.Paragraph>
           </div>
 
           <Form<LoginValues>
@@ -115,13 +111,19 @@ export function LoginPage() {
               name="username"
               rules={[{ required: true, whitespace: true, message: "请输入账号" }]}
             >
-              <Input size="large" prefix={<UserOutlined />} placeholder="请输入本地账号" autoComplete="username" />
+              <Input
+                size="large"
+                prefix={<UserOutlined />}
+                placeholder="请输入账号"
+                autoComplete="username"
+                readOnly={debugMode}
+              />
             </Form.Item>
             <Form.Item
               label="密码"
               name="password"
               rules={[{ required: true, message: "请输入密码" }]}
-              extra={debugMode ? "Debug 演示密码允许使用单字符。" : undefined}
+              extra={debugMode ? "Debug 演示密码：1。登录后可在顶栏切换演示身份。" : undefined}
             >
               <Input.Password size="large" prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
             </Form.Item>
@@ -144,26 +146,6 @@ export function LoginPage() {
             </Button>
           </Form>
 
-          {debugMode && <div className="demo-login">
-            <div className="demo-login-title"><span />选择演示身份<span /></div>
-            <Space.Compact block>
-              <Select
-                aria-label="选择演示身份"
-                value={demoPersona}
-                showSearch
-                optionFilterProp="searchText"
-                onChange={(value: PersonaId) => fillDemo(value)}
-                options={personas.map((item) => ({
-                  value: item.id,
-                  label: `${item.name} · ${item.role}`,
-                  searchText: `${item.id} ${item.name} ${item.role}`,
-                }))}
-                style={{ flex: 1 }}
-              />
-              <Button onClick={() => fillDemo(demoPersona)}>填入账号</Button>
-            </Space.Compact>
-            <Typography.Text type="secondary">演示密码均为：1</Typography.Text>
-          </div>}
         </div>
       </section>
     </main>

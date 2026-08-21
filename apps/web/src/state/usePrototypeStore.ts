@@ -342,6 +342,7 @@ const hydrateLegacyInstance = (instance: LegacyProcessInstance): ProcessInstance
   const version = definition?.versions.find((item) => item.version === normalizeTemplateVersion(instance.templateVersion));
   const hydrated: ProcessInstance = {
     ...instance,
+    template: version?.basic.name ?? instance.template,
     currentNode: instance.workflowType === "free" && instance.status === "进行中"
       ? instance.currentAssignee ?? instance.currentNode.replace(/受理中$/, "")
       : instance.currentNode
@@ -1294,7 +1295,7 @@ export const usePrototypeStore = create<PrototypeState>()(
     }),
     {
       name: "flowpilot-prototype-v5",
-      version: 17,
+      version: 18,
       migrate: (persisted) => {
         const { notices: legacyNotices, ...state } = persisted as PrototypeState & { notices?: unknown };
         void legacyNotices;

@@ -39,11 +39,25 @@ export async function gotoApp(page: Page, path: string) {
 export async function loginAs(page: Page, username: string, password = "1") {
   await gotoApp(page, "login");
   await expect(page.getByRole("heading", { name: "登录流程中心" })).toBeVisible();
-  await page.getByLabel("账号").fill(username);
-  await page.getByLabel("密码").fill(password);
+  const accountInput = page.getByLabel("账号");
+  if (isMockTarget) {
+    await expect(accountInput).toHaveValue("superadmin");
+    await expect(accountInput).toHaveAttribute("readonly", "");
+  } else {
+    await accountInput.fill(username);
+  }
+  await page.getByLabel("密码").fill(isMockTarget ? "1" : password);
   await page.locator("button.login-submit").click();
   await expect(page).toHaveURL(/\/flowpilot\/tasks$/);
   await expect(page.locator(".app-header")).toBeVisible();
+
+  if (isMockTarget && username !== "superadmin") {
+    const personaSelect = page.getByRole("combobox", { name: "切换演示身份" });
+    await personaSelect.click();
+    await personaSelect.fill(username);
+    await personaSelect.press("Enter");
+    await expect(page.locator(".user-copy strong")).not.toHaveText("超级管理员");
+  }
 }
 
 export async function stabilizeVisualPage(page: Page) {

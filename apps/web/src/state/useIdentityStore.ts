@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export type EnableStatus = "启用" | "停用";
+export type AuthenticationMode = "domain" | "password";
 export type WorkflowGroupPurpose = "发起" | "审批/受理" | "关闭";
 
 export interface DomainUser {
@@ -10,6 +11,7 @@ export interface DomainUser {
   email: string;
   name: string;
   password: string;
+  authenticationMode: AuthenticationMode;
   department: string[];
   departmentPath: string;
   jobTitle: string;
@@ -76,16 +78,16 @@ const roleSeed: DomainRole[] = [
 ];
 
 const primaryUsers: DomainUser[] = [
-  { id: "superadmin", account: "superadmin", email: companyEmail("superadmin"), name: "超级管理员", password: "1", department: ["system"], departmentPath: "系统内置", jobTitle: "系统内置", roles: ["超级管理员"], status: "启用", lastLogin: "从未登录", builtIn: true },
-  { id: "admin", account: "admin", email: companyEmail("admin"), name: "周杰", password: "1", department: ["document"], departmentPath: "文控", jobTitle: "经理", roles: ["系统管理员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 09:18" },
-  { id: "wangmin", account: "wangmin", email: companyEmail("wangmin"), name: "王敏", password: "1", department: ["document"], departmentPath: "文控", jobTitle: "员工", roles: ["文控专员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 10:32" },
-  { id: "zhangwei", account: "zhangwei", email: companyEmail("zhangwei"), name: "张伟", password: "1", department: ["rd", "rd-software"], departmentPath: "研发 / 软件", jobTitle: "员工", roles: ["研发审核员"], status: "启用", lastLogin: "2026-08-13 09:26" },
-  { id: "lina", account: "lina", email: companyEmail("lina"), name: "林晓", password: "1", department: ["quality", "quality-system"], departmentPath: "质量 / 体系", jobTitle: "员工", roles: ["质量审核员"], status: "启用", lastLogin: "2026-08-13 08:46" },
-  { id: "zhaolei", account: "zhaolei", email: companyEmail("zhaolei"), name: "赵磊", password: "1", department: ["production", "production-line1"], departmentPath: "生产 / 一车间", jobTitle: "员工", roles: ["生产审核员"], status: "启用", lastLogin: "2026-08-12 16:21" },
-  { id: "hejing", account: "hejing", email: companyEmail("hejing"), name: "何静", password: "1", department: ["quality"], departmentPath: "质量", jobTitle: "员工", roles: ["只读观察员"], status: "启用", lastLogin: "2026-08-12 15:04" },
-  { id: "chenchen", account: "chenchen", email: companyEmail("chenchen"), name: "陈晨", password: "1", department: ["rd", "rd-hardware"], departmentPath: "研发 / 硬件", jobTitle: "员工", roles: ["研发审核员"], status: "启用", lastLogin: "2026-08-12 13:20" },
-  { id: "liufang", account: "liufang", email: companyEmail("liufang"), name: "刘芳", password: "1", department: ["document"], departmentPath: "文控", jobTitle: "员工", roles: ["文控专员"], status: "启用", lastLogin: "2026-08-11 14:05" },
-  { id: "sunyue", account: "sunyue", email: companyEmail("sunyue"), name: "孙悦", password: "1", department: ["production", "production-line2"], departmentPath: "生产 / 二车间", jobTitle: "员工", roles: ["生产审核员"], status: "启用", lastLogin: "2026-08-11 11:28" },
+  { id: "superadmin", account: "superadmin", email: companyEmail("superadmin"), name: "超级管理员", password: "1", authenticationMode: "password", department: ["system"], departmentPath: "系统内置", jobTitle: "系统内置", roles: ["超级管理员"], status: "启用", lastLogin: "从未登录", builtIn: true },
+  { id: "admin", account: "admin", email: companyEmail("admin"), name: "周杰", password: "1", authenticationMode: "domain", department: ["document"], departmentPath: "文控", jobTitle: "经理", roles: ["系统管理员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 09:18" },
+  { id: "wangmin", account: "wangmin", email: companyEmail("wangmin"), name: "王敏", password: "1", authenticationMode: "domain", department: ["document"], departmentPath: "文控", jobTitle: "员工", roles: ["文控专员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 10:32" },
+  { id: "zhangwei", account: "zhangwei", email: companyEmail("zhangwei"), name: "张伟", password: "1", authenticationMode: "domain", department: ["rd", "rd-software"], departmentPath: "研发 / 软件", jobTitle: "员工", roles: ["研发审核员"], status: "启用", lastLogin: "2026-08-13 09:26" },
+  { id: "lina", account: "lina", email: companyEmail("lina"), name: "林晓", password: "1", authenticationMode: "domain", department: ["quality", "quality-system"], departmentPath: "质量 / 体系", jobTitle: "员工", roles: ["质量审核员"], status: "启用", lastLogin: "2026-08-13 08:46" },
+  { id: "zhaolei", account: "zhaolei", email: companyEmail("zhaolei"), name: "赵磊", password: "1", authenticationMode: "domain", department: ["production", "production-line1"], departmentPath: "生产 / 一车间", jobTitle: "员工", roles: ["生产审核员"], status: "启用", lastLogin: "2026-08-12 16:21" },
+  { id: "hejing", account: "hejing", email: companyEmail("hejing"), name: "何静", password: "1", authenticationMode: "domain", department: ["quality"], departmentPath: "质量", jobTitle: "员工", roles: ["只读观察员"], status: "启用", lastLogin: "2026-08-12 15:04" },
+  { id: "chenchen", account: "chenchen", email: companyEmail("chenchen"), name: "陈晨", password: "1", authenticationMode: "domain", department: ["rd", "rd-hardware"], departmentPath: "研发 / 硬件", jobTitle: "员工", roles: ["研发审核员"], status: "启用", lastLogin: "2026-08-12 13:20" },
+  { id: "liufang", account: "liufang", email: companyEmail("liufang"), name: "刘芳", password: "1", authenticationMode: "domain", department: ["document"], departmentPath: "文控", jobTitle: "员工", roles: ["文控专员"], status: "启用", lastLogin: "2026-08-11 14:05" },
+  { id: "sunyue", account: "sunyue", email: companyEmail("sunyue"), name: "孙悦", password: "1", authenticationMode: "domain", department: ["production", "production-line2"], departmentPath: "生产 / 二车间", jobTitle: "员工", roles: ["生产审核员"], status: "启用", lastLogin: "2026-08-11 11:28" },
 ];
 
 const departments = [
@@ -109,6 +111,7 @@ const generatedUsers: DomainUser[] = Array.from({ length: 228 }, (_, index) => {
     email: companyEmail(account),
     name: `演示员工${String(number).padStart(3, "0")}`,
     password: "1",
+    authenticationMode: "domain",
     department: department.value,
     departmentPath: department.path,
     jobTitle: index % 23 === 0 ? "经理" : "员工",
@@ -167,6 +170,7 @@ const canonicalizeIdentityRelations = (
 ) => {
   const usersWithRoleIds = users.map((user) => ({
     ...user,
+    authenticationMode: user.builtIn ? "password" as const : user.authenticationMode ?? "domain",
     roleIds: user.roleIds ?? roles.filter((role) => user.roles.includes(role.name)).map((role) => role.id),
   }));
   const rolesWithMemberIds = roles.map((role) => ({
@@ -199,6 +203,60 @@ const canonicalizeIdentityRelations = (
     };
   });
   return { users: normalizedUsers, roles: normalizedRoles, workflowGroups: normalizedGroups };
+};
+
+const repairPersistedIdentityRelations = (
+  users: DomainUser[],
+  roles: DomainRole[],
+  workflowGroups: WorkflowPermissionGroup[],
+) => {
+  const roleIds = new Set(roles.map((role) => role.id));
+  const userIds = new Set(users.map((user) => user.id));
+  const roleIdByName = new Map(roles.map((role) => [role.name, role.id]));
+  const userIdByName = new Map(users.map((user) => [user.name, user.id]));
+
+  const repairedUsers = users.map((user) => ({
+    ...user,
+    roleIds: [...new Set([
+      ...(user.roleIds ?? []).filter((roleId) => roleIds.has(roleId)),
+      ...user.roles.flatMap((roleName) => {
+        const roleId = roleIdByName.get(roleName);
+        return roleId ? [roleId] : [];
+      }),
+    ])],
+  }));
+
+  const repairedRoles = roles.map((role) => ({
+    ...role,
+    memberUserIds: [...new Set([
+      ...(role.memberUserIds ?? []).filter((userId) => userIds.has(userId)),
+      ...role.members.flatMap((userName) => {
+        const userId = userIdByName.get(userName);
+        return userId ? [userId] : [];
+      }),
+      ...repairedUsers.filter((user) => user.roleIds.includes(role.id)).map((user) => user.id),
+    ])],
+  }));
+
+  const repairedGroups = workflowGroups.map((group) => ({
+    ...group,
+    directMemberUserIds: [...new Set([
+      ...(group.directMemberUserIds ?? []).filter((userId) => userIds.has(userId)),
+      ...group.directMembers.flatMap((userName) => {
+        const userId = userIdByName.get(userName);
+        return userId ? [userId] : [];
+      }),
+    ])],
+    linkedRoleIds: [...new Set([
+      ...(group.linkedRoleIds ?? []).filter((roleId) => roleIds.has(roleId)),
+      ...group.linkedRoles.flatMap((roleName) => {
+        const roleId = roleIdByName.get(roleName);
+        return roleId ? [roleId] : [];
+      }),
+    ])],
+  }));
+
+  return canonicalizeIdentityRelations(repairedUsers, repairedRoles, repairedGroups);
 };
 
 const initialIdentity = canonicalizeIdentityRelations(userSeed, roleSeed, groupSeed);
@@ -240,14 +298,15 @@ export const useIdentityStore = create<IdentityState>()(
     }),
     {
       name: "flowpilot-identity-domain-v1",
-      version: 4,
+      version: 6,
       migrate: (persisted) => {
         const state = persisted as Partial<IdentityState>;
-        return canonicalizeIdentityRelations(
+        return repairPersistedIdentityRelations(
           Array.isArray(state.users) ? state.users.map((user) => ({
             ...user,
             email: user.email?.trim() || companyEmail(user.account),
             password: user.password || "1",
+            authenticationMode: user.builtIn ? "password" : user.authenticationMode ?? "domain",
             roles: [...(user.roles ?? [])],
           })) : userSeed,
           Array.isArray(state.roles) ? state.roles : roleSeed,

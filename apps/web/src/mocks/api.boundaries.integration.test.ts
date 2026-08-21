@@ -159,6 +159,43 @@ describe("Mock REST API 通用契约", () => {
     });
   });
 
+  it("用户登录方式默认域登录，支持受约束地切换为密码登录", async () => {
+    const created = await apiModule.flowPilotApi.directory.createUser({
+      account: "domain.user",
+      email: "domain.user@company.local",
+      authenticationMode: "domain",
+      name: "域登录用户",
+      department: ["rd", "rd-software"],
+      departmentPath: "研发 / 软件",
+      jobTitle: "员工",
+      roles: ["只读观察员"],
+      status: "启用",
+    });
+    expect(created.authenticationMode).toBe("domain");
+    await expect(apiModule.flowPilotApi.directory.resetPassword(created.id)).rejects.toMatchObject({
+      status: 409,
+      problem: { code: "AUTHENTICATION_MODE_CONFLICT" },
+    });
+
+    const resource = await apiModule.flowPilotApi.directory.userResource(created.id);
+    await expect(apiModule.flowPilotApi.directory.updateUser(
+      created.id,
+      { authenticationMode: "password" },
+      resource.etag,
+    )).rejects.toMatchObject({ status: 422 });
+
+    const updated = await apiModule.flowPilotApi.directory.updateUser(
+      created.id,
+      { authenticationMode: "password", newPassword: "1" },
+      resource.etag,
+    );
+    expect(updated.authenticationMode).toBe("password");
+    await expect(apiModule.flowPilotApi.directory.resetPassword(created.id)).resolves.toHaveProperty("temporaryPassword");
+
+    const superAdmin = identityModule.findIdentityUser("superadmin");
+    expect(superAdmin?.authenticationMode).toBe("password");
+  });
+
   it("写资源强制 If-Match，并在冲突时返回当前 ETag", async () => {
     const resource = await clientModule.apiResource<unknown>("/process-definitions/pdf-review", {
       headers: bearer("admin"),

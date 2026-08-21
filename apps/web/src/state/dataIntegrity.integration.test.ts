@@ -8,6 +8,7 @@ let prototypeModule: typeof import("./usePrototypeStore");
 let permissionModule: typeof import("./permissionEngine");
 let clientModule: typeof import("../api/client");
 let runtimeModule: typeof import("../mocks/runtime");
+let organizationModule: typeof import("./useOrganizationStore");
 
 beforeAll(async () => {
   ({ localStorage: storage } = installMemoryBrowserStorage());
@@ -17,11 +18,13 @@ beforeAll(async () => {
   permissionModule = await import("./permissionEngine");
   clientModule = await import("../api/client");
   runtimeModule = await import("../mocks/runtime");
+  organizationModule = await import("./useOrganizationStore");
 });
 
 beforeEach(() => {
   storage.clear();
   identityModule.useIdentityStore.getState().resetIdentity();
+  organizationModule.useOrganizationStore.getState().resetOrganization();
   definitionModule.useProcessDefinitionStore.getState().resetDefinitions();
   prototypeModule.usePrototypeStore.getState().resetDemo();
 });
@@ -34,6 +37,7 @@ describe("演示领域数据完整性", () => {
     const definitionById = new Map(definitions.map((definition) => [definition.id, definition]));
     const instanceById = new Map(instances.map((instance) => [instance.id, instance]));
     const userIds = new Set(users.map((user) => user.id));
+    const departmentIds = new Set(organizationModule.useOrganizationStore.getState().departments.map((department) => department.key));
     const groupIds = new Set(workflowGroups.flatMap((group) => [group.id, group.name]));
 
     expect(new Set(definitions.map((definition) => definition.id)).size).toBe(definitions.length);
@@ -44,11 +48,18 @@ describe("演示领域数据完整性", () => {
     expect(new Set(instances.map((instance) => instance.code)).size).toBe(instances.length);
     expect(new Set(tasks.map((task) => task.id)).size).toBe(tasks.length);
 
+    users.filter((user) => !user.builtIn).forEach((user) => {
+      user.department.forEach((departmentId) => {
+        expect(departmentIds.has(departmentId), `用户 ${user.id} 引用的部门 ${departmentId} 应存在`).toBe(true);
+      });
+    });
+
     instances.forEach((instance) => {
       const definition = definitionById.get(instance.definitionId);
       const version = definition?.versions.find((item) => item.id === instance.versionId);
       expect(definition, `实例 ${instance.id} 引用的定义应存在`).toBeDefined();
       expect(version, `实例 ${instance.id} 引用的版本应存在`).toBeDefined();
+      expect(instance.template).toBe(version?.basic.name);
       expect(instance.template.trim()).not.toBe("");
       expect(instance.templateVersion.toUpperCase()).toBe(version?.version.toUpperCase());
       expect(
@@ -154,6 +165,7 @@ describe("身份、权限和持久化边界", () => {
     expect(migrated.users.find((user) => user.id === "wangmin")).toMatchObject({
       email: "wangmin@company.local",
       password: "1",
+      authenticationMode: "domain",
       roleIds: ["ROLE-002", "ROLE-003"],
     });
     expect(migrated.workflowGroups.find((group) => group.id === legacyGroup.id)).toMatchObject({
@@ -161,6 +173,53 @@ describe("身份、权限和持久化边界", () => {
       directMemberUserIds: expect.arrayContaining(["wangmin", "liufang"]),
       linkedRoleIds: ["ROLE-003"],
     });
+  });
+
+  it("旧身份数据中的空稳定标识不会清空普通用户角色和流程权限组", async () => {
+    const current = identityModule.useIdentityStore.getState();
+    storage.setItem("flowpilot-identity-domain-v1", JSON.stringify({
+      state: {
+        users: current.users.map((user) => ({ ...user, roleIds: [] })),
+        roles: current.roles.map((role) => ({ ...role, memberUserIds: [] })),
+        workflowGroups: current.workflowGroups.map((group) => ({
+          ...group,
+          directMemberUserIds: [],
+          linkedRoleIds: [],
+        })),
+      },
+      version: 4,
+    }));
+
+    await identityModule.useIdentityStore.persist.rehydrate();
+
+    expect(identityModule.findIdentityUser("lina")).toMatchObject({
+      roles: ["质量审核员"],
+      roleIds: ["ROLE-005"],
+    });
+    expect(identityModule.isUserInWorkflowGroup("lina", "PDF审核_质量_流程权限组")).toBe(true);
+    expect(permissionModule.hasUserPermission("lina", "work-task:查看")).toBe(true);
+    expect(permissionModule.hasUserPermission("lina", "org-role:授权")).toBe(false);
+  });
+
+  it("旧组织数据自动补齐用户已经引用的生产车间", async () => {
+    const current = organizationModule.useOrganizationStore.getState();
+    storage.setItem("flowpilot-organization-domain-v1", JSON.stringify({
+      state: {
+        departments: current.departments.filter((department) =>
+          !["production-line1", "production-line2"].includes(department.key)),
+        jobTitles: current.jobTitles,
+      },
+      version: 1,
+    }));
+
+    await organizationModule.useOrganizationStore.persist.rehydrate();
+
+    const productionChildren = organizationModule.useOrganizationStore.getState().departments
+      .filter((department) => department.parentKey === "production");
+    expect(productionChildren).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "production-line1", path: "生产 / 一车间" }),
+      expect.objectContaining({ key: "production-line2", path: "生产 / 二车间" }),
+    ]));
   });
 
   it("损坏的会话和权限 JSON 安全降级，重置只清理本应用的运行时键", () => {

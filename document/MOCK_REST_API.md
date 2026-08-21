@@ -80,8 +80,8 @@ try {
 | 领域 | 主要路径 | 已模拟能力 |
 | --- | --- | --- |
 | 健康与 Mock 控制 | `/health`、`/mock/settings`、`/mock/reset` | 健康检查、延迟/故障场景、定向重置演示数据 |
-| 会话 | `/auth/login`、`/auth/me`、`/auth/logout` | 密码校验、停用账号拦截、无密码用户 DTO |
-| 用户与组织 | `/users`、`/departments`、`/positions` | 分页、CRUD、启停、密码重置、ETag、审计 |
+| 会话 | `/auth/login`、`/auth/me`、`/auth/logout` | 演示密码校验、停用账号拦截、无密码用户 DTO；不连接真实域服务 |
+| 用户与组织 | `/users`、`/departments`、`/positions` | 分页、CRUD、登录方式、启停、密码登录账号重置密码、ETag、审计 |
 | 角色与权限 | `/roles`、`/permissions` | 角色 CRUD、权限矩阵、变更影响预览 |
 | 流程权限组 | `/workflow-permission-groups` | CRUD、有效成员分页、变更影响预览 |
 | 流程定义与版本 | `/process-definitions` | 新建/复制、版本、分区设计器保存、校验、发布、取消发布、删除 |
@@ -95,6 +95,8 @@ try {
 | 操作审计 | `/audit-events` | 分页筛选、详情、关键写操作留痕 |
 
 完整路径、参数、DTO、响应码和示例以 OpenAPI 文件为准。
+
+当前浏览器 Mock 为避免依赖公司域环境，所有演示账号继续使用本地演示密码；它不模拟 AD/LDAP 可用性，也不把演示密码当作正式用户登录方式。正式后端按用户的 `authenticationMode` 在域认证和 Argon2id 本地密码之间分流。超级管理员在 Mock 中切换演示身份时与正式模拟身份语义一致：不校验目标身份密码，直接返回切换后的会话状态。
 
 ## 5. 并发、权限和幂等
 

@@ -62,6 +62,7 @@ import {
   useIdentityStore,
   type DomainRole,
   type DomainUser,
+  type AuthenticationMode,
   type WorkflowGroupPurpose,
   type WorkflowPermissionGroup,
 } from "../state/useIdentityStore";
@@ -99,6 +100,11 @@ const departmentByIndex = [
 ];
 
 type UserRecord = DomainUser;
+
+const authenticationModeLabel: Record<AuthenticationMode, string> = {
+  domain: "域登录",
+  password: "密码登录",
+};
 
 function StatusTag({ status }: { status: EnableStatus }) {
   return <StatusPill status={status} />;
@@ -167,6 +173,7 @@ export function UserManagementPage() {
   const [drawerUser, setDrawerUser] = useState<UserRecord | "new" | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [form] = Form.useForm();
+  const selectedAuthenticationMode = Form.useWatch("authenticationMode", form) as AuthenticationMode | undefined;
   const { guard: userEditorGuard } = useUnsavedChangesGuard({
     dirty: editorDirty,
     title: "用户信息尚未保存",
@@ -228,13 +235,14 @@ export function UserManagementPage() {
     setEditorDirty(false);
     form.resetFields();
     form.setFieldsValue(user === "new" ? {
-      account: "", email: "", name: "", password: "", department: [], jobTitle: activeJobTitles.find((item) => item.id === "JOB-002")?.name ?? activeJobTitles[0]?.name, roles: [], status: true,
-    } : { ...user });
+      account: "", email: "", name: "", authenticationMode: "domain", password: "", newPassword: "", department: [], jobTitle: activeJobTitles.find((item) => item.id === "JOB-002")?.name ?? activeJobTitles[0]?.name, roles: [], status: true,
+    } : { ...user, newPassword: "" });
   };
 
   const columns: TableProps<UserRecord>["columns"] = [
     { title: "用户", dataIndex: "name", width: 190, fixed: "left", render: (_, record) => <Space size={6}><PersonChip name={record.name} detail={record.account} />{record.builtIn ? <Tag color="gold" icon={<LockOutlined />}>内置</Tag> : null}</Space> },
     { title: "邮箱", dataIndex: "email", width: 220, ellipsis: true },
+    { title: "登录方式", dataIndex: "authenticationMode", width: 106, render: (mode: AuthenticationMode) => <Tag color={mode === "domain" ? "blue" : "default"}>{authenticationModeLabel[mode]}</Tag> },
     { title: "部门", dataIndex: "departmentPath", width: 160, ellipsis: true },
     { title: "职务", dataIndex: "jobTitle", width: 100, render: (value: JobTitle) => <Tag color={value === managerTitleName ? "purple" : "default"}>{value}</Tag> },
     { title: "角色（可多选）", dataIndex: "roles", width: 260, render: (roles: string[]) => <Space size={[4, 4]} wrap>{roles.map((role) => <Tag key={role} color={role === "超级管理员" ? "gold" : role === "流程管理员" ? "blue" : undefined}>{role}</Tag>)}</Space> },
@@ -248,7 +256,7 @@ export function UserManagementPage() {
           <Tooltip title={record.status === "启用" ? "停用账号" : "启用账号"}>
             <Popconfirm disabled={record.builtIn} title={`确认${record.status === "启用" ? "停用" : "启用"} ${record.name}？`} onConfirm={() => void changeUserStatus(record)}><Button disabled={record.builtIn} type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}用户：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm>
           </Tooltip>
-          <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : "重置密码"}><Popconfirm disabled={record.builtIn} title="生成临时密码并立即生效？" onConfirm={() => void resetUserPassword(record)}><Button disabled={record.builtIn} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} /></Popconfirm></Tooltip>
+          <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : record.authenticationMode === "domain" ? "域登录密码由域系统维护" : "重置密码"}><Popconfirm disabled={record.builtIn || record.authenticationMode === "domain"} title="生成临时密码并立即生效？" onConfirm={() => void resetUserPassword(record)}><Button disabled={record.builtIn || record.authenticationMode === "domain"} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} /></Popconfirm></Tooltip>
         </Space>
       ),
     },
@@ -261,7 +269,7 @@ export function UserManagementPage() {
         { label: "用户总数", value: users.length, note: "按服务端分页加载" },
         { label: "启用账号", value: users.filter((item) => item.status === "启用").length, note: "可正常登录", tone: "green" },
         { label: "多角色用户", value: users.filter((item) => item.roles.length > 1).length, note: "权限取角色并集", tone: "blue" },
-        { label: "一级部门用户", value: users.filter((item) => item.department.length === 1).length, note: "允许归属一级节点" },
+        { label: "域登录账号", value: users.filter((item) => item.authenticationMode === "domain").length, note: "普通用户默认方式" },
       ]} />
       <Card className="query-card gov-query-card">
         <div className="gov-filter-grid gov-filter-grid--users">
@@ -275,26 +283,26 @@ export function UserManagementPage() {
       </Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}>
         <ResultHeader title="用户列表" count={filtered.length} extra={<><Typography.Text type="secondary">仅加载当前页数据</Typography.Text><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增用户</Button></>} />
-        <Table<UserRecord> rowKey="id" columns={columns} dataSource={pageRows} scroll={{ x: 1300 }} pagination={{ current: page, pageSize, total: filtered.length, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total) => `共 ${total} 名用户`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }} />
+        <Table<UserRecord> rowKey="id" columns={columns} dataSource={pageRows} scroll={{ x: 1420 }} pagination={{ current: page, pageSize, total: filtered.length, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total) => `共 ${total} 名用户`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }} />
       </Card>
       <Drawer width={600} open={drawerUser !== null} onClose={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })} title={drawerUser === "new" ? "新增用户" : "编辑用户"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
         <Alert
           className="gov-drawer-alert"
           type="info"
           showIcon
-          message={drawerUser === "new" ? "部门、职务与角色相互独立" : "密码和账号状态使用列表操作维护"}
-          description={drawerUser === "new" ? "邮箱用于流程通知；经理职务不会自动获得管理权限，一个用户可拥有多个角色。" : "编辑页维护用户基本资料（含通知邮箱）、部门、职务和角色；密码及账号状态仍通过列表操作处理。"}
+          message={drawerUser === "new" ? "普通用户默认使用域登录" : "可调整普通用户的登录方式"}
+          description={drawerUser === "new" ? "域登录不设置本地密码；密码登录必须填写初始密码。部门、职务与角色仍相互独立。" : "切换为密码登录时需要设置新密码；切换为域登录后，密码由域系统维护。账号状态仍通过列表操作处理。"}
         />
         <Form form={form} layout="vertical" requiredMark="optional" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
           const path = values.department.length === 1 ? departmentOptions.find((item) => item.value === values.department[0])?.label : `${departmentOptions.find((item) => item.value === values.department[0])?.label} / ${departmentOptions.find((item) => item.value === values.department[0])?.children?.find((item) => item.value === values.department[1])?.label}`;
           try {
             if (drawerUser === "new") {
-              const created = await flowPilotApi.directory.createUser({ account: values.account, email: String(values.email).trim(), password: values.password, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用" });
+              const created = await flowPilotApi.directory.createUser({ account: values.account, email: String(values.email).trim(), authenticationMode: values.authenticationMode, password: values.authenticationMode === "password" ? values.password : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用" });
               cacheUser(created);
               message.success("用户已创建");
             } else if (drawerUser) {
               const resource = await flowPilotApi.directory.userResource(drawerUser.id);
-              const updated = await flowPilotApi.directory.updateUser(drawerUser.id, { account: values.account, email: String(values.email).trim(), name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles }, resource.etag);
+              const updated = await flowPilotApi.directory.updateUser(drawerUser.id, { account: values.account, email: String(values.email).trim(), authenticationMode: values.authenticationMode, newPassword: drawerUser.authenticationMode === "domain" && values.authenticationMode === "password" ? values.newPassword : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles }, resource.etag);
               cacheUser(updated);
               message.success("用户信息已保存");
             }
@@ -320,7 +328,9 @@ export function UserManagementPage() {
           >
             <Input maxLength={120} placeholder="name@company.com" />
           </Form.Item>
-          {drawerUser === "new" && <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 1, message: "密码至少 1 个字符" }]} extra="首版采用最低密码强度，允许单个字符；无首次登录改密和连续失败锁定。"><Input.Password maxLength={64} /></Form.Item>}
+          <Form.Item name="authenticationMode" label="登录方式" rules={[{ required: true, message: "请选择登录方式" }]} extra="域登录由正式后端连接公司域服务校验；浏览器 Mock 仍使用统一演示密码。"><Select options={[{ value: "domain", label: "域登录（默认）" }, { value: "password", label: "密码登录" }]} /></Form.Item>
+          {drawerUser === "new" && selectedAuthenticationMode === "password" && <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 1, message: "密码至少 1 个字符" }]} extra="仅密码登录用户需要设置；正式后端使用 Argon2id 保存散列。"><Input.Password maxLength={64} /></Form.Item>}
+          {drawerUser !== "new" && drawerUser?.authenticationMode === "domain" && selectedAuthenticationMode === "password" && <Form.Item name="newPassword" label="新密码" rules={[{ required: true, min: 1, message: "切换为密码登录时必须设置新密码" }]}><Input.Password maxLength={64} /></Form.Item>}
           <Form.Item name="department" label="所属部门" rules={[{ required: true, message: "请选择部门" }]} extra="可选择一级节点（如研发）或二级节点（如研发 / 软件）。"><Cascader changeOnSelect showSearch options={departmentOptions} placeholder="请选择一级或二级部门" /></Form.Item>
           {drawerUser === "new" ? <div className="gov-form-grid">
             <Form.Item name="jobTitle" label="职务" rules={[{ required: true }]}><Select options={selectableJobTitles.map((item) => ({ value: item.name, label: item.status === "停用" ? `${item.name}（已停用，仅保留历史）` : item.name }))} /></Form.Item>

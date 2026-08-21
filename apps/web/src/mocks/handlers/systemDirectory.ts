@@ -18,6 +18,7 @@ import {
   useIdentityStore,
   type DomainRole,
   type DomainUser,
+  type AuthenticationMode,
   type EnableStatus,
   type WorkflowGroupPurpose,
   type WorkflowPermissionGroup,
@@ -51,6 +52,7 @@ import {
 
 const API_ROOT = MOCK_API_BASE_URL;
 const ACTIVE_STATUSES = new Set<EnableStatus>(["启用", "停用"]);
+const AUTHENTICATION_MODES = new Set<AuthenticationMode>(["domain", "password"]);
 const GROUP_PURPOSES = new Set<WorkflowGroupPurpose>(["发起", "审批/受理", "关闭"]);
 const MOCK_SCENARIOS = new Set<MockScenario>([
   "normal",
@@ -559,12 +561,15 @@ const userCreateHandler = http.post(`${API_ROOT}/users`, async ({ request }) => 
     const departmentPath = textValue(parsed.departmentPath);
     const jobTitle = textValue(parsed.jobTitle);
     const roles = parsed.roles === undefined ? [] : stringArray(parsed.roles);
+    const authenticationMode = parsed.authenticationMode === undefined ? "domain" : parsed.authenticationMode;
     const status = parsed.status === undefined ? "启用" : parsed.status;
     const errors: ValidationProblemField[] = [];
     if (!account) errors.push(issue("account", "REQUIRED", "请输入登录账号。"));
     if (!email) errors.push(issue("email", "REQUIRED", "请输入邮箱。"));
     else if (!EMAIL_PATTERN.test(email)) errors.push(issue("email", "INVALID_EMAIL", "邮箱格式不正确。"));
-    if (!password) errors.push(issue("password", "REQUIRED", "请输入初始密码。"));
+    if (!AUTHENTICATION_MODES.has(authenticationMode as AuthenticationMode)) errors.push(issue("authenticationMode", "INVALID_AUTHENTICATION_MODE", "登录方式无效。"));
+    if (authenticationMode === "password" && !password) errors.push(issue("password", "REQUIRED", "密码登录用户必须设置初始密码。"));
+    if (authenticationMode === "domain" && password !== undefined) errors.push(issue("password", "PASSWORD_NOT_ALLOWED", "域登录用户不设置本地密码。"));
     if (!name) errors.push(issue("name", "REQUIRED", "请输入员工姓名。"));
     if (!department?.length) errors.push(issue("department", "REQUIRED", "请选择所属部门。"));
     if (!jobTitle) errors.push(issue("jobTitle", "REQUIRED", "请选择职务。"));
@@ -584,7 +589,8 @@ const userCreateHandler = http.post(`${API_ROOT}/users`, async ({ request }) => 
       id: `USR-${createClientUuid()}`,
       account: account ?? "",
       email: email ?? "",
-      password: password ?? "",
+      password: authenticationMode === "password" ? password ?? "" : "1",
+      authenticationMode: authenticationMode as AuthenticationMode,
       name: name ?? "",
       department: department ?? [],
       departmentPath: departmentPath ?? (department ?? []).join(" / "),
@@ -615,7 +621,7 @@ const userUpdateHandler = http.patch(`${API_ROOT}/users/:userId`, async ({ reque
   const parsed = await parseJsonBody<unknown>(request);
   if (parsed instanceof Response) return parsed;
   if (!isObject(parsed)) return validationProblem(request, [issue("body", "OBJECT_REQUIRED", "请求体必须是对象。")]);
-  const allowedFields = new Set(["account", "email", "name", "department", "departmentPath", "jobTitle", "roles", "status"]);
+  const allowedFields = new Set(["account", "email", "name", "department", "departmentPath", "jobTitle", "roles", "authenticationMode", "newPassword", "status"]);
   const errors = Object.keys(parsed)
     .filter((key) => !allowedFields.has(key))
     .map((key) => issue(key, key === "password" ? "PASSWORD_WRITE_NOT_ALLOWED" : "IMMUTABLE_OR_UNKNOWN_FIELD", key === "password" ? "密码只能通过重置密码接口修改。" : "字段不可通过此接口修改。"));
@@ -627,6 +633,8 @@ const userUpdateHandler = http.patch(`${API_ROOT}/users/:userId`, async ({ reque
   const departmentPath = parsed.departmentPath === undefined ? current.departmentPath : textValue(parsed.departmentPath);
   const jobTitle = parsed.jobTitle === undefined ? current.jobTitle : textValue(parsed.jobTitle);
   const roleReferences = parsed.roles === undefined ? current.roles : stringArray(parsed.roles);
+  const authenticationMode = parsed.authenticationMode === undefined ? current.authenticationMode : parsed.authenticationMode;
+  const newPassword = typeof parsed.newPassword === "string" ? parsed.newPassword : undefined;
   const status = parsed.status === undefined ? current.status : parsed.status;
   if (!account) errors.push(issue("account", "REQUIRED", "请输入登录账号。"));
   if (!email) errors.push(issue("email", "REQUIRED", "请输入邮箱。"));
@@ -635,6 +643,10 @@ const userUpdateHandler = http.patch(`${API_ROOT}/users/:userId`, async ({ reque
   if (!department?.length) errors.push(issue("department", "REQUIRED", "请选择所属部门。"));
   if (!jobTitle) errors.push(issue("jobTitle", "REQUIRED", "请选择职务。"));
   if (roleReferences === undefined) errors.push(issue("roles", "INVALID_TYPE", "角色必须是字符串数组。"));
+  if (!AUTHENTICATION_MODES.has(authenticationMode as AuthenticationMode)) errors.push(issue("authenticationMode", "INVALID_AUTHENTICATION_MODE", "登录方式无效。"));
+  const switchingToPassword = current.authenticationMode === "domain" && authenticationMode === "password";
+  if (switchingToPassword && !newPassword) errors.push(issue("newPassword", "REQUIRED", "切换为密码登录时必须设置新密码。"));
+  if (!switchingToPassword && newPassword !== undefined) errors.push(issue("newPassword", "PASSWORD_WRITE_NOT_ALLOWED", "新密码只用于从域登录切换为密码登录。"));
   if (!ACTIVE_STATUSES.has(status as EnableStatus)) errors.push(issue("status", "INVALID_STATUS", "账号状态无效。"));
 
   const users = useIdentityStore.getState().users;
@@ -654,6 +666,8 @@ const userUpdateHandler = http.patch(`${API_ROOT}/users/:userId`, async ({ reque
     departmentPath: departmentPath ?? current.departmentPath,
     jobTitle: jobTitle ?? current.jobTitle,
     roles: resolvedRoles.names,
+    authenticationMode: authenticationMode as AuthenticationMode,
+    password: switchingToPassword ? newPassword ?? current.password : authenticationMode === "domain" ? "1" : current.password,
     status: status as EnableStatus,
   };
   saveUser(current, updated);
@@ -697,6 +711,7 @@ const resetPasswordHandler = http.post(`${API_ROOT}/users/:userId/reset-password
   const current = findIdentityUser(userId);
   if (!current) return notFound(request, "用户");
   if (current.builtIn) return immutableBuiltIn(request, "超级管理员账号密码");
+  if (current.authenticationMode === "domain") return apiProblem(request, 409, "AUTHENTICATION_MODE_CONFLICT", "域登录用户不能重置本地密码", "该用户的密码由域系统维护。 ");
   return withIdempotency(request, () => {
     const temporaryPassword = `T-${createClientUuid().replaceAll("-", "").slice(0, 10)}`;
     useIdentityStore.getState().setUsers((users) => users.map((user) => user.id === current.id ? { ...user, password: temporaryPassword } : user));

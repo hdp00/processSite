@@ -39,16 +39,19 @@ describe("登录页", () => {
     hydrateMock.mockReset();
   });
 
-  it("阻止空账号和空密码提交，并显示明确的中文校验信息", async () => {
+  it("Debug 登录页固定超级管理员账号，并阻止空密码提交", async () => {
     const user = userEvent.setup();
     renderLoginPage();
 
-    await user.clear(screen.getByPlaceholderText("请输入本地账号"));
+    const usernameInput = screen.getByPlaceholderText("请输入账号");
+    expect(usernameInput).toHaveValue("superadmin");
+    expect(usernameInput).toHaveAttribute("readonly");
+    expect(screen.queryByLabelText("选择演示身份")).not.toBeInTheDocument();
+
     await user.clear(screen.getByPlaceholderText("请输入密码"));
     await user.click(screen.getByRole("button", { name: /登录/ }));
 
-    expect(await screen.findByText("请输入账号")).toBeInTheDocument();
-    expect(screen.getByText("请输入密码")).toBeInTheDocument();
+    expect(await screen.findByText("请输入密码")).toBeInTheDocument();
     expect(loginMock).not.toHaveBeenCalled();
   });
 
@@ -57,19 +60,15 @@ describe("登录页", () => {
     const user = userEvent.setup();
     renderLoginPage();
 
-    await user.clear(screen.getByPlaceholderText("请输入本地账号"));
-    await user.clear(screen.getByPlaceholderText("请输入密码"));
-    await user.type(screen.getByPlaceholderText("请输入本地账号"), "lina");
-    await user.type(screen.getByPlaceholderText("请输入密码"), "1");
     await user.click(screen.getByRole("button", { name: /登录/ }));
 
-    await waitFor(() => expect(loginMock).toHaveBeenCalledWith("lina", "1"), { timeout: 5_000 });
+    await waitFor(() => expect(loginMock).toHaveBeenCalledWith("superadmin", "1"), { timeout: 5_000 });
     expect(await screen.findByRole(
       "heading",
       { name: "任务中心测试页" },
       { timeout: 5_000 },
     )).toBeInTheDocument();
-    expect(window.localStorage.getItem("flowpilot-last-successful-login-username")).toBe("lina");
+    expect(window.localStorage.getItem("flowpilot-last-successful-login-username")).toBe("superadmin");
     expect(hydrateMock).not.toHaveBeenCalled();
   });
 
@@ -78,9 +77,7 @@ describe("登录页", () => {
     const user = userEvent.setup();
     renderLoginPage();
 
-    await user.clear(screen.getByPlaceholderText("请输入本地账号"));
     await user.clear(screen.getByPlaceholderText("请输入密码"));
-    await user.type(screen.getByPlaceholderText("请输入本地账号"), "lina");
     await user.type(screen.getByPlaceholderText("请输入密码"), "bad-password");
     await user.click(screen.getByRole("button", { name: /登录/ }));
 
