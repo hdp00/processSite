@@ -765,41 +765,8 @@
   background: #fff3f4;
 }
 
-.gov-audit-values {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin: 18px 0;
-}
-
-.gov-audit-values > div {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid #e2e7ef;
-  border-radius: 10px;
-  background: #fafbfc;
-}
-
-.gov-audit-values span {
-  display: block;
-  padding: 9px 12px;
-  border-bottom: 1px solid #e8ebf0;
-  color: #5f6b81;
-  background: #f4f6f9;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.gov-audit-values pre {
-  min-height: 94px;
-  margin: 0;
-  overflow: auto;
-  padding: 12px;
-  color: #344158;
-  font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.7;
-  white-space: pre-wrap;
+.gov-audit-summary {
+  margin-top: 18px;
 }
 
 @media (max-width: 1360px) {
@@ -850,8 +817,7 @@
   transform: none;
 }
 
-.app-content .gov-page .gov-permission-row,
-.app-content .gov-page .gov-audit-values > div {
+.app-content .gov-page .gov-permission-row {
   border-radius: 8px;
   box-shadow: none;
 }

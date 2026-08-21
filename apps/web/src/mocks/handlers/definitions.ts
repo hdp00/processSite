@@ -514,8 +514,10 @@ export const definitionHandlers = [
       const { definitionId, versionId } = routeIds(params);
       const found = requireVersion(request, definitionId, versionId);
       if ("response" in found) return found.response;
-      if (canEditVersion(found.definition, found.version)) {
-        useProcessDefinitionStore.getState().updateVersionBasic(definitionId, versionId, found.version.basic);
+      const conflict = checkIfMatch(request, found.version, true);
+      if (conflict) return conflict;
+      if (!useProcessDefinitionStore.getState().revalidateVersion(definitionId, versionId)) {
+        return apiProblem(request, 409, "VERSION_VALIDATION_FAILED", "版本校验失败", "流程版本状态已经变化，请刷新后重试。 ");
       }
       const updated = versionById(definitionId, versionId)!;
       return apiOk(request, structuredClone(updated), { headers: withEtag(updated) });

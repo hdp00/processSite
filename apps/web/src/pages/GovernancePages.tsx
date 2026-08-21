@@ -79,8 +79,10 @@ import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { readLocalAuditEvents } from "../utils/localAuditRepository";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
+import { compareDomainTimestamps, formatDisplayDateTime } from "../utils/domainTime";
 import { collectRuntimeAuditEvents } from "../utils/runtimeAudit";
 import { isBrowserMockMode } from "../utils/runtimeMode";
+import { auditActionLabel, auditDetailText, auditModuleLabel, auditResultLabel, auditSummaryText } from "../utils/auditDisplay";
 import { deriveAllWorkflowGroupStatistics } from "../state/workflowGroupStatistics";
 import { flowPilotApi } from "../api/flowPilotApi";
 import type { AuditEvent } from "../api/contracts";
@@ -348,7 +350,7 @@ export function UserManagementPage() {
     { title: "职务", dataIndex: "jobTitle", width: 100, render: (value: JobTitle) => <Tag color={value === managerTitleName ? "purple" : "default"}>{value}</Tag> },
     { title: "角色（可多选）", dataIndex: "roles", width: 260, render: (roles: string[]) => <Space size={[4, 4]} wrap>{roles.map((role) => <Tag key={role} color={role === "超级管理员" ? "gold" : role === "流程管理员" ? "blue" : undefined}>{role}</Tag>)}</Space> },
     { title: "状态", dataIndex: "status", width: 88, render: (status: EnableStatus) => <StatusTag status={status} /> },
-    { title: "最近登录", dataIndex: "lastLogin", width: 154 },
+    { title: "最近登录", dataIndex: "lastLogin", width: 154, render: (value: string) => formatDisplayDateTime(value) },
     {
       title: "操作", fixed: "right", width: 146, align: "center",
       render: (_, record) => (
@@ -1180,7 +1182,7 @@ export function WorkflowPermissionGroupsPage() {
     { title: "成员构成", key: "composition", width: 220, render: (_, record) => <div className="gov-composition"><span><UserOutlined /> 直接 {record.directMemberUserIds?.length ?? record.directMembers.length}</span><span><TeamOutlined /> 角色 {record.linkedRoleIds?.length ?? record.linkedRoles.length}</span></div> },
     { title: "有效成员", key: "effective", width: 112, render: (_, record) => <Button className="gov-count-link" type="link" onClick={() => setPreview(record)}>{effectiveMembers(record).length} 人</Button> },
     { title: "状态", dataIndex: "status", width: 118, align: "center", render: (value: EnableStatus) => <StatusTag status={value} /> },
-    { title: "更新时间", dataIndex: "updatedAt", width: 150 },
+    { title: "更新时间", dataIndex: "updatedAt", width: 150, render: (value: string) => formatDisplayDateTime(value) },
     { title: "操作", fixed: "right", width: 142, align: "center", render: (_, record) => <Space size={4}>{canEditGroups && <Tooltip title="编辑"><Button type="text" aria-label={`编辑权限组：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}<Tooltip title="有效成员预览"><Button type="text" aria-label={`预览有效成员：${record.name}`} icon={<EyeOutlined />} onClick={() => setPreview(record)} /></Tooltip>{canEditGroups && <Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => void changeGroupStatus(record)}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}权限组：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip>}</Space> },
   ];
   return (
@@ -1301,8 +1303,8 @@ export function InstanceMonitorPage() {
     { title: "状态", dataIndex: "status", width: 118, render: (value: InstanceMonitorStatus) => <StatusPill status={value} /> },
     { title: "当前节点", dataIndex: "node", width: 210, ellipsis: true, render: (value: string) => value || "—" },
     { title: "发起人", dataIndex: "initiator", width: 125, render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.department}</small></div> },
-    { title: "发起时间", dataIndex: "createdAt", width: 155 },
-    { title: "更新时间", dataIndex: "updatedAt", width: 155 },
+    { title: "发起时间", dataIndex: "createdAt", width: 155, render: (value: string) => formatDisplayDateTime(value) },
+    { title: "更新时间", dataIndex: "updatedAt", width: 155, render: (value: string) => formatDisplayDateTime(value) },
     { title: "操作", fixed: "right", width: 80, align: "center", render: (_, record) => <Tooltip title="查看详情"><Button type="text" aria-label={`查看流程实例：${record.title}`} icon={<EyeOutlined />} onClick={() => setDetail(record)} /></Tooltip> },
   ];
   return (
@@ -1311,31 +1313,14 @@ export function InstanceMonitorPage() {
       <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--monitor"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="实例编号、标题或发起人" value={keyword} onChange={(event) => setKeyword(event.target.value)} onPressEnter={() => setAppliedFilters({ keyword, process, status, dateRange })} /></label><label><span>流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={Array.from(new Set(monitorRows.map((row) => row.process))).map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={monitorStatuses.map((value) => ({ value }))} /></label><label><span>发起时间</span><DatePicker.RangePicker allowClear={false} value={dateRange} onChange={(value) => { if (value?.[0] && value[1]) setDateRange(normalizeDayRange([value[0], value[1]])); }} /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => setAppliedFilters({ keyword, process, status, dateRange })}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { const nextRange = createDefaultDateRange(); setKeyword(""); setProcess(undefined); setStatus(undefined); setDateRange(nextRange); setAppliedFilters({ keyword: "", process: undefined, status: undefined, dateRange: nextRange }); }}>重置</Button></div></div></Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程实例" count={filtered.length} extra={<Typography.Text type="secondary"><LockOutlined /> 全部操作只读</Typography.Text>} /><Table<MonitorRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1510 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条实例` }} /></Card>
       <Drawer width={660} open={Boolean(detail)} onClose={() => setDetail(null)} title="流程实例详情（只读）">
-        {detail ? <><div className="gov-detail-hero-row"><span className="gov-detail-icon"><FileSearchOutlined /></span><div><Typography.Title level={4}>{detail.title}</Typography.Title><Typography.Text type="secondary">{detail.code} · {detail.process} {detail.version}</Typography.Text></div><StatusPill status={detail.status} /></div><Descriptions bordered column={2} size="small" items={[{ key: "initiator", label: "发起人", children: `${detail.initiator}（${detail.department}）` }, { key: "created", label: "发起时间", children: detail.createdAt }, { key: "node", label: "当前节点", children: detail.node || "—" }, { key: "updated", label: "更新时间", children: detail.updatedAt }]} /><div className="gov-detail-section"><div className="gov-section-title">流转概览</div><Timeline items={[{ color: "green", children: <><strong>{detail.initiator} 发起流程</strong><small>{detail.createdAt}</small></> }, { color: "blue", children: <><strong>进入 {detail.node || "结束"}</strong><small>{detail.updatedAt}</small></> }, { color: "gray", children: <Typography.Text type="secondary">后续流转记录将在这里按时间显示</Typography.Text> }]} /></div><Alert type="warning" showIcon message="只读限制" description="本页没有强制关闭、异常改派、跳过节点或修改表单的入口。" /></> : null}
+        {detail ? <><div className="gov-detail-hero-row"><span className="gov-detail-icon"><FileSearchOutlined /></span><div><Typography.Title level={4}>{detail.title}</Typography.Title><Typography.Text type="secondary">{detail.code} · {detail.process} {detail.version}</Typography.Text></div><StatusPill status={detail.status} /></div><Descriptions bordered column={2} size="small" items={[{ key: "initiator", label: "发起人", children: `${detail.initiator}（${detail.department}）` }, { key: "created", label: "发起时间", children: formatDisplayDateTime(detail.createdAt) }, { key: "node", label: "当前节点", children: detail.node || "—" }, { key: "updated", label: "更新时间", children: formatDisplayDateTime(detail.updatedAt) }]} /><div className="gov-detail-section"><div className="gov-section-title">流转概览</div><Timeline items={[{ color: "green", children: <><strong>{detail.initiator} 发起流程</strong><small>{formatDisplayDateTime(detail.createdAt)}</small></> }, { color: "blue", children: <><strong>进入 {detail.node || "结束"}</strong><small>{formatDisplayDateTime(detail.updatedAt)}</small></> }, { color: "gray", children: <Typography.Text type="secondary">后续流转记录将在这里按时间显示</Typography.Text> }]} /></div><Alert type="warning" showIcon message="只读限制" description="本页没有强制关闭、异常改派、跳过节点或修改表单的入口。" /></> : null}
       </Drawer>
     </div>
   );
 }
 
 type AuditResult = "成功" | "失败";
-interface AuditRecord { id: string; operator: string; department: string; module: string; object: string; objectId: string; action: string; result: AuditResult; ip: string; time: string; before: string; after: string; detail: string; }
-
-const auditModuleLabels: Record<string, string> = {
-  authentication: "登录认证",
-  definition: "流程定义",
-  instance: "流程实例",
-  task: "审批任务",
-  identity: "组织权限",
-};
-
-const auditActionLabels: Record<string, string> = {
-  create: "创建",
-  pass: "通过",
-  confirm: "确认",
-  reject: "驳回",
-  "revise-fields": "修改审核字段",
-  "delete-version": "删除版本",
-};
+interface AuditRecord { id: string; operator: string; department: string; module: string; summary: string; action: string; result: AuditResult; time: string; detail: string; }
 
 export function AuditLogPage() {
   const instances = usePrototypeStore((state) => state.instances);
@@ -1376,43 +1361,37 @@ export function AuditLogPage() {
     );
     return Array.from(eventsById.values()).map((event): AuditRecord => {
       const actor = event.actorId ? findIdentityUser(event.actorId) : undefined;
-      const details = event.details ? JSON.stringify(event.details, null, 2) : "—";
       return {
         id: event.id,
         operator: event.operatorName && event.operatorName !== event.actorName
           ? `${event.operatorName} → ${event.actorName ?? actor?.name ?? "未知用户"}`
           : event.actorName ?? actor?.name ?? "系统",
         department: actor?.departmentPath ?? "系统",
-        module: auditModuleLabels[event.category] ?? event.category,
-        object: event.summary,
-        objectId: event.resourceId,
-        action: auditActionLabels[event.action] ?? event.action,
-        result: "成功",
-        ip: "—",
-        time: event.occurredAt.replace("T", " ").replace(/\.\d{3}Z$/, ""),
-        before: "—",
-        after: details,
-        detail: event.summary,
+        module: auditModuleLabel(event.category),
+        summary: auditSummaryText(event),
+        action: auditActionLabel(event),
+        result: auditResultLabel(event),
+        time: event.occurredAt,
+        detail: auditDetailText(event),
       };
-    }).sort((left, right) => Date.parse(right.time.replace(" ", "T")) - Date.parse(left.time.replace(" ", "T")));
+    }).sort((left, right) => compareDomainTimestamps(right.time, left.time));
   }, [debugMode, instances, remoteAuditEvents, tasks]);
-  const filtered = auditRows.filter((row) => `${row.operator}${row.object}${row.objectId}${row.ip}`.toLowerCase().includes(appliedFilters.keyword.toLowerCase()) && (!appliedFilters.module || row.module === appliedFilters.module) && (!appliedFilters.result || row.result === appliedFilters.result) && isDateTimeInRange(row.time, appliedFilters.dateRange));
+  const filtered = auditRows.filter((row) => `${row.operator}${row.summary}${row.action}${row.module}`.toLowerCase().includes(appliedFilters.keyword.toLowerCase()) && (!appliedFilters.module || row.module === appliedFilters.module) && (!appliedFilters.result || row.result === appliedFilters.result) && isDateTimeInRange(row.time, appliedFilters.dateRange));
   const columns: TableProps<AuditRecord>["columns"] = [
-    { title: "时间", dataIndex: "time", width: 170, fixed: "left" },
+    { title: "时间", dataIndex: "time", width: 170, fixed: "left", render: (value: string) => formatDisplayDateTime(value) },
     { title: "操作人", dataIndex: "operator", width: 145, render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.department}</small></div> },
     { title: "模块", dataIndex: "module", width: 120, render: (value: string) => <Tag>{value}</Tag> },
-    { title: "操作对象", dataIndex: "object", width: 285, ellipsis: true, render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.objectId}</small></div> },
+    { title: "操作内容", dataIndex: "summary", width: 360, ellipsis: true, render: (value: string) => <Typography.Text>{value}</Typography.Text> },
     { title: "动作", dataIndex: "action", width: 120 },
     { title: "结果", dataIndex: "result", width: 88, render: (value: AuditResult) => <StatusPill status={value} /> },
-    { title: "IP 地址", dataIndex: "ip", width: 130 },
-    { title: "操作", fixed: "right", width: 78, align: "center", render: (_, record) => <Tooltip title="查看详情"><Button type="text" aria-label={`查看审计日志：${record.id}`} icon={<EyeOutlined />} onClick={() => setDetail(record)} /></Tooltip> },
+    { title: "查看", fixed: "right", width: 78, align: "center", render: (_, record) => <Tooltip title="查看详情"><Button type="text" aria-label={`查看审计详情：${record.summary}`} icon={<EyeOutlined />} onClick={() => setDetail(record)} /></Tooltip> },
   ];
   return (
     <div className="page-stack gov-page">
-      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--audit"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="操作人、对象、编号或 IP" value={keyword} onChange={(event) => setKeyword(event.target.value)} onPressEnter={() => setAppliedFilters({ keyword, module, result, dateRange })} /></label><label><span>模块</span><Select allowClear placeholder="全部模块" value={module} onChange={setModule} options={Array.from(new Set(auditRows.map((row) => row.module))).map((value) => ({ value }))} /></label><label><span>结果</span><Select allowClear placeholder="全部结果" value={result} onChange={setResult} options={["成功", "失败"].map((value) => ({ value }))} /></label><label><span>操作时间</span><DatePicker.RangePicker allowClear={false} showTime value={dateRange} onChange={(value) => { if (value?.[0] && value[1]) setDateRange([value[0], value[1]]); }} /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => setAppliedFilters({ keyword, module, result, dateRange })}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { const nextRange = createDefaultDateRange(); setKeyword(""); setModule(undefined); setResult(undefined); setDateRange(nextRange); setAppliedFilters({ keyword: "", module: undefined, result: undefined, dateRange: nextRange }); }}>重置</Button></div></div></Card>
-      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="操作审计" count={filtered.length} extra={<Typography.Text type="secondary">审计记录只读且不可删除</Typography.Text>} /><Table<AuditRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1240 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条日志` }} /></Card>
+      <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--audit"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="操作人或操作内容" value={keyword} onChange={(event) => setKeyword(event.target.value)} onPressEnter={() => setAppliedFilters({ keyword, module, result, dateRange })} /></label><label><span>模块</span><Select allowClear placeholder="全部模块" value={module} onChange={setModule} options={Array.from(new Set(auditRows.map((row) => row.module))).map((value) => ({ value }))} /></label><label><span>结果</span><Select allowClear placeholder="全部结果" value={result} onChange={setResult} options={["成功", "失败"].map((value) => ({ value }))} /></label><label><span>操作时间</span><DatePicker.RangePicker allowClear={false} showTime={{ format: "HH:mm" }} format="YYYY-MM-DD HH:mm" value={dateRange} onChange={(value) => { if (value?.[0] && value[1]) setDateRange([value[0], value[1]]); }} /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => setAppliedFilters({ keyword, module, result, dateRange })}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { const nextRange = createDefaultDateRange(); setKeyword(""); setModule(undefined); setResult(undefined); setDateRange(nextRange); setAppliedFilters({ keyword: "", module: undefined, result: undefined, dateRange: nextRange }); }}>重置</Button></div></div></Card>
+      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="操作审计" count={filtered.length} extra={<Typography.Text type="secondary">审计记录只读且不可删除</Typography.Text>} /><Table<AuditRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1080 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 条日志` }} /></Card>
       <Drawer width={680} open={Boolean(detail)} onClose={() => setDetail(null)} title="审计详情">
-        {detail ? <><div className="gov-audit-detail-head"><span className={`gov-audit-result is-${detail.result === "成功" ? "success" : "error"}`}>{detail.result === "成功" ? <CheckCircleOutlined /> : <StopOutlined />}</span><div><Typography.Title level={4}>{detail.action}</Typography.Title><Typography.Text type="secondary">{detail.id} · {detail.time}</Typography.Text></div><StatusPill status={detail.result} /></div><Descriptions bordered column={2} size="small" items={[{ key: "operator", label: "操作人", children: `${detail.operator}（${detail.department}）` }, { key: "ip", label: "IP 地址", children: detail.ip }, { key: "module", label: "模块", children: detail.module }, { key: "objectId", label: "对象编号", children: detail.objectId }, { key: "object", label: "操作对象", span: 2, children: detail.object }]} /><div className="gov-audit-values"><div><span>变更前</span><pre>{detail.before}</pre></div><div><span>变更后</span><pre>{detail.after}</pre></div></div><Alert type="info" showIcon message="操作说明" description={detail.detail} /></> : null}
+        {detail ? <><div className="gov-audit-detail-head"><span className={`gov-audit-result is-${detail.result === "成功" ? "success" : "error"}`}>{detail.result === "成功" ? <CheckCircleOutlined /> : <StopOutlined />}</span><div><Typography.Title level={4}>{detail.action}</Typography.Title><Typography.Text type="secondary">{formatDisplayDateTime(detail.time)}</Typography.Text></div><StatusPill status={detail.result} /></div><Descriptions bordered column={2} size="small" items={[{ key: "operator", label: "操作人", children: `${detail.operator}（${detail.department}）` }, { key: "module", label: "所属模块", children: detail.module }, { key: "summary", label: "操作内容", span: 2, children: detail.summary }]} /><Alert className="gov-audit-summary" type="info" showIcon title="操作摘要" description={detail.detail} /></> : null}
       </Drawer>
     </div>
   );

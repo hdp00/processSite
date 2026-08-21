@@ -43,6 +43,7 @@ import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "..
 import { normalizeDesignerFieldValue, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { designerChoiceOptionsToAntd } from "../utils/designerOptions";
 import { downloadProcessListXlsx } from "../utils/processExcelExport";
+import { formatDisplayDateTime } from "../utils/domainTime";
 import { formatRoundLabel } from "../utils/roundDisplay";
 import { getBusinessListColumnWidth, getSystemListColumnWidth } from "../utils/listColumnWidth";
 
@@ -186,11 +187,13 @@ export function ProcessListPage() {
       title: "发起时间",
       dataIndex: "createdAt",
       width: getSystemListColumnWidth("createdAt", "发起时间"),
+      render: (value: string) => formatDisplayDateTime(value),
     }] : []),
     ...(showSystemField("updatedAt") ? [{
       title: "更新时间",
       dataIndex: "updatedAt",
       width: getSystemListColumnWidth("updatedAt", "更新时间"),
+      render: (value: string) => formatDisplayDateTime(value),
     }] : []),
     {
       title: "操作",

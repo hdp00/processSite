@@ -39,6 +39,7 @@ import { formatRoundLabel } from "../utils/roundDisplay";
 import { canUserProcessTask } from "../state/workflowAccess";
 import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { isProcessInstanceResubmissionTodo } from "../utils/processInstanceAccess";
+import { formatDisplayDateTime } from "../utils/domainTime";
 
 const ALL_FLOWS = "__all__";
 const TASK_FLOW_STORAGE_PREFIX = "flowpilot-task-center-flow-v1";
@@ -238,8 +239,8 @@ export function TaskCenterPage() {
         <div className="person-cell"><AvatarText name={value} /><span>{value}<small>{record.department}</small></span></div>
       ),
     }] : []),
-    ...(showSystemField("createdAt") ? [{ title: "发起时间", dataIndex: "createdAt", width: getSystemListColumnWidth("createdAt", "发起时间") }] : []),
-    ...(showSystemField("updatedAt") ? [{ title: "更新时间", dataIndex: "updatedAt", width: getSystemListColumnWidth("updatedAt", "更新时间") }] : []),
+    ...(showSystemField("createdAt") ? [{ title: "发起时间", dataIndex: "createdAt", width: getSystemListColumnWidth("createdAt", "发起时间"), render: (value: string) => formatDisplayDateTime(value) }] : []),
+    ...(showSystemField("updatedAt") ? [{ title: "更新时间", dataIndex: "updatedAt", width: getSystemListColumnWidth("updatedAt", "更新时间"), render: (value: string) => formatDisplayDateTime(value) }] : []),
     ...(tab !== "initiated" ? [{
       title: "任务归属",
       dataIndex: "designatedReviewer",

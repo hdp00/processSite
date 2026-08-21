@@ -590,8 +590,8 @@ export const flowPilotApi = {
     },
     reply: (instanceId: string, content: string) =>
       apiRequest<ProcessInstance>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies`, { method: "POST", body: { content }, ...mutation() }),
-    transfer: (instanceId: string, content: string, nextAssigneeId: string, ifMatch?: string) =>
-      apiRequest<ProcessInstance>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/transfers`, { method: "POST", body: { content, nextAssigneeId }, ifMatch, ...mutation() }),
+    transfer: (instanceId: string, nextAssigneeId: string, content?: string, ifMatch?: string) =>
+      apiRequest<ProcessInstance>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/transfers`, { method: "POST", body: { nextAssigneeId, content }, ifMatch, ...mutation() }),
     editReply: (instanceId: string, entryId: string, content: string, ifMatch?: string) =>
       apiRequest<ProcessInstance>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies/${encodeURIComponent(entryId)}`, { method: "PATCH", body: { content }, ifMatch }),
     updateSubmission: (instanceId: string, input: { title: string; category: string; priority: "普通" | "紧急"; description: string; initialContent: string }, ifMatch?: string) =>

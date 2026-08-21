@@ -71,6 +71,8 @@ describe("流程定义状态与缺失目标边界", () => {
     expect(store.updateVersionFormSnapshot("pdf-review", "missing-version", source.snapshot.form, source.snapshot.systemFields)).toBe(false);
     expect(store.updateVersionFlowSnapshot("missing-definition", source.id, source.snapshot.flow)).toBe(false);
     expect(store.updateVersionFlowSnapshot("pdf-review", "missing-version", source.snapshot.flow)).toBe(false);
+    expect(store.revalidateVersion("missing-definition", source.id)).toBe(false);
+    expect(store.revalidateVersion("pdf-review", "missing-version")).toBe(false);
     expect(store.publishVersion("missing-definition", source.id, "不会发布")).toBe(false);
     expect(store.publishVersion("pdf-review", "missing-version", "不会发布")).toBe(false);
     expect(store.unpublishVersion("missing-definition", source.id)).toBe("not-found");
@@ -248,6 +250,29 @@ describe("发布、停用与删除边界", () => {
     expect(checked.versions[0].firstPublishedAt).toBeUndefined();
   });
 
+  it("已有实例的只读版本仍可按最新外部依赖重新校验并再次发布", () => {
+    const store = definitionModule.useProcessDefinitionStore.getState();
+    const definition = definitionById("pdf-review")!;
+    const version = definitionModule.getPublishedVersion(definition)!;
+    expect(version.instanceCount).toBeGreaterThan(0);
+    expect(store.unpublishVersion(definition.id, version.id, "验证只读版本重新校验")).toBe("unpublished");
+    replaceDefinition(definition.id, (current) => ({
+      ...current,
+      versions: current.versions.map((item) => item.id === version.id
+        ? { ...item, validation: { status: "未通过", checkedAt: "权限组修复前", issues: ["权限组没有有效成员"] } }
+        : item),
+    }));
+    const before = structuredClone(definitionById(definition.id)!.versions.find((item) => item.id === version.id)!.snapshot);
+
+    expect(definitionModule.canEditVersion(definitionById(definition.id)!, definitionById(definition.id)!.versions.find((item) => item.id === version.id)!)).toBe(false);
+    expect(store.revalidateVersion(definition.id, version.id)).toBe(true);
+    const checked = definitionById(definition.id)!.versions.find((item) => item.id === version.id)!;
+    expect(checked.snapshot).toEqual(before);
+    expect(checked.validation).toMatchObject({ status: "通过", issues: [] });
+    expect(checked.validation.checkedAt).not.toBe("权限组修复前");
+    expect(store.publishVersion(definition.id, version.id, "权限组修复后重新发布")).toBe(true);
+  });
+
   it("切换、取消发布和再次发布保留首次发布信息，并为留空原因提供默认值", () => {
     const store = definitionModule.useProcessDefinitionStore.getState();
     const definition = definitionById("pdf-review")!;
@@ -264,9 +289,18 @@ describe("发布、停用与删除边界", () => {
     expect(firstPublished.changeNote).toBe("切换为发布版本");
     expect(firstPublished.firstPublishedAt).toBeTruthy();
     expect(firstPublished.firstPublishedBy).toBe("超级管理员");
+    replaceDefinition(definition.id, (current) => ({
+      ...current,
+      versions: current.versions.map((version) => version.id === draftId
+        ? { ...version, validation: { status: "未通过", checkedAt: "过期校验时间", issues: ["过期校验结果"] } }
+        : version),
+    }));
 
     expect(store.unpublishVersion(definition.id, draftId, "   ")).toBe("unpublished");
     const unpublished = definitionById(definition.id)!.versions.find((version) => version.id === draftId)!;
+    expect(unpublished.validation.status).toBe("通过");
+    expect(unpublished.validation.issues).toEqual([]);
+    expect(unpublished.validation.checkedAt).not.toBe("过期校验时间");
     expect(unpublished.lastUnpublishReason).toBe("未填写原因");
     expect(unpublished.lastUnpublishedBy).toBe("超级管理员");
     expect(store.switchPublishedVersion(definition.id, draftId)).toBe(true);
@@ -350,7 +384,7 @@ describe("发布、停用与删除边界", () => {
   });
 });
 
-describe("流程定义 v16 旧数据迁移", () => {
+describe("流程定义 v17 旧数据迁移", () => {
   it("缺少 definitions 的旧状态回退为完整内置定义", async () => {
     storage.setItem("flowpilot-process-definitions-v1", JSON.stringify({ state: {}, version: 0 }));
     await definitionModule.useProcessDefinitionStore.persist.rehydrate();
@@ -361,6 +395,24 @@ describe("流程定义 v16 旧数据迁移", () => {
       "free-collaboration",
       "supplier-change-review",
     ]);
+  });
+
+  it("迁移时重新计算已取消发布版本的过期校验结果", async () => {
+    const legacy = structuredClone(definitionById("pdf-review")!);
+    legacy.publishedVersionId = undefined;
+    legacy.versions = legacy.versions.map((version) => version.id === "pdf-v3"
+      ? { ...version, validation: { status: "未通过", checkedAt: "过期校验时间", issues: ["过期校验结果"] } }
+      : version);
+    storage.setItem("flowpilot-process-definitions-v1", JSON.stringify({ state: { definitions: [legacy] }, version: 16 }));
+
+    await definitionModule.useProcessDefinitionStore.persist.rehydrate();
+
+    const migrated = definitionById("pdf-review")!;
+    const version = migrated.versions.find((item) => item.id === "pdf-v3")!;
+    expect(migrated.publishedVersionId).toBeUndefined();
+    expect(version.validation).toMatchObject({ status: "通过", issues: [] });
+    expect(version.validation.checkedAt).not.toBe("过期校验时间");
+    expect(definitionModule.getVersionStatus(migrated, version.id)).toBe("可发布");
   });
 
   it("迁移旧单值权限字段、撤回草稿、悬空发布指针并修复内置历史版本", async () => {

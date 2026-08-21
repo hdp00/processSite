@@ -3,7 +3,7 @@ import { Alert, Button, Card, Descriptions, Divider, Form, Input, Modal, Space, 
 import { Fragment, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
-import { cacheProcessDefinition } from "../api/entityCache";
+import { cacheProcessDefinition, cacheProcessVersion } from "../api/entityCache";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { ProcessWizardPreviousButton } from "../components/ProcessWizardNavigation";
 import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
@@ -12,6 +12,7 @@ import { resolveWorkflowGroupLabel, resolveWorkflowGroupLabels, useIdentityStore
 import { getPublishedVersion, getVersionStatus, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { buildFlowLevels, conditionOperatorLabel, rejectionHandlingLabel, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import { displayDesignerChoiceValue } from "../utils/designerOptions";
+import { formatDisplayDateTime } from "../utils/domainTime";
 import "./process-admin-pages.css";
 
 export function ProcessPublishPage() {
@@ -25,6 +26,7 @@ export function ProcessPublishPage() {
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [validating, setValidating] = useState(false);
   const [changeNote, setChangeNote] = useState("");
 
   const approvalNodes = useMemo(() => version?.snapshot.flow.nodes.filter((node) => node.data?.kind === "approval") ?? [], [version]);
@@ -69,9 +71,27 @@ export function ProcessPublishPage() {
   const status = getVersionStatus(definition, version.id);
   const current = getPublishedVersion(definition);
   const previousUrl = definition.type === "free" ? `/admin/processes/${definition.id}/form?versionId=${version.id}` : `/admin/processes/${definition.id}/flow?versionId=${version.id}`;
-  const canPublish = version.validation.status === "通过" && status !== "已发布";
+  const canAttemptPublish = status !== "已发布";
+  const preparePublish = async () => {
+    if (!canAttemptPublish) return;
+    setValidating(true);
+    try {
+      const resource = await flowPilotApi.definitions.versionResource(definition.id, version.id);
+      const checked = await flowPilotApi.definitions.validate(definition.id, version.id, resource.etag);
+      cacheProcessVersion(definition.id, checked);
+      if (checked.validation.status !== "通过") {
+        message.error(checked.validation.issues[0] ?? "该版本仍未通过校验，请修复校验问题后重试");
+        return;
+      }
+      setConfirmOpen(true);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "重新校验失败，请刷新后重试");
+    } finally {
+      setValidating(false);
+    }
+  };
   const publish = async () => {
-    if (!canPublish) return;
+    if (!canAttemptPublish) return;
     setPublishing(true);
     try {
       const resource = await flowPilotApi.definitions.versionResource(definition.id, version.id);
@@ -96,11 +116,11 @@ export function ProcessPublishPage() {
   return <div className="page-stack pa-page">
     <Card className="pa-config-head" bordered={false}>
       <div className="pa-config-head__main"><AppBackButton onClick={() => navigate(`/admin/processes/${definition.id}/versions`)} /><div><Space size={10} wrap><Typography.Title level={3}>{version.basic.name}</Typography.Title><Tag color="blue">正式版本 {version.version}</Tag><StatusPill status={status} /></Space><Typography.Text type="secondary">{definition.code} · 发布确认</Typography.Text></div></div>
-      <Space><ProcessWizardPreviousButton step={definition.type === "free" ? "初始表单" : "流程设计"} onClick={() => navigate(previousUrl)} /><Button type="primary" icon={<RocketOutlined />} disabled={!canPublish} onClick={() => setConfirmOpen(true)}>{status === "已发布" ? "当前已发布" : current ? "切换并发布" : "发布并生效"}</Button></Space>
+      <Space><ProcessWizardPreviousButton step={definition.type === "free" ? "初始表单" : "流程设计"} onClick={() => navigate(previousUrl)} /><Button type="primary" icon={<RocketOutlined />} loading={validating} disabled={!canAttemptPublish} onClick={() => void preparePublish()}>{status === "已发布" ? "当前已发布" : version.validation.status === "通过" ? current ? "重新校验并切换" : "重新校验并发布" : "重新校验；通过后发布"}</Button></Space>
     </Card>
     <Card className="pa-steps-card" bordered={false}><ProcessWizardSteps workflowType={definition.type} current={definition.type === "free" ? 2 : 3} /></Card>
 
-    {status === "已发布" ? <Alert type="success" showIcon message={`${version.version} 当前已发布`} description="新发起实例使用该版本的完整快照；如需修改，没有实例时先取消发布，有实例时复制新建版本。" /> : <Alert type={version.validation.status === "通过" ? "success" : "error"} showIcon message={version.validation.status === "通过" ? `${version.version} 校验通过，可以发布` : `${version.version} 校验未通过，不能发布`} description={version.validation.issues.length ? version.validation.issues.join("；") : `最近校验：${version.validation.checkedAt}`} />}
+    {status === "已发布" ? <Alert type="success" showIcon message={`${version.version} 当前已发布`} description="新发起实例使用该版本的完整快照；如需修改，没有实例时先取消发布，有实例时复制新建版本。" /> : <Alert type={version.validation.status === "通过" ? "success" : "error"} showIcon message={version.validation.status === "通过" ? `${version.version} 当前校验通过` : `${version.version} 当前记录未通过校验`} description={version.validation.status === "通过" ? `点击发布时仍会按最新权限组重新校验。最近校验：${formatDisplayDateTime(version.validation.checkedAt)}` : `${version.validation.issues.join("；") || "校验结果需要刷新"}。修复权限组等外部依赖后，可直接点击“重新校验；通过后发布”，无需编辑版本。`} />}
 
     <div className="pa-publish-grid">
       <div className="pa-config-main">
@@ -179,7 +199,7 @@ export function ProcessPublishPage() {
 
       <aside className="pa-config-aside">
         <Card className="pa-validation-card" title={<span className="pa-card-title"><SafetyCertificateOutlined /> 自动校验</span>}>
-          <div className="pa-validation-score"><CheckCircleFilled /><strong>{version.validation.status}</strong><span>{version.validation.checkedAt}</span></div>
+          <div className="pa-validation-score"><CheckCircleFilled /><strong>{version.validation.status}</strong><span>{formatDisplayDateTime(version.validation.checkedAt)}</span></div>
           <Divider />
           <Space direction="vertical" size={10} style={{ width: "100%" }}>
             <div className="pa-scope-line"><span>基本信息</span><StatusPill compact status={version.basic.instancePrefix && version.basic.starterGroups.length && version.basic.closeGroups.length ? "已通过" : "失败"} /></div>

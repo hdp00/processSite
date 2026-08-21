@@ -10,6 +10,7 @@ import { formatRoundLabel } from "../utils/roundDisplay";
 import { isDesignerFieldVisible, type StoredDesignerField, type StoredDesignerTableColumn } from "../utils/designerStorage";
 import { displayDesignerChoiceValue } from "../utils/designerOptions";
 import { resolveRuntimeAttachmentNames } from "../utils/attachmentDisplay";
+import { formatDisplayDateTime } from "../utils/domainTime";
 
 const reviewStatusClass: Record<ReviewerProgress["status"], string> = {
   待审核: "pending",
@@ -132,9 +133,9 @@ export function ProcessPrintPage() {
             <div><dt>流程状态</dt><dd><span className={`print-status status-${instance.status}`}>{instance.status}</span></dd></div>
             {instance.round > 1 ? <div><dt>当前轮次</dt><dd>{formatRoundLabel(instance.round)}</dd></div> : null}
             <div><dt>发布人</dt><dd>{instance.initiator}（{instance.department}）</dd></div>
-            <div><dt>发布时间</dt><dd>{instance.createdAt}</dd></div>
+            <div><dt>发布时间</dt><dd>{formatDisplayDateTime(instance.createdAt)}</dd></div>
             <div><dt>当前节点</dt><dd>{instance.currentNode}</dd></div>
-            <div><dt>最近更新</dt><dd>{instance.updatedAt}</dd></div>
+            <div><dt>最近更新</dt><dd>{formatDisplayDateTime(instance.updatedAt)}</dd></div>
           </dl>
         </section>
 
@@ -182,7 +183,7 @@ export function ProcessPrintPage() {
                   <td>{findIdentityUser(task?.defaultAssigneeId ?? "")?.name ?? "组内共享"}</td>
                   <td>{task.completedAt ? <>{task.completedByName ?? "—"}{isSubstitute ? "（代办）" : ""}</> : "—"}</td>
                   <td><span className={`print-review-status ${reviewStatusClass[status]}`}>{status}</span></td>
-                  <td>{task.completedAt ?? task.conditionEvaluatedAt ?? "—"}</td>
+                  <td>{formatDisplayDateTime(task.completedAt ?? task.conditionEvaluatedAt)}</td>
                   <td className="print-multiline">
                     <div>{task.comment?.trim() || "—"}</div>
                     {modifiedFieldLabels.length ? <div className="print-review-changes"><strong>修改字段：</strong>{modifiedFieldLabels.join("、")}</div> : null}
@@ -195,7 +196,7 @@ export function ProcessPrintPage() {
         ) : null}
 
         <footer className="process-print-footer">
-          <span>打印时间：{new Date().toLocaleString("zh-CN", { hour12: false })}</span>
+          <span>打印时间：{formatDisplayDateTime(new Date().toISOString())}</span>
           <span>此文件由 FlowPilot 流程审核中心生成</span>
         </footer>
       </article>

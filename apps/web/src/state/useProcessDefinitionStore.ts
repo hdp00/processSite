@@ -98,6 +98,7 @@ interface ProcessDefinitionState {
   updateVersionBasic: (definitionId: string, versionId: string, basic: ProcessBasicConfig) => boolean;
   updateVersionFormSnapshot: (definitionId: string, versionId: string, snapshot: CompleteDesignerSnapshot["form"], systemFields: CompleteDesignerSnapshot["systemFields"]) => boolean;
   updateVersionFlowSnapshot: (definitionId: string, versionId: string, snapshot: CompleteDesignerSnapshot["flow"]) => boolean;
+  revalidateVersion: (definitionId: string, versionId: string) => boolean;
   publishVersion: (definitionId: string, versionId: string, changeNote: string) => boolean;
   unpublishVersion: (definitionId: string, versionId: string, reason?: string) => UnpublishVersionResult;
   switchPublishedVersion: (definitionId: string, versionId: string) => boolean;
@@ -440,6 +441,19 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
         }) }));
         return updated;
       },
+      revalidateVersion: (definitionId, versionId) => {
+        if (!currentUserCan("config-definition:查看")) return false;
+        let validated = false;
+        set((state) => ({ definitions: state.definitions.map((definition) => {
+          if (definition.id !== definitionId) return definition;
+          const target = definition.versions.find((version) => version.id === versionId);
+          if (!target) return definition;
+          validated = true;
+          const validation = validateSnapshot(target.basic.type, target.basic, target.snapshot);
+          return { ...definition, versions: definition.versions.map((version) => version.id === versionId ? { ...version, validation } : version) };
+        }) }));
+        return validated;
+      },
       publishVersion: (definitionId, versionId, changeNote) => {
         if (!currentUserCan("config-definition:发布")) return false;
         let published = false;
@@ -447,7 +461,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           if (definition.id !== definitionId) return definition;
           const target = definition.versions.find((version) => version.id === versionId);
           if (!target) return definition;
-          const checked = refreshVersion(target, target.basic, target.snapshot);
+          const checked = { ...target, validation: validateSnapshot(target.basic.type, target.basic, target.snapshot) };
           if (checked.validation.status !== "通过") return { ...definition, versions: definition.versions.map((version) => version.id === target.id ? checked : version) };
           published = true;
           const publishedAt = nowText();
@@ -466,7 +480,9 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
           if (!target) return definition;
           result = "unpublished";
           const at = nowText();
-          return { ...definition, publishedVersionId: undefined, updatedAt: at, updatedBy: currentActorName(), versions: definition.versions.map((version) => version.id === versionId ? { ...version, lastUnpublishedAt: at, lastUnpublishedBy: currentActorName(), lastUnpublishReason: reason?.trim() || "未填写原因" } : version) };
+          const actor = currentActorName();
+          const validation = validateSnapshot(target.basic.type, target.basic, target.snapshot);
+          return { ...definition, publishedVersionId: undefined, updatedAt: at, updatedBy: actor, versions: definition.versions.map((version) => version.id === versionId ? { ...version, validation, lastUnpublishedAt: at, lastUnpublishedBy: actor, lastUnpublishReason: reason?.trim() || "未填写原因" } : version) };
         }) }));
         return result;
       },
@@ -527,7 +543,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
     }),
     {
       name: "flowpilot-process-definitions-v1",
-      version: 16,
+      version: 17,
       migrate: (persisted) => {
         const legacyState = persisted as { definitions?: Array<Record<string, unknown>> };
         if (!legacyState.definitions) return { definitions: initialDefinitions };

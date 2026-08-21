@@ -539,7 +539,7 @@ describe("固定审批流程完整生命周期", () => {
 });
 
 describe("自由协作流程完整生命周期", () => {
-  it("支持创建、回复、转交、异常改派、关闭和填写理由后重新打开", () => {
+  it("支持创建、回复、直接变更受理人、异常改派、关闭和填写理由后重新打开", () => {
     setActor("wangmin");
     const instanceId = prototypeModule.usePrototypeStore.getState().createProcessInstance({
       definitionId: "free-collaboration",
@@ -556,7 +556,7 @@ describe("自由协作流程完整生命周期", () => {
     setActor("zhangwei");
     prototypeModule.usePrototypeStore.getState().replyFreeFlow(instanceId, "研发已完成分析");
     expect(instanceById(instanceId)?.freeTimeline).toHaveLength(initialTimelineLength + 1);
-    prototypeModule.usePrototypeStore.getState().transferFreeFlow(instanceId, "请质量确认", "林晓");
+    prototypeModule.usePrototypeStore.getState().transferFreeFlow(instanceId, "林晓");
     expect(instanceById(instanceId)).toMatchObject({ currentAssignee: "林晓", currentAssigneeId: "lina" });
 
     setActor("wangmin");

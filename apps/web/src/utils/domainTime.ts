@@ -14,7 +14,10 @@ export const domainTimestampEpoch = (value: string) => {
     .replace(/日/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  const localMatch = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+  const localMatch = hasExplicitTimezone
+    ? null
+    : normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?/);
   const epoch = localMatch
     ? new Date(
         Number(localMatch[1]),
@@ -27,6 +30,16 @@ export const domainTimestampEpoch = (value: string) => {
     : Date.parse(normalized);
   return Number.isFinite(epoch) ? epoch : Number.NEGATIVE_INFINITY;
 };
+
+export const formatDisplayDateTime = (value?: string, fallback = "—") => {
+  const normalized = value?.trim();
+  if (!normalized) return fallback;
+  const epoch = domainTimestampEpoch(normalized);
+  return Number.isFinite(epoch) ? formatDomainTimestamp(new Date(epoch)).slice(0, 16) : normalized;
+};
+
+export const formatDisplayDateTimeToMinute = (value?: string, fallback = "—") =>
+  formatDisplayDateTime(value, fallback);
 
 export const compareDomainTimestamps = (left: string, right: string) =>
   domainTimestampEpoch(left) - domainTimestampEpoch(right);

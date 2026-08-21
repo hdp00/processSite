@@ -11,6 +11,7 @@ import { hasPersonaPermission } from "../state/rolePermissions";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { definitionStatus, getPublishedVersion, useProcessDefinitionStore, type DefinitionStatus, type DefinitionType, type ProcessDefinition, type ProcessVersion } from "../state/useProcessDefinitionStore";
 import { createProcessDefinitionExport, parseProcessDefinitionImport, type ProcessDefinitionImportPreview } from "../utils/processDefinitionTransfer";
+import { formatDisplayDateTime } from "../utils/domainTime";
 import "./process-admin-pages.css";
 
 interface CreateProcessValues { name: string; type: DefinitionType; description?: string }
@@ -157,7 +158,7 @@ export function ProcessManagementPage() {
     { title: "定义状态", key: "status", width: 115, render: (_, record) => <StatusPill status={definitionStatus(record)} /> },
     { title: "发布版本", key: "published", width: 105, render: (_, record) => <span className={record.publishedVersionId ? "pa-version" : "pa-muted"}>{getPublishedVersion(record)?.version ?? "—"}</span> },
     { title: "版本数", key: "versions", width: 86, align: "right", render: (_, record) => record.versions.length },
-    { title: "最近更新", dataIndex: "updatedAt", width: 180, render: (value: string, record) => <span className="pa-two-line-cell"><span>{value}</span><small>{record.updatedBy}</small></span> },
+    { title: "最近更新", dataIndex: "updatedAt", width: 180, render: (value: string, record) => <span className="pa-two-line-cell"><span>{formatDisplayDateTime(value)}</span><small>{record.updatedBy}</small></span> },
     {
       title: "操作", key: "actions", fixed: "right", width: 126, align: "center",
       render: (_, record) => <Space size={2}><Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/admin/processes/${record.id}/versions`)}>查看</Button><Dropdown menu={{ items: getActionMenu(record) }} trigger={["click"]} placement="bottomRight"><Button type="text" className="pa-icon-button" icon={<MoreOutlined />} aria-label={`更多流程操作：${record.name}`} /></Dropdown></Space>,

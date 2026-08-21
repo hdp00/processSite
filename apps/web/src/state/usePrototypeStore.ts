@@ -98,7 +98,7 @@ interface PrototypeState {
   updateUnreviewedInstance: (id: string, changes: UnreviewedInstanceChanges) => RuntimeCommandResult;
   republishInstance: (id: string, changes: RepublishChanges) => RuntimeCommandResult;
   replyFreeFlow: (id: string, content: string) => void;
-  transferFreeFlow: (id: string, content: string, nextAssignee: string) => void;
+  transferFreeFlow: (id: string, nextAssignee: string, content?: string) => void;
   editFreeFlowReply: (id: string, entryId: string, content: string) => void;
   updateFreeFlowInitial: (id: string, changes: FreeFlowInitialChanges) => void;
   forceReassignFreeFlow: (id: string, reason: string, assignee: string) => void;
@@ -1084,25 +1084,33 @@ export const usePrototypeStore = create<PrototypeState>()(
             }),
           };
         }),
-      transferFreeFlow: (id, content, nextAssignee) =>
+      transferFreeFlow: (id, nextAssignee, content) =>
         set((state) => {
           const persona = currentPersona(state.personaId);
           const actionAt = nowText();
           const target = state.instances.find((instance) => instance.id === id);
           const nextAssigneeId = userIdByIdOrName(nextAssignee);
+          const hasContent = Boolean(content?.trim());
+          const canAttachReply = Boolean(
+            !hasContent
+            || target?.participantIds?.includes(persona.id)
+            || isSuperAdminPersona(state.personaId),
+          );
           const canTransfer = Boolean(
             target
             && canUserTransferFreeFlow(target, state.personaId)
             && nextAssigneeId !== target.currentAssigneeId
-            && isAllowedFreeAssignee(target, nextAssignee),
+            && isAllowedFreeAssignee(target, nextAssignee)
+            && canAttachReply
           );
           if (!target || !canTransfer) return state;
           const entries: FreeFlowEntry[] = [
             ...(target.freeTimeline ?? []),
-            freeEntry("reply", persona.name, { content, assignee: nextAssignee }),
+            ...(hasContent ? [freeEntry("reply", persona.name, { content, time: actionAt })] : []),
             freeEntry("assigned", persona.name, {
               assignee: nextAssignee,
               previousAssignee: target.currentAssignee,
+              time: actionAt,
             }),
           ];
           const includeActor = !isSuperAdminPersona(state.personaId);

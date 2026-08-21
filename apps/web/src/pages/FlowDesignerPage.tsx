@@ -94,6 +94,7 @@ import {
   type StoredNodeEmailNotification,
 } from "../utils/designerStorage";
 import { flattenDesignerChoiceOptions, type DesignerChoiceOption } from "../utils/designerOptions";
+import { formatDisplayDateTime } from "../utils/domainTime";
 import {
   validateApprovalFlow,
   type ProcessValidationContext,
@@ -425,13 +426,7 @@ const createGenericDraft = (starterGroups: string[]): Pick<StoredDraft, "nodes" 
   ],
 });
 
-const formatTime = () =>
-  new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(new Date());
+const formatTime = () => formatDisplayDateTime(new Date().toISOString());
 
 const readStoredDraft = (
   storageKey: string,

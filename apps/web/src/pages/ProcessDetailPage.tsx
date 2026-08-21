@@ -65,6 +65,7 @@ import { pdfPreviewBlob, resolveRuntimeAttachmentNames, resolveRuntimeAttachment
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
 import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../utils/roundDisplay";
 import { buildWorkflowProgressStages, type WorkflowProgressStatus } from "../utils/workflowProgress";
+import { formatDisplayDateTime } from "../utils/domainTime";
 
 const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> = {
   待审核: { icon: <HistoryOutlined /> },
@@ -838,14 +839,14 @@ export function ProcessDetailPage() {
               <span>{instance.template} · {instance.templateVersion}</span>
               {instance.round > 1 ? <span>{formatRoundLabel(instance.round)}</span> : null}
               <span>发起人 {instance.initiator}</span>
-              <span>{instance.createdAt}</span>
+              <span>{formatDisplayDateTime(instance.createdAt)}</span>
             </Space>
           </div>
         </div>
         <div className="detail-node-indicator">
           <small>当前节点</small>
           <strong>{instance.currentNode}</strong>
-          <span>最近更新 {instance.updatedAt}</span>
+          <span>最近更新 {formatDisplayDateTime(instance.updatedAt)}</span>
         </div>
       </Card>
 
@@ -931,7 +932,7 @@ export function ProcessDetailPage() {
           key: "workflow-progress",
           label: <div className="detail-collapse-heading"><strong>流程进度</strong><Tag bordered={false}>按实例锁定版本的拓扑推进</Tag></div>,
           children: <div className="topology-progress">
-          <div className="topology-endpoint is-complete"><CheckOutlined /><span><strong>开始</strong><small>{instance.createdAt.slice(5, 16)}</small></span></div>
+          <div className="topology-endpoint is-complete"><CheckOutlined /><span><strong>开始</strong><small>{formatDisplayDateTime(instance.createdAt).slice(5)}</small></span></div>
           {progressStages.map((stage) => (
             <div className="topology-stage-block" key={`progress-stage-${stage.index}`}>
               <div className="topology-stage-connector"><span /> <small>{stage.parallel ? "进入并行处理" : "进入下一步"}</small></div>
@@ -967,7 +968,7 @@ export function ProcessDetailPage() {
           <div className="topology-stage-connector"><span /> <small>满足结束条件</small></div>
           <div className={`topology-endpoint${instance.status === "已完成" ? " is-complete" : instance.status === "已关闭" ? " is-closed" : ""}`}>
             <CheckOutlined />
-            <span><strong>结束</strong><small>{instance.status === "已完成" ? instance.updatedAt.slice(5, 16) : instance.status === "已关闭" ? "流程已关闭" : instance.status === "驳回待处理" ? "等待发起方重新提交" : "等待前序节点完成"}</small></span>
+            <span><strong>结束</strong><small>{instance.status === "已完成" ? formatDisplayDateTime(instance.updatedAt).slice(5) : instance.status === "已关闭" ? "流程已关闭" : instance.status === "驳回待处理" ? "等待发起方重新提交" : "等待前序节点完成"}</small></span>
           </div>
           </div>,
         }]}
@@ -1138,7 +1139,7 @@ function InlinePdfPreview({
 function HistoryItem({ title, person, time, detail }: { title: string; person: string; time: string; detail?: string }) {
   return (
     <div className="history-item">
-      <div><strong>{title}</strong><span>{time}</span></div>
+      <div><strong>{title}</strong><span>{formatDisplayDateTime(time)}</span></div>
       <small>{person}</small>
       {detail ? <p>{detail}</p> : null}
     </div>

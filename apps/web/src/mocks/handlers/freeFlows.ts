@@ -72,14 +72,14 @@ export const freeFlowHandlers = [
       if ("response" in found) return found.response;
       const conflict = checkIfMatch(request, found.instance, true);
       if (conflict) return conflict;
-      const body = await parseJsonBody<{ content?: string; nextAssigneeId?: string }>(request);
+      const body = await parseJsonBody<{ nextAssigneeId?: string; content?: string }>(request);
       if (body instanceof Response) return body;
       const assignee = body.nextAssigneeId ? findIdentityUser(body.nextAssigneeId) : undefined;
-      if (!body.content?.trim() || !assignee) return apiProblem(request, 422, "VALIDATION_FAILED", "转交内容不完整", "请填写回复内容并选择有效的下一受理人。 ");
-      usePrototypeStore.getState().transferFreeFlow(found.instance.id, body.content, assignee.name);
+      if (!assignee) return apiProblem(request, 422, "ASSIGNEE_REQUIRED", "受理人无效", "请选择有效的新受理人。 ");
+      usePrototypeStore.getState().transferFreeFlow(found.instance.id, assignee.name, body.content);
       const updated = instanceById(found.instance.id);
-      if (!changed(found.instance, updated)) return apiProblem(request, 403, "TRANSFER_FORBIDDEN", "不能转交该事项", "只有当前有效的发起或受理权限组成员可以转交给其他有效受理人。 ");
-      audit(auth.actor.id, auth.actor.name, "transfer", updated!, `将 ${updated!.code} 转交给 ${assignee.name}`);
+      if (!changed(found.instance, updated)) return apiProblem(request, 403, "TRANSFER_FORBIDDEN", "不能变更受理人", "只有当前有效的发起或受理权限组成员可以变更为其他有效受理人。 ");
+      audit(auth.actor.id, auth.actor.name, "transfer", updated!, `将 ${updated!.code} 的受理人变更为 ${assignee.name}`);
       return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
     });
   }),

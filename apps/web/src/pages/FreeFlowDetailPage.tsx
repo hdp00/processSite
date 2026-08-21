@@ -5,7 +5,6 @@ import {
   LockOutlined,
   MessageOutlined,
   ReloadOutlined,
-  SendOutlined,
   SwapOutlined,
   UserOutlined,
 } from "@ant-design/icons";
@@ -39,6 +38,7 @@ import { canUserTransferFreeFlow, isSuperAdminPersona, usePrototypeStore } from 
 import { effectiveGroupMemberIds, findIdentityUser, isUserInWorkflowGroup, useIdentityStore } from "../state/useIdentityStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserCloseInstance } from "../state/workflowAccess";
+import { formatDisplayDateTime } from "../utils/domainTime";
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
 import "./free-flow.css";
 
@@ -48,7 +48,7 @@ const hasRichContent = (html: string) =>
 
 const entryMeta: Record<Exclude<FreeFlowEntry["type"], "reply">, { label: string; color: string }> = {
   created: { label: "创建事项", color: "blue" },
-  assigned: { label: "转交受理", color: "purple" },
+  assigned: { label: "变更受理人", color: "purple" },
   closed: { label: "关闭事项", color: "gray" },
   reopened: { label: "重新打开", color: "green" },
   "form-edited": { label: "修改初始表单", color: "gold" },
@@ -125,6 +125,13 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     || draftInitial.description !== instance.description
     || draftInitial.initialContent !== (initialEntry?.content ?? "")
   ));
+  const hasReplyDraft = hasRichContent(replyContent);
+  const collaborationActionLabel = nextAssignee
+    ? hasReplyDraft ? "回复并变更" : "变更受理人"
+    : canReply ? "发表回复" : "变更受理人";
+  const collaborationActionDisabled = nextAssignee
+    ? !canTransfer
+    : !(canReply && hasReplyDraft);
   const { guard } = useUnsavedChangesGuard({
     dirty: Boolean(
       hasRichContent(replyContent)
@@ -145,21 +152,25 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
   if (!instance) return null;
 
-  const postReply = async () => {
-    if (!hasRichContent(replyContent)) return message.warning("请输入回复内容");
+  const submitCollaboration = async () => {
+    if (nextAssignee) {
+      const assigneeName = findIdentityUser(nextAssignee)?.name ?? "所选人员";
+      const resource = await flowPilotApi.instances.getResource(instance.id);
+      cacheProcessRuntime(await flowPilotApi.freeFlows.transfer(
+        instance.id,
+        nextAssignee,
+        hasReplyDraft ? replyContent : undefined,
+        resource.etag,
+      ));
+      if (hasReplyDraft) setReplyContent("");
+      setNextAssignee(undefined);
+      message.success(hasReplyDraft ? `回复已发表，受理人已变更为${assigneeName}` : `受理人已变更为${assigneeName}`);
+      return;
+    }
+    if (!hasReplyDraft) return message.warning("请输入回复内容");
     cacheProcessRuntime(await flowPilotApi.freeFlows.reply(instance.id, replyContent));
     setReplyContent("");
     message.success("回复已发表，不改变当前受理人");
-  };
-
-  const transfer = async () => {
-    if (!hasRichContent(replyContent)) return message.warning("请填写本次处理内容");
-    if (!nextAssignee) return message.warning("请选择下一位受理人");
-    const resource = await flowPilotApi.instances.getResource(instance.id);
-    cacheProcessRuntime(await flowPilotApi.freeFlows.transfer(instance.id, replyContent, nextAssignee, resource.etag));
-    setReplyContent("");
-    setNextAssignee(undefined);
-    message.success(`事项已转交给${findIdentityUser(nextAssignee)?.name ?? "下一位受理人"}`);
   };
 
   const renderSystemEvent = (entry: FreeFlowEntry) => {
@@ -167,9 +178,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     const detail = entry.type === "created"
       ? <>创建事项，首位受理人 <strong>{entry.assignee}</strong></>
       : entry.type === "assigned"
-        ? entry.previousAssignee
-          ? <>将受理人从 <strong>{entry.previousAssignee}</strong> 转交给 <strong>{entry.assignee}</strong></>
-          : <>转交给 <strong>{entry.assignee}</strong></>
+        ? <>受理人变更为 <strong>{entry.assignee}</strong></>
         : entry.type === "closed"
           ? <>关闭事项：{entry.content}</>
           : entry.type === "reopened"
@@ -188,7 +197,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
         <Tooltip title={fullDetail ?? (typeof entry.content === "string" ? entry.content : undefined)}>
           <Text className="free-system-event__detail">{detail}</Text>
         </Tooltip>
-        <Text type="secondary" className="free-system-event__time">{entry.time}</Text>
+        <Text type="secondary" className="free-system-event__time">{formatDisplayDateTime(entry.time)}</Text>
       </div>
     );
   };
@@ -226,7 +235,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
       <div className="free-flow-layout">
         <main className="free-flow-main">
-          <Card className="free-initial-card" title="初始表单" extra={initialEntry?.editedAt ? <Tag color="gold">已编辑 · {initialEntry.editedAt}</Tag> : null}>
+          <Card className="free-initial-card" title="初始表单" extra={initialEntry?.editedAt ? <Tag color="gold">已编辑 · {formatDisplayDateTime(initialEntry.editedAt)}</Tag> : null}>
             <Descriptions column={2} size="small">
               <Descriptions.Item label="事项分类">{instance.category}</Descriptions.Item>
               <Descriptions.Item label="优先级"><Tag color={instance.priority === "紧急" ? "red" : "default"}>{instance.priority}</Tag></Descriptions.Item>
@@ -250,10 +259,10 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
               children: entry.type === "reply" ? (
                 <Card className="free-reply-card" size="small">
                   <div className="free-reply-card__head">
-                    <Space><Avatar size={30}>{entry.actor.slice(-1)}</Avatar><Text strong>{entry.actor}</Text>{entry.assignee && <Tag color="purple">处理并转交</Tag>}</Space>
+                    <Space><Avatar size={30}>{entry.actor.slice(-1)}</Avatar><Text strong>{entry.actor}</Text></Space>
                     <Space>
-                      {entry.editedAt && <Tooltip title={`最后编辑：${entry.editedAt}；后台保留 ${entry.revisions?.length ?? 0} 个历史版本`}><Tag bordered={false}>已编辑</Tag></Tooltip>}
-                      <Text type="secondary">{entry.time}</Text>
+                      {entry.editedAt && <Tooltip title={`首次发表：${formatDisplayDateTime(entry.time)}；最后编辑：${formatDisplayDateTime(entry.editedAt)}`}><Tag bordered={false}>已编辑</Tag></Tooltip>}
+                      <Text type="secondary">{entry.editedAt ? `最后编辑 ${formatDisplayDateTime(entry.editedAt)}` : formatDisplayDateTime(entry.time)}</Text>
                       {isOpen && entry.actor === persona?.name && (
                         <Button type="text" size="small" icon={<EditOutlined />} onClick={() => { setEditEntry(entry); setEditContent(entry.content ?? ""); }}>编辑</Button>
                       )}
@@ -268,17 +277,19 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
           {isOpen ? (
             canReply || canTransfer ? (
               <Card className="free-compose-card" title={<Space><MessageOutlined />协作处理</Space>}>
-                <RichTextEditor value={replyContent} onChange={setReplyContent} placeholder="补充信息，或填写本次转交说明…" minHeight={180} />
+                {canReply && <RichTextEditor value={replyContent} onChange={setReplyContent} placeholder="补充协作信息…" minHeight={180} />}
                 <div className="free-compose-actions">
-                  <Text type="secondary">发表回复不会改变当前受理人；发起或受理权限组成员可处理并转交。</Text>
+                  <Text type="secondary">发表回复不会改变当前受理人；发起或受理权限组成员可直接变更受理人。</Text>
                   <Space wrap>
-                    {canReply && <Button icon={<MessageOutlined />} onClick={postReply}>发表回复</Button>}
                     {canTransfer && (
-                      <>
-                        <Select showSearch optionFilterProp="label" placeholder="选择下一位受理人" value={nextAssignee} onChange={setNextAssignee} options={userOptions.filter((option) => option.value !== instance.currentAssigneeId)} style={{ width: 210 }} />
-                        <Button type="primary" icon={<SendOutlined />} onClick={transfer}>处理并转交</Button>
-                      </>
+                      <Select allowClear showSearch optionFilterProp="label" placeholder="选择新受理人（可选）" value={nextAssignee} onChange={setNextAssignee} options={userOptions.filter((option) => option.value !== instance.currentAssigneeId)} style={{ width: 220 }} />
                     )}
+                    <Button
+                      type="primary"
+                      disabled={collaborationActionDisabled}
+                      icon={nextAssignee ? <SwapOutlined /> : <MessageOutlined />}
+                      onClick={submitCollaboration}
+                    >{collaborationActionLabel}</Button>
                   </Space>
                 </div>
               </Card>
@@ -295,8 +306,8 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
           </Card>
           <Card title="事项信息" size="small">
             <Descriptions column={1} size="small">
-              <Descriptions.Item label="创建时间">{instance.createdAt}</Descriptions.Item>
-              <Descriptions.Item label="最后更新">{instance.updatedAt}</Descriptions.Item>
+              <Descriptions.Item label="创建时间">{formatDisplayDateTime(instance.createdAt)}</Descriptions.Item>
+              <Descriptions.Item label="最后更新">{formatDisplayDateTime(instance.updatedAt)}</Descriptions.Item>
               <Descriptions.Item label="流程版本">{instance.templateVersion}</Descriptions.Item>
             </Descriptions>
           </Card>

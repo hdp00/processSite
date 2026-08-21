@@ -104,6 +104,7 @@ import {
   updateDesignerChoiceOption,
   type DesignerChoiceOption,
 } from "../utils/designerOptions";
+import { formatDisplayDateTime } from "../utils/domainTime";
 import "./form-designer.css";
 
 const { Text, Title, Paragraph } = Typography;
@@ -837,7 +838,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   );
   const [saveState, setSaveState] = useState<"dirty" | "saved">("saved");
   const skipDirtyEffect = useRef(true);
-  const [savedAt, setSavedAt] = useState(initialDraft.savedAt ?? "刚刚");
+  const [savedAt, setSavedAt] = useState(initialDraft.savedAt ?? formatDisplayDateTime(new Date().toISOString()));
   const designerHistoryValue = useMemo(
     () => ({ fields, systemListFields }),
     [fields, systemListFields],
@@ -1015,7 +1016,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   }, [definitionId, messageApi, versionId]);
 
   const saveVersion = async () => {
-    const time = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
+    const time = formatDisplayDateTime(new Date().toISOString());
     skipDirtyEffect.current = true;
     setSavedAt(time);
     try {

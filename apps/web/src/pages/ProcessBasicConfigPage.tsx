@@ -37,6 +37,7 @@ import {
   type ProcessBasicConfig,
 } from "../state/useProcessDefinitionStore";
 import { formatInstanceNumber } from "../utils/instanceNumber";
+import { formatDisplayDateTime } from "../utils/domainTime";
 import "./process-admin-pages.css";
 
 interface ProcessBasicConfigPageProps {
@@ -93,7 +94,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     visibleUsers: [],
   }), [definition?.code, definition?.description, definition?.name, definition?.type, searchParams, version?.basic]);
   const [form] = Form.useForm<BasicConfigValues>();
-  const [lastSavedAt, setLastSavedAt] = useState("2026-08-13 10:32");
+  const [lastSavedAt, setLastSavedAt] = useState(() => formatDisplayDateTime(version?.updatedAt ?? new Date().toISOString()));
   const [dirty, setDirty] = useState(false);
   const [versionEtag, setVersionEtag] = useState<string>();
   const workflowType = Form.useWatch("type", form) ?? initialConfig.type;
@@ -123,7 +124,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
         const created = await flowPilotApi.definitions.create({ basic: values });
         cacheProcessDefinition(created.definition);
         setDirty(false);
-        setLastSavedAt("刚刚");
+        setLastSavedAt(formatDisplayDateTime(new Date().toISOString()));
         message.success("流程定义已保存，并生成正式 V1");
         if (navigateToCreated) {
           allowNextNavigation();
@@ -145,7 +146,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
       return null;
     }
     setDirty(false);
-    setLastSavedAt("刚刚");
+    setLastSavedAt(formatDisplayDateTime(new Date().toISOString()));
     message.success("版本基本信息已保存，并已自动更新校验结果");
     return { definitionId: resolvedId, versionId };
   };

@@ -1303,6 +1303,13 @@
   gap: 6px;
 }
 
+.pa-unpublish-reason {
+  display: grid;
+  gap: 8px;
+  padding-top: 18px;
+  padding-bottom: 22px;
+}
+
 .pa-import-warning-list {
   display: grid;
   gap: 4px;

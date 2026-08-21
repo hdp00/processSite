@@ -12,10 +12,8 @@ async function switchPersona(page: Page, personaId: keyof typeof personaOptions)
   const persona = personaOptions[personaId];
   const selector = page.getByLabel("切换演示身份");
   await selector.click();
-  await selector.fill(persona.name);
-  const dropdown = page.locator(".ant-select-dropdown:visible");
-  await dropdown.locator(".ant-select-item-option").filter({ hasText: persona.label }).click();
-  await expect(dropdown).toBeHidden();
+  await selector.fill(personaId);
+  await selector.press("Enter");
   await expect(page.locator(".user-copy strong")).toHaveText(persona.name);
 }
 

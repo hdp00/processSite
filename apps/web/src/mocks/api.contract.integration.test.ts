@@ -72,6 +72,78 @@ describe("REST API contract boundary", () => {
       .rejects.toMatchObject({ status: 422, problem: { code: "VALIDATION_FAILED" } });
   });
 
+  it("uses the process definition ETag when cancelling the current publication", async () => {
+    const { flowPilotApi } = await import("../api/flowPilotApi");
+    const { getPublishedVersion } = await import("../state/useProcessDefinitionStore");
+    await flowPilotApi.auth.login("superadmin", "1");
+    const definitionResource = await flowPilotApi.definitions.getResource("pdf-review");
+    const publishedVersion = getPublishedVersion(definitionResource.data)!;
+    const versionResource = await flowPilotApi.definitions.versionResource("pdf-review", publishedVersion.id);
+
+    await expect(flowPilotApi.definitions.unpublish(
+      "pdf-review",
+      publishedVersion.id,
+      "错误使用版本并发标识",
+      versionResource.etag,
+    )).rejects.toMatchObject({ status: 412, problem: { code: "REVISION_MISMATCH" } });
+
+    const unpublished = await flowPilotApi.definitions.unpublish(
+      "pdf-review",
+      publishedVersion.id,
+      "验证定义并发标识",
+      definitionResource.etag,
+    );
+    expect(unpublished.definition.publishedVersionId).toBeUndefined();
+    expect(unpublished.version.validation).toMatchObject({ status: "通过", issues: [] });
+
+    const refreshedVersion = await flowPilotApi.definitions.versionResource("pdf-review", publishedVersion.id);
+    const republished = await flowPilotApi.definitions.publish(
+      "pdf-review",
+      publishedVersion.id,
+      "恢复合约测试发布状态",
+      refreshedVersion.etag,
+    );
+    expect(republished.definition.publishedVersionId).toBe(publishedVersion.id);
+  });
+
+  it("revalidates an instance-bound readonly version without editing its snapshot", async () => {
+    const { flowPilotApi } = await import("../api/flowPilotApi");
+    const { getPublishedVersion, useProcessDefinitionStore } = await import("../state/useProcessDefinitionStore");
+    await flowPilotApi.auth.login("superadmin", "1");
+    const definitionResource = await flowPilotApi.definitions.getResource("pdf-review");
+    const publishedVersion = getPublishedVersion(definitionResource.data)!;
+    const unpublished = await flowPilotApi.definitions.unpublish(
+      "pdf-review",
+      publishedVersion.id,
+      "验证只读版本重新校验",
+      definitionResource.etag,
+    );
+    useProcessDefinitionStore.setState((state) => ({
+      definitions: state.definitions.map((definition) => definition.id === "pdf-review" ? {
+        ...definition,
+        versions: definition.versions.map((version) => version.id === publishedVersion.id
+          ? { ...version, validation: { status: "未通过", checkedAt: "权限组修复前", issues: ["权限组没有有效成员"] } }
+          : version),
+      } : definition),
+    }));
+    const before = structuredClone(unpublished.version.snapshot);
+    const resource = await flowPilotApi.definitions.versionResource("pdf-review", publishedVersion.id);
+
+    const checked = await flowPilotApi.definitions.validate("pdf-review", publishedVersion.id, resource.etag);
+
+    expect(checked.instanceCount).toBeGreaterThan(0);
+    expect(checked.snapshot).toEqual(before);
+    expect(checked.validation).toMatchObject({ status: "通过", issues: [] });
+    const checkedResource = await flowPilotApi.definitions.versionResource("pdf-review", publishedVersion.id);
+    const republished = await flowPilotApi.definitions.publish(
+      "pdf-review",
+      publishedVersion.id,
+      "权限组修复后重新发布",
+      checkedResource.etag,
+    );
+    expect(republished.definition.publishedVersionId).toBe(publishedVersion.id);
+  });
+
   it("enforces the independent irreversible-delete permission", async () => {
     const { flowPilotApi } = await import("../api/flowPilotApi");
     const adminSession = await flowPilotApi.auth.login("admin", "1");

@@ -13,9 +13,9 @@ test("只读身份无法进入任务和流程配置页面 @smoke", async ({ page
   await expect(page.getByText("当前角色未获得此页面的查看权限。", { exact: true })).toBeVisible();
 });
 
-test("审核身份不能通过直达地址查看越权实例", async ({ page }) => {
+test("非协作权限组的审核身份不能通过直达地址查看越权实例", async ({ page }) => {
   test.skip(!isMockTarget, "演示实例和可见范围只适用于本地 Mock API。");
-  await loginAs(page, "lina");
+  await loginAs(page, "chenchen");
 
   await gotoApp(page, "processes/free-12");
   await expect(page.getByText("无权查看此流程", { exact: true })).toBeVisible();
