@@ -146,7 +146,7 @@ await flowPilotApi.system.updateMockSettings({
 1. 以 OpenAPI 生成 NestJS DTO/校验器或在 CI 中做契约校验。
 2. 保持 `/api/v1`、错误码、分页、ETag 与幂等语义，逐域替换 Mock 兼容 DTO。
 3. 将会话改为 HttpOnly/SameSite Cookie；移除 `mock:<userId>` Bearer 方案。
-4. 将领域命令迁移到 NestJS 服务和 SQLite/Drizzle 事务，建立外键与唯一约束。
+4. 将领域命令迁移到 NestJS 服务和 SQL Server/`node-mssql` 事务，建立外键、唯一约束、锁语义和类型化查询投影。
 5. 将附件迁移到服务器文件目录，将邮件迁移到持久化 Outbox worker；Excel 继续由浏览器生成，后端只实现导出数据集查询和权限控制。
 6. 逐页切换到 `flowPilotApi`，最后设置 `VITE_API_MODE=remote` 并删除浏览器业务数据双写。
 7. 对 OpenAPI、领域服务、Handler、组件集成和关键 E2E 分层测试。

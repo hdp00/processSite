@@ -33,6 +33,8 @@ debug 包不注册 Service Worker，不要求 HTTPS。其流程状态保存在�
 
 主站已有重写规则时，应确认 FlowPilot 应用形成独立配置边界。FlowPilot 的 `web.config` 会清除继承的规则，防止主站 SPA 或其他网站的重写规则抢先处理请求。
 
+访问不带末尾斜杠的 `/flowpilot` 时，应用会永久重定向到 `/flowpilot/`，因此两个地址都可以作为入口使用。若服务器在进入 FlowPilot 子应用前就由主站处理了 `/flowpilot`，需在主站重写规则最前面增加同等的 `/flowpilot` → `/flowpilot/` 重定向，并确保它位于主站 SPA 回退之前。
+
 ## 3. 正式 API 代理
 
 正式前端请求地址为：
@@ -53,6 +55,7 @@ http://服务器/api/v1/...
 
 ```text
 /flowpilot/
+/flowpilot（应重定向到 /flowpilot/）
 /flowpilot/login
 /flowpilot/tasks
 /flowpilot/processes

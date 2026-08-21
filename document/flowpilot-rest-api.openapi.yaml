@@ -25,7 +25,7 @@ security:
   - cookieAuth: []
   - mockBearerAuth: []
 x-flowpilot-concurrency-policy:
-  storage: SQLite 单后端实例，写命令使用短事务；发布、实例创建、任务决策和编号分配使用 BEGIN IMMEDIATE 或等价仓储事务
+  storage: SQL Server 2016 SP2 单后端实例，写命令使用短显式事务；发布、实例创建、任务决策和编号分配按场景使用 SERIALIZABLE、UPDLOCK/HOLDLOCK 或等价仓储事务
   optimisticLocking: 可变聚合以 revision 生成强 ETag；If-Match 缺失返回 428，过期返回 412
   taskFirstWriterWins: 待办以 status=pending 且 revision 匹配的条件更新实现，未更新到行时返回 TASK_ALREADY_COMPLETED
   fieldLevelConcurrency: 审批和重复修改只 patch 授权字段，并比较 touched field 的 baseFieldRevisions
