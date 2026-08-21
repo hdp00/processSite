@@ -327,7 +327,19 @@ const mockSettingsUpdateHandler = http.patch(`${API_ROOT}/mock/settings`, async 
 const mockResetHandler = http.post(`${API_ROOT}/mock/reset`, async ({ request }) => {
   const scenario = await scenarioResponse(request, true);
   if (scenario) return scenario;
-  const actor = optionalActor(request);
+  const authenticated = requireActor(request);
+  if (authenticated.response) return authenticated.response;
+  const session = usePrototypeStore.getState();
+  const operator = findIdentityUser(session.operatorUserId);
+  if (!session.authenticated || !operator?.builtIn || operator.status !== "启用") {
+    return apiProblem(
+      request,
+      403,
+      "DEMO_RESET_NOT_ALLOWED",
+      "不允许重置演示数据",
+      "只有真实登录的系统内置超级管理员可以重置演示数据。",
+    );
+  }
   return withIdempotency(request, async () => {
     usePrototypeStore.getState().resetDemo();
     useProcessDefinitionStore.getState().resetDefinitions();
@@ -335,7 +347,7 @@ const mockResetHandler = http.post(`${API_ROOT}/mock/reset`, async ({ request })
     useOrganizationStore.getState().resetOrganization();
     if ("indexedDB" in window) await Promise.all([clearAttachments(), clearRichMedia()]);
     resetMockApiRuntime();
-    auditIdentity(actor, "mock.reset", "mock-runtime", "global", "Mock 演示数据已重置");
+    auditIdentity(operator, "mock.reset", "mock-runtime", "global", "Mock 演示数据已重置");
     return apiOk(request, { reset: true as const });
   });
 });

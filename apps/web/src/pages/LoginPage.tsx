@@ -17,6 +17,7 @@ import {
   readLastSuccessfulLoginUsername,
   saveLastSuccessfulLoginUsername,
 } from "../utils/lastLoginUsername";
+import { isBrowserMockMode } from "../utils/runtimeMode";
 
 interface LoginValues {
   username: string;
@@ -27,7 +28,7 @@ interface LoginValues {
 export function LoginPage() {
   const navigate = useNavigate();
   const [form] = Form.useForm<LoginValues>();
-  const debugMode = import.meta.env.VITE_API_MODE === "mock";
+  const debugMode = isBrowserMockMode;
   const [initialUsername] = useState(() =>
     readLastSuccessfulLoginUsername() || (debugMode ? "lina" : ""));
   const [submitting, setSubmitting] = useState(false);
@@ -147,6 +148,7 @@ export function LoginPage() {
             <div className="demo-login-title"><span />选择演示身份<span /></div>
             <Space.Compact block>
               <Select
+                aria-label="选择演示身份"
                 value={demoPersona}
                 showSearch
                 optionFilterProp="searchText"

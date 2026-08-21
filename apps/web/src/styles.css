@@ -2767,7 +2767,7 @@ button {
   }
 
   .page-identity .ant-typography:first-child {
-    color: #7b879b;
+    color: #5f6878;
     font-size: 10px;
     font-weight: 750;
     letter-spacing: 1.25px;
@@ -2783,6 +2783,7 @@ button {
 
   .persona-switcher {
     border-color: #dce2ec !important;
+    color: #5f6878;
     background: rgba(248, 250, 253, 0.9) !important;
     box-shadow: var(--ui-shadow-sm);
   }
@@ -2946,7 +2947,7 @@ button {
   .node-cell small,
   .person-cell small,
   .inline-subtle {
-    color: #8c96a8;
+    color: #5f6878;
   }
 
   .table-link.strong {
@@ -3425,5 +3426,19 @@ button {
 
   .ant-list .ant-list-item-meta-description {
     color: #7d88a0;
+  }
+
+  /* Small secondary copy must keep WCAG AA contrast on light surfaces. */
+  .ant-typography.ant-typography-secondary,
+  .login-card .ant-form-item-extra,
+  .demo-login-title,
+  .user-copy small,
+  .task-flow-item__copy small,
+  .person-cell small {
+    color: #5f6878 !important;
+  }
+
+  .app-mode-segmented .ant-segmented-item:not(.ant-segmented-item-selected) {
+    color: #536078;
   }
 }

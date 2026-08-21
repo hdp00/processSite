@@ -38,7 +38,12 @@ import { hydrateRemoteApplication } from "../api/remoteHydration";
 import type { DirectoryUser } from "../api/contracts";
 import { ROLE_PERMISSIONS_CHANGED_EVENT, canPersonaAccessLaunch, hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { personas, usePrototypeStore, type PersonaId } from "../state/usePrototypeStore";
+import {
+  isSuperAdminPersona,
+  personas,
+  usePrototypeStore,
+  type PersonaId,
+} from "../state/usePrototypeStore";
 import { useIdentityStore } from "../state/useIdentityStore";
 import { canUserViewDefinition } from "../state/workflowAccess";
 
@@ -67,11 +72,18 @@ export function AppShell() {
   const {
     personaId,
     operatorUserId,
+    sessionSuperAdmin,
     operatorSuperAdmin,
     impersonation,
     switchPersona,
   } = usePrototypeStore();
-  const debugMode = import.meta.env.VITE_API_MODE === "mock";
+  const debugMode = import.meta.env.VITE_API_MODE === "mock"
+    || (import.meta.env.DEV && import.meta.env.VITE_API_MODE !== "remote");
+  const canResetDemoData = debugMode && (
+    sessionSuperAdmin
+    || operatorSuperAdmin
+    || isSuperAdminPersona(personaId)
+  );
 
   const identityUser = useIdentityStore((state) => state.users.find((user) => user.id === personaId));
   const persona = identityUser
@@ -250,10 +262,6 @@ export function AppShell() {
   const resetDemoData = async () => {
     try {
       await flowPilotApi.system.resetDemo();
-      if (!debugMode) {
-        await flowPilotApi.auth.me();
-        await hydrateRemoteApplication();
-      }
       navigate("/tasks", { replace: true });
       message.success("演示数据已重置");
     } catch (error) {
@@ -262,7 +270,7 @@ export function AppShell() {
   };
 
   const userMenu: MenuProps["items"] = [
-    ...(debugMode || operatorSuperAdmin ? [{
+    ...(canResetDemoData ? [{
       key: "reset",
       icon: <ReloadOutlined />,
       label: "重置演示数据",
@@ -326,6 +334,7 @@ export function AppShell() {
               <SwapOutlined />
               <span>{debugMode ? "演示身份" : "模拟身份"}</span>
               <Select
+                aria-label={debugMode ? "切换演示身份" : "切换模拟身份"}
                 variant="borderless"
                 value={personaId}
                 loading={switchingPersona}

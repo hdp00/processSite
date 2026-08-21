@@ -35,5 +35,17 @@ describe("resolveLockedProcessVersion", () => {
   it("仅为没有 versionId 的旧数据按版本文本迁移", () => {
     const current = definition();
     expect(resolveLockedProcessVersion(current, { templateVersion: "1" })?.id).toBe("version-1");
+    expect(resolveLockedProcessVersion(current, { templateVersion: "  v2  " })?.id).toBe("version-2");
+  });
+
+  it("定义不存在或旧版本文本为空时不猜测当前发布版本", () => {
+    expect(resolveLockedProcessVersion(undefined, { templateVersion: "V1" })).toBeUndefined();
+    expect(resolveLockedProcessVersion(definition("version-2"), { templateVersion: "   " })).toBeUndefined();
+  });
+
+  it("同时归一化实例与历史定义中的无前缀版本号", () => {
+    const current = definition();
+    current.versions[1] = version("version-2", "2");
+    expect(resolveLockedProcessVersion(current, { templateVersion: "V2" })?.id).toBe("version-2");
   });
 });

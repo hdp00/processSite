@@ -9,6 +9,13 @@
     "build": "pnpm --filter @process-site/web build",
     "build:debug": "pnpm --filter @process-site/web build:debug",
     "typecheck": "pnpm --filter @process-site/web typecheck",
-    "test": "pnpm --filter @process-site/web test"
+    "test": "pnpm --filter @process-site/web test",
+    "test:coverage": "pnpm --filter @process-site/web test:coverage",
+    "test:coverage:all": "pnpm --filter @process-site/web test:coverage:all",
+    "test:e2e": "pnpm --filter @process-site/web test:e2e",
+    "test:e2e:edge": "pnpm --filter @process-site/web test:e2e:edge",
+    "test:visual": "pnpm --filter @process-site/web test:visual",
+    "test:update-snapshots": "pnpm --filter @process-site/web test:update-snapshots",
+    "test:all": "pnpm --filter @process-site/web test:all"
   }
 }

@@ -27,13 +27,20 @@
 ```bash
 pnpm install
 pnpm dev
+pnpm test
+pnpm test:coverage
+pnpm test:coverage:all
+pnpm test:e2e
+pnpm test:e2e:edge
+pnpm test:all
 pnpm typecheck
 pnpm build
 ```
 
 - 开发服务器默认监听 `http://127.0.0.1:5173`。
-- 仓库目前没有配置单元测试、端到端测试或 lint 脚本。不要声称运行了不存在的检查。
-- 日常修改至少运行 `pnpm typecheck`；涉及路由、构建配置、依赖或交付前修改时再运行 `pnpm build`。
+- `pnpm test` 运行 Vitest 单元、领域集成和组件测试；`pnpm test:coverage` 执行核心领域覆盖率门禁，`pnpm test:coverage:all` 生成包含页面与浏览器适配代码的全源码报告。
+- `pnpm test:e2e` 运行 Chromium 全量浏览器测试；`pnpm test:e2e:edge` 运行 Microsoft Edge 冒烟测试。仓库当前不配置 CI 或 lint 脚本，不要声称运行了不存在的检查。
+- 日常修改至少运行 `pnpm typecheck` 和受影响测试；涉及路由、构建配置、依赖或交付前修改时运行 `pnpm test:all`。
 
 ## 实现约定
 
@@ -66,13 +73,13 @@ pnpm build
 1. 阅读 `REQUIREMENTS.md` 的相关章节及待修改文件的相邻实现。
 2. 检查 `git status`，保留用户已有改动；不要顺手重构无关代码或覆盖未提交内容。
 3. 以最小完整改动实现需求，并同步更新共享类型、模拟数据、权限判断和文档中实际受影响的部分。
-4. 运行 `pnpm typecheck`，按修改风险运行 `pnpm build`。
-5. 对受影响流程做浏览器手工验证，至少覆盖正常路径、校验失败路径和一个无权限/不同身份路径。
+4. 运行 `pnpm typecheck` 和受影响的 Vitest；按修改风险运行覆盖率、构建及浏览器测试，交付前运行 `pnpm test:all`。
+5. 对受影响流程做浏览器验证，至少覆盖正常路径、校验失败路径和一个无权限/不同身份路径；新增稳定业务链路时同步补自动化用例。
 
 ## 完成标准
 
 - 实现与 `REQUIREMENTS.md` 中的已确认需求一致。
-- TypeScript 检查通过；需要构建验证时构建也通过。
+- TypeScript 检查和受影响自动化测试通过；交付前的覆盖率、双构建与浏览器门禁通过。
 - 无明显控制台错误，刷新后持久化状态仍可读取。
 - 关键操作具有中文反馈，权限边界和异常状态可解释。
 - 提交内容聚焦本次任务，不包含生成产物、`node_modules` 或无关格式化改动。

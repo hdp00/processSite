@@ -76,6 +76,7 @@ import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { readLocalAuditEvents } from "../utils/localAuditRepository";
 import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
 import { collectRuntimeAuditEvents } from "../utils/runtimeAudit";
+import { isBrowserMockMode } from "../utils/runtimeMode";
 import { deriveAllWorkflowGroupStatistics } from "../state/workflowGroupStatistics";
 import { flowPilotApi } from "../api/flowPilotApi";
 import type { AuditEvent } from "../api/contracts";
@@ -1191,7 +1192,7 @@ const auditActionLabels: Record<string, string> = {
 export function AuditLogPage() {
   const instances = usePrototypeStore((state) => state.instances);
   const tasks = usePrototypeStore((state) => state.tasks);
-  const debugMode = import.meta.env.VITE_API_MODE === "mock";
+  const debugMode = isBrowserMockMode;
   const [remoteAuditEvents, setRemoteAuditEvents] = useState<AuditEvent[]>([]);
   const [keyword, setKeyword] = useState("");
   const [module, setModule] = useState<string>();

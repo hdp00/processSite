@@ -688,3 +688,8 @@
   border-radius: 9px;
   box-shadow: none;
 }
+
+.app-content .launch-center-page .launch-overview-count span,
+.app-content .launch-center-page .launch-card-meta > span {
+  color: #5f6878;
+}

@@ -273,13 +273,17 @@ export const authenticateLocalAccount = (account: string, password: string) => {
 };
 
 export const effectiveGroupMemberIds = (groupIdOrName: string) => {
-  const { users, workflowGroups } = useIdentityStore.getState();
+  const { users, roles, workflowGroups } = useIdentityStore.getState();
   const group = workflowGroups.find((item) => item.id === groupIdOrName || item.name === groupIdOrName);
   if (!group) return [];
+  // 停用仅阻止权限组被新流程引用；既有发布版本和运行实例仍需解析当前有效成员。
+  const enabledLinkedRoleIds = new Set(
+    roles.filter((role) => role.status === "启用" && group.linkedRoleIds?.includes(role.id)).map((role) => role.id),
+  );
   return users
     .filter((user) => !user.builtIn && user.status === "启用")
     .filter((user) => group.directMemberUserIds?.includes(user.id)
-      || user.roleIds?.some((roleId) => group.linkedRoleIds?.includes(roleId)))
+      || user.roleIds?.some((roleId) => enabledLinkedRoleIds.has(roleId)))
     .map((user) => user.id);
 };
 

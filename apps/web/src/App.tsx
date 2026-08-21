@@ -32,7 +32,7 @@ const RoleManagementPage = lazy(() => import("./pages/GovernancePages").then((mo
 const UserManagementPage = lazy(() => import("./pages/GovernancePages").then((module) => ({ default: module.UserManagementPage })));
 const WorkflowPermissionGroupsPage = lazy(() => import("./pages/GovernancePages").then((module) => ({ default: module.WorkflowPermissionGroupsPage })));
 
-function ProtectedRoute({ children }: { children: ReactNode }) {
+export function ProtectedRoute({ children }: { children: ReactNode }) {
   const authenticated = usePrototypeStore((state) => state.authenticated);
   return authenticated ? children : <Navigate to="/login" replace />;
 }
@@ -42,7 +42,7 @@ function LoginRoute() {
   return authenticated ? <Navigate to="/tasks" replace /> : <LoginPage />;
 }
 
-function PersonaGate({ scope, definitionId, permission, children }: { scope: "initiator" | "permission"; definitionId?: string; permission?: string; children: ReactNode }) {
+export function PersonaGate({ scope, definitionId, permission, children }: { scope: "initiator" | "permission"; definitionId?: string; permission?: string; children: ReactNode }) {
   const personaId = usePrototypeStore((state) => state.personaId);
   const params = useParams<{ definitionId?: string }>();
   const targetDefinitionId = definitionId ?? params.definitionId;

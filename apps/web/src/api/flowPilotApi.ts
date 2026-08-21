@@ -58,6 +58,19 @@ export interface WorkflowTaskQuery extends PageQuery {
 
 const mutation = () => ({ idempotencyKey: createIdempotencyKey() });
 
+interface MockSystemApi {
+  getMockSettings: () => Promise<MockApiSettings>;
+  updateMockSettings: (settings: Partial<MockApiSettings>) => Promise<MockApiSettings>;
+  resetDemo: () => Promise<{ reset: true }>;
+}
+
+const mockSystemApi = (import.meta.env.VITE_API_MODE === "remote" ? {} : {
+  getMockSettings: () => apiRequest<MockApiSettings>("/mock/settings"),
+  updateMockSettings: (settings: Partial<MockApiSettings>) =>
+    apiRequest<MockApiSettings>("/mock/settings", { method: "PATCH", body: settings }),
+  resetDemo: () => apiRequest<{ reset: true }>("/mock/reset", { method: "POST", ...mutation() }),
+}) as MockSystemApi;
+
 const applySession = (session: AuthSession) => {
   writeApiAccessToken(session.accessToken ?? readCurrentToken());
   const sessionUsers = [session.operatorUser, session.user].filter((user): user is DirectoryUser => Boolean(user));
@@ -78,13 +91,7 @@ const readCurrentToken = () => window.sessionStorage.getItem("flowpilot-api-acce
 export const flowPilotApi = {
   system: {
     health: () => apiRequest<ApiHealth>("/health"),
-    getMockSettings: () => apiRequest<MockApiSettings>("/mock/settings"),
-    updateMockSettings: (settings: Partial<MockApiSettings>) =>
-      apiRequest<MockApiSettings>("/mock/settings", { method: "PATCH", body: settings }),
-    resetDemo: () => apiRequest<{ reset: true }>(
-      import.meta.env.VITE_API_MODE === "remote" ? "/system/demo-data/reset" : "/mock/reset",
-      { method: "POST", ...mutation() },
-    ),
+    ...mockSystemApi,
   },
   auth: {
     login: async (account: string, password: string) => {
