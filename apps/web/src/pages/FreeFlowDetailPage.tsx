@@ -35,7 +35,7 @@ import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { FreeFlowEntry, ProcessInstance } from "../data/types";
-import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
+import { canUserTransferFreeFlow, isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
 import { effectiveGroupMemberIds, findIdentityUser, isUserInWorkflowGroup, useIdentityStore } from "../state/useIdentityStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserCloseInstance } from "../state/workflowAccess";
@@ -102,7 +102,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
   const participants = instance?.participants ?? [];
   const isOpen = instance?.status === "进行中";
-  const isCurrentAssignee = isOpen && instance?.currentAssigneeId === persona?.id;
   const isStarter = Boolean(
     isSuperAdmin || lockedVersion?.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(personaId, groupId)),
   );
@@ -116,6 +115,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const canEditInitial = Boolean(
     isOpen && instance && persona && canEditProcessInstanceSubmission(instance, persona, isSuperAdmin),
   );
+  const canTransfer = Boolean(instance && canUserTransferFreeFlow(instance, personaId));
   const canForceReassign = Boolean(isOpen && isStarter);
   const initialEntry = instance?.freeTimeline?.find((entry) => entry.type === "created");
   const initialFormDirty = Boolean(initialEditOpen && instance && (
@@ -167,7 +167,9 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     const detail = entry.type === "created"
       ? <>创建事项，首位受理人 <strong>{entry.assignee}</strong></>
       : entry.type === "assigned"
-        ? <>转交给 <strong>{entry.assignee}</strong></>
+        ? entry.previousAssignee
+          ? <>将受理人从 <strong>{entry.previousAssignee}</strong> 转交给 <strong>{entry.assignee}</strong></>
+          : <>转交给 <strong>{entry.assignee}</strong></>
         : entry.type === "closed"
           ? <>关闭事项：{entry.content}</>
           : entry.type === "reopened"
@@ -264,23 +266,23 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
           />
 
           {isOpen ? (
-            canReply ? (
-              <Card className="free-compose-card" title={<Space><MessageOutlined />新增回复</Space>}>
-                <RichTextEditor value={replyContent} onChange={setReplyContent} placeholder="补充信息，或由当前受理人填写处理结果…" minHeight={180} />
+            canReply || canTransfer ? (
+              <Card className="free-compose-card" title={<Space><MessageOutlined />协作处理</Space>}>
+                <RichTextEditor value={replyContent} onChange={setReplyContent} placeholder="补充信息，或填写本次转交说明…" minHeight={180} />
                 <div className="free-compose-actions">
-                  <Text type="secondary">发表回复不会改变当前受理人。</Text>
+                  <Text type="secondary">发表回复不会改变当前受理人；发起或受理权限组成员可处理并转交。</Text>
                   <Space wrap>
-                    <Button icon={<MessageOutlined />} onClick={postReply}>发表回复</Button>
-                    {(isCurrentAssignee || isSuperAdmin) && (
+                    {canReply && <Button icon={<MessageOutlined />} onClick={postReply}>发表回复</Button>}
+                    {canTransfer && (
                       <>
-                        <Select showSearch optionFilterProp="label" placeholder="选择下一位受理人" value={nextAssignee} onChange={setNextAssignee} options={userOptions.filter((option) => option.value !== instance.currentAssignee)} style={{ width: 210 }} />
+                        <Select showSearch optionFilterProp="label" placeholder="选择下一位受理人" value={nextAssignee} onChange={setNextAssignee} options={userOptions.filter((option) => option.value !== instance.currentAssigneeId)} style={{ width: 210 }} />
                         <Button type="primary" icon={<SendOutlined />} onClick={transfer}>处理并转交</Button>
                       </>
                     )}
                   </Space>
                 </div>
               </Card>
-            ) : <Alert showIcon type="info" message="当前为只读查看" description="只有发起人、当前或历史参与人可以新增回复。" />
+            ) : <Alert showIcon type="info" message="当前为只读查看" description="发起人、当前或历史参与人可以回复；发起或受理权限组成员可以切换当前受理人。" />
           ) : <Alert showIcon icon={<LockOutlined />} type="warning" message="事项已关闭，内容已锁定" description="重新打开后，参与人可继续回复，原作者也可继续编辑自己的历史回复。" />}
         </main>
 

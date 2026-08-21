@@ -14,7 +14,7 @@ import { createProcessDefinitionExport, parseProcessDefinitionImport, type Proce
 import "./process-admin-pages.css";
 
 interface CreateProcessValues { name: string; type: DefinitionType; description?: string }
-interface ImportPreviewState extends ProcessDefinitionImportPreview { fileName: string }
+interface ImportPreviewState extends ProcessDefinitionImportPreview { fileName: string; document: unknown }
 
 const typeMeta: Record<DefinitionType, { label: string; icon: React.ReactNode; className: string }> = {
   approval: { label: "固定审批", icon: <BranchesOutlined />, className: "is-approval" },
@@ -26,11 +26,11 @@ export function ProcessManagementPage() {
   const navigate = useNavigate();
   const [form] = Form.useForm<CreateProcessValues>();
   const definitions = useProcessDefinitionStore((state) => state.definitions);
-  const importDefinition = useProcessDefinitionStore((state) => state.importDefinition);
   const users = useIdentityStore((state) => state.users);
   const roles = useIdentityStore((state) => state.roles);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const personaId = usePrototypeStore((state) => state.personaId);
+  const canEditDefinition = hasPersonaPermission(personaId, "config-definition:编辑");
   const canDeleteDefinition = hasPersonaPermission(personaId, "config-definition:删除");
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<DefinitionStatus>();
@@ -119,28 +119,31 @@ export function ProcessManagementPage() {
       return;
     }
     try {
-      const preview = parseProcessDefinitionImport(await file.text(), { users, roles, workflowGroups });
-      setImportPreview({ ...preview, fileName: file.name });
+      const sourceText = await file.text();
+      const preview = parseProcessDefinitionImport(sourceText, { users, roles, workflowGroups });
+      setImportPreview({ ...preview, fileName: file.name, document: JSON.parse(sourceText) as unknown });
     } catch (error) {
       message.error(error instanceof Error ? error.message : "流程定义导入文件无法解析");
     }
   };
 
-  const confirmImport = () => {
+  const confirmImport = async () => {
     if (!importPreview) return;
-    const importedId = importDefinition(importPreview.definition);
-    const imported = useProcessDefinitionStore.getState().definitions.find((definition) => definition.id === importedId);
-    if (!imported) return message.error("流程定义导入失败");
-    setImportPreview(undefined);
-    message.success(`已导入为“${imported.name}”，全部版本保持未发布`);
-    navigate(`/admin/processes/${imported.id}/versions`);
+    try {
+      const imported = await flowPilotApi.definitions.import(importPreview.document);
+      cacheProcessDefinition(imported);
+      setImportPreview(undefined);
+      message.success(`已导入为“${imported.name}”，全部版本保持未发布`);
+      navigate(`/admin/processes/${imported.id}/versions`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "流程定义导入失败");
+    }
   };
 
   const getActionMenu = (record: ProcessDefinition): MenuProps["items"] => [
-    { key: "copy", icon: <CopyOutlined />, label: "复制新建流程", onClick: () => copyDefinition(record) },
+    ...(canEditDefinition ? [{ key: "copy", icon: <CopyOutlined />, label: "复制新建流程", onClick: () => copyDefinition(record) }] : []),
     { key: "export", icon: <DownloadOutlined />, label: "导出", onClick: () => exportDefinition(record) },
-    { type: "divider" },
-    { key: "toggle", icon: record.disabled ? <CheckCircleOutlined /> : <StopOutlined />, label: record.disabled ? "启用流程" : "停用流程", danger: !record.disabled, disabled: !record.publishedVersionId, onClick: () => updateStatus(record) },
+    ...(canEditDefinition ? [{ type: "divider" as const }, { key: "toggle", icon: record.disabled ? <CheckCircleOutlined /> : <StopOutlined />, label: record.disabled ? "启用流程" : "停用流程", danger: !record.disabled, disabled: !record.publishedVersionId, onClick: () => updateStatus(record) }] : []),
     ...(canDeleteDefinition ? [{ key: "delete", icon: <DeleteOutlined />, label: "删除流程", danger: true, disabled: Boolean(record.publishedVersionId || record.instanceCount || record.versions.some((version) => version.instanceCount > 0)), onClick: () => removeDefinition(record) }] : []),
   ];
 
@@ -178,7 +181,7 @@ export function ProcessManagementPage() {
         <div className="pa-overview-copy"><span className="pa-eyebrow"><FileTextOutlined /> 流程配置</span><Typography.Title level={3}>流程定义概览</Typography.Title><Typography.Text type="secondary">流程定义负责名称与员工侧入口；每个版本都是完整快照，最多一个版本处于发布状态。</Typography.Text></div>
         <div className="pa-overview-stats" aria-label="流程统计"><span><strong>{definitions.length}</strong><small>流程定义</small></span><span><strong>{definitions.filter((item) => definitionStatus(item) === "已发布").length}</strong><small>已发布</small></span><span><strong>{definitions.reduce((total, item) => total + item.versions.length, 0)}</strong><small>正式版本</small></span></div>
       </Card>
-      <Card className="query-card pa-filter-card"><div className="pa-filter-row"><Input className="pa-keyword-input" prefix={<SearchOutlined />} allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索流程名称、编号或说明" /><Select<DefinitionType> className="pa-filter-select" allowClear value={type} onChange={setType} placeholder="全部类型" options={Object.entries(typeMeta).map(([value, meta]) => ({ value: value as DefinitionType, label: meta.label }))} /><Select<DefinitionStatus> className="pa-filter-select" allowClear value={status} onChange={setStatus} placeholder="全部状态" options={["未发布", "已发布", "已停用"].map((value) => ({ value: value as DefinitionStatus, label: value }))} /><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setStatus(undefined); setType(undefined); }}>重置</Button><Upload accept=".json" showUploadList={false} beforeUpload={(file) => { void readImportFile(file); return false; }}><Button icon={<UploadOutlined />}>导入</Button></Upload><Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建流程</Button></div></Card>
+      <Card className="query-card pa-filter-card"><div className="pa-filter-row"><Input className="pa-keyword-input" prefix={<SearchOutlined />} allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索流程名称、编号或说明" /><Select<DefinitionType> className="pa-filter-select" allowClear value={type} onChange={setType} placeholder="全部类型" options={Object.entries(typeMeta).map(([value, meta]) => ({ value: value as DefinitionType, label: meta.label }))} /><Select<DefinitionStatus> className="pa-filter-select" allowClear value={status} onChange={setStatus} placeholder="全部状态" options={["未发布", "已发布", "已停用"].map((value) => ({ value: value as DefinitionStatus, label: value }))} /><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setStatus(undefined); setType(undefined); }}>重置</Button>{canEditDefinition && <Upload accept=".json" showUploadList={false} beforeUpload={(file) => { void readImportFile(file); return false; }}><Button icon={<UploadOutlined />}>导入</Button></Upload>}{canEditDefinition && <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建流程</Button>}</div></Card>
       <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}>
         <div className="table-result-head pa-table-head"><div><strong>流程定义</strong><Tag bordered={false}>{filteredDefinitions.length} 条</Tag></div><Typography.Text type="secondary">进入版本记录可发布、取消发布、切换发布版本或从任意版本复制新建</Typography.Text></div>
         <Table<ProcessDefinition> rowKey="id" columns={columns} dataSource={filteredDefinitions} scroll={{ x: 1120 }} pagination={{ pageSize: 8, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录` }} />

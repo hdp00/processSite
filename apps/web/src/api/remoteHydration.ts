@@ -29,8 +29,9 @@ export const hydrateRemoteApplication = async () => {
         flowPilotApi.definitions.visible({ page, pageSize: 100 }));
     }
   };
-  const [directoryResult, definitionsResult, instancesResult, taskItemsResult, departmentsResult, positionsResult] = await Promise.allSettled([
-    flowPilotApi.directory.snapshot(),
+  const [roles, workflowGroups, definitions, instances, taskItems, departments, positions] = await Promise.all([
+    collectPages((page) => flowPilotApi.directory.roles({ page, pageSize: 100 })),
+    collectPages((page) => flowPilotApi.directory.groups({ page, pageSize: 100 })),
     loadDefinitions(),
     collectPages<ProcessInstance>((page) => flowPilotApi.instances.list({ page, pageSize: 100 })),
     collectPages<WorkflowTaskListItem>((page) => flowPilotApi.tasks.listMine({ page, pageSize: 100, view: "all" })),
@@ -38,31 +39,17 @@ export const hydrateRemoteApplication = async () => {
     flowPilotApi.organization.positions(),
   ]);
 
-  if (directoryResult.status === "fulfilled") {
-    const directory = directoryResult.value;
-    useIdentityStore.setState({
-      users: directory.users.map((user) => ({ ...user, password: "" })),
-      roles: directory.roles,
-      workflowGroups: directory.workflowGroups,
-    });
-  } else {
-    const session = usePrototypeStore.getState();
-    const sessionUsers = useIdentityStore.getState().users.filter((user) =>
-      user.id === session.personaId || user.id === session.operatorUserId,
-    );
-    useIdentityStore.setState({
-      users: sessionUsers,
-      roles: [],
-      workflowGroups: [],
-    });
-  }
+  // Commit the new cache only after every critical query succeeds. A temporary
+  // backend failure must not turn into a persisted "zero data" application.
+  const session = usePrototypeStore.getState();
+  const sessionUsers = useIdentityStore.getState().users.filter((user) =>
+    user.id === session.personaId || user.id === session.operatorUserId,
+  );
+  useIdentityStore.setState({ users: sessionUsers, roles, workflowGroups });
 
-  const definitions = definitionsResult.status === "fulfilled" ? definitionsResult.value : [];
   useProcessDefinitionStore.setState({
     definitions: definitions.map(({ status: _status, ...definition }) => definition),
   });
-  const instances = instancesResult.status === "fulfilled" ? instancesResult.value : [];
-  const taskItems = taskItemsResult.status === "fulfilled" ? taskItemsResult.value : [];
   const instanceById = new Map(instances.map((instance) => [instance.id, instance]));
   taskItems.forEach((item) => instanceById.set(item.instance.id, item.instance));
   usePrototypeStore.setState({
@@ -70,8 +57,7 @@ export const hydrateRemoteApplication = async () => {
     tasks: taskItems.map((item) => item.task),
   });
   useOrganizationStore.setState({
-    departments: departmentsResult.status === "fulfilled"
-      ? departmentsResult.value.map((department) => ({
+    departments: departments.map((department) => ({
         key: department.id,
         name: department.name,
         path: department.path,
@@ -82,17 +68,14 @@ export const hydrateRemoteApplication = async () => {
         users: department.memberCount,
         referenced: department.memberCount > 0,
         description: department.description ?? "",
-      }))
-      : [],
-    jobTitles: positionsResult.status === "fulfilled"
-      ? positionsResult.value.map((position, index) => ({
+      })),
+    jobTitles: positions.map((position, index) => ({
         id: position.id,
         name: position.name,
         description: position.description,
         status: position.status,
         users: position.memberCount,
         sort: position.sortOrder ?? (index + 1) * 10,
-      }))
-      : [],
+      })),
   });
 };

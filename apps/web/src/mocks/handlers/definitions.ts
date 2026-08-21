@@ -4,6 +4,7 @@ import type { DomainUser } from "../../state/useIdentityStore";
 import {
   effectiveGroupMemberIds,
   findIdentityUser,
+  useIdentityStore,
 } from "../../state/useIdentityStore";
 import type {
   DefinitionType,
@@ -22,6 +23,7 @@ import { usePrototypeStore } from "../../state/usePrototypeStore";
 import { canUserViewDefinition, canUserViewInstance } from "../../state/workflowAccess";
 import { compareDomainTimestamps } from "../../utils/domainTime";
 import type { CompleteDesignerSnapshot } from "../../utils/designerStorage";
+import { parseProcessDefinitionImport } from "../../utils/processDefinitionTransfer";
 import { MOCK_API_BASE_URL } from "../apiBase";
 import {
   apiNoContent,
@@ -205,6 +207,33 @@ export const definitionHandlers = [
       if (!definition || !version) return apiProblem(request, 403, "DEFINITION_CREATE_FORBIDDEN", "无法创建流程定义", "当前用户没有创建流程定义的权限。 ");
       auditDefinition(auth.actor.id, auth.actor.name, "create", definition, `创建流程定义 ${definition.name}`);
       return apiOk(request, { definition, version }, { status: 201, headers: { Location: `${API}/process-definitions/${definition.id}`, ...withEtag(definition) } });
+    });
+  }),
+
+  http.post(`${API}/process-definitions/imports`, async ({ request }) => {
+    const simulated = await applyMockScenario(request, true);
+    if (simulated) return simulated;
+    return withIdempotency(request, async () => {
+      const auth = requirePermission(request, "config-definition:编辑");
+      if (auth.response) return auth.response;
+      const body = await parseJsonBody<{ document?: unknown }>(request);
+      if (body instanceof Response) return body;
+      if (!body.document) return apiProblem(request, 422, "IMPORT_DOCUMENT_REQUIRED", "导入文件不能为空", "请提交完整的流程定义导出文档。 ");
+      try {
+        const identities = useIdentityStore.getState();
+        const preview = parseProcessDefinitionImport(JSON.stringify(body.document), identities);
+        const importedId = useProcessDefinitionStore.getState().importDefinition(preview.definition);
+        if (!importedId) return apiProblem(request, 409, "DEFINITION_IMPORT_FAILED", "流程定义导入失败", "导入事务未能生成有效的流程定义。 ");
+        const imported = definitionById(importedId);
+        if (!imported) return apiProblem(request, 409, "DEFINITION_IMPORT_FAILED", "流程定义导入失败", "导入事务未能创建完整流程定义。 ");
+        auditDefinition(auth.actor.id, auth.actor.name, "import", imported, `导入流程定义 ${imported.name}`);
+        return apiOk(request, structuredClone(imported), {
+          status: 201,
+          headers: { Location: `${API}/process-definitions/${imported.id}`, ...withEtag(imported) },
+        });
+      } catch (error) {
+        return apiProblem(request, 422, "DEFINITION_IMPORT_INVALID", "流程定义导入文件无效", error instanceof Error ? error.message : "无法解析流程定义导入文件。 ");
+      }
     });
   }),
 

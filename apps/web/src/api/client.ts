@@ -86,6 +86,14 @@ export interface ApiResourceResult<T> {
   requestId: string;
 }
 
+const isApiEnvelope = <T>(value: unknown): value is ApiEnvelope<T> => {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ApiEnvelope<T>>;
+  return "data" in candidate
+    && Boolean(candidate.meta)
+    && typeof candidate.meta?.requestId === "string";
+};
+
 async function performApiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<ApiResourceResult<T>> {
   const {
     body,
@@ -137,11 +145,15 @@ async function performApiRequest<T>(path: string, options: ApiRequestOptions = {
       etag: response.headers.get("ETag") ?? undefined,
       requestId: response.headers.get("X-Request-Id") ?? requestId,
     };
-    const envelope = await response.json() as ApiEnvelope<T>;
+    const payload = await response.json() as T | ApiEnvelope<T>;
+    const envelope = isApiEnvelope<T>(payload) ? payload : undefined;
     return {
-      data: envelope.data,
+      // Debug Mock historically uses an envelope while the formal OpenAPI
+      // contract returns the response DTO directly. Supporting both here keeps
+      // transport compatibility out of page components.
+      data: envelope ? envelope.data : payload as T,
       etag: response.headers.get("ETag") ?? undefined,
-      requestId: envelope.meta.requestId,
+      requestId: envelope?.meta.requestId ?? response.headers.get("X-Request-Id") ?? requestId,
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;

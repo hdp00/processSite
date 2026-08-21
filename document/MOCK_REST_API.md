@@ -10,7 +10,7 @@
 - 浏览器 Mock 入口：`apps/web/src/mocks/browser.ts`
 - 领域 Handler：`apps/web/src/mocks/handlers`
 
-Mock 层是当前前端领域模型的兼容适配器；OpenAPI 是 NestJS 正式实现的目标契约。正式后端接入时，应逐域替换兼容 DTO，并以 OpenAPI 中的服务端校验、事务和并发约束为准。
+Mock 层是当前前端领域模型的兼容适配器；OpenAPI 是 NestJS 正式实现的目标契约。统一客户端会把 Mock 响应包和 OpenAPI 直接 DTO 映射到同一前端领域模型，并以 OpenAPI 中的服务端校验、事务和并发约束为准；正式模式不调用 Mock 私有聚合接口。
 
 ## 2. 运行方式
 
@@ -73,7 +73,7 @@ try {
 - JSON 请求、multipart 上传和 Blob 下载；
 - RFC Problem Details 风格错误解析。
 
-当前 Mock 兼容层的成功响应采用 `{ data, meta: { requestId, timestamp } }`；错误响应至少包含 `type`、`title`、`status`、`detail`、`instance`、`code` 和 `traceId`。字段校验错误附带 `errors[]`，并发错误可附带 `currentEtag`。
+当前 Mock 兼容层的成功响应采用 `{ data, meta: { requestId, timestamp } }`，正式 OpenAPI 成功响应直接返回 DTO；客户端兼容两种形式，并从响应头或响应包读取 requestId。错误响应至少包含 `type`、`title`、`status`、`detail`、`instance`、`code` 和 `traceId`。字段校验错误附带 `errors[]`，并发错误可附带 `currentEtag`。
 
 ## 4. API 范围
 
@@ -84,7 +84,7 @@ try {
 | 用户与组织 | `/users`、`/departments`、`/positions` | 分页、CRUD、登录方式、启停、密码登录账号重置密码、ETag、审计 |
 | 角色与权限 | `/roles`、`/permissions` | 角色 CRUD、权限矩阵、变更影响预览 |
 | 流程权限组 | `/workflow-permission-groups` | CRUD、有效成员分页、变更影响预览 |
-| 流程定义与版本 | `/process-definitions` | 新建/复制、版本、分区设计器保存、校验、发布、取消发布、删除 |
+| 流程定义与版本 | `/process-definitions`、`/process-definitions/imports` | 新建/复制/原子导入、版本、分区设计器保存、校验、发布、取消发布、删除 |
 | 发起配置 | `/me/launchable-process-definitions`、`/process-definitions/{id}/launch-config` | 数据范围裁剪、锁定发布版本、候选人员解析 |
 | 流程实例 | `/process-instances` | 分页查询、创建、首审前修改、重新提交、关闭、复制新建 |
 | 审批任务 | `/me/workflow-tasks`、`/workflow-tasks/{id}` | 我的待办/可代办、审批/确认/驳回、重复字段修改 |

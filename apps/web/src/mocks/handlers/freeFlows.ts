@@ -78,7 +78,7 @@ export const freeFlowHandlers = [
       if (!body.content?.trim() || !assignee) return apiProblem(request, 422, "VALIDATION_FAILED", "转交内容不完整", "请填写回复内容并选择有效的下一受理人。 ");
       usePrototypeStore.getState().transferFreeFlow(found.instance.id, body.content, assignee.name);
       const updated = instanceById(found.instance.id);
-      if (!changed(found.instance, updated)) return apiProblem(request, 403, "TRANSFER_FORBIDDEN", "不能转交该事项", "只有当前受理人可以转交给允许的受理人。 ");
+      if (!changed(found.instance, updated)) return apiProblem(request, 403, "TRANSFER_FORBIDDEN", "不能转交该事项", "只有当前有效的发起或受理权限组成员可以转交给其他有效受理人。 ");
       audit(auth.actor.id, auth.actor.name, "transfer", updated!, `将 ${updated!.code} 转交给 ${assignee.name}`);
       return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
     });

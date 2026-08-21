@@ -7,9 +7,9 @@ export default mergeConfig(coreConfig, defineConfig({
       reportsDirectory: "./coverage/all-source",
       include: ["src/**/*.{ts,tsx}"],
       thresholds: {
-        lines: 0,
-        functions: 0,
-        branches: 0,
+        lines: 30,
+        functions: 25,
+        branches: 20,
       },
     },
   },

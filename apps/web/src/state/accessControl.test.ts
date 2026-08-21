@@ -43,6 +43,7 @@ const configurePublishedAccess = (
   access: {
     starterGroups?: string[];
     closeGroups?: string[];
+    assigneeGroups?: string[];
     visibleRoles?: string[];
     visibleUsers?: string[];
     approvalGroups?: string[];
@@ -62,6 +63,7 @@ const configurePublishedAccess = (
                 ...version.basic,
                 starterGroups: access.starterGroups ?? [],
                 closeGroups: access.closeGroups ?? [],
+                assigneeGroups: access.assigneeGroups ?? [],
                 visibleRoles: access.visibleRoles ?? [],
                 visibleUsers: access.visibleUsers ?? [],
               },
@@ -340,6 +342,8 @@ describe("页面入口与流程数据范围", () => {
     expect(workflowAccessModule.canUserViewInstance("hejing", instance)).toBe(true);
     configurePublishedAccess("pdf-review", { starterGroups: ["PDF审核_文控_流程权限组"] });
     expect(workflowAccessModule.canUserViewInstance("wangmin", instance)).toBe(true);
+    configurePublishedAccess("pdf-review", { assigneeGroups: ["PDF审核_研发_流程权限组"] });
+    expect(workflowAccessModule.canUserViewInstance("zhangwei", instance)).toBe(true);
     configurePublishedAccess("pdf-review", { closeGroups: ["PDF审核_文控_流程权限组"] });
     expect(workflowAccessModule.canUserViewInstance("wangmin", instance)).toBe(true);
     configurePublishedAccess("pdf-review", { approvalGroups: ["PDF审核_研发_流程权限组"] });
@@ -391,6 +395,8 @@ describe("页面入口与流程数据范围", () => {
     expect(workflowAccessModule.canUserViewDefinition("hejing", definitionId)).toBe(true);
     configurePublishedAccess(definitionId, { starterGroups: ["PDF审核_文控_流程权限组"] });
     expect(workflowAccessModule.canUserViewDefinition("wangmin", definitionId)).toBe(true);
+    configurePublishedAccess(definitionId, { assigneeGroups: ["PDF审核_研发_流程权限组"] });
+    expect(workflowAccessModule.canUserViewDefinition("zhangwei", definitionId)).toBe(true);
     configurePublishedAccess(definitionId, { closeGroups: ["PDF审核_文控_流程权限组"] });
     expect(workflowAccessModule.canUserViewDefinition("wangmin", definitionId)).toBe(true);
     configurePublishedAccess(definitionId, { approvalGroups: ["PDF审核_质量_流程权限组"] });

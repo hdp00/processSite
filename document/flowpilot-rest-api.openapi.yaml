@@ -468,7 +468,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpsertDepartmentRequest"
+              $ref: "#/components/schemas/UpdateDepartmentRequest"
       responses:
         "200":
           description: 部门已更新
@@ -582,7 +582,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpsertPositionRequest"
+              $ref: "#/components/schemas/UpdatePositionRequest"
       responses:
         "200":
           description: 职务已更新
@@ -962,7 +962,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpsertWorkflowPermissionGroupRequest"
+              $ref: "#/components/schemas/UpdateWorkflowPermissionGroupRequest"
       responses:
         "200":
           description: 流程权限组已更新
@@ -1142,6 +1142,41 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /process-definitions/imports:
+    post:
+      tags: [ProcessDefinitions]
+      operationId: importProcessDefinition
+      summary: 从 FlowPilot 导出文档导入新的流程定义
+      description: 服务端校验文件类型和格式版本，重新生成定义、版本、字段、节点及连线标识，并在同一事务中创建全部未发布版本；任何版本无效时整体回滚。
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportProcessDefinitionRequest"
+      responses:
+        "201":
+          description: 流程定义及全部未发布版本已导入
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VisibleProcessDefinitionDto"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
 
   /me/visible-process-definitions:
     get:
@@ -2133,7 +2168,8 @@ paths:
     post:
       tags: [FreeCollaboration]
       operationId: transferFreeCollaboration
-      summary: 当前受理人处理并转交
+      summary: 发起或受理权限组成员处理并转交
+      description: 操作人必须是实例锁定版本中当前有效的发起流程权限组或审批/受理流程权限组成员；超级管理员可越权执行。目标用户必须是有效受理人且不能与当前受理人相同。成功后必须更新实例更新时间，并在时间线保存操作人、原受理人、新受理人和发生时间。
       parameters:
         - $ref: "#/components/parameters/InstanceId"
         - $ref: "#/components/parameters/IfMatch"
@@ -3295,6 +3331,25 @@ components:
         description:
           type: string
           maxLength: 500
+    UpdateDepartmentRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        parentId:
+          type: [string, "null"]
+          format: uuid
+        sortOrder:
+          type: integer
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        description:
+          type: string
+          maxLength: 500
     DepartmentDto:
       type: object
       required: [id, revision, code, name, path, level, sortOrder, status, userCount, children]
@@ -3335,6 +3390,22 @@ components:
       type: object
       additionalProperties: false
       required: [name, sortOrder, status]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        sortOrder:
+          type: integer
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        description:
+          type: string
+          maxLength: 500
+    UpdatePositionRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
       properties:
         name:
           type: string
@@ -3398,8 +3469,25 @@ components:
             type: string
             format: uuid
     UpdateRoleRequest:
-      allOf:
-        - $ref: "#/components/schemas/CreateRoleRequest"
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        memberIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
     RoleDto:
       type: object
       required: [id, revision, code, name, status, builtIn, memberCount, memberIds, permissionCount]
@@ -3501,6 +3589,38 @@ components:
       type: object
       additionalProperties: false
       required: [name, purposes, status, directUserIds, roleIds]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        purposes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/WorkflowGroupPurpose"
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+        directUserIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    UpdateWorkflowPermissionGroupRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
       properties:
         name:
           type: string
@@ -4201,6 +4321,15 @@ components:
       properties:
         basic:
           $ref: "#/components/schemas/ProcessBasicConfigInput"
+    ImportProcessDefinitionRequest:
+      type: object
+      additionalProperties: false
+      required: [document]
+      properties:
+        document:
+          type: object
+          description: createProcessDefinitionExport 生成的完整 FlowPilot 流程定义 JSON 文档；服务端不得接受客户端生成后的内部标识作为可信数据。
+          additionalProperties: true
     CreateProcessDefinitionResponse:
       type: object
       required: [definition, version]
@@ -4427,10 +4556,19 @@ components:
           items:
             type: string
             format: uuid
+        attachmentIdsByField:
+          type: object
+          description: 按稳定表单字段标识关联已上传的临时附件；服务端在实例创建事务内转为正式引用。
+          additionalProperties:
+            type: array
+            uniqueItems: true
+            items:
+              type: string
+              format: uuid
     UpdateInstanceSubmissionRequest:
       type: object
       additionalProperties: false
-      required: [formValues, attachmentIds]
+      required: [formValues, attachmentIdsByField]
       properties:
         formValues:
           type: object
@@ -4442,6 +4580,16 @@ components:
           items:
             type: string
             format: uuid
+          deprecated: true
+          description: 旧客户端兼容字段；新客户端使用 attachmentIdsByField 保留字段归属。
+        attachmentIdsByField:
+          type: object
+          additionalProperties:
+            type: array
+            uniqueItems: true
+            items:
+              type: string
+              format: uuid
         assigneeByNode:
           type: object
           additionalProperties:
@@ -4766,6 +4914,15 @@ components:
             $ref: "#/components/schemas/JsonValue"
         baseFieldRevisions:
           $ref: "#/components/schemas/BaseFieldRevisions"
+        attachmentIdsByField:
+          type: object
+          description: 本次审核字段修改关联的附件标识，与任务结果在同一事务内提交。
+          additionalProperties:
+            type: array
+            uniqueItems: true
+            items:
+              type: string
+              format: uuid
     TaskDecisionResponse:
       type: object
       required: [instance, task, activatedTaskIds, cancelledTaskIds]
@@ -4799,6 +4956,15 @@ components:
         comment:
           type: string
           maxLength: 2000
+        attachmentIdsByField:
+          type: object
+          description: 本次重复修改关联的附件标识，与字段修订事件在同一事务内提交。
+          additionalProperties:
+            type: array
+            uniqueItems: true
+            items:
+              type: string
+              format: uuid
     ReviseTaskFieldsResponse:
       type: object
       required: [instance, task, revision]

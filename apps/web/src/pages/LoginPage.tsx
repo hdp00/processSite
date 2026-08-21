@@ -34,13 +34,18 @@ export function LoginPage() {
 
   const submit = async (values: LoginValues) => {
     setSubmitting(true);
+    let sessionEstablished = false;
     try {
       await flowPilotApi.auth.login(values.username, values.password);
+      sessionEstablished = true;
       if (import.meta.env.VITE_API_MODE === "remote") await hydrateRemoteApplication();
       saveLastSuccessfulLoginUsername(values.username);
       message.success("登录成功");
       navigate("/tasks", { replace: true });
     } catch (error) {
+      if (sessionEstablished && import.meta.env.VITE_API_MODE === "remote") {
+        await flowPilotApi.auth.logout().catch(() => undefined);
+      }
       message.error(error instanceof ApiError ? error.message : "登录失败，请稍后重试");
     } finally {
       setSubmitting(false);
@@ -52,7 +57,7 @@ export function LoginPage() {
       <section className="login-story">
         <div className="login-brand">
           <span className="brand-lockup">
-            <span className="moons-wordmark" aria-label="MOONS'">
+            <span className="moons-wordmark" role="img" aria-label="MOONS'">
               <span className="moons-wordmark-name" aria-hidden="true">MOONS</span>
               <span className="moons-wordmark-apostrophe" aria-hidden="true">&apos;</span>
             </span>

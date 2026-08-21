@@ -83,6 +83,23 @@ describe("REST API contract boundary", () => {
       .rejects.toMatchObject({ status: 403, problem: { code: "PERMISSION_DENIED" } });
   });
 
+  it("imports a complete process definition through the REST transaction boundary", async () => {
+    const { flowPilotApi } = await import("../api/flowPilotApi");
+    const { useIdentityStore } = await import("../state/useIdentityStore");
+    const { useProcessDefinitionStore } = await import("../state/useProcessDefinitionStore");
+    const { createProcessDefinitionExport } = await import("../utils/processDefinitionTransfer");
+    await flowPilotApi.auth.login("superadmin", "1");
+    const source = useProcessDefinitionStore.getState().definitions[0];
+    const identities = useIdentityStore.getState();
+
+    const imported = await flowPilotApi.definitions.import(createProcessDefinitionExport(source, identities));
+
+    expect(imported.id).not.toBe(source.id);
+    expect(imported.name).toContain(source.name);
+    expect(imported.versions).toHaveLength(source.versions.length);
+    expect(useProcessDefinitionStore.getState().definitions.some((item) => item.id === imported.id)).toBe(true);
+  });
+
   it("keeps the real super administrator while authorizing as the impersonated user", async () => {
     const { flowPilotApi } = await import("../api/flowPilotApi");
     const { usePrototypeStore } = await import("../state/usePrototypeStore");

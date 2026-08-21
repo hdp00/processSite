@@ -2,16 +2,20 @@ import type { Page } from "@playwright/test";
 import { expect, gotoApp, isMockTarget, loginAs, test } from "./fixtures/app";
 
 const personaOptions = {
-  wangmin: { label: "王敏 · 文控专员", name: "王敏" },
-  zhangwei: { label: "张伟 · 研发审核人", name: "张伟" },
-  lina: { label: "林晓 · 质量审核人", name: "林晓" },
-  zhaolei: { label: "赵磊 · 生产审核人", name: "赵磊" },
+  wangmin: { label: "王敏 · 流程管理员、文控专员", name: "王敏" },
+  zhangwei: { label: "张伟 · 研发审核员", name: "张伟" },
+  lina: { label: "林晓 · 质量审核员", name: "林晓" },
+  zhaolei: { label: "赵磊 · 生产审核员", name: "赵磊" },
 } as const;
 
 async function switchPersona(page: Page, personaId: keyof typeof personaOptions) {
   const persona = personaOptions[personaId];
-  await page.getByLabel("切换演示身份").click();
-  await page.locator(".ant-select-dropdown:visible").getByText(persona.label, { exact: true }).click();
+  const selector = page.getByLabel("切换演示身份");
+  await selector.click();
+  await selector.fill(persona.name);
+  const dropdown = page.locator(".ant-select-dropdown:visible");
+  await dropdown.locator(".ant-select-item-option").filter({ hasText: persona.label }).click();
+  await expect(dropdown).toBeHidden();
   await expect(page.locator(".user-copy strong")).toHaveText(persona.name);
 }
 

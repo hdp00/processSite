@@ -139,6 +139,15 @@ const isStarterActor = (instance: ProcessInstance, userId: string) => {
   return Boolean(version?.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(userId, groupId)));
 };
 
+export const canUserTransferFreeFlow = (instance: ProcessInstance, userId: string) => {
+  if (instance.workflowType !== "free" || instance.status !== "进行中") return false;
+  if (isSuperAdminPersona(userId)) return true;
+  const version = resolveInstanceVersion(instance);
+  if (!version) return false;
+  return [...version.basic.starterGroups, ...(version.basic.assigneeGroups ?? [])]
+    .some((groupId) => isUserInWorkflowGroup(userId, groupId));
+};
+
 const isCloserActor = (instance: ProcessInstance, userId: string) => {
   if (isSuperAdminPersona(userId)) return true;
   const version = resolveInstanceVersion(instance);
@@ -1081,17 +1090,22 @@ export const usePrototypeStore = create<PrototypeState>()(
           const actionAt = nowText();
           const target = state.instances.find((instance) => instance.id === id);
           const nextAssigneeId = userIdByIdOrName(nextAssignee);
-          const canTransfer =
-            target?.workflowType === "free" &&
-            target.status === "进行中" &&
-            (target.currentAssigneeId === persona.id || isSuperAdminPersona(state.personaId)) &&
-            isAllowedFreeAssignee(target, nextAssignee);
+          const canTransfer = Boolean(
+            target
+            && canUserTransferFreeFlow(target, state.personaId)
+            && nextAssigneeId !== target.currentAssigneeId
+            && isAllowedFreeAssignee(target, nextAssignee),
+          );
           if (!target || !canTransfer) return state;
           const entries: FreeFlowEntry[] = [
             ...(target.freeTimeline ?? []),
             freeEntry("reply", persona.name, { content, assignee: nextAssignee }),
-            freeEntry("assigned", persona.name, { assignee: nextAssignee }),
+            freeEntry("assigned", persona.name, {
+              assignee: nextAssignee,
+              previousAssignee: target.currentAssignee,
+            }),
           ];
+          const includeActor = !isSuperAdminPersona(state.personaId);
           return {
             instances: state.instances.map((instance) =>
               instance.id === id
@@ -1102,8 +1116,8 @@ export const usePrototypeStore = create<PrototypeState>()(
                     designatedReviewer: nextAssignee,
                     currentNode: nextAssignee,
                     updatedAt: actionAt,
-                    participants: [...new Set([...(instance.participants ?? []), nextAssignee])],
-                    participantIds: [...new Set([...(instance.participantIds ?? []), ...(nextAssigneeId ? [nextAssigneeId] : [])])],
+                    participants: [...new Set([...(instance.participants ?? []), ...(includeActor ? [persona.name] : []), nextAssignee])],
+                    participantIds: [...new Set([...(instance.participantIds ?? []), ...(includeActor ? [persona.id] : []), ...(nextAssigneeId ? [nextAssigneeId] : [])])],
                     freeTimeline: entries,
                   }
                 : instance,
@@ -1114,9 +1128,17 @@ export const usePrototypeStore = create<PrototypeState>()(
         set((state) => {
           const persona = currentPersona(state.personaId);
           const editedAt = nowText();
+          const target = state.instances.find((instance) => instance.id === id);
+          const targetEntry = target?.freeTimeline?.find((entry) => entry.id === entryId);
+          const canEdit = target?.workflowType === "free"
+            && target.status === "进行中"
+            && targetEntry?.type === "reply"
+            && targetEntry.actor === persona.name
+            && targetEntry.content !== content;
+          if (!target || !canEdit) return state;
           return {
             instances: state.instances.map((instance) => {
-              if (instance.id !== id || instance.workflowType !== "free" || instance.status !== "进行中") return instance;
+              if (instance.id !== id) return instance;
               return {
                 ...instance,
                 updatedAt: editedAt,
@@ -1157,6 +1179,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                 instance.description !== changes.description ? { field: "事项摘要", before: instance.description, after: changes.description } : null,
                 originalInitialContent !== changes.initialContent ? { field: "初始说明", before: "原富文本内容", after: "新富文本内容" } : null,
               ].filter((change): change is { field: string; before: string; after: string } => Boolean(change));
+              if (!fieldChanges.length) return instance;
               return {
                 ...instance,
                 title: changes.title,
@@ -1164,6 +1187,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                 documentType: changes.category,
                 priority: changes.priority,
                 description: changes.description,
+                formValues: { ...(instance.formValues ?? {}), [PROCESS_TITLE_FIELD_ID]: changes.title },
                 updatedAt: actionAt,
                 freeTimeline: [
                   ...(instance.freeTimeline ?? []).map((entry) =>

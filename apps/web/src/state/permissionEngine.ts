@@ -1,4 +1,5 @@
 import { findIdentityUser, useIdentityStore } from "./useIdentityStore";
+import { allPermissionCodes } from "../data/permissionCatalog";
 
 export const ROLE_PERMISSION_STORAGE_KEY = "flowpilot-role-permissions-v1";
 export const ROLE_PERMISSIONS_CHANGED_EVENT = "flowpilot-role-permissions-changed";
@@ -15,25 +16,11 @@ export function normalizeRolePermissionList(permissions: string[]) {
   })));
 }
 
-const allPermissions = [
-  "work-launch:查看", "work-launch:发起",
-  "work-task:查看", "work-task:审核", "work-task:驳回",
-  "work-list:查看", "work-list:复制新建", "work-list:打印",
-  "config-definition:查看", "config-definition:编辑", "config-definition:发布", "config-definition:删除",
-  "config-form:查看", "config-form:编辑", "config-form:预览",
-  "org-user:查看", "org-user:编辑", "org-user:重置密码",
-  "org-department:查看", "org-department:编辑",
-  "org-role:查看", "org-role:编辑", "org-role:授权",
-  "org-group:查看", "org-group:编辑",
-  "system-monitor:查看", "system-monitor:导出",
-  "system-audit:查看", "system-audit:导出",
-];
-
 const reviewerPermissions = ["work-task:查看", "work-task:审核", "work-task:驳回", "work-list:查看"];
 
 export const defaultRolePermissionMap: Record<string, string[]> = {
-  "ROLE-SUPER": allPermissions,
-  "ROLE-001": allPermissions,
+  "ROLE-SUPER": allPermissionCodes,
+  "ROLE-001": allPermissionCodes,
   "ROLE-002": ["work-task:查看", "work-list:查看", "work-list:打印", "config-definition:查看", "config-definition:编辑", "config-definition:发布", "config-definition:删除", "config-form:查看", "config-form:编辑", "config-form:预览"],
   "ROLE-003": ["work-launch:查看", "work-launch:发起", "work-task:查看", "work-list:查看", "work-list:复制新建", "work-list:打印"],
   "ROLE-004": reviewerPermissions,
@@ -48,7 +35,7 @@ export function readStoredRolePermissions(): Record<string, string[]> {
     return {
       ...defaultRolePermissionMap,
       ...Object.fromEntries(Object.entries(stored).map(([roleId, permissions]) => [roleId, normalizeRolePermissionList(permissions)])),
-      "ROLE-SUPER": allPermissions,
+      "ROLE-SUPER": allPermissionCodes,
     };
   } catch {
     return { ...defaultRolePermissionMap };

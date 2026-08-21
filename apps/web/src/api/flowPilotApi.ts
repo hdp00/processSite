@@ -6,17 +6,35 @@ import type {
   ProcessDefinition,
   ProcessVersion,
 } from "../state/useProcessDefinitionStore";
+import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import type { CompleteDesignerSnapshot } from "../utils/designerStorage";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useIdentityStore } from "../state/useIdentityStore";
+import { useOrganizationStore } from "../state/useOrganizationStore";
 import { apiDownload, apiRequest, apiResource, createIdempotencyKey, writeApiAccessToken } from "./client";
+import type { ApiResourceResult } from "./client";
+import {
+  normalizeAuthSession,
+  normalizeDepartments,
+  normalizeDirectoryUser,
+  normalizeDomainRole,
+  normalizeLaunchableDefinition,
+  normalizePageResult,
+  normalizePermissionCatalog,
+  normalizePositions,
+  normalizeProcessDefinition,
+  normalizeProcessInstance,
+  normalizeProcessVersion,
+  normalizeRolePermissions,
+  normalizeWorkflowTask,
+  normalizeWorkflowGroup,
+} from "./remoteAdapters";
 import type {
   ApiHealth,
   AttachmentRecord,
   AuditEvent,
   AuthSession,
   DepartmentRecord,
-  DirectorySnapshot,
   DirectoryUser,
   EmailOutboxItem,
   ImpactPreview,
@@ -57,6 +75,185 @@ export interface WorkflowTaskQuery extends PageQuery {
 }
 
 const mutation = () => ({ idempotencyKey: createIdempotencyKey() });
+const remoteMode = import.meta.env.VITE_API_MODE === "remote";
+
+const mappedResource = async <T>(resource: Promise<ApiResourceResult<unknown>>, map: (value: unknown) => T) => {
+  const result = await resource;
+  return { ...result, data: map(result.data) };
+};
+
+const pageRequest = async <T>(path: string, query: object, map: (value: unknown) => T) =>
+  normalizePageResult(await apiRequest<unknown>(path, { query }), map);
+
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const processDefinitionStatus = (definition: ProcessDefinition): ProcessDefinitionListItem["status"] =>
+  definition.disabled ? "disabled" : definition.publishedVersionId ? "published" : "unpublished";
+
+const fullVersionsRequest = async (definitionId: string, supplied?: unknown[]): Promise<ProcessVersion[]> => {
+  const values = supplied ?? await apiRequest<unknown[]>(`/process-definitions/${encodeURIComponent(definitionId)}/versions`);
+  return Promise.all(values.map(async (value) => {
+    if (isRecord(value) && value.snapshot && value.basic) return normalizeProcessVersion(value);
+    if (!isRecord(value)) throw new Error("流程版本摘要格式不正确");
+    return normalizeProcessVersion(await apiRequest<unknown>(
+      `/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(String(value.id ?? ""))}`,
+    ));
+  }));
+};
+
+const definitionPageRequest = async (path: string, query: object): Promise<PageResult<ProcessDefinitionListItem>> => {
+  const raw = await apiRequest<unknown>(path, { query });
+  const page = normalizePageResult(raw, (item) => item);
+  const items = await Promise.all(page.items.map(async (item) => {
+    let versions: ProcessVersion[] | undefined;
+    if (isRecord(item) && Array.isArray(item.versions)) {
+      versions = await fullVersionsRequest(String(item.id ?? ""), item.versions);
+    } else if (remoteMode && isRecord(item)) {
+      const definitionId = String(item.id ?? "");
+      versions = await fullVersionsRequest(definitionId);
+    }
+    const definition = normalizeProcessDefinition(item, versions);
+    return { ...definition, status: processDefinitionStatus(definition) };
+  }));
+  return { items, page: page.page };
+};
+
+const normalizeDefinitionVersionResult = (value: unknown): ProcessDefinitionVersionResult => {
+  if (!isRecord(value)) throw new Error("流程定义写入响应格式不正确");
+  const version = normalizeProcessVersion(value.version ?? value.publishedVersion);
+  if (!isRecord(value.definition)) throw new Error("流程定义写入响应缺少定义信息");
+  const definitionId = String(value.definition.id ?? "");
+  const currentVersions = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId)?.versions ?? [];
+  const versions = [version, ...currentVersions.filter((item) => item.id !== version.id)];
+  return {
+    definition: normalizeProcessDefinition(value.definition, versions),
+    version,
+  };
+};
+
+const normalizeSavedVersionResult = (value: unknown): SavedProcessVersionResult => {
+  if (!isRecord(value)) throw new Error("流程设计保存响应格式不正确");
+  return {
+    version: normalizeProcessVersion(value.version),
+    removedReferences: Array.isArray(value.removedReferences)
+      ? value.removedReferences as SavedProcessVersionResult["removedReferences"]
+      : [],
+  };
+};
+
+const normalizeSavedVersion = (value: unknown) =>
+  normalizeProcessVersion(isRecord(value) && value.version ? value.version : value);
+
+const normalizeInstanceDetail = (value: unknown): ProcessInstanceDetail => {
+  if (!isRecord(value)) throw new Error("流程实例详情响应格式不正确");
+  const source = isRecord(value.instance) ? value.instance : value;
+  const tasks = Array.isArray(value.tasks) ? value.tasks : Array.isArray(source.tasks) ? source.tasks : [];
+  return {
+    instance: normalizeProcessInstance(source),
+    tasks: tasks.map(normalizeWorkflowTask),
+  };
+};
+
+const normalizeTaskListItem = async (value: unknown): Promise<WorkflowTaskListItem> => {
+  if (!isRecord(value)) throw new Error("任务列表响应格式不正确");
+  const taskSource = isRecord(value.task) ? value.task : value;
+  const task = normalizeWorkflowTask(taskSource);
+  const instance = value.instance
+    ? normalizeProcessInstance(value.instance)
+    : normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(task.instanceId)}`)).instance;
+  const handlingMode = value.handlingMode === "confirmation" || task.handlingMode === "confirmation" ? "confirmation" : "approval";
+  const allowedActions = Array.isArray(value.allowedActions)
+    ? value.allowedActions as WorkflowTaskListItem["allowedActions"]
+    : task.allowedActions ?? (handlingMode === "confirmation" ? ["confirm"] : ["pass", "reject"]);
+  return { task, instance, handlingMode, allowedActions };
+};
+
+const taskPageRequest = async (query: object): Promise<PageResult<WorkflowTaskListItem>> => {
+  const raw = await apiRequest<unknown>("/me/workflow-tasks", { query });
+  const page = normalizePageResult(raw, (item) => item);
+  return { items: await Promise.all(page.items.map(normalizeTaskListItem)), page: page.page };
+};
+
+const remoteStatus = (status: "启用" | "停用") => status === "启用" ? "enabled" : "disabled";
+const remoteInstanceStatus: Record<InstanceStatus, string> = {
+  审核中: "reviewing",
+  驳回待处理: "rejected-pending",
+  已完成: "completed",
+  进行中: "in-progress",
+  已关闭: "closed",
+};
+const isoDate = (date: Date) => date.toISOString().slice(0, 10);
+const defaultInstanceDateRange = () => {
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(start.getDate() - 30);
+  return { dateFrom: isoDate(start), dateTo: isoDate(end) };
+};
+const remotePurpose = (purpose: string) => purpose === "发起" ? "start" : purpose === "关闭" ? "close" : "review-or-accept";
+const positionIdByName = (name: string) => useOrganizationStore.getState().jobTitles.find((item) => item.name === name)?.id ?? name;
+const roleIdsByNames = (names: string[]) => {
+  const roles = useIdentityStore.getState().roles;
+  return names.map((name) => roles.find((role) => role.name === name)?.id).filter((id): id is string => Boolean(id));
+};
+const userIdsByNames = (names: string[]) => {
+  const users = useIdentityStore.getState().users;
+  return names.map((name) => users.find((user) => user.name === name)?.id).filter((id): id is string => Boolean(id));
+};
+
+const remoteUserInput = (input: Partial<DomainUser> & { password?: string; newPassword?: string }) => ({
+  ...(input.account !== undefined ? { loginName: input.account } : {}),
+  ...(input.name !== undefined ? { name: input.name } : {}),
+  ...(input.email !== undefined ? { email: input.email } : {}),
+  ...(input.authenticationMode !== undefined ? { authenticationMode: input.authenticationMode } : {}),
+  ...(input.department !== undefined ? { departmentId: input.department.at(-1) } : {}),
+  ...(input.jobTitle !== undefined ? { positionId: positionIdByName(input.jobTitle) } : {}),
+  ...(input.roles !== undefined ? { roleIds: roleIdsByNames(input.roles) } : {}),
+  ...(input.status !== undefined ? { status: remoteStatus(input.status) } : {}),
+  ...(input.password ? { initialPassword: input.password } : {}),
+  ...(input.newPassword ? { newPassword: input.newPassword } : {}),
+});
+
+const remoteRoleInput = (input: Partial<DomainRole>) => ({
+  ...(input.name !== undefined ? { name: input.name } : {}),
+  ...(input.description !== undefined ? { description: input.description } : {}),
+  ...(input.status !== undefined ? { status: remoteStatus(input.status) } : {}),
+  ...((input.memberUserIds || input.members) ? { memberIds: input.memberUserIds ?? userIdsByNames(input.members ?? []) } : {}),
+});
+
+const remoteGroupInput = (input: Partial<WorkflowPermissionGroup>) => ({
+  ...(input.name !== undefined ? { name: input.name } : {}),
+  ...(input.purposes !== undefined ? { purposes: input.purposes.map(remotePurpose) } : {}),
+  ...(input.status !== undefined ? { status: remoteStatus(input.status) } : {}),
+  ...((input.directMemberUserIds || input.directMembers) ? { directUserIds: input.directMemberUserIds ?? userIdsByNames(input.directMembers ?? []) } : {}),
+  ...((input.linkedRoleIds || input.linkedRoles) ? { roleIds: input.linkedRoleIds ?? roleIdsByNames(input.linkedRoles ?? []) } : {}),
+});
+
+const remoteBasicInput = (input: ProcessBasicConfig) => ({
+  name: input.name,
+  instancePrefix: input.instancePrefix,
+  type: input.type,
+  description: input.description,
+  starterGroupIds: input.starterGroups,
+  assigneeGroupIds: input.assigneeGroups ?? [],
+  closeGroupIds: input.closeGroups,
+  visibleRoleIds: input.visibleRoles,
+  visibleUserIds: input.visibleUsers,
+});
+
+const remoteDepartmentInput = (input: Partial<DepartmentRecord> & { name?: string }) => ({
+  ...(input.name !== undefined ? { name: input.name } : {}),
+  ...(input.parentId !== undefined ? { parentId: input.parentId } : {}),
+  ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+  ...(input.status !== undefined ? { status: remoteStatus(input.status) } : {}),
+  ...(input.description !== undefined ? { description: input.description } : {}),
+});
+
+const remotePositionInput = (input: Partial<PositionRecord> & { name?: string }) => ({
+  ...(input.name !== undefined ? { name: input.name } : {}),
+  ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}),
+  ...(input.status !== undefined ? { status: remoteStatus(input.status) } : {}),
+  ...(input.description !== undefined ? { description: input.description } : {}),
+});
 
 interface MockSystemApi {
   getMockSettings: () => Promise<MockApiSettings>;
@@ -98,27 +295,27 @@ export const flowPilotApi = {
       const body = import.meta.env.VITE_API_MODE === "remote"
         ? { loginName: account, password }
         : { account, password };
-      const session = await apiRequest<AuthSession>("/auth/login", { method: "POST", body, ...mutation() });
+      const session = normalizeAuthSession(await apiRequest<unknown>("/auth/login", { method: "POST", body, ...mutation() }));
       return applySession(session);
     },
     me: async () => {
-      const session = await apiRequest<AuthSession | DirectoryUser>("/auth/me");
-      const normalized: AuthSession = "user" in session
-        ? session
-        : { user: session, operatorUser: session };
+      const response = await apiRequest<unknown>("/auth/me");
+      const normalized = response && typeof response === "object" && "user" in response
+        ? normalizeAuthSession(response)
+        : { user: normalizeDirectoryUser(response), operatorUser: normalizeDirectoryUser(response) };
       return applySession(normalized);
     },
     impersonationCandidates: (query: PageQuery = {}) =>
-      apiRequest<PageResult<DirectoryUser>>("/auth/impersonation/candidates", { query }),
+      pageRequest("/auth/impersonation/candidates", query, normalizeDirectoryUser),
     startImpersonation: async (targetUserId: string, reason: string) => applySession(
-      await apiRequest<AuthSession>("/auth/impersonation", {
+      normalizeAuthSession(await apiRequest<unknown>("/auth/impersonation", {
         method: "POST",
         body: { targetUserId, reason },
         ...mutation(),
-      }),
+      })),
     ),
     stopImpersonation: async () => applySession(
-      await apiRequest<AuthSession>("/auth/impersonation", { method: "DELETE", ...mutation() }),
+      normalizeAuthSession(await apiRequest<unknown>("/auth/impersonation", { method: "DELETE", ...mutation() })),
     ),
     logout: async () => {
       try {
@@ -130,103 +327,192 @@ export const flowPilotApi = {
     },
   },
   directory: {
-    snapshot: () => apiRequest<DirectorySnapshot>("/directory"),
-    users: (query: PageQuery & { status?: "启用" | "停用"; hasEmail?: boolean } = {}) =>
-      apiRequest<PageResult<DirectoryUser>>("/users", { query }),
-    user: (userId: string) => apiRequest<DirectoryUser>(`/users/${encodeURIComponent(userId)}`),
-    userResource: (userId: string) => apiResource<DirectoryUser>(`/users/${encodeURIComponent(userId)}`),
-    createUser: (input: Omit<DomainUser, "id" | "lastLogin" | "password"> & { password?: string }) =>
-      apiRequest<DirectoryUser>("/users", { method: "POST", body: input, ...mutation() }),
-    updateUser: (userId: string, patch: Partial<DomainUser> & { newPassword?: string }, ifMatch?: string) =>
-      apiRequest<DirectoryUser>(`/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: patch, ifMatch }),
+    users: (query: PageQuery & { status?: "启用" | "停用"; hasEmail?: boolean; departmentId?: string; positionId?: string; roleId?: string; authenticationMode?: string } = {}) =>
+      pageRequest("/users", {
+        ...query,
+        status: query.status && remoteMode ? remoteStatus(query.status) : query.status,
+      }, normalizeDirectoryUser),
+    user: async (userId: string) => normalizeDirectoryUser(await apiRequest<unknown>(`/users/${encodeURIComponent(userId)}`)),
+    userResource: (userId: string) => mappedResource(apiResource<unknown>(`/users/${encodeURIComponent(userId)}`), normalizeDirectoryUser),
+    createUser: async (input: Omit<DomainUser, "id" | "lastLogin" | "password"> & { password?: string }) =>
+      normalizeDirectoryUser(await apiRequest<unknown>("/users", { method: "POST", body: remoteMode ? remoteUserInput(input) : input, ...mutation() })),
+    updateUser: async (userId: string, patch: Partial<DomainUser> & { newPassword?: string }, ifMatch?: string) =>
+      normalizeDirectoryUser(await apiRequest<unknown>(`/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: remoteMode ? remoteUserInput(patch) : patch, ifMatch })),
     updateUserStatus: (userId: string, status: "启用" | "停用", ifMatch: string) =>
-      apiRequest<DirectoryUser>(`/users/${encodeURIComponent(userId)}/status`, { method: "PUT", body: { status }, ifMatch }),
-    resetPassword: (userId: string) =>
-      apiRequest<{ temporaryPassword: string }>(`/users/${encodeURIComponent(userId)}/reset-password`, { method: "POST", ...mutation() }),
-    roles: (query: PageQuery = {}) => apiRequest<PageResult<DomainRole>>("/roles", { query }),
-    roleResource: (roleId: string) => apiResource<DomainRole>(`/roles/${encodeURIComponent(roleId)}`),
-    createRole: (input: Omit<DomainRole, "id" | "code" | "pagePermissions" | "actionPermissions" | "users">) =>
-      apiRequest<DomainRole>("/roles", { method: "POST", body: input, ...mutation() }),
+      apiRequest<unknown>(`/users/${encodeURIComponent(userId)}/status`, { method: "PUT", body: { status: remoteMode ? remoteStatus(status) : status }, ifMatch }).then(normalizeDirectoryUser),
+    resetPassword: async (userId: string, newPassword = "", ifMatch?: string) => {
+      const result = await apiRequest<unknown>(`/users/${encodeURIComponent(userId)}/reset-password`, {
+        method: "POST",
+        body: remoteMode ? { newPassword } : undefined,
+        ifMatch,
+        ...mutation(),
+      });
+      return isRecord(result) && typeof result.temporaryPassword === "string"
+        ? { temporaryPassword: result.temporaryPassword }
+        : {};
+    },
+    roles: (query: PageQuery = {}) => pageRequest("/roles", query, normalizeDomainRole),
+    roleResource: (roleId: string) => mappedResource(apiResource<unknown>(`/roles/${encodeURIComponent(roleId)}`), normalizeDomainRole),
+    createRole: (input: Pick<DomainRole, "name" | "description" | "status"> & Pick<Partial<DomainRole>, "members" | "memberUserIds">) =>
+      apiRequest<unknown>("/roles", { method: "POST", body: remoteMode ? remoteRoleInput(input) : input, ...mutation() }).then(normalizeDomainRole),
     updateRole: (roleId: string, patch: Partial<DomainRole>, ifMatch?: string) =>
-      apiRequest<DomainRole>(`/roles/${encodeURIComponent(roleId)}`, { method: "PATCH", body: patch, ifMatch }),
+      apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}`, { method: "PATCH", body: remoteMode ? remoteRoleInput(patch) : patch, ifMatch }).then(normalizeDomainRole),
     groups: (query: PageQuery & { purpose?: string } = {}) =>
-      apiRequest<PageResult<WorkflowPermissionGroup>>("/workflow-permission-groups", { query }),
-    groupResource: (groupId: string) => apiResource<WorkflowPermissionGroup>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`),
-    createGroup: (input: Pick<WorkflowPermissionGroup, "name" | "purposes" | "directMembers" | "linkedRoles" | "status">) =>
-      apiRequest<WorkflowPermissionGroup>("/workflow-permission-groups", { method: "POST", body: input, ...mutation() }),
+      pageRequest("/workflow-permission-groups", query, normalizeWorkflowGroup),
+    groupResource: (groupId: string) => mappedResource(apiResource<unknown>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`), normalizeWorkflowGroup),
+    createGroup: (input: Pick<WorkflowPermissionGroup, "name" | "purposes" | "status"> & Pick<Partial<WorkflowPermissionGroup>, "directMembers" | "linkedRoles" | "directMemberUserIds" | "linkedRoleIds">) =>
+      apiRequest<unknown>("/workflow-permission-groups", { method: "POST", body: remoteMode ? remoteGroupInput(input) : input, ...mutation() }).then(normalizeWorkflowGroup),
     updateGroup: (groupId: string, patch: Partial<WorkflowPermissionGroup>, ifMatch?: string) =>
-      apiRequest<WorkflowPermissionGroup>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`, { method: "PATCH", body: patch, ifMatch }),
+      apiRequest<unknown>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`, { method: "PATCH", body: remoteMode ? remoteGroupInput(patch) : patch, ifMatch }).then(normalizeWorkflowGroup),
   },
   organization: {
-    departments: (q?: string) => apiRequest<DepartmentRecord[]>("/departments", { query: { q } }),
-    department: (departmentId: string) => apiResource<DepartmentRecord>(`/departments/${encodeURIComponent(departmentId)}`),
-    createDepartment: (input: { name: string; parentId?: string; sortOrder?: number; description?: string }) => apiRequest<DepartmentRecord>("/departments", { method: "POST", body: input, ...mutation() }),
-    updateDepartment: (departmentId: string, patch: Partial<DepartmentRecord>, ifMatch: string) => apiRequest<DepartmentRecord>(`/departments/${encodeURIComponent(departmentId)}`, { method: "PATCH", body: patch, ifMatch }),
+    departments: async (q?: string) => normalizeDepartments(await apiRequest<unknown>("/departments", { query: { q } })),
+    department: async (departmentId: string) => mappedResource(apiResource<unknown>(`/departments/${encodeURIComponent(departmentId)}`), (value) => normalizeDepartments([value])[0]),
+    createDepartment: async (input: { name: string; parentId?: string; sortOrder?: number; description?: string }) =>
+      normalizeDepartments([await apiRequest<unknown>("/departments", {
+        method: "POST",
+        body: remoteMode ? remoteDepartmentInput({ ...input, status: "启用", sortOrder: input.sortOrder ?? 10 }) : input,
+        ...mutation(),
+      })])[0],
+    updateDepartment: async (departmentId: string, patch: Partial<DepartmentRecord>, ifMatch: string) =>
+      normalizeDepartments([await apiRequest<unknown>(`/departments/${encodeURIComponent(departmentId)}`, {
+        method: "PATCH",
+        body: remoteMode ? remoteDepartmentInput(patch) : patch,
+        ifMatch,
+      })])[0],
     removeDepartment: (departmentId: string, ifMatch: string) => apiRequest<void>(`/departments/${encodeURIComponent(departmentId)}`, { method: "DELETE", ifMatch }),
-    positions: () => apiRequest<PositionRecord[]>("/positions"),
-    position: (positionId: string) => apiResource<PositionRecord>(`/positions/${encodeURIComponent(positionId)}`),
-    createPosition: (input: { name: string; description?: string; sortOrder?: number }) => apiRequest<PositionRecord>("/positions", { method: "POST", body: input, ...mutation() }),
-    updatePosition: (positionId: string, patch: Partial<PositionRecord>, ifMatch: string) => apiRequest<PositionRecord>(`/positions/${encodeURIComponent(positionId)}`, { method: "PATCH", body: patch, ifMatch }),
+    positions: async () => normalizePositions(await apiRequest<unknown>("/positions")),
+    position: (positionId: string) => mappedResource(apiResource<unknown>(`/positions/${encodeURIComponent(positionId)}`), (value) => normalizePositions([value])[0]),
+    createPosition: async (input: { name: string; description?: string; sortOrder?: number }) =>
+      normalizePositions([await apiRequest<unknown>("/positions", {
+        method: "POST",
+        body: remoteMode ? remotePositionInput({ ...input, status: "启用", sortOrder: input.sortOrder ?? 10 }) : input,
+        ...mutation(),
+      })])[0],
+    updatePosition: async (positionId: string, patch: Partial<PositionRecord>, ifMatch: string) =>
+      normalizePositions([await apiRequest<unknown>(`/positions/${encodeURIComponent(positionId)}`, {
+        method: "PATCH",
+        body: remoteMode ? remotePositionInput(patch) : patch,
+        ifMatch,
+      })])[0],
     removePosition: (positionId: string, ifMatch: string) => apiRequest<void>(`/positions/${encodeURIComponent(positionId)}`, { method: "DELETE", ifMatch }),
-    permissionCatalog: () => apiRequest<PermissionCatalogItem[]>("/permissions"),
-    rolePermissions: (roleId: string) => apiResource<string[]>(`/roles/${encodeURIComponent(roleId)}/permissions`),
-    updateRolePermissions: (roleId: string, permissions: string[], ifMatch: string) => apiRequest<string[]>(`/roles/${encodeURIComponent(roleId)}/permissions`, { method: "PUT", body: { permissions }, ifMatch }),
+    permissionCatalog: async () => normalizePermissionCatalog(await apiRequest<unknown>("/permissions")),
+    rolePermissions: (roleId: string) => mappedResource(apiResource<unknown>(`/roles/${encodeURIComponent(roleId)}/permissions`), normalizeRolePermissions),
+    updateRolePermissions: async (roleId: string, permissions: string[], ifMatch: string) => normalizeRolePermissions(await apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}/permissions`, { method: "PUT", body: remoteMode ? { permissionCodes: permissions } : { permissions }, ifMatch })),
     roleImpact: (roleId: string) => apiRequest<ImpactPreview>(`/roles/${encodeURIComponent(roleId)}/change-impact`, { method: "POST", ...mutation() }),
     groupEffectiveMembers: (groupId: string, query: PageQuery = {}) => apiRequest<PageResult<{ id: string; account: string; name: string; email: string; departmentPath: string; sources: string[] }>>(`/workflow-permission-groups/${encodeURIComponent(groupId)}/effective-members`, { query }),
     groupImpact: (groupId: string) => apiRequest<ImpactPreview>(`/workflow-permission-groups/${encodeURIComponent(groupId)}/change-impact`, { method: "POST", ...mutation() }),
   },
   definitions: {
-    launchable: () => apiRequest<LaunchableProcessDefinition[]>("/me/launchable-process-definitions"),
-    visible: (query: PageQuery = {}) =>
-      apiRequest<PageResult<ProcessDefinitionListItem>>("/me/visible-process-definitions", { query }),
-    list: (query: PageQuery & { type?: DefinitionType; status?: string } = {}) =>
-      apiRequest<PageResult<ProcessDefinitionListItem>>("/process-definitions", { query }),
-    launchConfig: (definitionId: string) =>
-      apiResource<ProcessLaunchConfig>(`/process-definitions/${encodeURIComponent(definitionId)}/launch-config`),
-    get: (definitionId: string) => apiRequest<ProcessDefinition>(`/process-definitions/${encodeURIComponent(definitionId)}`),
-    getResource: (definitionId: string) => apiResource<ProcessDefinition>(`/process-definitions/${encodeURIComponent(definitionId)}`),
+    launchable: async () => (await apiRequest<unknown[]>("/me/launchable-process-definitions")).map(normalizeLaunchableDefinition),
+    visible: (query: PageQuery = {}) => definitionPageRequest("/me/visible-process-definitions", query),
+    list: (query: PageQuery & { type?: DefinitionType; status?: string } = {}) => definitionPageRequest("/process-definitions", query),
+    launchConfig: async (definitionId: string) => {
+      const resource = await apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/launch-config`);
+      if (!isRecord(resource.data)) throw new Error("流程发起配置响应格式不正确");
+      const version = normalizeProcessVersion(resource.data.version);
+      const candidateEntries = isRecord(resource.data.assigneeCandidatesByNode) ? Object.entries(resource.data.assigneeCandidatesByNode) : [];
+      const assigneeCandidatesByNode = Object.fromEntries(candidateEntries.map(([nodeId, candidates]) => [
+        nodeId,
+        Array.isArray(candidates) ? candidates.map(normalizeDirectoryUser) : [],
+      ]));
+      return {
+        ...resource,
+        data: {
+          definition: normalizeProcessDefinition(resource.data.definition, [version]),
+          version,
+          assigneeCandidatesByNode,
+          firstAssigneeCandidates: Array.isArray(resource.data.firstAssigneeCandidates) ? resource.data.firstAssigneeCandidates.map(normalizeDirectoryUser) : [],
+        } satisfies ProcessLaunchConfig,
+      };
+    },
+    get: async (definitionId: string) => {
+      const value = await apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}`);
+      return normalizeProcessDefinition(value, await fullVersionsRequest(definitionId));
+    },
+    getResource: async (definitionId: string) => {
+      const resource = await apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}`);
+      return { ...resource, data: normalizeProcessDefinition(resource.data, await fullVersionsRequest(definitionId)) };
+    },
     create: (input: { basic: ProcessBasicConfig }) =>
-      apiRequest<ProcessDefinitionVersionResult>("/process-definitions", { method: "POST", body: input, ...mutation() }),
+      apiRequest<unknown>("/process-definitions", { method: "POST", body: { basic: remoteMode ? remoteBasicInput(input.basic) : input.basic }, ...mutation() }).then(normalizeDefinitionVersionResult),
+    import: async (document: unknown) => {
+      const value = await apiRequest<unknown>("/process-definitions/imports", { method: "POST", body: { document }, ...mutation() });
+      const definition = normalizeProcessDefinition(value);
+      return definition.versions.length ? definition : normalizeProcessDefinition(value, await fullVersionsRequest(definition.id));
+    },
     copy: (definitionId: string, sourceVersionId?: string) =>
-      apiRequest<ProcessDefinitionVersionResult>(`/process-definitions/${encodeURIComponent(definitionId)}/copies`, { method: "POST", body: { sourceVersionId }, ...mutation() }),
-    updateAvailability: (definitionId: string, disabled: boolean, ifMatch?: string) =>
-      apiRequest<ProcessDefinition>(`/process-definitions/${encodeURIComponent(definitionId)}`, { method: "PATCH", body: { disabled }, ifMatch }),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/copies`, { method: "POST", body: { sourceVersionId }, ...mutation() }).then(normalizeDefinitionVersionResult),
+    updateAvailability: async (definitionId: string, disabled: boolean, ifMatch?: string) => {
+      const value = await apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}`, { method: "PATCH", body: { disabled }, ifMatch });
+      const versions = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId)?.versions;
+      return normalizeProcessDefinition(value, versions);
+    },
     remove: (definitionId: string, ifMatch?: string) =>
       apiRequest<void>(`/process-definitions/${encodeURIComponent(definitionId)}`, { method: "DELETE", ifMatch }),
-    versions: (definitionId: string) => apiRequest<ProcessVersion[]>(`/process-definitions/${encodeURIComponent(definitionId)}/versions`),
-    version: (definitionId: string, versionId: string) => apiRequest<ProcessVersion>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}`),
-    versionResource: (definitionId: string, versionId: string) => apiResource<ProcessVersion>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}`),
+    versions: (definitionId: string) => fullVersionsRequest(definitionId),
+    version: (definitionId: string, versionId: string) => apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}`).then(normalizeProcessVersion),
+    versionResource: (definitionId: string, versionId: string) => mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}`), normalizeProcessVersion),
     createVersion: (definitionId: string, sourceVersionId: string) =>
-      apiRequest<ProcessVersion>(`/process-definitions/${encodeURIComponent(definitionId)}/versions`, { method: "POST", body: { sourceVersionId }, ...mutation() }),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions`, { method: "POST", body: { sourceVersionId }, ...mutation() }).then(normalizeProcessVersion),
     saveBasic: (definitionId: string, versionId: string, basic: ProcessBasicConfig, ifMatch?: string) =>
-      apiRequest<ProcessVersion>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/basic`, { method: "PUT", body: basic, ifMatch }),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/basic`, { method: "PUT", body: remoteMode ? remoteBasicInput(basic) : basic, ifMatch }).then(normalizeSavedVersion),
+    saveBasicResource: (definitionId: string, versionId: string, basic: ProcessBasicConfig, ifMatch?: string) =>
+      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/basic`, { method: "PUT", body: remoteMode ? remoteBasicInput(basic) : basic, ifMatch }), normalizeSavedVersion),
     saveDesigner: (definitionId: string, versionId: string, snapshot: Partial<CompleteDesignerSnapshot>, ifMatch?: string) =>
-      apiRequest<ProcessVersion>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/designer`, { method: "PUT", body: snapshot, ifMatch }),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/designer`, { method: "PUT", body: snapshot, ifMatch }).then(normalizeSavedVersion),
     saveFormDesigner: (definitionId: string, versionId: string, input: Pick<CompleteDesignerSnapshot, "form" | "systemFields">, ifMatch?: string) =>
-      apiRequest<SavedProcessVersionResult>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: input, ifMatch }),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: input, ifMatch }).then(normalizeSavedVersionResult),
+    saveFormDesignerResource: (definitionId: string, versionId: string, input: Pick<CompleteDesignerSnapshot, "form" | "systemFields">, ifMatch?: string) =>
+      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: input, ifMatch }), normalizeSavedVersionResult),
     saveFlowDesigner: (definitionId: string, versionId: string, input: { basicPatch?: Pick<ProcessBasicConfig, "name" | "starterGroups">; flow: CompleteDesignerSnapshot["flow"] }, ifMatch?: string) =>
-      apiRequest<SavedProcessVersionResult>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: input, ifMatch }),
-    validate: (definitionId: string, versionId: string, ifMatch?: string) =>
-      apiRequest<ProcessVersion>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/validate`, { method: "POST", ifMatch, ...mutation() }),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteMode ? { ...input, basicPatch: input.basicPatch && { name: input.basicPatch.name, starterGroupIds: input.basicPatch.starterGroups } } : input, ifMatch }).then(normalizeSavedVersionResult),
+    saveFlowDesignerResource: (definitionId: string, versionId: string, input: { basicPatch?: Pick<ProcessBasicConfig, "name" | "starterGroups">; flow: CompleteDesignerSnapshot["flow"] }, ifMatch?: string) =>
+      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteMode ? { ...input, basicPatch: input.basicPatch && { name: input.basicPatch.name, starterGroupIds: input.basicPatch.starterGroups } } : input, ifMatch }), normalizeSavedVersionResult),
+    validate: async (definitionId: string, versionId: string, ifMatch?: string) => {
+      const value = await apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/validate`, { method: "POST", ifMatch, ...mutation() });
+      if (isRecord(value) && value.snapshot && value.basic) return normalizeProcessVersion(value);
+      return normalizeProcessVersion(await apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}`));
+    },
     publish: (definitionId: string, versionId: string, changeNote: string, ifMatch?: string) =>
-      apiRequest<ProcessDefinitionVersionResult>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/publish`, { method: "POST", body: { changeNote }, ifMatch, ...mutation() }),
-    unpublish: (definitionId: string, versionId: string, reason: string, ifMatch?: string) =>
-      apiRequest<ProcessDefinitionVersionResult>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/unpublish`, { method: "POST", body: { reason }, ifMatch, ...mutation() }),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/publish`, { method: "POST", body: { changeNote }, ifMatch, ...mutation() }).then(normalizeDefinitionVersionResult),
+    unpublish: async (definitionId: string, versionId: string, reason: string, ifMatch?: string) => {
+      const value = await apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/unpublish`, { method: "POST", body: { reason }, ifMatch, ...mutation() });
+      if (isRecord(value) && value.definition && (value.version || value.publishedVersion)) return normalizeDefinitionVersionResult(value);
+      const version = normalizeProcessVersion(await apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}`));
+      const currentVersions = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId)?.versions ?? [];
+      return {
+        definition: normalizeProcessDefinition(value, [version, ...currentVersions.filter((item) => item.id !== version.id)]),
+        version,
+      };
+    },
     removeVersion: (definitionId: string, versionId: string, ifMatch?: string) =>
       apiRequest<void>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}`, { method: "DELETE", ifMatch }),
   },
   instances: {
-    list: (query: ProcessInstanceQuery = {}) => apiRequest<PageResult<ProcessInstance>>("/process-instances", { query }),
-    get: (instanceId: string) => apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}`),
-    getResource: (instanceId: string) => apiResource<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}`),
+    list: (query: ProcessInstanceQuery = {}) => pageRequest("/process-instances", {
+      ...(remoteMode ? {
+        page: query.page,
+        pageSize: query.pageSize,
+        q: query.q,
+        definitionId: query.definitionId,
+        status: query.status ? remoteInstanceStatus[query.status] : undefined,
+        initiatorId: query.initiatorId,
+        ...defaultInstanceDateRange(),
+        dateFrom: query.createdFrom ?? defaultInstanceDateRange().dateFrom,
+        dateTo: query.createdTo ?? defaultInstanceDateRange().dateTo,
+      } : query),
+    }, normalizeProcessInstance),
+    get: (instanceId: string) => apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`).then(normalizeInstanceDetail),
+    getResource: (instanceId: string) => mappedResource(apiResource<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`), normalizeInstanceDetail),
     create: (input: { definitionId: string; formValues: Record<string, unknown>; copySourceInstanceId?: string; assigneeByNode?: Record<string, string | undefined>; firstAssigneeId?: string; attachmentIds?: string[]; attachmentIdsByField?: Record<string, string[]> }) =>
-      apiRequest<ProcessInstanceDetail>("/process-instances", { method: "POST", body: input, ...mutation() }),
+      apiRequest<unknown>("/process-instances", { method: "POST", body: input, ...mutation() }).then(normalizeInstanceDetail),
     updateSubmission: (instanceId: string, input: { formValues: Record<string, unknown>; attachmentNames?: string[]; attachmentIdsByField?: Record<string, string[]>; assigneeByNode?: Record<string, string> }, ifMatch?: string) =>
-      apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/submission`, { method: "PATCH", body: input, ifMatch }),
+      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/submission`, { method: "PATCH", body: remoteMode ? { formValues: input.formValues, attachmentIdsByField: input.attachmentIdsByField ?? {}, assigneeByNode: input.assigneeByNode } : input, ifMatch }).then(normalizeInstanceDetail),
     resubmit: (instanceId: string, input: { formValues: Record<string, unknown>; attachmentNames?: string[]; attachmentIdsByField?: Record<string, string[]> }, ifMatch?: string) =>
-      apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/resubmissions`, { method: "POST", body: input, ifMatch, ...mutation() }),
+      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/resubmissions`, { method: "POST", body: remoteMode ? { formValues: input.formValues, attachmentIdsByField: input.attachmentIdsByField ?? {} } : input, ifMatch, ...mutation() }).then(normalizeInstanceDetail),
     close: (instanceId: string, reason: string, ifMatch?: string) =>
-      apiRequest<ProcessInstanceDetail>(`/process-instances/${encodeURIComponent(instanceId)}/close`, { method: "POST", body: { reason }, ifMatch, ...mutation() }),
+      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/close`, { method: "POST", body: { reason }, ifMatch, ...mutation() }).then(normalizeInstanceDetail),
   },
   exports: {
     processInstanceData: (filter: ProcessExcelDataFilter) =>
@@ -237,13 +523,50 @@ export const flowPilotApi = {
       }),
   },
   tasks: {
-    listMine: (query: WorkflowTaskQuery = {}) => apiRequest<PageResult<WorkflowTaskListItem>>("/me/workflow-tasks", { query }),
-    get: (taskId: string) => apiRequest<WorkflowTaskListItem>(`/workflow-tasks/${encodeURIComponent(taskId)}`),
-    getResource: (taskId: string) => apiResource<WorkflowTaskListItem>(`/workflow-tasks/${encodeURIComponent(taskId)}`),
-    decide: (taskId: string, input: { action: "pass" | "confirm" | "reject"; comment?: string; fieldValues?: Record<string, unknown>; attachmentIdsByField?: Record<string, string[]> }, ifMatch?: string) =>
-      apiRequest<WorkflowDecisionResult>(`/workflow-tasks/${encodeURIComponent(taskId)}/decision`, { method: "POST", body: input, ifMatch, ...mutation() }),
-    reviseFields: (taskId: string, fieldValues: Record<string, unknown>, comment?: string, ifMatch?: string, attachmentIdsByField?: Record<string, string[]>) =>
-      apiRequest<WorkflowRevisionResult>(`/workflow-tasks/${encodeURIComponent(taskId)}/field-revisions`, { method: "POST", body: { fieldValues, comment, attachmentIdsByField }, ifMatch, ...mutation() }),
+    listMine: (query: WorkflowTaskQuery = {}) => taskPageRequest(query),
+    get: (taskId: string) => apiRequest<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}`).then(normalizeTaskListItem),
+    getResource: async (taskId: string) => {
+      const resource = await apiResource<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}`);
+      return { ...resource, data: await normalizeTaskListItem(resource.data) };
+    },
+    decide: async (taskId: string, input: { action: "pass" | "confirm" | "reject"; comment?: string; fieldValues?: Record<string, unknown>; attachmentIdsByField?: Record<string, string[]> }, ifMatch?: string) => {
+      const task = usePrototypeStore.getState().tasks.find((item) => item.id === taskId);
+      const instance = usePrototypeStore.getState().instances.find((item) => item.id === task?.instanceId);
+      const fieldIds = task?.editableFieldIds?.length ? task.editableFieldIds : Object.keys(input.fieldValues ?? {});
+      const fieldValues = Object.fromEntries(Object.entries(input.fieldValues ?? {}).filter(([fieldId]) => fieldIds.includes(fieldId)));
+      const baseFieldRevisions = Object.fromEntries(Object.keys(fieldValues).map((fieldId) => [fieldId, instance?.fieldRevisions?.[fieldId] ?? 0]));
+      const value = await apiRequest<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}/decision`, {
+        method: "POST",
+        body: remoteMode ? { ...input, fieldValues, baseFieldRevisions } : input,
+        ifMatch,
+        ...mutation(),
+      });
+      if (!isRecord(value)) throw new Error("任务提交响应格式不正确");
+      return {
+        instance: normalizeProcessInstance(value.instance),
+        task: normalizeWorkflowTask(value.task),
+        activatedTaskIds: Array.isArray(value.activatedTaskIds) ? value.activatedTaskIds.filter((id): id is string => typeof id === "string") : [],
+        cancelledTaskIds: Array.isArray(value.cancelledTaskIds) ? value.cancelledTaskIds.filter((id): id is string => typeof id === "string") : [],
+      } satisfies WorkflowDecisionResult;
+    },
+    reviseFields: async (taskId: string, fieldValues: Record<string, unknown>, comment?: string, ifMatch?: string, attachmentIdsByField?: Record<string, string[]>) => {
+      const task = usePrototypeStore.getState().tasks.find((item) => item.id === taskId);
+      const instance = usePrototypeStore.getState().instances.find((item) => item.id === task?.instanceId);
+      const allowedIds = task?.editableFieldIds?.length ? task.editableFieldIds : Object.keys(fieldValues);
+      const allowedValues = Object.fromEntries(Object.entries(fieldValues).filter(([fieldId]) => allowedIds.includes(fieldId)));
+      const baseFieldRevisions = Object.fromEntries(Object.keys(allowedValues).map((fieldId) => [fieldId, instance?.fieldRevisions?.[fieldId] ?? 0]));
+      const value = await apiRequest<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}/field-revisions`, {
+        method: "POST",
+        body: remoteMode ? { fieldValues: allowedValues, baseFieldRevisions, comment, attachmentIdsByField } : { fieldValues, comment, attachmentIdsByField },
+        ifMatch,
+        ...mutation(),
+      });
+      if (!isRecord(value)) throw new Error("任务字段修改响应格式不正确");
+      return {
+        instance: normalizeProcessInstance(value.instance),
+        task: normalizeWorkflowTask(value.task),
+      } satisfies WorkflowRevisionResult;
+    },
   },
   freeFlows: {
     create: async (input: { definitionId: string; title: string; category: string; priority: "普通" | "紧急"; description: string; initialContent: string; attachmentIds?: string[]; assigneeId: string }) => {

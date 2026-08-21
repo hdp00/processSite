@@ -31,12 +31,12 @@ test("超级管理员可以打开流程管理入口", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "流程定义概览" })).toBeVisible();
 });
 
-test("重置入口仅对当前或真实超级管理员显示", async ({ page }) => {
+test("Debug 中真实超级管理员切换任何演示身份后仍可重置", async ({ page }) => {
   test.skip(!isMockTarget, "演示数据重置入口只适用于本地 Mock API。");
   await loginAs(page, "admin");
 
   await page.locator("button.user-button").click();
-  await expect(page.getByRole("menuitem", { name: "重置演示数据" })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "重置演示数据" })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByLabel("切换演示身份").click();
   await page.locator(".ant-select-dropdown:visible").getByText("超级管理员 · 系统内置 · 全部权限", { exact: true }).click();
@@ -47,8 +47,10 @@ test("重置入口仅对当前或真实超级管理员显示", async ({ page }) 
   await expect(page.getByRole("heading", { name: "登录流程中心" })).toBeVisible();
 
   await loginAs(page, "superadmin");
-  await page.getByLabel("切换演示身份").click();
-  await page.locator(".ant-select-dropdown:visible").getByText("王敏 · 文控专员", { exact: true }).click();
+  const selector = page.getByLabel("切换演示身份");
+  await selector.click();
+  await selector.fill("王敏");
+  await page.locator(".ant-select-dropdown:visible .ant-select-item-option").filter({ hasText: "王敏 · 流程管理员、文控专员" }).click();
   await expect(page.locator(".user-copy strong")).toHaveText("王敏");
   await page.locator("button.user-button").click();
   await expect(page.getByRole("menuitem", { name: "重置演示数据" })).toBeVisible();

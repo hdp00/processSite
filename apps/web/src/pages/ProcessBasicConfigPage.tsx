@@ -95,12 +95,26 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
   const [form] = Form.useForm<BasicConfigValues>();
   const [lastSavedAt, setLastSavedAt] = useState("2026-08-13 10:32");
   const [dirty, setDirty] = useState(false);
+  const [versionEtag, setVersionEtag] = useState<string>();
   const workflowType = Form.useWatch("type", form) ?? initialConfig.type;
   const instancePrefix = Form.useWatch("instancePrefix", form) ?? initialConfig.instancePrefix;
 
   useEffect(() => {
     form.setFieldsValue(initialConfig);
   }, [form, initialConfig]);
+
+  useEffect(() => {
+    if (isNew || !resolvedId || !versionId) return;
+    let cancelled = false;
+    void flowPilotApi.definitions.versionResource(resolvedId, versionId).then((resource) => {
+      if (cancelled) return;
+      cacheProcessVersion(resolvedId, resource.data);
+      setVersionEtag(resource.etag);
+    }).catch((error) => {
+      if (!cancelled) message.error(error instanceof Error ? error.message : "流程版本加载失败");
+    });
+    return () => { cancelled = true; };
+  }, [isNew, resolvedId, versionId]);
 
   const saveVersion = async (navigateToCreated = true) => {
     const values = await form.validateFields();
@@ -122,9 +136,10 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
       }
     }
     try {
-      const resource = await flowPilotApi.definitions.versionResource(resolvedId, versionId);
-      const savedVersion = await flowPilotApi.definitions.saveBasic(resolvedId, versionId, values, resource.etag);
-      cacheProcessVersion(resolvedId, savedVersion);
+      if (!versionEtag) throw new Error("流程版本尚未加载完成，请稍后重试");
+      const saved = await flowPilotApi.definitions.saveBasicResource(resolvedId, versionId, values, versionEtag);
+      cacheProcessVersion(resolvedId, saved.data);
+      setVersionEtag(saved.etag);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "该版本当前不可编辑，请返回版本记录确认状态");
       return null;

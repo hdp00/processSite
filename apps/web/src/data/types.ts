@@ -100,6 +100,8 @@ export interface ProcessInstance {
   participantIds?: string[];
   freeTimeline?: FreeFlowEntry[];
   formValues?: Record<string, unknown>;
+  /** 正式后端返回的字段并发版本，用于审核字段级乐观锁。 */
+  fieldRevisions?: Record<string, number>;
   attachmentNames?: string[];
   attachmentIds?: string[];
   attachmentIdsByField?: Record<string, string[]>;
@@ -121,6 +123,9 @@ export interface WorkflowTask {
   nodeId: string;
   nodeName: string;
   permissionGroupId: string;
+  handlingMode?: "approval" | "confirmation";
+  editableFieldIds?: string[];
+  allowedActions?: Array<"pass" | "confirm" | "reject" | "revise-fields">;
   status: WorkflowTaskStatus;
   defaultAssigneeId?: string;
   completedById?: string;

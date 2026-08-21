@@ -5,7 +5,6 @@ import {
   ExportOutlined,
   FilterOutlined,
   PrinterOutlined,
-  PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
@@ -374,7 +373,6 @@ export function ProcessListPage() {
           <Space>
             <Typography.Text type="secondary">{definition.label} · 包含当前用户可见的全部历史版本实例</Typography.Text>
             <Button icon={<ExportOutlined />} loading={exporting} onClick={() => void exportCurrentQuery()}>导出 Excel</Button>
-            {isFreeFlow && canPersonaLaunchDefinition(personaId, definition.id) && <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate(`/launch/${definition.id}`)}>新建事项</Button>}
           </Space>
         </div>
         <Table<ProcessInstance>

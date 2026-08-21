@@ -10,7 +10,6 @@ import {
   ReloadOutlined,
   RocketOutlined,
   SafetyCertificateOutlined,
-  SettingOutlined,
   SwapOutlined,
   TeamOutlined,
   UserOutlined,
@@ -294,7 +293,7 @@ export function AppShell() {
       <Sider className="app-sider" width={248} theme="dark">
         <button className="brand" type="button" onClick={() => navigate("/tasks")}>
           <span className="brand-lockup">
-            <span className="moons-wordmark" aria-label="MOONS'">
+            <span className="moons-wordmark" role="img" aria-label="MOONS'">
               <span className="moons-wordmark-name" aria-hidden="true">MOONS</span>
               <span className="moons-wordmark-apostrophe" aria-hidden="true">&apos;</span>
             </span>
@@ -314,10 +313,6 @@ export function AppShell() {
           />
         </div>
 
-        <div className="sider-footnote">
-          <SettingOutlined />
-          <span>流程版本保存后自动校验</span>
-        </div>
       </Sider>
 
       <Layout>

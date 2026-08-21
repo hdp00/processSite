@@ -791,6 +791,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   const navigate = useNavigate();
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const version = definition?.versions.find((item) => item.id === versionId);
+  const [versionEtag, setVersionEtag] = useState<string>();
   const workflowName = version?.basic.name ?? definition?.name ?? "流程";
   const [messageApi, messageHolder] = message.useMessage();
   const fallbackFields = useMemo(
@@ -1001,17 +1002,30 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     });
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    void flowPilotApi.definitions.versionResource(definitionId, versionId).then((resource) => {
+      if (cancelled) return;
+      cacheProcessVersion(definitionId, resource.data);
+      setVersionEtag(resource.etag);
+    }).catch((error) => {
+      if (!cancelled) messageApi.error(error instanceof Error ? error.message : "流程版本加载失败");
+    });
+    return () => { cancelled = true; };
+  }, [definitionId, messageApi, versionId]);
+
   const saveVersion = async () => {
     const time = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
     skipDirtyEffect.current = true;
     setSavedAt(time);
     try {
-      const resource = await flowPilotApi.definitions.versionResource(definitionId, versionId);
-      const saved = await flowPilotApi.definitions.saveFormDesigner(definitionId, versionId, {
+      if (!versionEtag) throw new Error("流程版本尚未加载完成，请稍后重试");
+      const saved = await flowPilotApi.definitions.saveFormDesignerResource(definitionId, versionId, {
         form: { fields: ensureProcessTitleField(fields), savedAt: time },
         systemFields: systemListFields,
-      }, resource.etag);
-      cacheProcessVersion(definitionId, saved.version);
+      }, versionEtag);
+      cacheProcessVersion(definitionId, saved.data.version);
+      setVersionEtag(saved.etag);
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "当前版本不可编辑，请返回版本记录确认发布状态和实例数量");
       return false;

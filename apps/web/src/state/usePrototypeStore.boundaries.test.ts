@@ -340,20 +340,28 @@ describe("实例命令失败码", () => {
 });
 
 describe("自由协作异常操作", () => {
-  it("仅回复作者可以在进行中的事项内修改回复，并保留修订历史", () => {
+  it("仅回复作者可以在进行中的事项内修改回复，并同步事项更新时间", () => {
     const entry = instanceById("free-18")!.freeTimeline!.find((item) => item.type === "reply" && item.actor === "张伟")!;
     const originalContent = entry.content;
+    const before = structuredClone(instanceById("free-18")!);
 
     setActor("lina");
     prototypeModule.usePrototypeStore.getState().editFreeFlowReply("free-18", entry.id, "他人越权修改");
-    expect(instanceById("free-18")?.freeTimeline?.find((item) => item.id === entry.id)?.content).toBe(originalContent);
+    expect(instanceById("free-18")).toEqual(before);
 
     setActor("zhangwei");
     prototypeModule.usePrototypeStore.getState().editFreeFlowReply("free-18", entry.id, "研发修订后的结论");
-    expect(instanceById("free-18")?.freeTimeline?.find((item) => item.id === entry.id)).toMatchObject({
+    const updated = instanceById("free-18")!;
+    const updatedEntry = updated.freeTimeline?.find((item) => item.id === entry.id);
+    expect(updatedEntry).toMatchObject({
       content: "研发修订后的结论",
       revisions: expect.arrayContaining([expect.objectContaining({ content: originalContent })]),
     });
+    expect(updated.updatedAt).toBe(updatedEntry?.editedAt);
+
+    const afterEdit = structuredClone(updated);
+    prototypeModule.usePrototypeStore.getState().editFreeFlowReply("free-18", entry.id, "研发修订后的结论");
+    expect(instanceById("free-18")).toEqual(afterEdit);
 
     const closedEntry = instanceById("free-12")!.freeTimeline!.find((item) => item.type === "reply" && item.actor === "张伟")!;
     prototypeModule.usePrototypeStore.getState().editFreeFlowReply("free-12", closedEntry.id, "关闭后修改");
@@ -404,11 +412,40 @@ describe("自由协作异常操作", () => {
         expect.objectContaining({ field: "初始说明" }),
       ]),
     });
+    expect(updated.updatedAt).toBe(updated.freeTimeline?.at(-1)?.time);
+  });
+
+  it("发起或受理权限组成员均可切换受理人并记录前后人员", () => {
+    setActor("zhangwei");
+    prototypeModule.usePrototypeStore.getState().transferFreeFlow("free-18", "请生产确认", "赵磊");
+    const acceptedTransfer = instanceById("free-18")!;
+    expect(acceptedTransfer).toMatchObject({ currentAssignee: "赵磊", currentAssigneeId: "zhaolei" });
+    expect(acceptedTransfer.freeTimeline?.at(-1)).toMatchObject({
+      type: "assigned",
+      actor: "张伟",
+      previousAssignee: "林晓",
+      assignee: "赵磊",
+    });
+
+    setActor("wangmin");
+    prototypeModule.usePrototypeStore.getState().transferFreeFlow("free-18", "调整为研发受理", "张伟");
+    const starterTransfer = instanceById("free-18")!;
+    expect(starterTransfer).toMatchObject({ currentAssignee: "张伟", currentAssigneeId: "zhangwei" });
+    expect(starterTransfer.freeTimeline?.at(-1)).toMatchObject({
+      type: "assigned",
+      actor: "王敏",
+      previousAssignee: "赵磊",
+      assignee: "张伟",
+    });
+
+    const beforeSameAssignee = structuredClone(starterTransfer);
+    prototypeModule.usePrototypeStore.getState().transferFreeFlow("free-18", "不能转给当前人员", "张伟");
+    expect(instanceById("free-18")).toEqual(beforeSameAssignee);
   });
 
   it("无权转交、无效受理人、越权改派、越权关闭和无效重开均保持原状态", () => {
     const activeBefore = structuredClone(instanceById("free-18")!);
-    setActor("zhangwei");
+    setActor("hejing");
     prototypeModule.usePrototypeStore.getState().transferFreeFlow("free-18", "越权转交", "赵磊");
     expect(instanceById("free-18")).toEqual(activeBefore);
 

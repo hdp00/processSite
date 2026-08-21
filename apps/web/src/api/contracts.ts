@@ -241,6 +241,10 @@ export interface PermissionCatalogItem {
   key: string;
   page: string;
   action: string;
+  name?: string;
+  category?: string;
+  description?: string;
+  kind?: "page" | "action";
 }
 
 export interface ImpactPreview {

@@ -54,9 +54,12 @@ import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import {
   ROLE_PERMISSION_STORAGE_KEY,
+  defaultRolePermissionMap,
+  hasPersonaPermission,
   normalizeRolePermissionList,
   notifyRolePermissionsChanged,
 } from "../state/rolePermissions";
+import { permissionCatalogPages } from "../data/permissionCatalog";
 import {
   findIdentityUser,
   useIdentityStore,
@@ -100,6 +103,36 @@ const departmentByIndex = [
 ];
 
 type UserRecord = DomainUser;
+
+function useDirectoryUserCandidates(keyword: string, active: boolean, selectedIds: string[] = []) {
+  const mockUsers = useIdentityStore((state) => state.users);
+  const [remoteUsers, setRemoteUsers] = useState<UserRecord[]>([]);
+  const selectedKey = selectedIds.join(",");
+  useEffect(() => {
+    if (isBrowserMockMode || !active) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void Promise.all([
+        flowPilotApi.directory.users({ page: 1, pageSize: 100, q: keyword.trim() || undefined, status: "启用" }),
+        ...selectedIds.map((id) => flowPilotApi.directory.user(id).catch(() => undefined)),
+      ]).then(([page, ...selected]) => {
+        if (cancelled) return;
+        const byId = new Map<string, UserRecord>();
+        [...page.items, ...selected].forEach((user) => {
+          if (user) byId.set(user.id, { ...user, password: "" });
+        });
+        setRemoteUsers([...byId.values()]);
+      }).catch(() => {
+        if (!cancelled) message.error("人员候选加载失败，请重试");
+      });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [active, keyword, selectedKey]);
+  return isBrowserMockMode ? mockUsers : remoteUsers;
+}
 
 const authenticationModeLabel: Record<AuthenticationMode, string> = {
   domain: "域登录",
@@ -165,13 +198,20 @@ export function UserManagementPage() {
   const roles = useIdentityStore((state) => state.roles);
   const jobTitles = useOrganizationStore((state) => state.jobTitles);
   const departments = useOrganizationStore((state) => state.departments);
+  const personaId = usePrototypeStore((state) => state.personaId);
+  const canEditUsers = hasPersonaPermission(personaId, "org-user:编辑");
+  const canResetPasswords = hasPersonaPermission(personaId, "org-user:重置密码");
   const departmentOptions = useMemo(() => departmentCascaderOptions(departments), [departments]);
   const [draftFilters, setDraftFilters] = useState({ keyword: "", department: [] as string[], jobTitle: "", role: "", status: "" });
   const [filters, setFilters] = useState(draftFilters);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [remoteRows, setRemoteRows] = useState<UserRecord[]>([]);
+  const [remoteTotal, setRemoteTotal] = useState(0);
+  const [remoteLoading, setRemoteLoading] = useState(false);
   const [drawerUser, setDrawerUser] = useState<UserRecord | "new" | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
+  const [editorEtag, setEditorEtag] = useState<string>();
   const [form] = Form.useForm();
   const selectedAuthenticationMode = Form.useWatch("authenticationMode", form) as AuthenticationMode | undefined;
   const { guard: userEditorGuard } = useUnsavedChangesGuard({
@@ -185,6 +225,14 @@ export function UserManagementPage() {
     const next = { ...current, ...user, password: current?.password ?? "" } as UserRecord;
     return current ? rows.map((item) => item.id === user.id ? next : item) : [next, ...rows];
   });
+  const cacheVisibleUser = (user: Omit<UserRecord, "password">) => {
+    cacheUser(user);
+    setRemoteRows((rows) => {
+      const current = rows.find((item) => item.id === user.id);
+      const next = { ...current, ...user, password: current?.password ?? "" } as UserRecord;
+      return current ? rows.map((item) => item.id === user.id ? next : item) : [next, ...rows].slice(0, pageSize);
+    });
+  };
   const changeUserStatus = async (record: UserRecord) => {
     try {
       const resource = await flowPilotApi.directory.userResource(record.id);
@@ -193,19 +241,33 @@ export function UserManagementPage() {
         record.status === "启用" ? "停用" : "启用",
         resource.etag ?? "*",
       );
-      cacheUser(updated);
+      cacheVisibleUser(updated);
       message.success(`账号已${updated.status}`);
     } catch {
       message.error("账号状态更新失败，请刷新后重试");
     }
   };
   const resetUserPassword = async (record: UserRecord) => {
-    try {
-      const result = await flowPilotApi.directory.resetPassword(record.id);
-      message.success(`已为 ${record.name} 生成临时密码：${result.temporaryPassword}`);
-    } catch {
-      message.error("密码重置失败，请稍后重试");
-    }
+    let nextPassword = "";
+    Modal.confirm({
+      title: `重置 ${record.name} 的密码`,
+      content: <div style={{ marginTop: 16 }}><Typography.Paragraph type="secondary">请输入新密码。保存后旧密码立即失效。</Typography.Paragraph><Input.Password autoFocus placeholder="新密码" onChange={(event) => { nextPassword = event.target.value; }} /></div>,
+      okText: "确认重置",
+      cancelText: "取消",
+      onOk: async () => {
+        if (!nextPassword) throw new Error("请输入新密码");
+        try {
+          const resource = await flowPilotApi.directory.userResource(record.id);
+          const result = await flowPilotApi.directory.resetPassword(record.id, nextPassword, resource.etag);
+          message.success(result.temporaryPassword
+            ? `已为 ${record.name} 生成临时密码：${result.temporaryPassword}`
+            : `${record.name} 的密码已重置`);
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "密码重置失败，请稍后重试");
+          throw error;
+        }
+      },
+    });
   };
 
   const activeJobTitles = jobTitles.filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
@@ -217,14 +279,49 @@ export function UserManagementPage() {
     .filter((item) => item.status === "启用" || item.name === drawerJobTitle)
     .sort((a, b) => a.sort - b.sort);
 
-  const filtered = useMemo(() => users.filter((user) => {
+  useEffect(() => {
+    if (isBrowserMockMode) return;
+    let cancelled = false;
+    setRemoteLoading(true);
+    const positionId = jobTitles.find((item) => item.name === filters.jobTitle)?.id;
+    const roleId = roles.find((item) => item.name === filters.role)?.id;
+    void flowPilotApi.directory.users({
+      page,
+      pageSize,
+      q: filters.keyword || undefined,
+      departmentId: filters.department.at(-1),
+      positionId,
+      roleId,
+      status: filters.status === "启用" || filters.status === "停用" ? filters.status : undefined,
+    }).then((result) => {
+      if (cancelled) return;
+      const rows = result.items.map((user) => ({ ...user, password: "" }));
+      setRemoteRows(rows);
+      setRemoteTotal(result.page.totalElements);
+      setUsers((current) => {
+        const byId = new Map(current.map((user) => [user.id, user]));
+        rows.forEach((user) => byId.set(user.id, { ...byId.get(user.id), ...user }));
+        return [...byId.values()];
+      });
+    }).catch(() => {
+      if (!cancelled) message.error("用户列表加载失败，请重试");
+    }).finally(() => {
+      if (!cancelled) setRemoteLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [filters, jobTitles, page, pageSize, roles, setUsers]);
+
+  const filtered = useMemo(() => (isBrowserMockMode ? users : remoteRows).filter((user) => {
+    if (!isBrowserMockMode) return true;
     const keyword = filters.keyword.trim().toLowerCase();
     const matchesKeyword = !keyword || `${user.account}${user.name}${user.email}`.toLowerCase().includes(keyword);
     const matchesDepartment = !filters.department.length || filters.department.every((value, index) => user.department[index] === value);
     return matchesKeyword && matchesDepartment && (!filters.jobTitle || user.jobTitle === filters.jobTitle)
       && (!filters.role || user.roles.includes(filters.role)) && (!filters.status || user.status === filters.status);
-  }), [filters, users]);
-  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
+  }), [filters, remoteRows, users]);
+  const pageRows = isBrowserMockMode ? filtered.slice((page - 1) * pageSize, page * pageSize) : filtered;
+  const resultTotal = isBrowserMockMode ? filtered.length : remoteTotal;
+  const summaryUsers = isBrowserMockMode ? users : remoteRows;
 
   const openEditor = (user: UserRecord | "new") => {
     if (user !== "new" && user.builtIn) {
@@ -232,11 +329,15 @@ export function UserManagementPage() {
       return;
     }
     setDrawerUser(user);
+    setEditorEtag(undefined);
     setEditorDirty(false);
     form.resetFields();
     form.setFieldsValue(user === "new" ? {
       account: "", email: "", name: "", authenticationMode: "domain", password: "", newPassword: "", department: [], jobTitle: activeJobTitles.find((item) => item.id === "JOB-002")?.name ?? activeJobTitles[0]?.name, roles: [], status: true,
     } : { ...user, newPassword: "" });
+    if (user !== "new") {
+      void flowPilotApi.directory.userResource(user.id).then((resource) => setEditorEtag(resource.etag)).catch(() => message.error("用户最新版本加载失败，请刷新后重试"));
+    }
   };
 
   const columns: TableProps<UserRecord>["columns"] = [
@@ -252,11 +353,11 @@ export function UserManagementPage() {
       title: "操作", fixed: "right", width: 146, align: "center",
       render: (_, record) => (
         <Space size={4}>
-          <Tooltip title={record.builtIn ? "系统内置账号不可编辑" : "编辑用户"}><Button disabled={record.builtIn} type="text" aria-label={`编辑用户：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>
-          <Tooltip title={record.status === "启用" ? "停用账号" : "启用账号"}>
+          {canEditUsers && <Tooltip title={record.builtIn ? "系统内置账号不可编辑" : "编辑用户"}><Button disabled={record.builtIn} type="text" aria-label={`编辑用户：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}
+          {canEditUsers && <Tooltip title={record.status === "启用" ? "停用账号" : "启用账号"}>
             <Popconfirm disabled={record.builtIn} title={`确认${record.status === "启用" ? "停用" : "启用"} ${record.name}？`} onConfirm={() => void changeUserStatus(record)}><Button disabled={record.builtIn} type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}用户：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm>
-          </Tooltip>
-          <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : record.authenticationMode === "domain" ? "域登录密码由域系统维护" : "重置密码"}><Popconfirm disabled={record.builtIn || record.authenticationMode === "domain"} title="生成临时密码并立即生效？" onConfirm={() => void resetUserPassword(record)}><Button disabled={record.builtIn || record.authenticationMode === "domain"} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} /></Popconfirm></Tooltip>
+          </Tooltip>}
+          {canResetPasswords && <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : record.authenticationMode === "domain" ? "域登录密码由域系统维护" : "重置密码"}><Button disabled={record.builtIn || record.authenticationMode === "domain"} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} onClick={() => void resetUserPassword(record)} /></Tooltip>}
         </Space>
       ),
     },
@@ -266,10 +367,10 @@ export function UserManagementPage() {
     <div className="page-stack gov-page">
       {userEditorGuard}
       <SummaryStrip items={[
-        { label: "用户总数", value: users.length, note: "按服务端分页加载" },
-        { label: "启用账号", value: users.filter((item) => item.status === "启用").length, note: "可正常登录", tone: "green" },
-        { label: "多角色用户", value: users.filter((item) => item.roles.length > 1).length, note: "权限取角色并集", tone: "blue" },
-        { label: "域登录账号", value: users.filter((item) => item.authenticationMode === "domain").length, note: "普通用户默认方式" },
+        { label: "用户总数", value: isBrowserMockMode ? users.length : remoteTotal, note: "按服务端分页加载" },
+        { label: "启用账号", value: summaryUsers.filter((item) => item.status === "启用").length, note: isBrowserMockMode ? "可正常登录" : "当前页", tone: "green" },
+        { label: "多角色用户", value: summaryUsers.filter((item) => item.roles.length > 1).length, note: isBrowserMockMode ? "权限取角色并集" : "当前页", tone: "blue" },
+        { label: "域登录账号", value: summaryUsers.filter((item) => item.authenticationMode === "domain").length, note: isBrowserMockMode ? "普通用户默认方式" : "当前页" },
       ]} />
       <Card className="query-card gov-query-card">
         <div className="gov-filter-grid gov-filter-grid--users">
@@ -282,8 +383,8 @@ export function UserManagementPage() {
         </div>
       </Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}>
-        <ResultHeader title="用户列表" count={filtered.length} extra={<><Typography.Text type="secondary">仅加载当前页数据</Typography.Text><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增用户</Button></>} />
-        <Table<UserRecord> rowKey="id" columns={columns} dataSource={pageRows} scroll={{ x: 1420 }} pagination={{ current: page, pageSize, total: filtered.length, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total) => `共 ${total} 名用户`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }} />
+        <ResultHeader title="用户列表" count={resultTotal} extra={<><Typography.Text type="secondary">仅加载当前页数据</Typography.Text>{canEditUsers && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增用户</Button>}</>} />
+        <Table<UserRecord> loading={remoteLoading} rowKey="id" columns={columns} dataSource={pageRows} scroll={{ x: 1420 }} pagination={{ current: page, pageSize, total: resultTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total) => `共 ${total} 名用户`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }} />
       </Card>
       <Drawer width={600} open={drawerUser !== null} onClose={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })} title={drawerUser === "new" ? "新增用户" : "编辑用户"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
         <Alert
@@ -298,12 +399,12 @@ export function UserManagementPage() {
           try {
             if (drawerUser === "new") {
               const created = await flowPilotApi.directory.createUser({ account: values.account, email: String(values.email).trim(), authenticationMode: values.authenticationMode, password: values.authenticationMode === "password" ? values.password : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用" });
-              cacheUser(created);
+              cacheVisibleUser(created);
               message.success("用户已创建");
             } else if (drawerUser) {
-              const resource = await flowPilotApi.directory.userResource(drawerUser.id);
-              const updated = await flowPilotApi.directory.updateUser(drawerUser.id, { account: values.account, email: String(values.email).trim(), authenticationMode: values.authenticationMode, newPassword: drawerUser.authenticationMode === "domain" && values.authenticationMode === "password" ? values.newPassword : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles }, resource.etag);
-              cacheUser(updated);
+              if (!editorEtag) throw new Error("用户最新版本尚未加载完成");
+              const updated = await flowPilotApi.directory.updateUser(drawerUser.id, { email: String(values.email).trim(), authenticationMode: values.authenticationMode, newPassword: drawerUser.authenticationMode === "domain" && values.authenticationMode === "password" ? values.newPassword : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles }, editorEtag);
+              cacheVisibleUser(updated);
               message.success("用户信息已保存");
             }
           } catch {
@@ -314,7 +415,7 @@ export function UserManagementPage() {
           setDrawerUser(null);
         }}>
           <div className="gov-form-grid">
-            <Form.Item name="account" label="登录账号" rules={[{ required: true, message: "请输入登录账号" }, { validator: (_, value) => String(value ?? "").trim().toLowerCase() === "superadmin" ? Promise.reject(new Error("该账号由系统内置，不能创建或修改")) : Promise.resolve() }]}><Input maxLength={40} /></Form.Item>
+            <Form.Item name="account" label="登录账号" rules={[{ required: true, message: "请输入登录账号" }, { validator: (_, value) => String(value ?? "").trim().toLowerCase() === "superadmin" ? Promise.reject(new Error("该账号由系统内置，不能创建或修改")) : Promise.resolve() }]}><Input disabled={drawerUser !== "new"} maxLength={40} /></Form.Item>
             <Form.Item name="name" label="员工姓名" rules={[{ required: true, message: "请输入员工姓名" }]}><Input maxLength={40} /></Form.Item>
           </div>
           <Form.Item
@@ -345,6 +446,8 @@ export function UserManagementPage() {
 
 export function DepartmentManagementPage() {
   const confirmEditorClose = useCloseEditorConfirmation();
+  const personaId = usePrototypeStore((state) => state.personaId);
+  const canEditOrganization = hasPersonaPermission(personaId, "org-department:编辑");
   const [section, setSection] = useState<"departments" | "jobTitles">("departments");
   const storedDepartments = useOrganizationStore((state) => state.departments);
   const setDepartments = useOrganizationStore((state) => state.setDepartments);
@@ -363,6 +466,8 @@ export function DepartmentManagementPage() {
   const [editor, setEditor] = useState<{ mode: "new-root" | "new-child" | "edit"; record?: DepartmentRecord } | null>(null);
   const [jobTitleEditor, setJobTitleEditor] = useState<JobTitleRecord | "new" | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
+  const [departmentEtag, setDepartmentEtag] = useState<string>();
+  const [jobTitleEtag, setJobTitleEtag] = useState<string>();
   const [form] = Form.useForm();
   const [jobTitleForm] = Form.useForm();
   const { guard: organizationEditorGuard } = useUnsavedChangesGuard({
@@ -456,16 +561,24 @@ export function DepartmentManagementPage() {
   const openDepartmentEditor = (mode: "new-root" | "new-child" | "edit") => {
     const record = mode === "edit" ? selected : undefined;
     setEditor({ mode, record });
+    setDepartmentEtag(undefined);
     setEditorDirty(false);
     form.setFieldsValue(record ? { ...record, status: record.status === "启用" } : { name: "", sort: 10, status: true, description: "" });
+    if (record) {
+      void flowPilotApi.organization.department(record.key).then((resource) => setDepartmentEtag(resource.etag)).catch(() => message.error("部门最新版本加载失败"));
+    }
   };
   const openJobTitleEditor = (record: JobTitleRecord | "new") => {
     setJobTitleEditor(record);
+    setJobTitleEtag(undefined);
     setEditorDirty(false);
     jobTitleForm.resetFields();
     jobTitleForm.setFieldsValue(record === "new"
       ? { name: "", sort: Math.max(0, ...jobTitles.map((item) => item.sort)) + 10, status: true, description: "" }
       : { ...record, status: record.status === "启用" });
+    if (record !== "new") {
+      void flowPilotApi.organization.position(record.id).then((resource) => setJobTitleEtag(resource.etag)).catch(() => message.error("职务最新版本加载失败"));
+    }
   };
   const jobTitleColumns: TableProps<JobTitleRecord>["columns"] = [
     { title: "职务名称", dataIndex: "name", width: 190, fixed: "left", render: (value: string) => <strong>{value}</strong> },
@@ -479,11 +592,11 @@ export function DepartmentManagementPage() {
       width: 142,
       fixed: "right",
       align: "center",
-      render: (_, record) => <Space size={4}>
+      render: (_, record) => canEditOrganization ? <Space size={4}>
         <Tooltip title="编辑职务"><Button type="text" aria-label={`编辑职务：${record.name}`} icon={<EditOutlined />} onClick={() => openJobTitleEditor(record)} /></Tooltip>
         <Tooltip title={record.status === "启用" ? "停用职务" : "启用职务"}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}职务：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => void changePositionStatus(record)} /></Tooltip>
         <Tooltip title={record.users ? "已有用户使用，不能删除" : "删除职务"}><Popconfirm disabled={record.users > 0} title="确认删除这个职务？" onConfirm={() => void deletePosition(record)}><Button type="text" danger disabled={record.users > 0} icon={<DeleteOutlined />} /></Popconfirm></Tooltip>
-      </Space>,
+      </Space> : null,
     },
   ];
 
@@ -505,11 +618,11 @@ export function DepartmentManagementPage() {
       {section === "departments" ? <>
       <Alert showIcon type="info" message="部门层级最多两级" description="用户可以归属一级或二级部门。一级部门可以没有子部门；二级部门不能继续添加下级。引用中的部门不可删除，但可以停用。" />
       <div className="gov-split-layout gov-department-layout">
-        <Card className="content-card gov-tree-card" title={<Space><ApartmentOutlined />组织架构</Space>} extra={<Button type="text" icon={<PlusOutlined />} onClick={() => openDepartmentEditor("new-root")}>新增一级部门</Button>}>
+        <Card className="content-card gov-tree-card" title={<Space><ApartmentOutlined />组织架构</Space>} extra={canEditOrganization ? <Button type="text" icon={<PlusOutlined />} onClick={() => openDepartmentEditor("new-root")}>新增一级部门</Button> : null}>
           <Input allowClear prefix={<SearchOutlined />} placeholder="搜索部门" className="gov-tree-search" />
           <Tree blockNode defaultExpandAll selectedKeys={[selectedKey]} treeData={treeData} onSelect={(keys) => keys[0] && setSelectedKey(String(keys[0]))} />
         </Card>
-        <Card className="content-card gov-detail-card" title="部门详情" extra={<Space><Button icon={<EditOutlined />} onClick={() => openDepartmentEditor("edit")}>编辑</Button><Button type="primary" icon={<PlusOutlined />} disabled={selected.level === 2} onClick={() => openDepartmentEditor("new-child")}>添加下级</Button></Space>}>
+        <Card className="content-card gov-detail-card" title="部门详情" extra={canEditOrganization ? <Space><Button icon={<EditOutlined />} onClick={() => openDepartmentEditor("edit")}>编辑</Button><Button type="primary" icon={<PlusOutlined />} disabled={selected.level === 2} onClick={() => openDepartmentEditor("new-child")}>添加下级</Button></Space> : null}>
           <div className="gov-detail-hero-row"><span className="gov-detail-icon"><ApartmentOutlined /></span><div><Typography.Title level={4}>{selected.name}</Typography.Title><Typography.Text type="secondary">完整路径：{selected.path}</Typography.Text></div><StatusTag status={selected.status} /></div>
           <Descriptions bordered column={2} size="middle" items={[
             { key: "level", label: "部门层级", children: `${selected.level} 级` },
@@ -521,17 +634,17 @@ export function DepartmentManagementPage() {
           <div className="gov-detail-section">
             <div className="gov-section-title">维护规则</div>
             <Alert type={selected.referenced ? "warning" : "success"} showIcon message={selected.referenced ? "该部门已有用户或历史流程引用，不允许删除" : "当前部门尚未被引用，可以删除"} description="停用后不能再分配给新用户；现有用户与历史数据仍保留该部门路径，待管理员完成迁移。" />
-            <Space>
+            {canEditOrganization && <Space>
               <Popconfirm title={`确认${selected.status === "启用" ? "停用" : "启用"}此部门？`} onConfirm={() => void changeDepartmentStatus(selected)}><Button icon={selected.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />}>{selected.status === "启用" ? "停用部门" : "启用部门"}</Button></Popconfirm>
               <Popconfirm disabled={selected.referenced} title="确认删除此部门？" onConfirm={() => void deleteDepartment(selected)}><Button danger disabled={selected.referenced} icon={<DeleteOutlined />}>删除部门</Button></Popconfirm>
-            </Space>
+            </Space>}
           </div>
         </Card>
       </div>
       </> : <>
         <Alert showIcon type="info" message="职务是全局组织字典" description="职务不绑定具体部门。停用后不能再分配给新用户，已有用户保留历史职务；只有未被任何用户使用的职务才可以删除。" />
         <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}>
-          <ResultHeader title="职务列表" count={jobTitles.length} extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openJobTitleEditor("new")}>新增职务</Button>} />
+          <ResultHeader title="职务列表" count={jobTitles.length} extra={canEditOrganization ? <Button type="primary" icon={<PlusOutlined />} onClick={() => openJobTitleEditor("new")}>新增职务</Button> : null} />
           <Table<JobTitleRecord> rowKey="id" columns={jobTitleColumns} dataSource={[...jobTitles].sort((a, b) => a.sort - b.sort)} scroll={{ x: 850 }} pagination={false} />
         </Card>
       </>}
@@ -540,8 +653,8 @@ export function DepartmentManagementPage() {
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
           try {
             if (editor?.mode === "edit") {
-              const resource = await flowPilotApi.organization.department(selected.key);
-              const saved = await flowPilotApi.organization.updateDepartment(selected.key, { name: values.name, sortOrder: values.sort, status: values.status ? "启用" : "停用", description: values.description }, resource.etag ?? "*");
+              if (!departmentEtag) throw new Error("部门最新版本尚未加载完成");
+              const saved = await flowPilotApi.organization.updateDepartment(selected.key, { name: values.name, sortOrder: values.sort, status: values.status ? "启用" : "停用", description: values.description }, departmentEtag);
               cacheDepartment(saved);
               message.success("部门信息已保存");
             } else {
@@ -572,8 +685,8 @@ export function DepartmentManagementPage() {
               cachePosition(await flowPilotApi.organization.createPosition({ name: values.name.trim(), description: values.description, sortOrder: values.sort }));
               message.success("职务已新增");
             } else if (jobTitleEditor) {
-              const resource = await flowPilotApi.organization.position(jobTitleEditor.id);
-              cachePosition(await flowPilotApi.organization.updatePosition(jobTitleEditor.id, { name: values.name.trim(), description: values.description, status: values.status ? "启用" : "停用", sortOrder: values.sort }, resource.etag ?? "*"));
+              if (!jobTitleEtag) throw new Error("职务最新版本尚未加载完成");
+              cachePosition(await flowPilotApi.organization.updatePosition(jobTitleEditor.id, { name: values.name.trim(), description: values.description, status: values.status ? "启用" : "停用", sortOrder: values.sort }, jobTitleEtag));
               message.success("职务信息已保存");
             }
           } catch {
@@ -605,14 +718,18 @@ export function RoleManagementPage() {
   const setRoles = useIdentityStore((state) => state.setRoles);
   const identityUsers = useIdentityStore((state) => state.users);
   const organizationJobTitles = useOrganizationStore((state) => state.jobTitles);
+  const personaId = usePrototypeStore((state) => state.personaId);
+  const canEditRoles = hasPersonaPermission(personaId, "org-role:编辑");
+  const canGrantRoles = hasPersonaPermission(personaId, "org-role:授权");
   const [keyword, setKeyword] = useState("");
   const [editor, setEditor] = useState<RoleRecord | "new" | null>(null);
   const [memberRole, setMemberRole] = useState<RoleRecord | null>(null);
   const [memberKeyword, setMemberKeyword] = useState("");
-  const [editingMembers, setEditingMembers] = useState<string[]>([]);
+  const [editingMemberIds, setEditingMemberIds] = useState<string[]>([]);
   const [roleMemberKeyword, setRoleMemberKeyword] = useState("");
   const [roleMemberView, setRoleMemberView] = useState<"all" | "selected">("all");
   const [editorDirty, setEditorDirty] = useState(false);
+  const [editorEtag, setEditorEtag] = useState<string>();
   const [form] = Form.useForm();
   const { guard: roleEditorGuard } = useUnsavedChangesGuard({
     dirty: editorDirty,
@@ -638,13 +755,15 @@ export function RoleManagementPage() {
   };
   const filtered = roles.filter((role) => `${role.name}${role.description}`.toLowerCase().includes(keyword.toLowerCase()));
   const configuredRoleJobTitles = organizationJobTitles.filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
-  const roleMemberCandidates = identityUsers.filter((user) => !user.builtIn).map((user) => ({
+  const candidateUsers = useDirectoryUserCandidates(roleMemberKeyword, editor !== null, editingMemberIds);
+  const roleMemberCandidates = candidateUsers.filter((user) => !user.builtIn).map((user) => ({
+    id: user.id,
     name: user.name,
     department: user.departmentPath,
     jobTitle: user.jobTitle,
   }));
   const visibleRoleMembers = roleMemberCandidates.filter((member) => {
-    const matchesView = roleMemberView === "all" || editingMembers.includes(member.name);
+    const matchesView = roleMemberView === "all" || editingMemberIds.includes(member.id);
     const normalizedKeyword = roleMemberKeyword.trim().toLowerCase();
     return matchesView && (!normalizedKeyword || `${member.name}${member.department}${member.jobTitle}`.toLowerCase().includes(normalizedKeyword));
   });
@@ -654,13 +773,17 @@ export function RoleManagementPage() {
       return;
     }
     setEditor(record);
+    setEditorEtag(undefined);
     setEditorDirty(false);
-    setEditingMembers(record === "new" ? [] : record.members);
+    setEditingMemberIds(record === "new" ? [] : record.memberUserIds ?? identityUsers.filter((user) => record.members.includes(user.name)).map((user) => user.id));
     setRoleMemberKeyword("");
     setRoleMemberView("all");
     form.setFieldsValue(record === "new"
       ? { name: "", description: "", status: true, members: [] }
       : { ...record, status: record.status === "启用" });
+    if (record !== "new") {
+      void flowPilotApi.directory.roleResource(record.id).then((resource) => setEditorEtag(resource.etag)).catch(() => message.error("角色最新版本加载失败"));
+    }
   };
   const columns: TableProps<RoleRecord>["columns"] = [
     { title: "角色", dataIndex: "name", width: 220, fixed: "left", render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}{record.builtIn ? <Tag color="gold" icon={<LockOutlined />}>系统内置</Tag> : null}</strong></div> },
@@ -669,24 +792,27 @@ export function RoleManagementPage() {
     { title: "动作权限", dataIndex: "actionPermissions", width: 105, render: (value: number) => <strong>{value}</strong> },
     { title: "用户数", dataIndex: "users", width: 110, render: (value: number, record) => record.builtIn ? <Tag bordered={false}>1 个内置账号</Tag> : <Button type="link" className="gov-count-link" onClick={() => { setMemberRole(record); setMemberKeyword(""); }}>{value} 人</Button> },
     { title: "状态", dataIndex: "status", width: 88, render: (status: EnableStatus) => <StatusTag status={status} /> },
-    { title: "操作", fixed: "right", width: 146, align: "center", render: (_, record) => <Space size={4}><Tooltip title={record.builtIn ? "系统内置角色不可编辑" : "编辑角色"}><Button disabled={record.builtIn} type="text" aria-label="编辑角色" icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip><Tooltip title={record.builtIn ? "查看全部权限（只读）" : "配置权限"}><Button type="text" aria-label={record.builtIn ? "查看超级管理员权限" : "配置权限"} icon={record.builtIn ? <LockOutlined /> : <SafetyCertificateOutlined />} onClick={() => navigate(`/admin/permissions?roleId=${encodeURIComponent(record.id)}`)} /></Tooltip><Tooltip title={record.builtIn ? "系统内置角色不可停用" : record.status === "启用" ? "停用" : "启用"}><Button disabled={record.builtIn} type="text" aria-label={record.status === "启用" ? "停用角色" : "启用角色"} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => void changeRoleStatus(record)} /></Tooltip></Space> },
+    { title: "操作", fixed: "right", width: 146, align: "center", render: (_, record) => <Space size={4}>{canEditRoles && <Tooltip title={record.builtIn ? "系统内置角色不可编辑" : "编辑角色"}><Button disabled={record.builtIn} type="text" aria-label="编辑角色" icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}{canGrantRoles && <Tooltip title={record.builtIn ? "查看全部权限（只读）" : "配置权限"}><Button type="text" aria-label={record.builtIn ? "查看超级管理员权限" : "配置权限"} icon={record.builtIn ? <LockOutlined /> : <SafetyCertificateOutlined />} onClick={() => navigate(`/admin/permissions?roleId=${encodeURIComponent(record.id)}`)} /></Tooltip>}{canEditRoles && <Tooltip title={record.builtIn ? "系统内置角色不可停用" : record.status === "启用" ? "停用" : "启用"}><Button disabled={record.builtIn} type="text" aria-label={record.status === "启用" ? "停用角色" : "启用角色"} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => void changeRoleStatus(record)} /></Tooltip>}</Space> },
   ];
   return (
     <div className="page-stack gov-page">
       {roleEditorGuard}
       <Alert type="info" showIcon message="一个用户可以拥有多个角色" description="系统页面与动作权限取所有角色的并集。角色只决定系统功能权限，不等同于流程节点的办理资格。" />
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}>
-        <div className="gov-toolbar"><Input allowClear prefix={<SearchOutlined />} placeholder="搜索角色名称或说明" value={keyword} onChange={(event) => setKeyword(event.target.value)} /><Space><Typography.Text type="secondary">共 {filtered.length} 个角色</Typography.Text><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增角色</Button></Space></div>
+        <div className="gov-toolbar"><Input allowClear prefix={<SearchOutlined />} placeholder="搜索角色名称或说明" value={keyword} onChange={(event) => setKeyword(event.target.value)} /><Space><Typography.Text type="secondary">共 {filtered.length} 个角色</Typography.Text>{canEditRoles && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增角色</Button>}</Space></div>
         <Table<RoleRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 940 }} pagination={{ pageSize: 10, showSizeChanger: false }} />
       </Card>
       <Drawer width={620} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "角色信息", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增角色" : "编辑角色"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "角色信息", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
-          const patch = { name: values.name.trim(), description: values.description, status: values.status ? "启用" as const : "停用" as const, members: editingMembers };
+          const selectedNames = candidateUsers.filter((user) => editingMemberIds.includes(user.id)).map((user) => user.name);
+          const patch = isBrowserMockMode
+            ? { name: values.name.trim(), description: values.description, status: values.status ? "启用" as const : "停用" as const, members: selectedNames }
+            : { name: values.name.trim(), description: values.description, status: values.status ? "启用" as const : "停用" as const, memberUserIds: editingMemberIds };
           try {
             if (editor === "new") cacheRole(await flowPilotApi.directory.createRole(patch));
             else if (editor) {
-              const resource = await flowPilotApi.directory.roleResource(editor.id);
-              cacheRole(await flowPilotApi.directory.updateRole(editor.id, patch, resource.etag));
+              if (!editorEtag) throw new Error("角色最新版本尚未加载完成");
+              cacheRole(await flowPilotApi.directory.updateRole(editor.id, patch, editorEtag));
             }
             message.success("角色已保存");
           } catch {
@@ -711,7 +837,7 @@ export function RoleManagementPage() {
           <div className="gov-role-member-picker">
             <div className="gov-role-member-picker__head">
               <div><strong>角色成员</strong><Typography.Text type="secondary">用户可同时加入多个角色</Typography.Text></div>
-              <Tag color="blue">已选择 {editingMembers.length} 人</Tag>
+              <Tag color="blue">已选择 {editingMemberIds.length} 人</Tag>
             </div>
             <div className="gov-role-member-picker__toolbar">
               <Input allowClear prefix={<SearchOutlined />} placeholder="搜索姓名、部门或职务" value={roleMemberKeyword} onChange={(event) => setRoleMemberKeyword(event.target.value)} />
@@ -720,23 +846,23 @@ export function RoleManagementPage() {
                 onChange={(value) => setRoleMemberView(value as "all" | "selected")}
                 options={[
                   { label: `全部成员 ${roleMemberCandidates.length}`, value: "all" },
-                  { label: `已选择 ${editingMembers.length}`, value: "selected" },
+                  { label: `已选择 ${editingMemberIds.length}`, value: "selected" },
                 ]}
               />
             </div>
             <div className="gov-role-member-picker__bulk">
               <Typography.Text type="secondary">当前显示 {visibleRoleMembers.length} 人</Typography.Text>
               <Space size={4}>
-                <Button type="link" size="small" disabled={visibleRoleMembers.length === 0} onClick={() => { setEditorDirty(true); setEditingMembers((current) => Array.from(new Set([...current, ...visibleRoleMembers.map((member) => member.name)]))); }}>选择当前结果</Button>
-                <Button type="link" size="small" disabled={editingMembers.length === 0} onClick={() => { setEditorDirty(true); setEditingMembers([]); }}>清空已选</Button>
+                <Button type="link" size="small" disabled={visibleRoleMembers.length === 0} onClick={() => { setEditorDirty(true); setEditingMemberIds((current) => Array.from(new Set([...current, ...visibleRoleMembers.map((member) => member.id)]))); }}>选择当前结果</Button>
+                <Button type="link" size="small" disabled={editingMemberIds.length === 0} onClick={() => { setEditorDirty(true); setEditingMemberIds([]); }}>清空已选</Button>
               </Space>
             </div>
             <div className="gov-role-member-picker__list">
               {visibleRoleMembers.map((member) => (
-                <label className={editingMembers.includes(member.name) ? "gov-role-member-option is-selected" : "gov-role-member-option"} key={member.name}>
+                <label className={editingMemberIds.includes(member.id) ? "gov-role-member-option is-selected" : "gov-role-member-option"} key={member.id}>
                   <Checkbox
-                    checked={editingMembers.includes(member.name)}
-                    onChange={(event) => { setEditorDirty(true); setEditingMembers((current) => event.target.checked ? [...new Set([...current, member.name])] : current.filter((name) => name !== member.name)); }}
+                    checked={editingMemberIds.includes(member.id)}
+                    onChange={(event) => { setEditorDirty(true); setEditingMemberIds((current) => event.target.checked ? [...new Set([...current, member.id])] : current.filter((id) => id !== member.id)); }}
                   />
                   <PersonChip name={member.name} detail={member.department} />
                   <Tag bordered={false}>{member.jobTitle}</Tag>
@@ -758,35 +884,9 @@ export function RoleManagementPage() {
   );
 }
 
-interface PermissionRow { key: string; module: string; page: string; description: string; actions: string[]; }
-const permissionRows: PermissionRow[] = [
-  { key: "work-launch", module: "员工工作区", page: "流程发起", description: "进入发起中心并提交流程权限组授权的流程", actions: ["查看", "发起"] },
-  { key: "work-task", module: "员工工作区", page: "任务中心", description: "查看我的待办与可代办", actions: ["查看", "审核", "驳回"] },
-  { key: "work-list", module: "员工工作区", page: "流程清单", description: "查看已获授权的流程实例", actions: ["查看", "复制新建", "打印"] },
-  { key: "config-definition", module: "流程配置", page: "流程定义", description: "创建和维护流程版本", actions: ["查看", "编辑", "发布"] },
-  { key: "config-form", module: "流程配置", page: "表单设计器", description: "配置初始表单与列表字段", actions: ["查看", "编辑", "预览"] },
-  { key: "org-user", module: "用户与权限", page: "用户管理", description: "维护本地用户及多角色关系", actions: ["查看", "编辑", "重置密码"] },
-  { key: "org-department", module: "用户与权限", page: "部门管理", description: "维护两级组织架构", actions: ["查看", "编辑"] },
-  { key: "org-role", module: "用户与权限", page: "角色管理", description: "配置系统页面及动作权限", actions: ["查看", "编辑", "授权"] },
-  { key: "org-group", module: "用户与权限", page: "流程权限组", description: "维护流程节点处理成员", actions: ["查看", "编辑"] },
-  { key: "system-monitor", module: "系统运维", page: "流程实例监控", description: "只读查看全部流程实例", actions: ["查看", "导出"] },
-  { key: "system-audit", module: "系统运维", page: "操作审计", description: "查看敏感操作记录", actions: ["查看", "导出"] },
-];
+const permissionRows = permissionCatalogPages;
 
 type RolePermissionMap = Record<string, string[]>;
-
-const workflowAdminGranted = ["work-task:查看", "work-task:审核", "work-task:驳回", "work-list:查看", "work-list:打印", "config-definition:查看", "config-definition:编辑", "config-definition:发布", "config-form:查看", "config-form:编辑"];
-const reviewerGranted = ["work-task:查看", "work-task:审核", "work-task:驳回", "work-list:查看"];
-const defaultRolePermissionMap: RolePermissionMap = {
-  "ROLE-SUPER": permissionRows.flatMap((row) => row.actions.map((action) => `${row.key}:${action}`)),
-  "ROLE-001": permissionRows.flatMap((row) => row.actions.map((action) => `${row.key}:${action}`)),
-  "ROLE-002": workflowAdminGranted,
-  "ROLE-003": ["work-launch:查看", "work-launch:发起", "work-task:查看", "work-list:查看", "work-list:复制新建", "work-list:打印"],
-  "ROLE-004": reviewerGranted,
-  "ROLE-005": reviewerGranted,
-  "ROLE-006": reviewerGranted,
-  "ROLE-007": ["work-list:查看"],
-};
 
 function readRolePermissionMap(): RolePermissionMap {
   try {
@@ -834,6 +934,7 @@ export function PermissionManagementPage() {
   const identityRoles = useIdentityStore((state) => state.roles);
   const [searchParams, setSearchParams] = useSearchParams();
   const [permissionsByRole, setPermissionsByRole] = useState(readRolePermissionMap);
+  const [catalogRows, setCatalogRows] = useState(permissionRows);
   const availableRoles = useMemo(
     () => applyRolePermissionStats(identityRoles, permissionsByRole),
     [identityRoles, permissionsByRole],
@@ -856,6 +957,28 @@ export function PermissionManagementPage() {
     event.preventDefault();
     event.returnValue = "";
   }, [isDirty]));
+  useEffect(() => {
+    let cancelled = false;
+    void flowPilotApi.organization.permissionCatalog().then((items) => {
+      if (cancelled) return;
+      const knownKeys = new Set(permissionRows.map((row) => row.key));
+      const merged = permissionRows.map((row) => ({
+        ...row,
+        actions: items.filter((item) => item.page === row.key).map((item) => item.action),
+      })).map((row) => ({ ...row, actions: row.actions.length ? row.actions : permissionRows.find((item) => item.key === row.key)!.actions }));
+      const unknown = [...new Set(items.filter((item) => !knownKeys.has(item.page)).map((item) => item.page))].map((key) => ({
+        key,
+        module: "其他权限",
+        page: items.find((item) => item.page === key)?.category || key,
+        description: items.find((item) => item.page === key)?.description || "由服务端权限目录提供",
+        actions: items.filter((item) => item.page === key).map((item) => item.action),
+      }));
+      setCatalogRows([...merged, ...unknown]);
+    }).catch(() => {
+      if (!cancelled) message.error("权限目录加载失败，已保留内置目录，请刷新后重试");
+    });
+    return () => { cancelled = true; };
+  }, []);
   useEffect(() => {
     let cancelled = false;
     void flowPilotApi.organization.rolePermissions(roleId).then((resource) => {
@@ -906,6 +1029,9 @@ export function PermissionManagementPage() {
     setPermissionsByRole(nextPermissionMap);
     const rolesWithStats = applyRolePermissionStats(readStoredRoles(), nextPermissionMap);
     setIdentityRoles(rolesWithStats);
+    if (import.meta.env.VITE_API_MODE === "remote") {
+      await flowPilotApi.auth.me();
+    }
     notifyRolePermissionsChanged();
     return nextPermissionMap;
   };
@@ -928,10 +1054,10 @@ export function PermissionManagementPage() {
       />
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}>
         <div className="gov-permission-toolbar"><div><Select aria-label="选择要配置的角色" showSearch optionFilterProp="label" value={roleId} onChange={selectRole} options={availableRoles.map((role) => ({ value: role.id, label: `${role.name}${role.builtIn ? " · 系统内置" : role.status === "停用" ? " · 已停用" : ""}` }))} /></div><Space><Tag color={isBuiltInRole ? "gold" : isDirty ? "gold" : "green"}>{isBuiltInRole ? "全部权限 · 不可修改" : isDirty ? "有未保存修改" : "已保存"}</Tag><Button disabled={isBuiltInRole || !isDirty} onClick={() => { setGranted(new Set(permissionsByRole[roleId] ?? [])); message.info("已恢复当前角色上次保存的权限"); }}>恢复</Button><Button disabled={isBuiltInRole || !isDirty} type="primary" icon={isBuiltInRole ? <LockOutlined /> : <SafetyCertificateOutlined />} onClick={savePermissions}>保存权限</Button></Space></div>
-        <div className="gov-permission-summary"><div><strong>{permissionStats.pagePermissions}</strong><span>已授权页面</span></div><Progress percent={Math.round(granted.size / permissionRows.reduce((sum, row) => sum + row.actions.length, 0) * 100)} showInfo={false} /><Typography.Text type="secondary">已选择 {permissionStats.actionPermissions} 个动作；保存后角色列表统计同步更新，不会改变流程待办。</Typography.Text></div>
+        <div className="gov-permission-summary"><div><strong>{permissionStats.pagePermissions}</strong><span>已授权页面</span></div><Progress percent={Math.round(granted.size / catalogRows.reduce((sum, row) => sum + row.actions.length, 0) * 100)} showInfo={false} /><Typography.Text type="secondary">已选择 {permissionStats.actionPermissions} 个动作；保存后角色列表统计同步更新，不会改变流程待办。</Typography.Text></div>
         <div className="gov-permission-matrix">
           <div className="gov-permission-row gov-permission-head"><span>模块 / 页面</span><span>页面说明</span><span>动作权限</span></div>
-          {permissionRows.map((row, index) => <div className="gov-permission-row" key={row.key}><div className="gov-permission-page">{index === 0 || permissionRows[index - 1]?.module !== row.module ? <small>{row.module}</small> : <small className="is-continuation">↳</small>}<strong>{row.page}</strong></div><Typography.Text type="secondary">{row.description}</Typography.Text><div className="gov-permission-actions">{row.actions.map((action) => <Checkbox disabled={isBuiltInRole} key={action} checked={granted.has(`${row.key}:${action}`)} onChange={(event) => toggle(`${row.key}:${action}`, event.target.checked)}>{action}</Checkbox>)}</div></div>)}
+          {catalogRows.map((row, index) => <div className="gov-permission-row" key={row.key}><div className="gov-permission-page">{index === 0 || catalogRows[index - 1]?.module !== row.module ? <small>{row.module}</small> : <small className="is-continuation">↳</small>}<strong>{row.page}</strong></div><Typography.Text type="secondary">{row.description}</Typography.Text><div className="gov-permission-actions">{row.actions.map((action) => <Checkbox disabled={isBuiltInRole} key={action} checked={granted.has(`${row.key}:${action}`)} onChange={(event) => toggle(`${row.key}:${action}`, event.target.checked)}>{action}</Checkbox>)}</div></div>)}
         </div>
       </Card>
       <Modal
@@ -989,6 +1115,8 @@ export function WorkflowPermissionGroupsPage() {
   );
   const identityUsers = useIdentityStore((state) => state.users);
   const identityRoles = useIdentityStore((state) => state.roles);
+  const personaId = usePrototypeStore((state) => state.personaId);
+  const canEditGroups = hasPersonaPermission(personaId, "org-group:编辑");
   const [keyword, setKeyword] = useState("");
   const [process, setProcess] = useState<string>();
   const [status, setStatus] = useState<string>();
@@ -998,6 +1126,8 @@ export function WorkflowPermissionGroupsPage() {
   const [linkedRoleIds, setLinkedRoleIds] = useState<string[]>([]);
   const [effectiveMemberKeyword, setEffectiveMemberKeyword] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
+  const [editorEtag, setEditorEtag] = useState<string>();
+  const candidateUsers = useDirectoryUserCandidates(effectiveMemberKeyword, editor !== null, directMemberUserIds);
   const [form] = Form.useForm();
   const { guard: workflowGroupEditorGuard } = useUnsavedChangesGuard({
     dirty: editorDirty,
@@ -1022,12 +1152,13 @@ export function WorkflowPermissionGroupsPage() {
     }
   };
   const filtered = groups.filter((group) => `${group.name}${group.id}`.toLowerCase().includes(keyword.toLowerCase()) && (!process || group.processes.includes(process)) && (!status || group.status === status));
-  const directMembers = identityUsers.filter((user) => directMemberUserIds.includes(user.id)).map((user) => user.name);
+  const directMembers = candidateUsers.filter((user) => directMemberUserIds.includes(user.id)).map((user) => user.name);
   const linkedRoles = identityRoles.filter((role) => linkedRoleIds.includes(role.id)).map((role) => role.name);
   const derived = effectiveMembers({ directMembers, linkedRoles, directMemberUserIds, linkedRoleIds });
   const visibleDerived = derived.filter((name) => name.toLowerCase().includes(effectiveMemberKeyword.trim().toLowerCase()));
   const openEditor = (record: GroupRecord | "new") => {
     setEditor(record);
+    setEditorEtag(undefined);
     setEditorDirty(false);
     setEffectiveMemberKeyword("");
     const memberIds = record === "new" ? [] : record.directMemberUserIds ?? identityUsers.filter((user) => record.directMembers.includes(user.name)).map((user) => user.id);
@@ -1038,6 +1169,9 @@ export function WorkflowPermissionGroupsPage() {
     setDirectMemberUserIds(memberIds);
     setLinkedRoleIds(roleIds);
     form.setFieldsValue(values);
+    if (record !== "new") {
+      void flowPilotApi.directory.groupResource(record.id).then((resource) => setEditorEtag(resource.etag)).catch(() => message.error("流程权限组最新版本加载失败"));
+    }
   };
   const columns: TableProps<GroupRecord>["columns"] = [
     { title: "流程权限组", dataIndex: "name", width: 260, fixed: "left", render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.code}</small></div> },
@@ -1047,23 +1181,27 @@ export function WorkflowPermissionGroupsPage() {
     { title: "有效成员", key: "effective", width: 112, render: (_, record) => <Button className="gov-count-link" type="link" onClick={() => setPreview(record)}>{effectiveMembers(record).length} 人</Button> },
     { title: "状态", dataIndex: "status", width: 118, align: "center", render: (value: EnableStatus) => <StatusTag status={value} /> },
     { title: "更新时间", dataIndex: "updatedAt", width: 150 },
-    { title: "操作", fixed: "right", width: 142, align: "center", render: (_, record) => <Space size={4}><Tooltip title="编辑"><Button type="text" aria-label={`编辑权限组：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip><Tooltip title="有效成员预览"><Button type="text" aria-label={`预览有效成员：${record.name}`} icon={<EyeOutlined />} onClick={() => setPreview(record)} /></Tooltip><Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => void changeGroupStatus(record)}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}权限组：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip></Space> },
+    { title: "操作", fixed: "right", width: 142, align: "center", render: (_, record) => <Space size={4}>{canEditGroups && <Tooltip title="编辑"><Button type="text" aria-label={`编辑权限组：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}<Tooltip title="有效成员预览"><Button type="text" aria-label={`预览有效成员：${record.name}`} icon={<EyeOutlined />} onClick={() => setPreview(record)} /></Tooltip>{canEditGroups && <Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => void changeGroupStatus(record)}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}权限组：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip>}</Space> },
   ];
   return (
     <div className="page-stack gov-page">
       {workflowGroupEditorGuard}
       <Alert type="info" showIcon message="成员变化立即影响运行中的待办" description="直接成员和关联角色成员合并去重后形成有效成员。允许用途决定权限组可出现的设计位置，已引用流程由系统自动统计；停用权限组不影响已运行流程，引用后不可删除。" />
       <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--groups"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="权限组名称或编号" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>已引用流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={[...new Set(groups.flatMap((group) => group.processes))].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={["启用", "停用"].map((value) => ({ value }))} /></label><div className="gov-filter-actions"><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); }}>重置</Button></div></div></Card>
-      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程权限组" count={filtered.length} extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增权限组</Button>} /><Table<GroupRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 个权限组` }} /></Card>
+      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程权限组" count={filtered.length} extra={canEditGroups ? <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增权限组</Button> : null} /><Table<GroupRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 个权限组` }} /></Card>
       <Drawer width={720} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增流程权限组" : "编辑流程权限组"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存并立即生效</Button></Space>}>
         {editor !== "new" && editor?.openTasks ? <Alert className="gov-drawer-alert" type="warning" showIcon message={`当前有 ${editor.openTasks} 项运行待办`} description="保存后，新增成员立即获得处理资格；被移除成员将立即失去尚未处理的待办资格。" /> : null}
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
           try {
             if (editor === "new") {
-              cacheGroup(await flowPilotApi.directory.createGroup({ name: values.name, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用" }));
+              cacheGroup(await flowPilotApi.directory.createGroup(isBrowserMockMode
+                ? { name: values.name, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用" }
+                : { name: values.name, purposes: values.purposes, directMembers: [], linkedRoles: [], directMemberUserIds, linkedRoleIds, status: values.status ? "启用" : "停用" }));
             } else if (editor) {
-              const resource = await flowPilotApi.directory.groupResource(editor.id);
-              cacheGroup(await flowPilotApi.directory.updateGroup(editor.id, { name: values.name, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用" }, resource.etag));
+              if (!editorEtag) throw new Error("流程权限组最新版本尚未加载完成");
+              cacheGroup(await flowPilotApi.directory.updateGroup(editor.id, isBrowserMockMode
+                ? { name: values.name, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用" }
+                : { name: values.name, purposes: values.purposes, directMembers: [], linkedRoles: [], directMemberUserIds, linkedRoleIds, status: values.status ? "启用" : "停用" }, editorEtag));
             }
             message.success("流程权限组已保存，成员资格已立即更新");
           } catch {
@@ -1085,7 +1223,7 @@ export function WorkflowPermissionGroupsPage() {
               <Checkbox.Group className="gov-purpose-checkboxes" options={(["发起", "审批/受理", "关闭"] satisfies GroupPurpose[]).map((value) => ({ label: value, value }))} />
             </Form.Item>
           </div>
-          <div className="gov-group-editor-section"><div className="gov-section-title"><span><UserOutlined />直接成员</span><Tag>{directMemberUserIds.length} 人</Tag></div><Typography.Paragraph type="secondary">逐个加入的固定人员，不依赖其系统角色。</Typography.Paragraph><Form.Item name="directMemberUserIds"><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={identityUsers.filter((user) => !user.builtIn && user.status === "启用").map((user) => ({ value: user.id, label: `${user.name} · ${user.departmentPath}` }))} onChange={(values) => { setEditorDirty(true); setDirectMemberUserIds(values); }} /></Form.Item></div>
+          <div className="gov-group-editor-section"><div className="gov-section-title"><span><UserOutlined />直接成员</span><Tag>{directMemberUserIds.length} 人</Tag></div><Typography.Paragraph type="secondary">逐个加入的固定人员，不依赖其系统角色。正式模式按输入内容从服务端搜索。</Typography.Paragraph><Form.Item name="directMemberUserIds"><Select mode="multiple" showSearch filterOption={isBrowserMockMode} optionFilterProp="label" maxTagCount="responsive" onSearch={setEffectiveMemberKeyword} options={candidateUsers.filter((user) => !user.builtIn && user.status === "启用").map((user) => ({ value: user.id, label: `${user.name} · ${user.departmentPath}` }))} onChange={(values) => { setEditorDirty(true); setDirectMemberUserIds(values); }} /></Form.Item></div>
           <div className="gov-group-editor-section"><div className="gov-section-title"><span><TeamOutlined />关联角色</span><Tag>{linkedRoleIds.length} 个</Tag></div><Typography.Paragraph type="secondary">角色下的全部用户动态加入；角色成员变化会立即同步到本权限组。</Typography.Paragraph><Form.Item name="linkedRoleIds"><Select mode="multiple" showSearch optionFilterProp="label" options={identityRoles.filter((role) => !role.builtIn && role.status === "启用").map((role) => ({ value: role.id, label: role.name }))} onChange={(values) => { setEditorDirty(true); setLinkedRoleIds(values); }} /></Form.Item></div>
           <div className="gov-effective-preview">
             <div className="gov-effective-preview__head"><strong>有效成员预览</strong><Tag color="blue">去重后 {derived.length} 人</Tag></div>

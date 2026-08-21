@@ -557,6 +557,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
   const navigate = useNavigate();
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const users = useIdentityStore((state) => state.users);
+  const [versionEtag, setVersionEtag] = useState<string>();
   const starterGroupOptions = workflowGroups
     .filter((group) => group.status === "启用" && group.purposes.includes("发起"))
     .map((group) => ({ value: group.id, label: group.name }));
@@ -845,18 +846,31 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     message.success("已按连线层级自动整理节点");
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    void flowPilotApi.definitions.versionResource(definitionId, versionId).then((resource) => {
+      if (cancelled) return;
+      cacheProcessVersion(definitionId, resource.data);
+      setVersionEtag(resource.etag);
+    }).catch((error) => {
+      if (!cancelled) message.error(error instanceof Error ? error.message : "流程版本加载失败");
+    });
+    return () => { cancelled = true; };
+  }, [definitionId, versionId]);
+
   const saveVersion = async () => {
     const nextMeta = { ...meta, lastSavedAt: formatTime() };
     skipDirtyEffect.current = true;
     setMeta(nextMeta);
     const startGroups = nodes.find((node) => node.data.kind === "start")?.data.permissionGroups ?? starterGroups;
     try {
-      const resource = await flowPilotApi.definitions.versionResource(definitionId, versionId);
-      const saved = await flowPilotApi.definitions.saveFlowDesigner(definitionId, versionId, {
+      if (!versionEtag) throw new Error("流程版本尚未加载完成，请稍后重试");
+      const saved = await flowPilotApi.definitions.saveFlowDesignerResource(definitionId, versionId, {
         basicPatch: { name: nextMeta.name, starterGroups: startGroups },
         flow: { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot,
-      }, resource.etag);
-      cacheProcessVersion(definitionId, saved.version);
+      }, versionEtag);
+      cacheProcessVersion(definitionId, saved.data.version);
+      setVersionEtag(saved.etag);
       setAutoSaved(true);
       message.success("版本已保存，并已自动更新校验结果");
       return true;
