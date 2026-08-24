@@ -1,13 +1,15 @@
 import { findIdentityUser, useIdentityStore } from "./useIdentityStore";
 import { allPermissionCodes } from "../data/permissionCatalog";
 
-export const ROLE_PERMISSION_STORAGE_KEY = "flowpilot-role-permissions-v1";
+export const ROLE_PERMISSION_STORAGE_KEY = "flowpilot-role-permissions-v2";
+export const LEGACY_ROLE_PERMISSION_STORAGE_KEY = "flowpilot-role-permissions-v1";
 export const ROLE_PERMISSIONS_CHANGED_EVENT = "flowpilot-role-permissions-changed";
 
 const editActionAliases = new Set(["新增", "新建", "编辑", "启停", "停用"]);
 
 export function normalizeRolePermissionList(permissions: string[]) {
   return Array.from(new Set(permissions.map((permission) => {
+    if (permission === "work-task:驳回") return "work-task:审核";
     const separatorIndex = permission.lastIndexOf(":");
     if (separatorIndex < 0) return permission;
     const pageKey = permission.slice(0, separatorIndex);
@@ -16,13 +18,13 @@ export function normalizeRolePermissionList(permissions: string[]) {
   })));
 }
 
-const reviewerPermissions = ["work-task:查看", "work-task:审核", "work-task:驳回", "work-list:查看"];
+const reviewerPermissions = ["work-task:查看", "work-task:审核", "work-list:查看"];
 
 export const defaultRolePermissionMap: Record<string, string[]> = {
   "ROLE-SUPER": allPermissionCodes,
   "ROLE-001": allPermissionCodes,
   "ROLE-002": ["work-task:查看", "work-list:查看", "work-list:打印", "config-definition:查看", "config-definition:编辑", "config-definition:发布", "config-definition:删除", "config-form:查看", "config-form:编辑", "config-form:预览"],
-  "ROLE-003": ["work-launch:查看", "work-launch:发起", "work-task:查看", "work-list:查看", "work-list:复制新建", "work-list:打印"],
+  "ROLE-003": ["work-launch:查看", "work-launch:发起", "work-task:查看", "work-task:审核", "work-task:关闭", "work-list:查看", "work-list:复制新建", "work-list:打印"],
   "ROLE-004": reviewerPermissions,
   "ROLE-005": reviewerPermissions,
   "ROLE-006": reviewerPermissions,
@@ -31,10 +33,24 @@ export const defaultRolePermissionMap: Record<string, string[]> = {
 
 export function readStoredRolePermissions(): Record<string, string[]> {
   try {
-    const stored = JSON.parse(window.localStorage.getItem(ROLE_PERMISSION_STORAGE_KEY) ?? "{}") as Record<string, string[]>;
+    const current = window.localStorage.getItem(ROLE_PERMISSION_STORAGE_KEY);
+    const legacy = current === null ? window.localStorage.getItem(LEGACY_ROLE_PERMISSION_STORAGE_KEY) : null;
+    const stored = JSON.parse(current ?? legacy ?? "{}") as Record<string, string[]>;
+    const saved = Object.fromEntries(Object.entries(stored).map(([roleId, permissions]) => [
+      roleId,
+      normalizeRolePermissionList(permissions),
+    ]));
+    if (legacy !== null && saved["ROLE-003"]) {
+      saved["ROLE-003"] = Array.from(new Set([
+        ...saved["ROLE-003"],
+        "work-task:审核",
+        "work-task:关闭",
+      ]));
+    }
+    if (legacy !== null) window.localStorage.setItem(ROLE_PERMISSION_STORAGE_KEY, JSON.stringify(saved));
     return {
       ...defaultRolePermissionMap,
-      ...Object.fromEntries(Object.entries(stored).map(([roleId, permissions]) => [roleId, normalizeRolePermissionList(permissions)])),
+      ...saved,
       "ROLE-SUPER": allPermissionCodes,
     };
   } catch {

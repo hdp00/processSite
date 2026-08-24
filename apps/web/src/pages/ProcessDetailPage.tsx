@@ -49,6 +49,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { cacheProcessRuntime } from "../api/entityCache";
 import { AppBackButton } from "../components/AppBackButton";
+import { ExcelPdfPreviewModal } from "../components/ExcelPdfPreviewModal";
 import { RuntimeReadonlyChoice } from "../components/RuntimeReadonlyChoice";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
@@ -66,6 +67,7 @@ import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess
 import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../utils/roundDisplay";
 import { buildWorkflowProgressStages, type WorkflowProgressStatus } from "../utils/workflowProgress";
 import { formatDisplayDateTime } from "../utils/domainTime";
+import { convertXlsxToPdf, type ExcelPdfConversionResult } from "../utils/excelToPdf";
 
 const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> = {
   待审核: { icon: <HistoryOutlined /> },
@@ -183,6 +185,14 @@ export function ProcessDetailPage() {
   const [uploadingAttachmentFieldId, setUploadingAttachmentFieldId] = useState<string>();
   const [deletingAttachmentKey, setDeletingAttachmentKey] = useState<string>();
   const [expandedPdfFieldIds, setExpandedPdfFieldIds] = useState<string[]>([]);
+  const [excelDialog, setExcelDialog] = useState<{
+    field: StoredDesignerField;
+    sourceName: string;
+    result?: ExcelPdfConversionResult;
+    error?: string;
+    converting: boolean;
+  }>();
+  const [confirmingExcelUpload, setConfirmingExcelUpload] = useState(false);
 
   useEffect(() => {
     if (instance) {
@@ -228,7 +238,7 @@ export function ProcessDetailPage() {
   const canReview = Boolean(
     instance?.status === "审核中" && currentTask?.status === "待处理",
   );
-  const canReject = canReview && !isConfirmationTask && hasPersonaPermission(personaId, "work-task:驳回");
+  const canReject = canReview && !isConfirmationTask;
   const isSubstitute = Boolean(
     canReview && currentTask?.defaultAssigneeId && currentTask.defaultAssigneeId !== persona?.id,
   );
@@ -589,18 +599,19 @@ export function ProcessDetailPage() {
     const extension = file.name.toLowerCase().split(".").pop() ?? "";
     const excelToPdf = Boolean(field.attachment?.excelToPdf);
     const allowedExtensions = field.attachment?.allowedExtensions ?? (isInlinePdf ? ["pdf"] : []);
-    if (allowedExtensions.length && !allowedExtensions.includes(extension)) {
+    const isConvertedPdf = excelToPdf && extension === "pdf";
+    if (allowedExtensions.length && !allowedExtensions.includes(extension) && !isConvertedPdf) {
       message.error(`该附件字段只允许 ${allowedExtensions.join("、")} 文件`);
-      return;
+      return false;
     }
     if (isInlinePdf && extension !== "pdf" && !(excelToPdf && ["xls", "xlsx"].includes(extension))) {
       message.error("该附件字段只能上传 PDF 或配置允许转换的 Excel 文件");
-      return;
+      return false;
     }
     const maxSizeMb = field.attachment?.maxSizeMb ?? 100;
     if (file.size / 1024 / 1024 > maxSizeMb) {
       message.error(`${file.name} 超过 ${maxSizeMb} MB 限制`);
-      return;
+      return false;
     }
     setUploadingAttachmentFieldId(field.id);
     try {
@@ -610,7 +621,7 @@ export function ProcessDetailPage() {
       const replaceExisting = shouldReplaceUploadedAttachment(isInlinePdf, field.attachment?.maxCount);
       if (!replaceExisting && currentCount >= maxCount) {
         message.error(`该字段最多上传 ${maxCount} 个附件`);
-        return;
+        return false;
       }
       const record = await flowPilotApi.attachments.upload(file, {
         definitionId: instance.definitionId,
@@ -630,11 +641,45 @@ export function ProcessDetailPage() {
         };
       });
       message.success(replaceExisting ? "附件已暂存，保存后完成替换" : "附件已暂存，保存后生效");
+      return true;
     } catch (error) {
       message.error(error instanceof Error ? error.message : "附件上传失败，请稍后重试");
+      return false;
     } finally {
       setUploadingAttachmentFieldId(undefined);
     }
+  };
+
+  const selectAttachment = async (field: StoredDesignerField, file: File) => {
+    const extension = file.name.toLowerCase().split(".").pop() ?? "";
+    if (extension === "xls") {
+      message.error("浏览器端转换仅支持 .xlsx，请先用 Excel 另存为 .xlsx 文件");
+      return;
+    }
+    if (!field.attachment?.excelToPdf || extension !== "xlsx") {
+      await stageAttachment(field, file);
+      return;
+    }
+    const maxSizeMb = field.attachment.maxSizeMb ?? 100;
+    if (file.size / 1024 / 1024 > maxSizeMb) {
+      message.error(`${file.name} 超过 ${maxSizeMb} MB 限制`);
+      return;
+    }
+    setExcelDialog({ field, sourceName: file.name, converting: true });
+    try {
+      const result = await convertXlsxToPdf(file, field.attachment.maxPreviewPages ?? 1);
+      setExcelDialog({ field, sourceName: file.name, result, converting: false });
+    } catch (error) {
+      setExcelDialog({ field, sourceName: file.name, error: error instanceof Error ? error.message : "Excel 转 PDF 失败", converting: false });
+    }
+  };
+
+  const confirmExcelUpload = async () => {
+    if (!excelDialog?.result) return;
+    setConfirmingExcelUpload(true);
+    const uploaded = await stageAttachment(excelDialog.field, excelDialog.result.file);
+    setConfirmingExcelUpload(false);
+    if (uploaded) setExcelDialog(undefined);
   };
 
   const downloadAttachment = async (attachment: RuntimeAttachmentItem) => {
@@ -757,8 +802,12 @@ export function ProcessDetailPage() {
               </div>;
             })}
           </div> : <div className="runtime-empty-control">未上传附件</div>}
-          {editable ? <Upload showUploadList={false} beforeUpload={(file) => { void stageAttachment(field, file); return Upload.LIST_IGNORE; }}>
-            <Button loading={uploadingAttachmentFieldId === field.id} icon={<UploadOutlined />}>{attachments.length && replaceExisting ? "替换附件" : attachments.length ? "继续上传" : "上传附件"}</Button>
+          {editable ? <Upload
+            showUploadList={false}
+            accept={(field.attachment?.allowedExtensions ?? []).map((extension) => `.${extension}`).join(",") || undefined}
+            beforeUpload={(file) => { void selectAttachment(field, file); return Upload.LIST_IGNORE; }}
+          >
+            <Button loading={uploadingAttachmentFieldId === field.id || (excelDialog?.field.id === field.id && excelDialog.converting)} icon={<UploadOutlined />}>{attachments.length && replaceExisting ? "替换附件" : attachments.length ? "继续上传" : "上传附件"}</Button>
           </Upload> : null}
         </div>
         {previewPdf && pdfExpanded ? <InlinePdfPreview attachmentId={previewPdf.id} fileName={previewPdf.name} /> : null}
@@ -1083,6 +1132,15 @@ export function ProcessDetailPage() {
         <Alert type="warning" showIcon message="关闭后不可恢复，所有未完成待办将被取消。" />
         <label className="field-block modal-field"><span>关闭说明 <em className="required-hint">必填</em></span><Input.TextArea value={closeReason} onChange={(event) => setCloseReason(event.target.value)} placeholder="请说明关闭原因" rows={3} /></label>
       </Modal>
+      <ExcelPdfPreviewModal
+        sourceName={excelDialog?.sourceName}
+        result={excelDialog?.result}
+        converting={Boolean(excelDialog?.converting)}
+        confirming={confirmingExcelUpload}
+        error={excelDialog?.error}
+        onCancel={() => setExcelDialog(undefined)}
+        onConfirm={() => void confirmExcelUpload()}
+      />
     </div>
   );
 }

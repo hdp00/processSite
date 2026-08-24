@@ -114,14 +114,29 @@ describe("角色权限引擎", () => {
       "org-user:启停",
       "org-user:停用",
       "org-user:查看",
+      "work-task:驳回",
       "不含分隔符",
       "domain:sub:编辑",
     ])).toEqual([
       "org-user:编辑",
       "org-user:查看",
+      "work-task:审核",
       "不含分隔符",
       "domain:sub:编辑",
     ]);
+  });
+
+  it("将旧版驳回权限迁入审核，并为文控专员补齐审核与关闭权限", () => {
+    storage.setItem(permissionModule.LEGACY_ROLE_PERMISSION_STORAGE_KEY, JSON.stringify({
+      "ROLE-003": ["work-launch:查看", "work-launch:发起", "work-task:查看"],
+      "ROLE-005": ["work-task:查看", "work-task:审核", "work-task:驳回"],
+    }));
+
+    const stored = permissionModule.readStoredRolePermissions();
+    expect(stored["ROLE-003"]).toEqual(expect.arrayContaining(["work-task:审核", "work-task:关闭"]));
+    expect(stored["ROLE-005"]).toEqual(["work-task:查看", "work-task:审核"]);
+    expect(stored["ROLE-005"]).not.toContain("work-task:驳回");
+    expect(storage.getItem(permissionModule.ROLE_PERMISSION_STORAGE_KEY)).not.toBeNull();
   });
 
   it("合并持久化覆盖但不允许覆盖超级管理员，并在 JSON 损坏时回退默认值", () => {
@@ -144,6 +159,9 @@ describe("角色权限引擎", () => {
     expect(permissionModule.hasUserPermission("superadmin", "unknown:operation")).toBe(true);
     expect(permissionModule.hasUserPermission("missing-user", "work-list:查看")).toBe(false);
     expect(permissionModule.hasUserPermission("lina", "work-task:审核")).toBe(true);
+    expect(permissionModule.hasUserPermission("wangmin", "work-task:审核")).toBe(true);
+    expect(permissionModule.hasUserPermission("wangmin", "work-task:关闭")).toBe(true);
+    expect(permissionModule.hasUserPermission("lina", "work-task:关闭")).toBe(false);
     expect(permissionModule.hasUserPermission("lina", "org-role:授权")).toBe(false);
 
     identityModule.useIdentityStore.getState().setRoles((roles) => roles.map((role) => role.id === "ROLE-005"
@@ -422,6 +440,12 @@ describe("页面入口与流程数据范围", () => {
     configurePublishedAccess("pdf-review", { closeGroups: ["PDF审核_文控_流程权限组"] });
     expect(workflowAccessModule.canUserCloseInstance("wangmin", instance)).toBe(true);
     expect(workflowAccessModule.canUserCloseInstance("lina", instance)).toBe(false);
+    expect(workflowAccessModule.canUserCloseInstance("superadmin", instance)).toBe(true);
+
+    setRolePermissionOverrides({
+      "ROLE-003": permissionModule.defaultRolePermissionMap["ROLE-003"].filter((permission) => permission !== "work-task:关闭"),
+    });
+    expect(workflowAccessModule.canUserCloseInstance("wangmin", instance)).toBe(false);
     expect(workflowAccessModule.canUserCloseInstance("superadmin", instance)).toBe(true);
 
     configurePublishedAccess("pdf-review", {

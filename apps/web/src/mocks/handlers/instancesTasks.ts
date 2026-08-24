@@ -150,7 +150,7 @@ const taskListItem = (task: WorkflowTask, instance: ProcessInstance, actorId: st
   const allowedActions: WorkflowTaskListItem["allowedActions"] = [];
   if (canHandle && hasUserPermission(actorId, "work-task:审核")) {
     allowedActions.push(handlingMode === "confirmation" ? "confirm" : "pass");
-    if (handlingMode === "approval" && hasUserPermission(actorId, "work-task:驳回")) allowedActions.push("reject");
+    if (handlingMode === "approval") allowedActions.push("reject");
   }
   if (
     task.status === "已完成" && (task.action === "通过" || task.action === "确认") &&
@@ -336,7 +336,7 @@ export const instanceTaskHandlers = [
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
     return withIdempotency(request, async () => {
-      const auth = requirePermission(request, "work-launch:发起");
+      const auth = requirePermission(request, "work-task:关闭");
       if (auth.response) return auth.response;
       const mismatch = ensureSessionActor(request, auth.actor.id);
       if (mismatch) return mismatch;
@@ -417,7 +417,6 @@ export const instanceTaskHandlers = [
         return apiProblem(request, 409, "ACTION_NOT_ALLOWED_FOR_NODE", "节点不允许该处理动作", handlingMode === "confirmation" ? "确认节点只能提交确认。" : "审批节点只能通过或驳回。 ");
       }
       if (body.action === "reject" && !body.comment?.trim()) return apiProblem(request, 422, "COMMENT_REQUIRED", "驳回说明不能为空", "驳回时必须填写说明。 ");
-      if (body.action === "reject" && !hasUserPermission(auth.actor.id, "work-task:驳回")) return apiProblem(request, 403, "REJECT_PERMISSION_DENIED", "没有驳回权限", "当前账号只能执行正向处理。 ");
       const attachmentProblem = await validateAttachmentReferences(request, auth.actor.id, instance, body.attachmentIdsByField);
       if (attachmentProblem) return attachmentProblem;
       const beforeTaskIds = new Map(usePrototypeStore.getState().tasks.filter((item) => item.instanceId === instance.id).map((item) => [item.id, item.status]));

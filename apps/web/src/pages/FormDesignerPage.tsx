@@ -1386,7 +1386,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                     <div className="fd-switch-row">
                       <div>
                         <Text strong>Excel 转 PDF 后展示</Text>
-                        <Text type="secondary">上传 xls / xlsx 后由服务端转换；转换完成后不保留原始 Excel。</Text>
+                        <Text type="secondary">选择 xlsx 后在浏览器生成并预览 PDF；确认后只上传 PDF。</Text>
                       </div>
                       <Switch
                         disabled={!(selectedField.attachment?.inlinePdf ?? true)}
@@ -1399,14 +1399,14 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                             excelToPdf,
                             maxPreviewPages: selectedField.attachment?.maxPreviewPages ?? 1,
                             allowedExtensions: excelToPdf
-                              ? [...new Set([...(selectedField.attachment?.allowedExtensions ?? []), "pdf", "xls", "xlsx"])]
+                              ? [...new Set([...(selectedField.attachment?.allowedExtensions ?? []).filter((extension) => extension !== "xls"), "pdf", "xlsx"])]
                               : selectedField.attachment?.allowedExtensions ?? ["pdf"],
                           },
                         })}
                       />
                     </div>
                     {selectedField.attachment?.excelToPdf ? (
-                      <Form.Item label="转换最大页数" extra="少于此页数时显示实际页数，超过时只生成设定页数。">
+                      <Form.Item label="转换最大页数" extra="浏览器优先按工作簿打印区域、纸张方向和缩放设置分页，超过时只生成设定页数。">
                         <InputNumber
                           min={1}
                           max={50}

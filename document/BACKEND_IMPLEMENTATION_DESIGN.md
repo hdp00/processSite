@@ -259,7 +259,18 @@ ATTACHMENT_ROOT/
 - 只有服务端实际识别为 PDF 的文件允许 `inline`，其他文件强制下载。
 - 下载响应使用经过处理的原始文件名；响应头必须防止换行和头部注入。
 
+### 6.5 浏览器 Excel 转 PDF 边界
+
+- Excel 转 PDF 属于前端便利功能：浏览器读取 `.xlsx`、生成 PDF、显示预览，用户确认后附件接口只接收生成的 PDF。
+- 原始 Excel 不进入 multipart 请求，不写入附件目录或附件元数据；正式后端不安装、不调用 LibreOffice、Office COM 或虚拟 PDF 打印机。
+- 开启 `excelToPdf` 只改变前端源文件选择和预览行为，不放宽服务端附件校验。对应内嵌 PDF 字段仍必须按文件名、声明类型和内容签名确认为 PDF，否则返回 `415 PDF_ATTACHMENT_REQUIRED`；该模式下 `allowedExtensions` 描述源文件选择范围，服务端必须接受有效的最终 PDF，即使历史流程版本只保存了 `xlsx`。
+- 服务端不信任客户端报告的来源文件名、工作表数或生成页数；正式附件元数据只记录最终 PDF 的名称、大小、内容类型、SHA-256、上传人和业务引用。
+
 ## 7. 身份、会话和接口安全
+
+- 任务中心动作权限使用 `work-task:查看`、`work-task:审核` 和 `work-task:关闭`。`work-task:审核` 统一授权通过、确认和驳回，节点处理方式继续限制确认节点不能驳回；后端不再定义或校验独立的 `work-task:驳回`。
+- 关闭固定审批或自由协作实例必须同时通过 `work-task:关闭` RBAC 校验和实例锁定版本的关闭流程权限组校验。`work-launch:发起`、`work-task:审核`、当前受理人或实际发起人身份均不能替代关闭权限。
+- 默认角色种子中，文控专员拥有 `work-task:查看`、`work-task:审核` 和 `work-task:关闭`；审核员拥有查看与审核但不默认拥有关闭。具体节点和实例仍由流程权限组做第二层授权。
 
 - `users.authentication_mode` 使用受约束枚举 `domain | password`。普通用户默认 `domain`；系统内置超级管理员固定为 `password`，仓储和领域服务都必须拒绝修改其登录方式。
 - `users.password_hash` 可空且只能在 `authentication_mode=password` 时存在。正式本地密码使用 Argon2id 散列，不保存或记录明文；域用户的本地密码散列必须为 `NULL`。数据库迁移和仓储契约测试需要校验这项组合约束。

@@ -53,7 +53,7 @@ function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
         const expected = ["empty", "not-empty"].includes(rule.operator) ? "" : sourceField ? displayDesignerChoiceValue(sourceField.options, rule.value) : String(rule.value ?? "");
         return `${fieldLabels.get(rule.fieldId) ?? rule.fieldId} ${conditionOperatorLabel(rule.operator)} ${expected}`.trim();
       }).join(field.displayCondition.mode === "all" ? " 且 " : " 或 ")}</span></div> : null}
-      {field.type === "attachment" ? <div className="pa-snapshot-options"><small>附件规则</small><span>最多 {field.attachment?.maxCount ?? 20} 个，单文件不超过 {field.attachment?.maxSizeMb ?? 100} MB；PDF {field.attachment?.inlinePdf ? "在页面内展示" : "仅提供下载"}</span></div> : null}
+      {field.type === "attachment" ? <div className="pa-snapshot-options"><small>附件规则</small><span>最多 {field.attachment?.maxCount ?? 20} 个，单文件不超过 {field.attachment?.maxSizeMb ?? 100} MB；PDF {field.attachment?.inlinePdf ? "在页面内展示" : "仅提供下载"}{field.attachment?.excelToPdf ? `；xlsx 在浏览器转 PDF，最多 ${field.attachment.maxPreviewPages ?? 1} 页` : ""}</span></div> : null}
       {field.type === "table" ? <VersionTableColumns field={field} /> : null}
     </article>) : <Alert type="warning" showIcon message="该版本尚未配置初始表单字段" />}
     <section className="pa-snapshot-list-fields">

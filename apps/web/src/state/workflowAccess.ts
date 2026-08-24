@@ -65,6 +65,7 @@ export function canUserProcessTask(userId: string, task: WorkflowTask) {
 export function canUserCloseInstance(userId: string, instance: ProcessInstance) {
   const version = instanceVersion(instance);
   if (instance.status === "驳回待处理" && version?.snapshot.flow.meta?.rejectionHandling === "resubmit-only") return false;
+  if (!hasPersonaPermission(userId, "work-task:关闭")) return false;
   if (isSuperAdminPersona(userId)) return true;
   return Boolean(version?.basic.closeGroups.some((groupId) => isUserInWorkflowGroup(userId, groupId)));
 }

@@ -293,20 +293,15 @@ const validateFile = async (
     });
   }
   const allowedExtensions = field?.attachment?.allowedExtensions ?? [];
-  if (allowedExtensions.length && !allowedExtensions.includes(extension)) {
+  const isConvertedPdf = Boolean(field?.attachment?.excelToPdf && extension === "pdf");
+  if (allowedExtensions.length && !allowedExtensions.includes(extension) && !isConvertedPdf) {
     return apiProblem(request, 415, "ATTACHMENT_EXTENSION_NOT_ALLOWED", "文件格式不支持", `该字段只允许 ${allowedExtensions.join("、")} 文件。`);
   }
-  const convertibleExcel = Boolean(field?.attachment?.excelToPdf && ["xls", "xlsx"].includes(extension));
   const hasPdfSignature = String.fromCharCode(...signature.slice(0, 5)) === "%PDF-";
-  const hasZipSignature = signature[0] === 0x50 && signature[1] === 0x4b && signature[2] === 0x03 && signature[3] === 0x04;
-  const hasOleSignature = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every((value, index) => signature[index] === value);
   if (extension === "pdf" && !hasPdfSignature) {
     return apiProblem(request, 415, "PDF_SIGNATURE_INVALID", "PDF 内容无效", "文件扩展名为 PDF，但内容签名不是有效的 PDF。 ");
   }
-  if (convertibleExcel && ((extension === "xlsx" && !hasZipSignature) || (extension === "xls" && !hasOleSignature))) {
-    return apiProblem(request, 415, "EXCEL_SIGNATURE_INVALID", "Excel 内容无效", "文件内容与声明的 Excel 格式不一致。 ");
-  }
-  if (field?.attachment?.inlinePdf && !convertibleExcel) {
+  if (field?.attachment?.inlinePdf) {
     const hasPdfName = file.name.toLowerCase().endsWith(".pdf");
     const hasPdfType = !file.type || file.type.toLowerCase() === "application/pdf";
     if (!hasPdfName || !hasPdfType) {
@@ -316,28 +311,6 @@ const validateFile = async (
     }
   }
   return undefined;
-};
-
-const createExcelPreviewPdf = (maxPages: number) => {
-  const text = `Excel preview converted by LibreOffice service (prototype), max pages: ${maxPages}`;
-  const stream = `BT /F1 11 Tf 50 790 Td (${text.replace(/[()\\]/g, "\\$&")}) Tj ET`;
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-  ];
-  let source = "%PDF-1.4\n";
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(source.length);
-    source += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = source.length;
-  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n `).join("\n")}\n`;
-  source += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return new Blob([source], { type: "application/pdf" });
 };
 
 const attachmentRecord = (file: File, actor: DomainUser, scope?: { instanceId: string; fieldId: string }): AttachmentRecord => ({
@@ -573,23 +546,10 @@ const uploadHandler = http.post(`${API_BASE}/attachments`, async ({ request }) =
         }
       }
 
-      let uploadBlob: Blob = parsed.file;
-      let record = attachmentRecord(parsed.file, actor, parsed.instanceId && parsed.fieldId
+      const record = attachmentRecord(parsed.file, actor, parsed.instanceId && parsed.fieldId
         ? { instanceId: parsed.instanceId, fieldId: parsed.fieldId }
         : undefined);
-      const extension = parsed.file.name.toLowerCase().split(".").pop() ?? "";
-      if (policyField?.attachment?.excelToPdf && ["xls", "xlsx"].includes(extension)) {
-        const maxPages = policyField.attachment.maxPreviewPages ?? 1;
-        uploadBlob = createExcelPreviewPdf(maxPages);
-        record = {
-          ...record,
-          name: parsed.file.name.replace(/\.(xls|xlsx)$/i, ".pdf"),
-          size: uploadBlob.size,
-          contentType: "application/pdf",
-          conversion: { kind: "excel-to-pdf", status: "completed", generatedPages: 1, maxPages },
-        };
-      }
-      await putAttachment({ record, blob: uploadBlob });
+      await putAttachment({ record, blob: parsed.file });
       if (scope && parsed.instanceId && parsed.fieldId) {
         const references = [...attachmentValues(scope.instance.formValues?.[parsed.fieldId]), attachmentReference(record)];
         if (!synchronizeInstanceAttachment(parsed.instanceId, scope.version, parsed.fieldId, references, record.size)) {

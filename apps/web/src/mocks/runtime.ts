@@ -75,6 +75,7 @@ export const resetMockApiRuntime = () => {
   window.localStorage.removeItem(IDEMPOTENCY_KEY);
   window.localStorage.removeItem(LOCAL_AUDIT_STORAGE_KEY);
   window.localStorage.removeItem("flowpilot-role-permissions-v1");
+  window.localStorage.removeItem("flowpilot-role-permissions-v2");
   window.localStorage.removeItem("flowpilot-mock-email-outbox-v1");
   const resetPrefixes = [
     "flowpilot-form-designer-draft-v2-",

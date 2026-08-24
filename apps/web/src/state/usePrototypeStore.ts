@@ -792,12 +792,11 @@ export const usePrototypeStore = create<PrototypeState>()(
         const targetVersion = targetInstance ? resolveInstanceVersion(targetInstance) : undefined;
         const targetNode = targetVersion?.snapshot.flow.nodes.find((node) => node.id === task?.nodeId);
         const handlingMode = targetNode?.data?.handlingMode ?? "approval";
-        const actionPermission = action === "reject" ? "work-task:驳回" : "work-task:审核";
         const actionMatchesNode = handlingMode === "confirmation" ? action === "confirm" : action !== "confirm";
         if (
           !actor || !task || !targetInstance || !targetVersion || targetInstance.status !== "审核中" ||
           !actionMatchesNode || (action === "reject" && !comment.trim()) ||
-          !hasUserPermission(actor.id, actionPermission)
+          !hasUserPermission(actor.id, "work-task:审核")
         ) return false;
 
         const autoCloseOnReject = action === "reject" && targetVersion.snapshot.flow.meta?.rejectionHandling === "auto-close";

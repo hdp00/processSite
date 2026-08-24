@@ -8,7 +8,7 @@ export interface PermissionCatalogPage {
 
 export const permissionCatalogPages: PermissionCatalogPage[] = [
   { key: "work-launch", module: "员工工作区", page: "流程发起", description: "进入发起中心并提交流程权限组授权的流程", actions: ["查看", "发起"] },
-  { key: "work-task", module: "员工工作区", page: "任务中心", description: "查看我的待办与可代办", actions: ["查看", "审核", "驳回"] },
+  { key: "work-task", module: "员工工作区", page: "任务中心", description: "查看和处理待办，并按独立权限关闭流程", actions: ["查看", "审核", "关闭"] },
   { key: "work-list", module: "员工工作区", page: "流程清单", description: "查看已获授权的流程实例", actions: ["查看", "复制新建", "打印"] },
   { key: "config-definition", module: "流程配置", page: "流程定义", description: "创建、维护、发布和删除流程版本", actions: ["查看", "编辑", "发布", "删除"] },
   { key: "config-form", module: "流程配置", page: "表单设计器", description: "配置初始表单与列表字段", actions: ["查看", "编辑", "预览"] },
@@ -22,4 +22,3 @@ export const permissionCatalogPages: PermissionCatalogPage[] = [
 
 export const allPermissionCodes = permissionCatalogPages.flatMap((row) =>
   row.actions.map((action) => `${row.key}:${action}`));
-

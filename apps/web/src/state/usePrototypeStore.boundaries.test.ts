@@ -196,7 +196,7 @@ describe("流程创建与审核冲突边界", () => {
     )).toBe(false);
 
     const noPermission = reviewScenario("review-no-permission");
-    storage.setItem("flowpilot-role-permissions-v1", JSON.stringify({ "ROLE-005": ["work-task:查看"] }));
+    storage.setItem("flowpilot-role-permissions-v2", JSON.stringify({ "ROLE-005": ["work-task:查看"] }));
     setActor("lina");
     expect(prototypeModule.usePrototypeStore.getState().reviewInstance(
       noPermission.instance.id,

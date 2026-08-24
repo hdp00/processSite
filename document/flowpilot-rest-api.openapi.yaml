@@ -1861,7 +1861,7 @@ paths:
       tags: [ProcessInstances]
       operationId: closeProcessInstance
       summary: 关闭流程实例
-      description: 后端重新校验当前发起流程权限组资格，并取消尚未处理的任务。
+      description: 后端同时校验 work-task:关闭 动作权限和实例锁定版本的关闭流程权限组资格，并取消尚未处理的任务。
       parameters:
         - $ref: "#/components/parameters/InstanceId"
         - $ref: "#/components/parameters/IfMatch"
@@ -2250,6 +2250,7 @@ paths:
       tags: [FreeCollaboration]
       operationId: closeFreeCollaboration
       summary: 关闭进行中的自由协作事项
+      description: 后端同时校验 work-task:关闭 动作权限和实例锁定版本的关闭流程权限组资格。
       parameters:
         - $ref: "#/components/parameters/InstanceId"
         - $ref: "#/components/parameters/IfMatch"
@@ -3900,20 +3901,20 @@ components:
           description: 为 true 时服务端强制该字段只保留一个附件引用
         allowedExtensions:
           type: array
-          description: 允许的小写文件扩展名，不含点号；空数组表示仅应用系统安全黑名单
+          description: 允许的小写源文件扩展名，不含点号；空数组表示仅应用系统安全黑名单。excelToPdf=true 时附件上传接口仍接受最终 PDF，即使该数组只包含 xlsx
           items:
             type: string
             pattern: "^[a-z0-9]+$"
         excelToPdf:
           type: boolean
           default: false
-          description: 接受 xls/xlsx 并由隔离的 LibreOffice Headless 服务转换为 PDF；成功后删除原始 Excel
+          description: 前端允许选择 xlsx 并在浏览器生成 PDF；附件接口始终只接收最终 PDF，不接收原始 Excel
         maxPreviewPages:
           type: integer
           minimum: 1
           maximum: 50
           default: 1
-          description: Excel 转 PDF 最多实际生成的页数
+          description: 前端 Excel 转 PDF 最多生成的页数；服务端仅保存版本配置，不执行转换
     DesignerFieldDto:
       type: object
       additionalProperties: false
@@ -5083,26 +5084,6 @@ components:
     AttachmentStatus:
       type: string
       enum: [staged, referenced, cleanup-pending]
-    AttachmentConversionDto:
-      type: object
-      required: [kind, status, maxPages]
-      properties:
-        kind:
-          type: string
-          enum: [excel-to-pdf]
-        status:
-          type: string
-          enum: [processing, completed, failed]
-        generatedPages:
-          type: integer
-          minimum: 1
-        maxPages:
-          type: integer
-          minimum: 1
-          maximum: 50
-        error:
-          type: string
-          description: 仅失败时返回经过脱敏的错误摘要
     AttachmentDto:
       type: object
       required: [id, revision, originalName, sizeBytes, contentType, status, uploadedBy, uploadedAt]
@@ -5149,8 +5130,6 @@ components:
           type: string
           format: uri-reference
           readOnly: true
-        conversion:
-          $ref: "#/components/schemas/AttachmentConversionDto"
     EmailOutboxStatus:
       type: string
       enum: [pending, processing, sent, retry-wait, dead-letter]

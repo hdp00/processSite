@@ -58,6 +58,7 @@ import {
   hasPersonaPermission,
   normalizeRolePermissionList,
   notifyRolePermissionsChanged,
+  readStoredRolePermissions,
 } from "../state/rolePermissions";
 import { permissionCatalogPages } from "../data/permissionCatalog";
 import {
@@ -891,22 +892,7 @@ const permissionRows = permissionCatalogPages;
 type RolePermissionMap = Record<string, string[]>;
 
 function readRolePermissionMap(): RolePermissionMap {
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(ROLE_PERMISSION_STORAGE_KEY) ?? "{}") as RolePermissionMap;
-    const saved = Object.fromEntries(
-      Object.entries(stored).map(([roleId, permissions]) => [roleId, normalizeRolePermissionList(permissions)]),
-    );
-    if (JSON.stringify(stored) !== JSON.stringify(saved)) {
-      window.localStorage.setItem(ROLE_PERMISSION_STORAGE_KEY, JSON.stringify(saved));
-    }
-    return {
-      ...defaultRolePermissionMap,
-      ...saved,
-      "ROLE-SUPER": defaultRolePermissionMap["ROLE-SUPER"],
-    };
-  } catch {
-    return { ...defaultRolePermissionMap };
-  }
+  return readStoredRolePermissions();
 }
 
 function readStoredRoles(): RoleRecord[] {

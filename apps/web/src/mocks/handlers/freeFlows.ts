@@ -159,7 +159,7 @@ export const freeFlowHandlers = [
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
     return withIdempotency(request, async () => {
-      const auth = requirePermission(request, "work-task:查看");
+      const auth = requirePermission(request, "work-task:关闭");
       if (auth.response) return auth.response;
       const mismatch = ensureSessionActor(request, auth.actor.id);
       if (mismatch) return mismatch;

@@ -1,0 +1,32 @@
+.excel-pdf-preview-modal .ant-modal-body {
+  max-height: calc(100vh - 190px);
+  overflow: auto;
+}
+
+.excel-pdf-converting {
+  display: grid;
+  min-height: 320px;
+  place-items: center;
+}
+
+.excel-pdf-error,
+.excel-pdf-meta {
+  margin-top: 16px;
+}
+
+.excel-pdf-preview-frame {
+  display: block;
+  width: 100%;
+  height: min(62vh, 720px);
+  min-height: 420px;
+  margin-top: 16px;
+  border: 1px solid #dce2ec;
+  border-radius: 8px;
+  background: #f4f6f9;
+}
+
+.excel-pdf-confirm-hint {
+  display: block;
+  margin-top: 10px;
+  text-align: right;
+}

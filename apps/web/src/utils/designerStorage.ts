@@ -151,14 +151,18 @@ const normalizeDesignerFieldOptions = (field: StoredDesignerField): StoredDesign
       : field.type === "select" || field.type === "radio"
         ? normalizeDesignerChoiceValue(options, field.defaultValue)
         : field.defaultValue;
+  const excelToPdf = Boolean(field.attachment?.excelToPdf && (field.attachment?.inlinePdf ?? true));
+  const normalizedAllowedExtensions = [...new Set((field.attachment?.allowedExtensions ?? ((field.attachment?.inlinePdf ?? true) ? ["pdf"] : []))
+    .map((extension) => extension.trim().replace(/^\./, "").toLowerCase())
+    .filter(Boolean))];
   const attachment = field.type === "attachment" ? {
     maxSizeMb: Math.min(100, Math.max(1, field.attachment?.maxSizeMb ?? 100)),
     maxCount: field.attachment?.inlinePdf === false ? Math.min(20, Math.max(1, field.attachment?.maxCount ?? 20)) : 1,
     inlinePdf: field.attachment?.inlinePdf ?? true,
-    allowedExtensions: [...new Set((field.attachment?.allowedExtensions ?? ((field.attachment?.inlinePdf ?? true) ? ["pdf"] : []))
-      .map((extension) => extension.trim().replace(/^\./, "").toLowerCase())
-      .filter(Boolean))],
-    excelToPdf: Boolean(field.attachment?.excelToPdf && (field.attachment?.inlinePdf ?? true)),
+    allowedExtensions: excelToPdf
+      ? [...new Set([...normalizedAllowedExtensions.filter((extension) => extension !== "xls"), "pdf", "xlsx"])]
+      : normalizedAllowedExtensions,
+    excelToPdf,
     maxPreviewPages: Math.min(50, Math.max(1, field.attachment?.maxPreviewPages ?? 1)),
   } : field.attachment;
   return {

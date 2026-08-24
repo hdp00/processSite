@@ -515,7 +515,7 @@ describe("完整设计快照迁移", () => {
       maxSizeMb: 1,
       maxCount: 1,
       inlinePdf: true,
-      allowedExtensions: ["pdf"],
+      allowedExtensions: ["pdf", "xlsx"],
       excelToPdf: true,
       maxPreviewPages: 50,
     });

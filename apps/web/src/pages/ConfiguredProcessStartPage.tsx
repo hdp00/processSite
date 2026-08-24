@@ -33,6 +33,7 @@ import {
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
+import { ExcelPdfPreviewModal } from "../components/ExcelPdfPreviewModal";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { AttachmentRecord } from "../api/contracts";
@@ -54,6 +55,7 @@ import {
 } from "../utils/designerStorage";
 import { designerChoiceOptionsToAntd } from "../utils/designerOptions";
 import { buildCopiedInstanceInitialValues } from "../utils/instanceCopy";
+import { convertXlsxToPdf, type ExcelPdfConversionResult } from "../utils/excelToPdf";
 
 type DynamicRow = Record<string, string | string[] | undefined> & { key: string };
 type DynamicFormValues = Record<string, unknown> & { firstAssignee?: string };
@@ -160,10 +162,16 @@ function DynamicFieldControl({
   field,
   value,
   onChange,
+  convertingExcel,
+  onConvertExcel,
+  onRemoveUploadedAttachment,
 }: {
   field: StoredDesignerField;
   value?: unknown;
   onChange?: (value: unknown) => void;
+  convertingExcel?: boolean;
+  onConvertExcel?: (field: StoredDesignerField, file: File) => void;
+  onRemoveUploadedAttachment?: (file: UploadFile<AttachmentRecord>) => Promise<boolean>;
 }) {
   const options = designerChoiceOptionsToAntd(field.options);
   if (field.type === "richtext") {
@@ -188,6 +196,10 @@ function DynamicFieldControl({
           message.error(`${file.name} 超过 ${maxSize} MB 限制`);
           return Upload.LIST_IGNORE;
         }
+        if (extension === "xls") {
+          message.error("浏览器端转换仅支持 .xlsx，请先用 Excel 另存为 .xlsx 文件");
+          return Upload.LIST_IGNORE;
+        }
         if (allowedExtensions.length && !allowedExtensions.includes(extension)) {
           message.error(`${file.name} 的格式不在允许范围内（${allowedExtensions.join("、")}）`);
           return Upload.LIST_IGNORE;
@@ -196,18 +208,24 @@ function DynamicFieldControl({
           message.error(`${file.name} 不是有效的 PDF 或可转换 Excel 文件`);
           return Upload.LIST_IGNORE;
         }
+        if (excelToPdf && extension === "xlsx") {
+          onConvertExcel?.(field, file);
+          return Upload.LIST_IGNORE;
+        }
         return false;
       },
+      onRemove: onRemoveUploadedAttachment,
     };
     return (
       <Upload.Dragger
         {...uploadProps}
+        disabled={convertingExcel}
         fileList={Array.isArray(value) ? value as UploadProps["fileList"] : []}
         onChange={({ fileList }) => onChange?.(inlinePdf ? fileList.slice(-1) : fileList)}
       >
         <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-        <p className="ant-upload-text">{inlinePdf && Array.isArray(value) && value.length ? "点击或拖拽上传新文件并替换原文件" : "点击或拖拽上传附件"}</p>
-        <p className="ant-upload-hint">{inlinePdf ? "仅保留 1 个文件，继续上传将替换原文件" : `最多 ${maxCount} 个`}，单个不超过 {field.attachment?.maxSizeMb ?? 100} MB{excelToPdf ? `；Excel 转为 PDF，最多 ${field.attachment?.maxPreviewPages ?? 1} 页` : inlinePdf ? "；PDF 可在流程页面预览" : ""}</p>
+        <p className="ant-upload-text">{convertingExcel ? "正在转换 Excel…" : inlinePdf && Array.isArray(value) && value.length ? "点击或拖拽上传新文件并替换原文件" : "点击或拖拽上传附件"}</p>
+        <p className="ant-upload-hint">{inlinePdf ? "仅保留 1 个文件，继续上传将替换原文件" : `最多 ${maxCount} 个`}，单个不超过 {field.attachment?.maxSizeMb ?? 100} MB{excelToPdf ? `；.xlsx 在浏览器转为 PDF 并预览（源文件不超过 ${Math.min(field.attachment?.maxSizeMb ?? 100, 25)} MB），最多 ${field.attachment?.maxPreviewPages ?? 1} 页` : inlinePdf ? "；PDF 可在流程页面预览" : ""}</p>
       </Upload.Dragger>
     );
   }
@@ -257,6 +275,14 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
   const [submitting, setSubmitting] = useState(false);
   const [submittedValues, setSubmittedValues] = useState<DynamicFormValues>({});
   const [dirty, setDirty] = useState(Boolean(copySource));
+  const [excelDialog, setExcelDialog] = useState<{
+    field: StoredDesignerField;
+    sourceName: string;
+    result?: ExcelPdfConversionResult;
+    error?: string;
+    converting: boolean;
+  }>();
+  const [confirmingExcelUpload, setConfirmingExcelUpload] = useState(false);
   const { guard, allowNextNavigation } = useUnsavedChangesGuard({
     dirty,
     title: "发起内容尚未提交",
@@ -303,6 +329,62 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
     }))),
   );
 
+  const beginExcelConversion = async (field: StoredDesignerField, file: File) => {
+    setExcelDialog({ field, sourceName: file.name, converting: true });
+    try {
+      const result = await convertXlsxToPdf(file, field.attachment?.maxPreviewPages ?? 1);
+      setExcelDialog({ field, sourceName: file.name, result, converting: false });
+    } catch (error) {
+      setExcelDialog({ field, sourceName: file.name, error: error instanceof Error ? error.message : "Excel 转 PDF 失败", converting: false });
+    }
+  };
+
+  const confirmExcelUpload = async () => {
+    if (!excelDialog?.result) return;
+    const maxSizeMb = excelDialog.field.attachment?.maxSizeMb ?? 100;
+    if (excelDialog.result.file.size > maxSizeMb * 1024 * 1024) {
+      message.error(`生成的 PDF 超过 ${maxSizeMb} MB 限制，请减少工作表内容或最大页数`);
+      return;
+    }
+    setConfirmingExcelUpload(true);
+    try {
+      const record = await flowPilotApi.attachments.upload(excelDialog.result.file, {
+        definitionId: definition.id,
+        versionId: version.id,
+        fieldId: excelDialog.field.id,
+      });
+      const current = form.getFieldValue(excelDialog.field.id) as UploadFile<AttachmentRecord>[] | undefined;
+      const replacedRecords = (current ?? []).flatMap((file) => file.response?.id ? [file.response] : []);
+      form.setFieldValue(excelDialog.field.id, [{
+        uid: record.id,
+        name: record.name,
+        size: record.size,
+        type: record.contentType,
+        status: "done",
+        response: record,
+      } satisfies UploadFile<AttachmentRecord>]);
+      setDirty(true);
+      setExcelDialog(undefined);
+      await Promise.allSettled(replacedRecords.map((item) => flowPilotApi.attachments.remove(item.id)));
+      message.success("PDF 已确认并暂存，提交流程后正式生效");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "PDF 上传失败，请稍后重试");
+    } finally {
+      setConfirmingExcelUpload(false);
+    }
+  };
+
+  const removeUploadedAttachment = async (file: UploadFile<AttachmentRecord>) => {
+    if (!file.response?.id) return true;
+    try {
+      await flowPilotApi.attachments.remove(file.response.id);
+      return true;
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "暂存附件删除失败");
+      return false;
+    }
+  };
+
   const renderField = (field: StoredDesignerField) => {
     const wide = ["richtext", "attachment", "table"].includes(field.type);
     const rules = field.type === "table"
@@ -323,7 +405,12 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
         extra={field.description}
         rules={rules}
       >
-        <DynamicFieldControl field={field} />
+        <DynamicFieldControl
+          field={field}
+          convertingExcel={excelDialog?.field.id === field.id && excelDialog.converting}
+          onConvertExcel={(targetField, file) => void beginExcelConversion(targetField, file)}
+          onRemoveUploadedAttachment={removeUploadedAttachment}
+        />
       </Form.Item>
     );
   };
@@ -339,9 +426,13 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
     try {
       const uploadedByField: Record<string, AttachmentRecord[]> = {};
       for (const field of fields.filter((item) => item.type === "attachment" && isDesignerFieldVisible(item, submittedValues))) {
-        const files = Array.isArray(submittedValues[field.id]) ? submittedValues[field.id] as UploadFile[] : [];
+        const files = Array.isArray(submittedValues[field.id]) ? submittedValues[field.id] as UploadFile<AttachmentRecord>[] : [];
         const records: AttachmentRecord[] = [];
         for (const file of files) {
+          if (file.response?.id) {
+            records.push(file.response);
+            continue;
+          }
           const source = file.originFileObj;
           if (!source) throw new Error(`无法读取附件“${file.name}”，请重新选择文件`);
           const record = await flowPilotApi.attachments.upload(source, {
@@ -367,7 +458,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
         copySourceInstanceId: copySource?.id,
         assigneeByNode,
         firstAssigneeId: submittedValues.firstAssignee,
-        attachmentIds: uploadedRecords.map((record) => record.id),
+        attachmentIds: Object.values(uploadedByField).flatMap((records) => records.map((record) => record.id)),
         attachmentIdsByField,
       });
       cacheProcessRuntime(created.instance, created.tasks);
@@ -520,6 +611,15 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
       >
         <Typography.Paragraph style={{ marginBottom: 0 }}>确定提交当前填写内容吗？</Typography.Paragraph>
       </Modal>
+      <ExcelPdfPreviewModal
+        sourceName={excelDialog?.sourceName}
+        result={excelDialog?.result}
+        converting={Boolean(excelDialog?.converting)}
+        confirming={confirmingExcelUpload}
+        error={excelDialog?.error}
+        onCancel={() => setExcelDialog(undefined)}
+        onConfirm={() => void confirmExcelUpload()}
+      />
       {guard}
     </div>
   );

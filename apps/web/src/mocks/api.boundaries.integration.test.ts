@@ -29,7 +29,7 @@ const basic = (name: string) => ({
   visibleRoles: [],
   visibleUsers: [],
 });
-const multipart = (fileName: string, content: string, fields: Record<string, string> = {}) => {
+const multipart = (fileName: string, content: string, fields: Record<string, string> = {}, fileContentType = "application/octet-stream") => {
   const boundary = "flowpilot-contract-boundary";
   const fieldParts = Object.entries(fields).map(([name, value]) => [
     `--${boundary}`,
@@ -40,7 +40,7 @@ const multipart = (fileName: string, content: string, fields: Record<string, str
   const filePart = [
     `--${boundary}`,
     `Content-Disposition: form-data; name="file"; filename="${fileName}"`,
-    "Content-Type: application/octet-stream",
+    `Content-Type: ${fileContentType}`,
     "",
     content,
   ].join("\r\n");
@@ -329,6 +329,59 @@ describe("目录权限组和附件 API 边界", () => {
       code: "DANGEROUS_ATTACHMENT_TYPE",
       errors: [{ path: "file", code: "DANGEROUS_TYPE" }],
     });
+
+    const definition = definitionModule.useProcessDefinitionStore.getState().definitions[0];
+    const version = definition.versions.find((item) => item.id === definition.publishedVersionId) ?? definition.versions[0];
+    definitionModule.useProcessDefinitionStore.setState(({ definitions }) => ({
+      definitions: definitions.map((item) => item.id !== definition.id ? item : {
+        ...item,
+        versions: item.versions.map((candidate) => candidate.id !== version.id ? candidate : {
+          ...candidate,
+          snapshot: {
+            ...candidate.snapshot,
+            form: {
+              ...candidate.snapshot.form,
+              fields: [...candidate.snapshot.form.fields, {
+                id: "excel-source",
+                type: "attachment",
+                label: "Excel 转换附件",
+                attachment: { inlinePdf: true, maxCount: 1, allowedExtensions: ["xlsx"], excelToPdf: true, maxPreviewPages: 1 },
+              }],
+            },
+          },
+        }),
+      }),
+    }));
+    const excel = multipart("source.xlsx", "PK\u0003\u0004mock-xlsx", {
+      definitionId: definition.id,
+      versionId: version.id,
+      fieldId: "excel-source",
+    });
+    const excelResponse = await fetch(`${API}/attachments`, {
+      method: "POST",
+      headers: bearer("wangmin", {
+        "Content-Type": excel.contentType,
+        "Idempotency-Key": "raw-excel-rejected",
+      }),
+      body: excel.body,
+    });
+    expect(excelResponse.status).toBe(415);
+    await expect(excelResponse.json()).resolves.toMatchObject({ code: "PDF_ATTACHMENT_REQUIRED" });
+
+    const convertedPdf = multipart("source.pdf", "%PDF-1.4\n%%EOF", {
+      definitionId: definition.id,
+      versionId: version.id,
+      fieldId: "excel-source",
+    }, "application/pdf");
+    const convertedPdfResponse = await fetch(`${API}/attachments`, {
+      method: "POST",
+      headers: bearer("wangmin", {
+        "Content-Type": convertedPdf.contentType,
+        "Idempotency-Key": "converted-pdf-accepted",
+      }),
+      body: convertedPdf.body,
+    });
+    expect(convertedPdfResponse.status).toBe(201);
   });
 
   it("临时附件支持幂等上传、元数据和内容读取，并限制非上传人删除", async () => {
