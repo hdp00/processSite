@@ -28,7 +28,7 @@ import { usePrototypeStore } from "../../state/usePrototypeStore";
 import { useOrganizationStore } from "../../state/useOrganizationStore";
 import { createClientUuid } from "../../utils/clientId";
 import { deriveWorkflowGroupStatistics } from "../../state/workflowGroupStatistics";
-import { clearAttachments } from "../attachmentRepository";
+import { clearAttachments, getAttachmentRecords } from "../attachmentRepository";
 import { clearRichMedia } from "../../utils/richMediaRepository";
 import { MOCK_API_BASE_URL } from "../apiBase";
 import {
@@ -78,6 +78,15 @@ const stringArray = (value: unknown) =>
     : undefined;
 
 const unique = <T,>(values: T[]) => [...new Set(values)];
+
+const referenceSummary = (label: string, values: string[]) => {
+  if (!values.length) return "";
+  const uniqueValues = unique(values);
+  const preview = uniqueValues.slice(0, 3).join("、");
+  return uniqueValues.length > 3
+    ? `${label}：${preview} 等 ${uniqueValues.length} 项`
+    : `${label}：${preview}`;
+};
 
 const userDto = (user: DomainUser): DirectoryUser => {
   const { password: _password, ...safe } = user;
@@ -679,18 +688,45 @@ const userUpdateHandler = http.patch(`${API_ROOT}/users/:userId`, async ({ reque
 const userDeleteHandler = http.delete(`${API_ROOT}/users/:userId`, async ({ request, params }) => {
   const scenario = await scenarioResponse(request, true);
   if (scenario) return scenario;
-  const authorized = requireAnyPermission(request, ["org-user:编辑"]);
+  const authorized = requireAnyPermission(request, ["org-user:删除"]);
   if (authorized.response) return authorized.response;
   const userId = paramValue(params.userId);
   const current = findIdentityUser(userId);
   if (!current) return notFound(request, "用户");
   if (current.builtIn) return immutableBuiltIn(request, "超级管理员账号");
   if (authorized.actor.id === current.id) return apiProblem(request, 409, "SELF_DELETE_NOT_ALLOWED", "不能删除当前账号", "请由其他管理员处理此账号。 ");
-  const revisionProblem = checkIfMatch(request, userDto(current));
+  const revisionProblem = checkIfMatch(request, userDto(current), true);
   if (revisionProblem) return revisionProblem;
-  const referencingGroups = useIdentityStore.getState().workflowGroups.filter((group) => group.directMemberUserIds?.includes(current.id));
-  if (referencingGroups.length) {
-    return apiProblem(request, 409, "USER_REFERENCED", "用户仍被流程权限组引用", `请先从以下权限组移除该用户：${referencingGroups.map((group) => group.name).join("、")}。`);
+  const identity = useIdentityStore.getState();
+  const runtime = usePrototypeStore.getState();
+  const definitions = useProcessDefinitionStore.getState().definitions;
+  const referencingRoles = identity.roles.filter((role) =>
+    role.memberUserIds?.includes(current.id) || current.roleIds?.includes(role.id) || role.members.includes(current.name));
+  const referencingGroups = identity.workflowGroups.filter((group) =>
+    group.directMemberUserIds?.includes(current.id) || group.directMembers.includes(current.name));
+  const referencingVersions = definitions.flatMap((definition) => definition.versions
+    .filter((version) => version.basic.visibleUsers.some((value) => [current.id, current.account, current.name].includes(value))
+      || version.snapshot.flow.nodes.some((node) => node.data?.emailNotification?.extraUserIds?.includes(current.id)))
+    .map((version) => `${definition.name} ${version.version}`));
+  const referencingInstances = runtime.instances.filter((instance) =>
+    instance.initiatorId === current.id
+    || instance.designatedReviewerId === current.id
+    || instance.currentAssigneeId === current.id
+    || instance.participantIds?.includes(current.id)
+    || instance.resubmissions?.some((record) => record.submittedById === current.id));
+  const referencingTasks = runtime.tasks.filter((task) =>
+    task.defaultAssigneeId === current.id || task.completedById === current.id);
+  const referencingAttachments = (await getAttachmentRecords()).filter((attachment) => attachment.uploadedById === current.id);
+  const references = [
+    referenceSummary("角色", referencingRoles.map((role) => role.name)),
+    referenceSummary("流程权限组", referencingGroups.map((group) => group.name)),
+    referenceSummary("流程版本", referencingVersions),
+    referencingInstances.length ? `流程实例 ${referencingInstances.length} 条` : "",
+    referencingTasks.length ? `审批任务 ${referencingTasks.length} 条` : "",
+    referencingAttachments.length ? `附件 ${referencingAttachments.length} 个` : "",
+  ].filter(Boolean);
+  if (references.length) {
+    return apiProblem(request, 409, "USER_REFERENCED", "用户仍被系统引用", `无法删除 ${current.name}。${references.join("；")}。请先解除可变配置引用；如存在历史业务记录，请停用账号。`);
   }
 
   useIdentityStore.getState().setUsers((users) => users.filter((user) => user.id !== current.id));
@@ -846,16 +882,30 @@ const roleUpdateHandler = http.patch(`${API_ROOT}/roles/:roleId`, async ({ reque
 const roleDeleteHandler = http.delete(`${API_ROOT}/roles/:roleId`, async ({ request, params }) => {
   const scenario = await scenarioResponse(request, true);
   if (scenario) return scenario;
-  const authorized = requireAnyPermission(request, ["org-role:编辑"]);
+  const authorized = requireAnyPermission(request, ["org-role:删除"]);
   if (authorized.response) return authorized.response;
   const roleId = paramValue(params.roleId);
   const current = useIdentityStore.getState().roles.find((role) => role.id === roleId);
   if (!current) return notFound(request, "角色");
   if (current.builtIn) return immutableBuiltIn(request, "超级管理员角色");
-  const revisionProblem = checkIfMatch(request, roleDto(current));
+  const revisionProblem = checkIfMatch(request, roleDto(current), true);
   if (revisionProblem) return revisionProblem;
-  const referencingGroups = useIdentityStore.getState().workflowGroups.filter((group) => group.linkedRoleIds?.includes(current.id));
-  if (referencingGroups.length) return apiProblem(request, 409, "ROLE_REFERENCED", "角色仍被流程权限组引用", `请先从以下权限组移除角色关联：${referencingGroups.map((group) => group.name).join("、")}。`);
+  const identity = useIdentityStore.getState();
+  const referencingUsers = identity.users.filter((user) =>
+    user.roleIds?.includes(current.id) || user.roles.includes(current.name));
+  const referencingGroups = identity.workflowGroups.filter((group) =>
+    group.linkedRoleIds?.includes(current.id) || group.linkedRoles.includes(current.name));
+  const referencingVersions = useProcessDefinitionStore.getState().definitions.flatMap((definition) => definition.versions
+    .filter((version) => version.basic.visibleRoles.some((value) => value === current.id || value === current.name))
+    .map((version) => `${definition.name} ${version.version}`));
+  const references = [
+    referenceSummary("用户", referencingUsers.map((user) => user.name)),
+    referenceSummary("流程权限组", referencingGroups.map((group) => group.name)),
+    referenceSummary("流程版本", referencingVersions),
+  ].filter(Boolean);
+  if (references.length) {
+    return apiProblem(request, 409, "ROLE_REFERENCED", "角色仍被系统引用", `无法删除 ${current.name}。${references.join("；")}。请先解除可变配置引用；如存在历史流程版本引用，请停用角色。`);
+  }
   useIdentityStore.getState().setRoles((roles) => roles.filter((role) => role.id !== current.id));
   removePermissionRecord(current.id);
   auditIdentity(authorized.actor, "role.deleted", "role", current.id, `角色 ${current.name} 已删除`, { before: roleDto(current) });

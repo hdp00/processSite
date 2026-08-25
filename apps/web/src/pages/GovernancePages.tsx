@@ -204,6 +204,7 @@ export function UserManagementPage() {
   const personaId = usePrototypeStore((state) => state.personaId);
   const canEditUsers = hasPersonaPermission(personaId, "org-user:编辑");
   const canResetPasswords = hasPersonaPermission(personaId, "org-user:重置密码");
+  const canDeleteUsers = hasPersonaPermission(personaId, "org-user:删除");
   const departmentOptions = useMemo(() => departmentCascaderOptions(departments), [departments]);
   const [draftFilters, setDraftFilters] = useState({ keyword: "", department: [] as string[], jobTitle: "", role: "", status: "" });
   const [filters, setFilters] = useState(draftFilters);
@@ -268,6 +269,27 @@ export function UserManagementPage() {
         } catch (error) {
           message.error(error instanceof Error ? error.message : "密码重置失败，请稍后重试");
           throw error;
+        }
+      },
+    });
+  };
+  const deleteUser = (record: UserRecord) => {
+    Modal.confirm({
+      title: `删除用户 ${record.name}？`,
+      content: "删除前会检查角色、流程权限组、流程版本、实例、任务和附件等引用。存在任何引用时将阻止删除，历史业务用户请改为停用。",
+      okText: "检查并删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          const resource = await flowPilotApi.directory.userResource(record.id);
+          await flowPilotApi.directory.deleteUser(record.id, resource.etag ?? "*");
+          setUsers((rows) => rows.filter((user) => user.id !== record.id));
+          setRemoteRows((rows) => rows.filter((user) => user.id !== record.id));
+          if (!isBrowserMockMode) setRemoteTotal((total) => Math.max(0, total - 1));
+          message.success(`用户 ${record.name} 已删除`);
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "用户删除失败，请刷新后重试");
         }
       },
     });
@@ -353,7 +375,7 @@ export function UserManagementPage() {
     { title: "状态", dataIndex: "status", width: 88, render: (status: EnableStatus) => <StatusTag status={status} /> },
     { title: "最近登录", dataIndex: "lastLogin", width: 154, render: (value: string) => formatDisplayDateTime(value) },
     {
-      title: "操作", fixed: "right", width: 146, align: "center",
+      title: "操作", fixed: "right", width: 184, align: "center",
       render: (_, record) => (
         <Space size={4}>
           {canEditUsers && <Tooltip title={record.builtIn ? "系统内置账号不可编辑" : "编辑用户"}><Button disabled={record.builtIn} type="text" aria-label={`编辑用户：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}
@@ -361,6 +383,7 @@ export function UserManagementPage() {
             <Popconfirm disabled={record.builtIn} title={`确认${record.status === "启用" ? "停用" : "启用"} ${record.name}？`} onConfirm={() => void changeUserStatus(record)}><Button disabled={record.builtIn} type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}用户：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm>
           </Tooltip>}
           {canResetPasswords && <Tooltip title={record.builtIn ? "系统内置账号密码不可在此重置" : record.authenticationMode === "domain" ? "域登录密码由域系统维护" : "重置密码"}><Button disabled={record.builtIn || record.authenticationMode === "domain"} type="text" aria-label={`重置密码：${record.name}`} icon={<KeyOutlined />} onClick={() => void resetUserPassword(record)} /></Tooltip>}
+          {canDeleteUsers && <Tooltip title={record.builtIn ? "系统内置账号不可删除" : "删除用户"}><Button danger disabled={record.builtIn} type="text" aria-label={`删除用户：${record.name}`} icon={<DeleteOutlined />} onClick={() => deleteUser(record)} /></Tooltip>}
         </Space>
       ),
     },
@@ -724,6 +747,7 @@ export function RoleManagementPage() {
   const personaId = usePrototypeStore((state) => state.personaId);
   const canEditRoles = hasPersonaPermission(personaId, "org-role:编辑");
   const canGrantRoles = hasPersonaPermission(personaId, "org-role:授权");
+  const canDeleteRoles = hasPersonaPermission(personaId, "org-role:删除");
   const [keyword, setKeyword] = useState("");
   const [editor, setEditor] = useState<RoleRecord | "new" | null>(null);
   const [memberRole, setMemberRole] = useState<RoleRecord | null>(null);
@@ -755,6 +779,25 @@ export function RoleManagementPage() {
     } catch {
       message.error("角色状态更新失败，请刷新后重试");
     }
+  };
+  const deleteRole = (record: RoleRecord) => {
+    Modal.confirm({
+      title: `删除角色 ${record.name}？`,
+      content: "删除前会检查用户成员、流程权限组和所有流程版本引用。存在任何引用时将阻止删除，历史业务角色请改为停用。",
+      okText: "检查并删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          const resource = await flowPilotApi.directory.roleResource(record.id);
+          await flowPilotApi.directory.deleteRole(record.id, resource.etag ?? "*");
+          setRoles((rows) => rows.filter((role) => role.id !== record.id));
+          message.success(`角色 ${record.name} 已删除`);
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "角色删除失败，请刷新后重试");
+        }
+      },
+    });
   };
   const filtered = roles.filter((role) => `${role.name}${role.description}`.toLowerCase().includes(keyword.toLowerCase()));
   const configuredRoleJobTitles = organizationJobTitles.filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
@@ -795,7 +838,7 @@ export function RoleManagementPage() {
     { title: "动作权限", dataIndex: "actionPermissions", width: 105, render: (value: number) => <strong>{value}</strong> },
     { title: "用户数", dataIndex: "users", width: 110, render: (value: number, record) => record.builtIn ? <Tag bordered={false}>1 个内置账号</Tag> : <Button type="link" className="gov-count-link" onClick={() => { setMemberRole(record); setMemberKeyword(""); }}>{value} 人</Button> },
     { title: "状态", dataIndex: "status", width: 88, render: (status: EnableStatus) => <StatusTag status={status} /> },
-    { title: "操作", fixed: "right", width: 146, align: "center", render: (_, record) => <Space size={4}>{canEditRoles && <Tooltip title={record.builtIn ? "系统内置角色不可编辑" : "编辑角色"}><Button disabled={record.builtIn} type="text" aria-label="编辑角色" icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}{canGrantRoles && <Tooltip title={record.builtIn ? "查看全部权限（只读）" : "配置权限"}><Button type="text" aria-label={record.builtIn ? "查看超级管理员权限" : "配置权限"} icon={record.builtIn ? <LockOutlined /> : <SafetyCertificateOutlined />} onClick={() => navigate(`/admin/permissions?roleId=${encodeURIComponent(record.id)}`)} /></Tooltip>}{canEditRoles && <Tooltip title={record.builtIn ? "系统内置角色不可停用" : record.status === "启用" ? "停用" : "启用"}><Button disabled={record.builtIn} type="text" aria-label={record.status === "启用" ? "停用角色" : "启用角色"} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => void changeRoleStatus(record)} /></Tooltip>}</Space> },
+    { title: "操作", fixed: "right", width: 184, align: "center", render: (_, record) => <Space size={4}>{canEditRoles && <Tooltip title={record.builtIn ? "系统内置角色不可编辑" : "编辑角色"}><Button disabled={record.builtIn} type="text" aria-label="编辑角色" icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}{canGrantRoles && <Tooltip title={record.builtIn ? "查看全部权限（只读）" : "配置权限"}><Button type="text" aria-label={record.builtIn ? "查看超级管理员权限" : "配置权限"} icon={record.builtIn ? <LockOutlined /> : <SafetyCertificateOutlined />} onClick={() => navigate(`/admin/permissions?roleId=${encodeURIComponent(record.id)}`)} /></Tooltip>}{canEditRoles && <Tooltip title={record.builtIn ? "系统内置角色不可停用" : record.status === "启用" ? "停用" : "启用"}><Button disabled={record.builtIn} type="text" aria-label={record.status === "启用" ? "停用角色" : "启用角色"} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => void changeRoleStatus(record)} /></Tooltip>}{canDeleteRoles && <Tooltip title={record.builtIn ? "系统内置角色不可删除" : "删除角色"}><Button danger disabled={record.builtIn} type="text" aria-label={`删除角色：${record.name}`} icon={<DeleteOutlined />} onClick={() => deleteRole(record)} /></Tooltip>}</Space> },
   ];
   return (
     <div className="page-stack gov-page">

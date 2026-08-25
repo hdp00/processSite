@@ -1,7 +1,7 @@
 # FlowPilot 正式后端实现设计决策
 
 > 文档状态：已确认的首版实现基线  
-> 整理日期：2026-08-21
+> 整理日期：2026-08-24
 > 适用范围：NestJS 正式后端、Microsoft SQL Server 2016 SP2、本地附件目录和内网部署
 
 ## 1. 文档定位
@@ -10,6 +10,8 @@
 
 - 业务需求以 [`REQUIREMENTS.md`](../REQUIREMENTS.md) 为最高优先级；两者冲突时以需求文档为准。
 - REST 接口结构以 [`flowpilot-rest-api.openapi.yaml`](./flowpilot-rest-api.openapi.yaml) 为契约来源。
+- SQL Server 表、约束、索引、删除和保留规则以 [`BACKEND_DATABASE_SCHEMA.md`](./BACKEND_DATABASE_SCHEMA.md) 为结构基线。
+- 运行参数、认证细节、前端迁移和交付门禁以 [`BACKEND_IMPLEMENTATION_CHECKLIST.md`](./BACKEND_IMPLEMENTATION_CHECKLIST.md) 为开工清单。
 - 当前前端 Mock 行为见 [`MOCK_REST_API.md`](./MOCK_REST_API.md)；Mock Bearer 身份、浏览器持久化和模拟任务不能直接搬到生产环境。
 - 本文中的逻辑表名和配置键是实施基线，可以在不改变语义和验收结果的前提下调整命名。
 
@@ -17,20 +19,23 @@
 
 - 正式后端采用 TypeScript、NestJS 和 REST API，与前端放在同一个 pnpm workspace 中。
 - 首版只支持 Microsoft SQL Server 2016 SP2，不实现 SQLite 运行时、数据库 provider 选择或跨数据库切换。
-- SQL Server 使用稳定版 `node-mssql`；连接参数通过部署配置提供，调整目标 SQL Server 实例不需要修改业务代码或重新构建。
-- 系统部署在公司内网的 Windows 服务器上：IIS 托管前端静态文件，并把同源 `/api/*` 反向代理到 Windows 服务形式运行的 NestJS。
+- ORM 固定使用稳定版 TypeORM，通过 `@nestjs/typeorm` 接入 NestJS；MSSQL 底层驱动继续使用稳定版 `node-mssql`。连接参数通过部署配置提供，调整目标 SQL Server 实例不需要修改业务代码或重新构建。
+- 系统部署在公司内网的 Windows 服务器上：IIS 托管前端静态文件，并把同源 `/api/flowpilot/*` 反向代理到 Windows 服务形式运行的 NestJS。
 - 首版只运行一个 API 实例。预计每年新增流程实例不超过 2 万，附件总量不超过 500 GB。
 - 附件正文保存在服务器本地目录；数据库只保存元数据、相对存储键和业务引用。
 - 当前正式环境使用 HTTP；这是既定兼容条件，但必须明确其缺少传输加密的风险，并保留以后启用 HTTPS 的配置能力。
 - 普通用户按账号配置选择 AD/LDAP 域认证或 FlowPilot 本地密码认证，默认使用域认证；系统内置超级管理员始终使用本地密码认证。
 - SQL Server 2016 SP2 已超出官方支持周期。兼容它是部署约束，不代表安全推荐；部署方需要提供补偿性控制和升级计划。
+- 后端位于 `apps/api`，使用 Node.js 24 LTS x64；具体补丁版本及全部依赖通过仓库版本文件和 pnpm lockfile 锁定。Windows Server 2016 必须在开发开始和每次运行时升级后执行实机冒烟测试。
+- 业务时间区固定为 `Asia/Shanghai`，数据库、租约、接口和审计时间统一使用 UTC。
 
 ```mermaid
 flowchart LR
     B["内网浏览器"] --> I["IIS：静态文件与同源反向代理"]
     I --> N["NestJS Windows 服务：127.0.0.1"]
     N --> P["领域仓储与事务边界"]
-    P --> M["SQL Server 2016 SP2 / node-mssql"]
+    P --> T["TypeORM / @nestjs/typeorm"]
+    T --> M["SQL Server 2016 SP2 / node-mssql"]
     N --> F["本地附件目录"]
     N --> O["邮件 Outbox / 内网 SMTP"]
 ```
@@ -74,7 +79,7 @@ flowchart LR
 
 ### 3.2 推荐的逻辑模型
 
-下列名称是实现示意，不是要求逐字采用的最终 DDL：
+下列名称用于解释核心流程模型；最终物理表、列、约束、索引和删除行为以 [`BACKEND_DATABASE_SCHEMA.md`](./BACKEND_DATABASE_SCHEMA.md) 为准：
 
 | 逻辑表 | 主要职责 |
 | --- | --- |
@@ -116,7 +121,7 @@ flowchart LR
 
 ## 4. SQL Server 数据访问与事务
 
-### 4.1 分层边界
+### 4.1 TypeORM 与分层边界
 
 领域服务只能依赖统一接口，例如：
 
@@ -128,23 +133,63 @@ flowchart LR
 - `SessionRepository`；
 - `OutboxRepository`。
 
-领域层不得直接导入 `node-mssql` 连接、连接池或数据库驱动类型。SQL 查询、锁、编号分配和任务领取等 SQL Server 细节封装在数据访问层内部。
+TypeORM 采用 Data Mapper 模式，不使用 Active Record。TypeORM Entity 是数据访问层的持久化模型，与领域实体和 API DTO 分离，三者通过显式 Mapper 转换；领域层不得使用 TypeORM 装饰器。
 
-SQL Server 连接配置示意：
+- 领域服务不得直接导入 TypeORM Repository、`EntityManager`、`QueryRunner`、`DataSource`、`node-mssql` 连接池或数据库驱动类型。
+- 普通单表 CRUD、稳定关联和常规分页查询优先使用 TypeORM Repository 或 QueryBuilder，避免重复手写基础 SQL。
+- 编号分配、版本发布、并发任务领取、复杂动态字段投影和带 `UPDLOCK/HOLDLOCK` 的 SQL Server 专用语句，可以在数据访问层通过事务专属 `QueryRunner` 执行参数化原生 SQL，不要求为了形式上的 ORM 纯度改写成低效查询。
+- `PersistenceUnitOfWork` 封装 `QueryRunner` 生命周期；事务内仓储只使用该 runner 的 `EntityManager`，禁止混用全局 Repository，确保所有写入位于同一连接和事务。
+- 关系级联、实体订阅器和懒加载默认关闭或显式限制，关键领域副作用由领域服务和事务命令明确调用，避免 ORM 隐式写入改变任务、审计或 Outbox 状态。
+
+`{FLOWPILOT_HOME}\Secrets\production.env` 集中保存集成服务和初始化敏感参数，示例模板只提供键名与占位值：
 
 ```dotenv
-MSSQL_SERVER=sqlserver.internal
+# SQL Server
+MSSQL_SERVER=<SQL Server 主机或实例地址>
 MSSQL_PORT=1433
-MSSQL_DATABASE=FlowPilot
-MSSQL_USER=flowpilot_app
-MSSQL_PASSWORD=由部署密钥提供
-MSSQL_ENCRYPT=按内网 SQL Server 配置确定
-MSSQL_TRUST_SERVER_CERTIFICATE=按部署环境确定
+MSSQL_DATABASE=<数据库名>
+MSSQL_SCHEMA=flowpilot
+MSSQL_USER=<应用运行账号>
+MSSQL_PASSWORD=<数据库密码>
+MSSQL_ENCRYPT=false
+MSSQL_TRUST_SERVER_CERTIFICATE=true
+MSSQL_EXPECTED_COMPATIBILITY_LEVEL=130
+MSSQL_EXPECTED_COLLATION=<DBA 确认的数据库排序规则>
+MSSQL_POOL_MIN=0
+MSSQL_POOL_MAX=20
+MSSQL_CONNECT_TIMEOUT_MS=5000
+MSSQL_REQUEST_TIMEOUT_MS=30000
+
+# AD/LDAP
+DOMAIN_AUTH_ENABLED=true
+DOMAIN_AUTH_URLS=<一个或多个 LDAP/LDAPS 地址>
+DOMAIN_AUTH_BASE_DN=<目录搜索根>
+DOMAIN_AUTH_UPN_SUFFIX=<UPN 后缀>
+DOMAIN_AUTH_NETBIOS_NAME=<可选 DOMAIN 名称>
+DOMAIN_AUTH_ACCOUNT_ATTRIBUTE=sAMAccountName
+DOMAIN_AUTH_CONNECT_TIMEOUT_MS=3000
+DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
+DOMAIN_AUTH_TLS_REJECT_UNAUTHORIZED=true
+
+# SMTP
+SMTP_HOST=<SMTP服务器>
+SMTP_PORT=25
+SMTP_SECURE=false
+SMTP_USER=<发件账号>
+SMTP_PASSWORD=<SMTP密码>
+SMTP_FROM=<发件地址>
+SMTP_REPLY_TO=<可选回复地址>
+FLOWPILOT_PUBLIC_BASE_URL=<包含 /flowpilot 且不带末尾斜杠的应用根地址>
+
+# 只供数据库首次初始化使用
+FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD=<超级管理员初始密码>
 ```
 
 - 应用启动时校验全部 SQL Server 必填配置、连接能力和数据库兼容级别。
-- 密码等秘密不得提交到仓库；示例配置只能提供占位符。
+- SQL Server、AD/LDAP、SMTP 和超级管理员初始化参数集中从 `{FLOWPILOT_HOME}\Secrets\production.env` 读取；真实值不得提交到仓库，示例配置只能提供键名和占位符。
+- 首版不使用 DPAPI 加密配置、外部密钥平台或其他 Secret Provider。敏感配置文件为明文，依靠仓库外存放、NTFS 最小权限和运维流程保护，程序不得输出完整配置或连接字符串。
 - 修改 SQL Server 连接配置并重启服务即可连接既定实例；附件根目录、接口地址和领域行为保持不变。
+- 迁移账号仅在停机部署命令中通过单独受限配置注入，不保存在常驻应用 Secrets。应用运行账号只拥有 `flowpilot` schema 所需的最小 DML 权限。
 
 ### 4.2 SQL Server 类型映射
 
@@ -162,15 +207,17 @@ MSSQL_TRUST_SERVER_CERTIFICATE=按部署环境确定
 
 ### 4.3 事务与并发
 
-- SQL Server 使用连接池和显式事务；编号分配、版本发布和任务抢占按场景使用 `SERIALIZABLE`、`UPDLOCK/HOLDLOCK` 或等价机制。
+- SQL Server 使用 TypeORM 管理的 `node-mssql` 连接池和显式 `QueryRunner` 事务；编号分配、版本发布和任务抢占按场景使用 `SERIALIZABLE`、`UPDLOCK/HOLDLOCK` 或等价机制。
+- 隔离级别在每个事务开始时显式指定，不通过可能泄漏到后续池连接的驱动级连接设置改变；提交、回滚和 `release()` 必须由统一 UoW 在 `finally` 中完成。
 - 数据库事务中不得发送 SMTP、移动附件正文或调用其他外部服务。
 - 发起实例、提交审核、重新提交和发布版本等命令必须保持领域原子性。
 - 写接口使用幂等键防止网络重试造成重复实例或重复决定；可编辑资源使用整数 revision 与 `ETag/If-Match` 处理并发覆盖。
 
 ### 4.4 SQL Server 迁移与升级
 
-- 每一个逻辑结构版本提供一份按编号排序的 SQL Server 迁移脚本，并记录已执行版本和校验和。
-- 应用启动只检查结构版本；结构落后、迁移校验和不一致或兼容级别不是 130 时拒绝就绪，不自动执行 DDL。
+- TypeORM 生产配置固定使用 `synchronize: false` 和 `migrationsRun: false`；不得根据 Entity 在启动时自动同步数据库结构。
+- 每一个逻辑结构版本提供一份按编号排序、人工复核的 TypeORM `MigrationInterface`。普通结构操作可以使用 `QueryRunner` schema API，`ISJSON` 约束、筛选索引、锁相关结构和其他 SQL Server 特性使用显式 SQL；不得把自动生成的 migration 未经检查直接用于生产。
+- 迁移记录已执行版本和校验和，由独立部署命令执行；应用启动只检查结构版本，结构落后、迁移校验和不一致或兼容级别不是 130 时拒绝就绪，不自动执行 DDL。
 - 迁移使用独立的高权限迁移账号，正常运行账号不应拥有随意修改结构的权限。
 - 正式升级前先停止 Windows 服务，由 DBA 备份数据库，并在生产备份的恢复副本上预演迁移和回滚方案。
 - 迁移完成后校验逐表数量、关键聚合、外键、JSON/投影一致性、Outbox、附件元数据和附件 SHA-256/存在性。
@@ -210,10 +257,36 @@ SQL Server 2016 SP2 在数据库兼容级别 130 下可以使用 `ISJSON`、`JSO
 
 文件系统保存附件正文。数据库不得保存附件二进制正文或客户端可访问的绝对路径。
 
-建议目录：
+正式服务器的程序与持久化数据按统一根目录分离，目录固定如下：
 
 ```text
-ATTACHMENT_ROOT/
+{FLOWPILOT_HOME}\
+├─ {实际程序目录名称}\         FLOWPILOT_APP_DIR，可重新部署
+│  ├─ web\
+│  └─ api\
+├─ Config\
+│  └─ application.env          非敏感运行参数
+├─ Secrets\
+│  └─ production.env           敏感参数，禁止进入 Git
+├─ Data\
+│  └─ Attachments\
+│     └─ 2026\
+├─ Logs\
+├─ Temp\
+└─ Backup\
+```
+
+- `FLOWPILOT_APP_DIR` 的盘符、路径和目录名称由部署时的实际安装位置确定，不固定为 `D:\FlowPilot\App`。`FLOWPILOT_HOME` 动态取实际程序目录的父目录；实现不得直接以 `process.cwd()` 作为程序目录或根目录，因为 Windows 服务启动方式可能改变当前工作目录。
+- 实际程序目录只保存可重新构建的程序文件；发布、回滚和卸载程序只能操作该目录。`Config`、`Secrets`、`Data`、`Logs`、`Temp` 和 `Backup` 是程序目录的同级目录，不属于发布包，不得被安装或升级脚本递归覆盖、清空或移动。
+- 默认附件根目录由 `FLOWPILOT_HOME` 推导为 `{FLOWPILOT_HOME}\Data\Attachments`，不再要求单独配置 `ATTACHMENT_ROOT`；所有推导结果必须规范化为绝对路径并验证仍位于预期的根目录下。
+- NestJS Windows 服务账号只读实际程序目录、`Config` 和 `Secrets`，并对 `Data\Attachments`、`Logs` 和 `Temp` 拥有必要的修改权限；IIS 应用程序池身份只读取 `{FLOWPILOT_APP_DIR}\web`，对其他同级目录无权限。
+- IIS 不得为附件根目录创建虚拟目录、静态映射或目录浏览。附件只能通过 NestJS 鉴权接口读取，不能由 IIS 直接按相对存储键返回。
+- 启动时规范化并比较实际路径，校验附件目录边界、读写能力、剩余空间，以及临时目录与正式对象目录是否同卷；校验失败时就绪检查必须失败，其中落入代码或 IIS 静态目录属于禁止启动的配置错误。
+
+`{FLOWPILOT_HOME}\Data\Attachments` 内部建议目录：
+
+```text
+Data/Attachments/
 └─ {yyyy}/
    ├─ .incoming/
    │  └─ {attachmentId}.part
@@ -222,11 +295,14 @@ ATTACHMENT_ROOT/
          └─ {attachmentId}
 ```
 
-- 例如 2026 年创建的附件使用 `ATTACHMENT_ROOT/2026`；临时文件和正式对象都进入同一个年份目录。
-- 年份由服务端根据附件创建时保存的上传时间和统一业务时区计算，生成后同时写入存储年份和相对存储键，不接受客户端传入，也不在以后读取时重新计算。
+- 例如 2026 年创建的附件使用 `{FLOWPILOT_HOME}\Data\Attachments\2026`；临时文件和正式对象都进入同一个年份目录。
+- 年份由服务端根据附件创建时保存的上传时间和 `Asia/Shanghai` 业务时区计算，生成后同时写入存储年份和相对存储键，不接受客户端传入，也不在以后读取时重新计算。
 - 临时目录和对象目录必须位于同一个磁盘卷，以便完成上传后使用原子重命名。
 - 物理文件名只使用服务端生成的附件 ID，不使用原始文件名。
+- `{ID分片}` 固定使用 UUID 去除连字符后的前四个十六进制字符作为两级目录，例如 `ab/cd/{attachmentId}`。
 - 数据库只保存相对存储键。解析后必须校验规范化的最终路径仍位于附件根目录内，阻止路径穿越。
+
+整体更换 `FLOWPILOT_HOME` 的盘符或路径时采用停机迁移：停止 Windows 服务，复制持久化目录，按数据库附件清单核对相对存储键、文件数量、大小和 SHA-256，修改根目录配置后启动服务并执行完整性检查。由于数据库不保存绝对路径，改变根目录不应更新附件记录；校验失败时继续使用旧目录并停止切换。
 
 ### 6.2 两阶段模型与状态
 
@@ -250,6 +326,8 @@ ATTACHMENT_ROOT/
 - 删除失败保存原因并重试，不能先删元数据导致孤立引用不可解释。
 - SHA-256 用于完整性校验、迁移核对和内容 ETag，不用于附件内容去重。
 - 首版不提供分片上传、断点续传、内容去重或病毒扫描状态机。
+- 使用锁定版本的 `file-type` 识别常见文件魔数，并对 PDF、ZIP/Office Open XML 和危险可执行/脚本签名补充专门校验。扩展名、声明 MIME 与识别内容冲突时默认拒绝。
+- 首版不做病毒扫描属于已经接受的风险项，不代表跳过扩展名黑名单、内容签名、大小数量限制、富文本清理、权限校验和下载响应安全。
 - 上传前检查磁盘空间，默认至少保留 2 GiB，可配置；不足时返回 HTTP `507`，健康状态显示降级。
 
 ### 6.4 下载和预览
@@ -279,27 +357,20 @@ ATTACHMENT_ROOT/
 - 域服务不可达、超时或配置错误返回 `503 DOMAIN_AUTHENTICATION_UNAVAILABLE`，不得回退到本地密码；凭据不正确统一返回 `401 INVALID_CREDENTIALS`，响应不得泄露账号是否存在或采用哪种登录方式。域提供方调用应设置较短连接和操作超时，并纳入受保护的详细健康检查。
 - `password` 模式只校验 Argon2id 散列。业务需求仍允许最短 1 个字符的本地密码，因此需要通过登录速率限制降低在线猜测风险；这不等于强密码策略。
 - 登录失败不锁定账号；两种认证方式都按“账号 + 来源 IP”和来源 IP 总量做临时限制，超限返回 `429`。
+- Argon2id 默认使用 64 MiB 内存、3 次迭代、并行度 1、16 字节盐和 32 字节哈希；完整参数保存在编码字符串中，参数提高后在下次成功登录时渐进重哈希。登录限流默认按“账号 + 客户端 IP”15 分钟 5 次失败、按 IP 15 分钟 100 次失败，封禁 15 分钟，并允许从非敏感配置调整。
 - 新建普通用户默认 `domain` 且不接收初始密码；新建 `password` 用户必须提供初始密码。从 `domain` 切换到 `password` 时在同一命令中提供新密码，从 `password` 切换到 `domain` 时原子清空散列。登录方式变更使该用户全部现存会话失效。
 - 密码重置命令只接受 `password` 用户；对 `domain` 用户返回 `409 AUTHENTICATION_MODE_CONFLICT`。域密码由域系统维护，FlowPilot 不提供修改或重置入口。
+- 用户和角色删除使用独立的 `org-user:删除`、`org-role:删除` 权限并要求 `If-Match`。应用服务在同一事务中执行权威引用查询：用户覆盖角色、流程权限组、流程版本引用展开表、实例、任务、附件及其他历史外键；角色覆盖成员、流程权限组、流程版本和运行资格。存在引用返回稳定的 `USER_REFERENCED` 或 `ROLE_REFERENCED` 及简洁中文分类摘要，不泄露 SQL 或内部路径；有历史业务引用时只允许停用。
+- 当前登录账号和内置超级管理员不可删除。无引用用户删除成功时同步撤销其全部会话；审计先写入并保留，关联历史不得级联删除。前端仅展示服务端结果，不以当前页缓存代替引用检查。
 - 正式后端使用服务端不透明会话。Cookie 只保存高强度随机令牌，数据库只保存令牌散列。
 - 会话闲置 8 小时失效，绝对有效期 24 小时。用户停用或密码重置后，全部现存会话立即失效。
-- Cookie 设置 `HttpOnly`、`SameSite=Strict`；当前 HTTP 环境关闭 `Secure`，以后启用 HTTPS 时通过配置打开。
-- 正式 API 只接受同源浏览器调用，关闭 CORS；所有修改状态的请求校验 `Origin` 或 `Referer`。
+- Cookie 名称固定为 `flowpilot_session`，设置 `Path=/api/flowpilot`、`HttpOnly`、`SameSite=Strict`；当前 HTTP 环境关闭 `Secure`，以后启用 HTTPS 时通过配置打开。登录、密码或权限变化和模拟身份切换后轮换令牌。
+- 正式 API 只接受同源浏览器调用，关闭 CORS；所有修改状态的请求优先校验 `Origin`，缺少时只接受与配置站点地址同源的 `Referer`，两者都缺少或不匹配时返回 `403 CSRF_VALIDATION_FAILED`。
+- 只信任本机 IIS 到 `127.0.0.1` 的反向代理头；不能信任任意来源提供的 `X-Forwarded-For`。
 - 首版不提供 API Key、服务账号或第三方集成认证。
-- 超级管理员初始密码从部署密钥读取并只散列写入一次；页面和业务 API 不能修改该账号，停机状态下可用专用离线命令重置。
+- 超级管理员初始密码从 `Secrets\production.env` 读取并只散列写入一次；数据库完成初始化后不再用配置覆盖现有密码，部署人员可以删除该配置项。页面和业务 API 不能修改该账号，停机状态下可用专用离线命令重置。
 
-域认证配置示意，具体键名可以在不改变行为的前提下调整：
-
-```dotenv
-DOMAIN_AUTH_ENABLED=true
-DOMAIN_AUTH_URL=ldaps://dc.internal.example
-DOMAIN_AUTH_BASE_DN=由部署密钥或服务器配置提供
-DOMAIN_AUTH_UPN_SUFFIX=internal.example
-DOMAIN_AUTH_CONNECT_TIMEOUT_MS=3000
-DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
-```
-
-域服务地址、绑定凭据和证书信任配置属于部署秘密，不得进入仓库。优先使用 LDAPS；如现有域环境只能使用未加密 LDAP，必须由部署方显式开启并记录凭据传输风险，不能作为默认配置。
+域服务地址、账号格式、可选绑定凭据和证书信任配置统一保存在服务器的 `Secrets\production.env`，不得进入仓库或程序发布包。用户表保存规范化裸账号，登录接口可接受裸账号、匹配配置的 UPN 或 `DOMAIN\user`。首版默认使用用户 UPN 直接绑定，再在配置 Base DN 内以经过 RFC 4515 转义的 `sAMAccountName` 筛选器确认用户；如果域策略不允许，再通过配置启用只读搜索账号，不改变登录接口和权限模型。如域环境支持，应优先使用 LDAPS；使用未加密 LDAP 时必须由部署方明确接受并记录凭据传输风险。
 
 ### 7.1 超级管理员模拟身份
 
@@ -316,12 +387,24 @@ DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
 
 ## 8. API 契约、错误和导出
 
+- 正式 API 基础路径固定为 `/api/flowpilot/v1`：`api` 表示站点 API 入口，`flowpilot` 用于共享 IIS 主站下的系统隔离，`v1` 表示接口主版本。NestJS 全局前缀与 URI 版本配置只能组合生成一次该路径，不能出现 `/v1/v1`。
 - OpenAPI 3.1 是正式接口的唯一事实来源，用来生成共享 TypeScript 类型、请求校验器和前端客户端；生成物不得手工编辑。
 - NestJS 实际响应需要通过契约测试，避免实现和 OpenAPI 漂移。
 - 错误使用 Problem Details 风格，包含稳定业务错误码和 traceId，不把数据库异常或绝对路径直接返回前端。
 - 写命令支持 `Idempotency-Key`；资源更新支持 `ETag/If-Match` 和 revision。
 - Mock 环境的 Bearer 身份只属于原型，正式接口改用服务端会话 Cookie。
 - Excel 文件仍由浏览器使用 ExcelJS 生成。后端只返回经过页面权限、数据范围、字段权限和全部查询条件过滤的数据集；单次最多 10000 行，不生成或暂存 `.xlsx`。
+- 正式 OpenAPI 全局只声明 Cookie；Mock Bearer 在正式契约中移除。空数据集返回 `rowCount=0` 和空 `rows`，不是业务错误。
+- 健康接口固定为 `/health/live`、`/health/ready` 和 `/health/details`。流程定义 JSON 导出固定为 `GET /process-definitions/{definitionId}/export`。
+- 自由协作初始表单修改使用 `PATCH`；暂存附件删除要求 `If-Match`；附件正文完整返回 `200`、合法单区间返回 `206`、非法或多区间返回 `416`，磁盘保留空间不足返回 `507`。
+- 角色和流程权限组的变更影响预览必须提交计划变更请求体。动态字段查询遵循 OpenAPI `deepObject` 编码，由生成客户端或经过契约测试的编码器实现。
+
+### 8.1 前端正式迁移边界
+
+- 正式浏览器不保存访问令牌，只使用同源 HttpOnly Cookie。
+- 登录启动只加载会话、权限和少量必要字典。用户、实例、任务、审计和 Outbox 使用服务端分页，不能随登录全量下载到 Zustand。
+- 流程定义列表只返回摘要，完整版本在设计器、发布页、详情和历史实例按需加载。
+- Zustand 只作为界面状态和可丢弃查询缓存；权限判断和领域状态变化必须由服务端重新执行。
 
 ## 9. 事务、Outbox 和后台任务
 
@@ -335,6 +418,8 @@ DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
 ### 9.2 Outbox
 
 - 需要发送邮件时，在业务事务中只写 Outbox 记录；事务提交后由后台任务调用 SMTP。
+- 任务激活邮件的受控目标路径为 `/processes/{instanceId}?taskId={taskId}`，结束邮件为 `/processes/{instanceId}`。`FLOWPILOT_PUBLIC_BASE_URL` 必须配置为包含 `/flowpilot` 的应用根地址；worker 第一次发送前解析并持久化绝对 URL，所有重试复用该 URL。链接中不得放置令牌或其他授权信息，登录后的返回地址只接受同源 FlowPilot 相对路径。
+- Outbox 和每次投递尝试均持久化到 SQL Server。Outbox 保存事件、实例/任务、收件人与邮箱快照、主题、最小模板数据、目标路径、解析后的链接、状态、计划/发送/死信时间、尝试次数和最后错误；投递尝试表保存每次 SMTP 调用的时间、结果和脱敏摘要。不得保存完整 MIME、完整渲染正文、业务附件、密码或 SMTP 凭据。
 - 首次失败后按 1、5、15、60、360 分钟重试，累计 6 次仍失败时进入死信。
 - 管理员可以手工安排死信重试；SMTP 故障不回滚已提交业务事务。
 
@@ -343,6 +428,7 @@ DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
 - 邮件、附件清理、过期会话和幂等记录清理由 API 进程内调度器执行。
 - 调度任务使用数据库状态和带超时的租约领取，服务重启后可以恢复卡住的处理中任务，不能只依赖内存计时器。
 - 当前只有一个 API 实例，但租约设计仍需防止任务重入和同一任务重复处理。
+- 默认每分钟扫描、每批最多 50 条、租约 5 分钟；邮件发送并发默认 5，单次 SMTP 超时 15 秒。具体值属于 `Config\application.env` 非敏感参数。
 
 ## 10. 数据保留、日志和备份
 
@@ -356,19 +442,21 @@ DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
 ## 11. 部署与健康检查
 
 - NestJS 只监听 `127.0.0.1`，由 IIS 提供内网入口。
-- Windows 服务使用独立低权限账号。程序目录只读，数据库、附件和日志目录分别授予最小读写权限。
-- 附件和日志放在固定持久化目录，不放进代码发布目录；SQL Server 通过部署配置的连接参数访问。
-- 提供存活、就绪和受权限保护的详细健康接口。
+- NestJS 使用 Node.js 24 LTS x64，由 WinSW 包装成 Windows 服务。应用通过 `nestjs-pino` 输出 JSON Lines 到标准输出，WinSW 按日期和大小滚动日志，并与 Windows 服务恢复策略共同处理异常退出。
+- Windows 服务使用独立低权限账号。程序目录只读，配置目录只读，附件和日志目录分别授予必要的修改权限；IIS 应用程序池不得访问附件、配置、日志和备份目录。
+- 配置、附件、日志和备份放在代码发布目录之外的固定持久化目录；部署和回滚只替换版本化程序目录，SQL Server 通过部署配置的连接参数访问。
+- `GET /api/flowpilot/v1/health/live` 提供匿名存活检查；`GET /api/flowpilot/v1/health/ready` 提供不泄露内部信息的匿名就绪检查；`GET /api/flowpilot/v1/health/details` 要求系统运维查看权限。
 - 数据库不可用或结构版本落后时不就绪；磁盘不足、附件清理失败或邮件死信显示降级。
 - 升级允许计划停机：停止服务、由 DBA 备份数据库、执行 SQL Server 迁移、启动服务、检查健康状态。
 - 正式数据库首次初始化只创建超级管理员、内置角色权限、必要字典和结构版本，不创建演示流程、实例、用户或附件。
+- 投影校验/重建、附件清单及完整性检查、数据库迁移、种子校验和超级管理员重置通过受控 CLI 执行，不提供普通 REST 维护写接口。
 
 ## 12. 建议实施顺序
 
 1. 固化 OpenAPI、统一 ID、时间、错误、revision 和幂等语义。
 2. 建立 NestJS 模块边界、领域仓储接口和 `PersistenceUnitOfWork`。
 3. 定义 SQL Server 逻辑数据模型、约束、索引和版本化迁移。
-4. 完成基于 `node-mssql` 的数据访问层、仓储契约测试和事务并发测试。
+4. 完成 TypeORM Entity/Mapper、基于仓储的常规数据访问、`QueryRunner` UoW、必要的参数化原生 SQL，以及仓储契约和事务并发测试。
 5. 实现按用户分流的域/本地密码认证、服务端会话、模拟身份、权限和数据范围校验。
 6. 实现流程定义版本、实例、任务、投影和事务命令。
 7. 实现本地附件暂存、引用、下载、清理和完整性检查。
@@ -379,10 +467,12 @@ DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
 ## 13. 首版验收重点
 
 - 同一构建产物通过部署配置连接 SQL Server 2016 SP2，数据库兼容级别 130，且不依赖 SQL Server 2017 或 SP3 才提供的能力。
+- TypeORM 生产配置确认关闭 `synchronize` 和 `migrationsRun`；普通 CRUD 使用 ORM，SQL Server 专用锁和复杂投影通过受控参数化 SQL 执行，二者共享同一 `QueryRunner` 事务且不存在事务外写入。
 - SQL Server 环境通过流程发布、发起、并行审批、驳回重提、重复修改、自由协作、附件和导出测试。
 - V1 的 A/B/C 实例和 V2 的 A/E/F 实例可以同时存在，详情按锁定版本展示，查询字段按当前规则投影。
 - JSON 与投影发生模拟故障时不会出现一边成功、一边失败；投影可以校验和重建。
 - 附件上传中断、业务提交失败、替换、过期和删除失败都能通过状态和后台任务恢复，不产生越权下载。
+- 替换或回滚实际程序目录中的程序不会修改同级附件目录；把附件目录错误配置到程序或 IIS 静态目录时服务拒绝就绪，IIS 无法绕过 API 直接访问附件正文。
 - 数据库结构落后时服务拒绝就绪；邮件或附件清理异常只形成可见降级，不破坏已提交业务事务。
 - 域用户通过 AD/LDAP 成功登录且不保存域密码；域服务不可用时不回退本地密码。密码用户和固定密码模式的超级管理员不依赖域服务，认证方式切换和密码重置边界符合账号配置。
 - 超级管理员模拟域用户或密码用户时均不要求目标用户凭据，直接返回双身份会话；普通用户和普通管理员不能调用该命令，审计同时保留真实操作者和生效用户。

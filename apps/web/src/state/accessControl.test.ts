@@ -150,6 +150,7 @@ describe("角色权限引擎", () => {
     expect(stored["ROLE-007"]).toEqual(["work-task:编辑", "work-task:查看"]);
     expect(stored["ROLE-CUSTOM"]).toEqual(["custom-page:查看"]);
     expect(stored["ROLE-SUPER"]).toContain("org-role:授权");
+    expect(stored["ROLE-SUPER"]).toEqual(expect.arrayContaining(["org-user:删除", "org-role:删除"]));
 
     storage.setItem(permissionModule.ROLE_PERMISSION_STORAGE_KEY, "{broken");
     expect(permissionModule.readStoredRolePermissions()).toEqual(permissionModule.defaultRolePermissionMap);

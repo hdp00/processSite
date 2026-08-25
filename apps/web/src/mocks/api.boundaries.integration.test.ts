@@ -196,6 +196,53 @@ describe("Mock REST API 通用契约", () => {
     expect(superAdmin?.authenticationMode).toBe("password");
   });
 
+  it("仅删除无引用用户和角色，并返回可读的引用冲突", async () => {
+    const disposableUser = await apiModule.flowPilotApi.directory.createUser({
+      account: "disposable.user",
+      email: "disposable.user@company.local",
+      authenticationMode: "domain",
+      name: "待删除用户",
+      department: ["rd", "rd-software"],
+      departmentPath: "研发 / 软件",
+      jobTitle: "员工",
+      roles: [],
+      status: "停用",
+    });
+    const disposableUserResource = await apiModule.flowPilotApi.directory.userResource(disposableUser.id);
+    await expect(clientModule.apiRequest(`/users/${disposableUser.id}`, { method: "DELETE" })).rejects.toMatchObject({
+      status: 428,
+      problem: { code: "IF_MATCH_REQUIRED" },
+    });
+    await expect(apiModule.flowPilotApi.directory.deleteUser(disposableUser.id, disposableUserResource.etag ?? "*"))
+      .resolves.toBeUndefined();
+    await expect(apiModule.flowPilotApi.directory.user(disposableUser.id)).rejects.toMatchObject({ status: 404 });
+
+    const referencedUserResource = await apiModule.flowPilotApi.directory.userResource("wangmin");
+    await expect(apiModule.flowPilotApi.directory.deleteUser("wangmin", referencedUserResource.etag ?? "*"))
+      .rejects.toMatchObject({
+        status: 409,
+        problem: { code: "USER_REFERENCED", title: "用户仍被系统引用" },
+      });
+
+    const disposableRole = await apiModule.flowPilotApi.directory.createRole({
+      name: "待删除角色",
+      description: "引用检查测试",
+      status: "停用",
+      memberUserIds: [],
+    });
+    const disposableRoleResource = await apiModule.flowPilotApi.directory.roleResource(disposableRole.id);
+    await expect(apiModule.flowPilotApi.directory.deleteRole(disposableRole.id, disposableRoleResource.etag ?? "*"))
+      .resolves.toBeUndefined();
+    await expect(apiModule.flowPilotApi.directory.roleResource(disposableRole.id)).rejects.toMatchObject({ status: 404 });
+
+    const referencedRoleResource = await apiModule.flowPilotApi.directory.roleResource("ROLE-005");
+    await expect(apiModule.flowPilotApi.directory.deleteRole("ROLE-005", referencedRoleResource.etag ?? "*"))
+      .rejects.toMatchObject({
+        status: 409,
+        problem: { code: "ROLE_REFERENCED", title: "角色仍被系统引用" },
+      });
+  });
+
   it("写资源强制 If-Match，并在冲突时返回当前 ETag", async () => {
     const resource = await clientModule.apiResource<unknown>("/process-definitions/pdf-review", {
       headers: bearer("admin"),

@@ -340,6 +340,8 @@ export const flowPilotApi = {
       normalizeDirectoryUser(await apiRequest<unknown>(`/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: remoteMode ? remoteUserInput(patch) : patch, ifMatch })),
     updateUserStatus: (userId: string, status: "启用" | "停用", ifMatch: string) =>
       apiRequest<unknown>(`/users/${encodeURIComponent(userId)}/status`, { method: "PUT", body: { status: remoteMode ? remoteStatus(status) : status }, ifMatch }).then(normalizeDirectoryUser),
+    deleteUser: (userId: string, ifMatch: string) =>
+      apiRequest<void>(`/users/${encodeURIComponent(userId)}`, { method: "DELETE", ifMatch }),
     resetPassword: async (userId: string, newPassword = "", ifMatch?: string) => {
       const result = await apiRequest<unknown>(`/users/${encodeURIComponent(userId)}/reset-password`, {
         method: "POST",
@@ -357,6 +359,8 @@ export const flowPilotApi = {
       apiRequest<unknown>("/roles", { method: "POST", body: remoteMode ? remoteRoleInput(input) : input, ...mutation() }).then(normalizeDomainRole),
     updateRole: (roleId: string, patch: Partial<DomainRole>, ifMatch?: string) =>
       apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}`, { method: "PATCH", body: remoteMode ? remoteRoleInput(patch) : patch, ifMatch }).then(normalizeDomainRole),
+    deleteRole: (roleId: string, ifMatch: string) =>
+      apiRequest<void>(`/roles/${encodeURIComponent(roleId)}`, { method: "DELETE", ifMatch }),
     groups: (query: PageQuery & { purpose?: string } = {}) =>
       pageRequest("/workflow-permission-groups", query, normalizeWorkflowGroup),
     groupResource: (groupId: string) => mappedResource(apiResource<unknown>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`), normalizeWorkflowGroup),

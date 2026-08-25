@@ -4,21 +4,31 @@
 
 ## 项目定位
 
-- 这是公司内部流程审核平台的首版交互原型，不是已接入后端的生产系统。
+- 这是公司内部流程审核平台的前端交互原型。应用已定义 REST API 边界，默认通过 MSW 在浏览器端模拟服务；仓库中尚无可部署的后端服务实现。
 - `REQUIREMENTS.md` 是需求的统一来源。实现业务变更前先查找对应章节；需求发生新增、调整或删除时，同步维护该文档及其变更记录。
-- 原型的重点是业务流程完整、交互可演示、角色权限表现一致。不要把尚未确认的讨论项当作已确认需求。
-- 未经明确要求，不要引入真实认证、数据库、文件存储或后端服务，也不要把原型数据访问包装成看似真实的生产 API。
+- `document/flowpilot-rest-api.openapi.yaml` 是前后端 REST 契约来源；`document/MOCK_REST_API.md`、`document/BACKEND_IMPLEMENTATION_DESIGN.md` 和 `document/IIS_DEPLOYMENT.md` 分别说明 mock 行为、后端落地设计和 IIS 部署。修改 API 行为、契约、部署方式或 mock 规则时，检查并同步对应文档。
+- 原型的重点是业务流程完整、交互可演示、角色权限一致，以及 API 边界可替换。不要把尚未确认的讨论项当作已确认需求，也不要在未获明确要求时添加真实认证、数据库、文件存储或后端服务。
 
 ## 技术栈与目录
 
 - 包管理器：pnpm 11，工作区配置位于 `pnpm-workspace.yaml`。
-- Web 应用：`apps/web`，使用 React 19、TypeScript、Vite、Ant Design 6、React Router 7 和 Zustand。
+- Web 应用：`apps/web`，使用 React 19、TypeScript、Vite、Ant Design 6、React Router 7、Zustand、MSW、Playwright 和 Vitest。
+- `apps/web/src/api`：REST 客户端、前端契约类型、远端 DTO 适配器、缓存和远端数据水合。页面应经由 `flowPilotApi` 访问服务，不要自行发起 `fetch` 或绕过响应规范化。
+- `apps/web/src/mocks`：浏览器 mock API、请求处理器和 mock 运行时；默认开发模式由 `main.tsx` 启动。mock 数据与行为须与 OpenAPI 契约及远端适配器保持一致。
 - `apps/web/src/pages`：路由级页面；页面专属样式通常与页面文件放在同一目录。
 - `apps/web/src/components`：跨页面复用的 UI 组件。
+- `apps/web/src/hooks`：可复用交互逻辑；`apps/web/e2e`：Playwright 端到端、可访问性和视觉回归测试，截图基线位于相邻 `visual.spec.ts-snapshots` 目录。
 - `apps/web/src/state`：原型状态、角色权限和流程定义状态。
 - `apps/web/src/data`：共享类型、模拟数据和列表字段配置。
 - `apps/web/src/utils`：无 UI 的通用逻辑。
-- `apps/web/src/App.tsx`：路由、登录保护、角色入口限制和全局 Ant Design 主题。
+- `apps/web/src/App.tsx`：路由、登录保护、角色入口限制和全局 Ant Design 主题；`apps/web/src/main.tsx`：API 模式初始化；`apps/web/src/styles.css`：全局壳层样式。
+
+## 运行、API 模式与部署
+
+- Vite 应用基路径固定为 `/flowpilot/`。本地入口为 `http://127.0.0.1:5173/flowpilot/`；不要假定应用部署在站点根路径。
+- 未设置 `VITE_API_MODE`（开发环境）或设置 `VITE_API_MODE=mock` 时，应用启动 MSW mock。设置 `VITE_API_MODE=remote` 时，应用访问 `VITE_API_BASE_URL`（默认 `/api/v1`），并在启动时读取当前会话和水合远端数据。
+- API 访问令牌保存在 `sessionStorage`；原型和 mock 数据使用定向的 `localStorage` 键。修改存储形状、令牌逻辑或重置逻辑时，兼容旧数据或有意识地升级键名，绝不清空整个 `localStorage`。
+- IIS 部署使用 `apps/web/public/web.config`，并以 `/flowpilot` 作为应用路径。修改 Vite 基路径、客户端路由回退或 API 代理假设时，一并检查该文件和 `document/IIS_DEPLOYMENT.md`。
 
 ## 常用命令
 
@@ -30,25 +40,31 @@ pnpm dev
 pnpm test
 pnpm test:coverage
 pnpm test:coverage:all
+pnpm build:debug
 pnpm test:e2e
 pnpm test:e2e:edge
+pnpm test:visual
+pnpm test:update-snapshots
 pnpm test:all
 pnpm typecheck
 pnpm build
 ```
 
 - 开发服务器默认监听 `http://127.0.0.1:5173`。
-- `pnpm test` 运行 Vitest 单元、领域集成和组件测试；`pnpm test:coverage` 执行核心领域覆盖率门禁，`pnpm test:coverage:all` 生成包含页面与浏览器适配代码的全源码报告。
-- `pnpm test:e2e` 运行 Chromium 全量浏览器测试；`pnpm test:e2e:edge` 运行 Microsoft Edge 冒烟测试。仓库当前不配置 CI 或 lint 脚本，不要声称运行了不存在的检查。
-- 日常修改至少运行 `pnpm typecheck` 和受影响测试；涉及路由、构建配置、依赖或交付前修改时运行 `pnpm test:all`。
+- `pnpm test` 运行 Vitest 单元、领域集成、组件和 API/mock 契约测试；`pnpm test:coverage` 执行核心领域覆盖率门禁，`pnpm test:coverage:all` 生成全源码覆盖率报告。
+- `pnpm test:e2e` 运行 Chromium 全量端到端测试；`pnpm test:e2e:edge` 运行 Microsoft Edge 的 `@smoke` 用例；`pnpm test:visual` 运行 Chromium 视觉回归，`pnpm test:update-snapshots` 仅在人工确认视觉变更后更新基线。
+- E2E 默认构建 debug 包并启动本地 preview mock 服务。要测试已部署服务，设置 `FLOWPILOT_TEST_TARGET=remote` 和 `FLOWPILOT_TEST_BASE_URL`；必要时用 `FLOWPILOT_TEST_PORT` 指定本地 preview 端口。
+- 日常修改至少运行 `pnpm typecheck` 和受影响测试；涉及路由、构建配置、依赖、API 契约、mock 或交付前修改时运行 `pnpm test:all`。仓库未配置 lint 脚本，不要声称运行了 lint 或不存在的检查。
 
 ## 实现约定
 
 - 遵循现有 TypeScript 风格：严格类型、双引号、分号、函数组件和具名领域类型。不要用 `any`、`@ts-ignore` 或关闭类型检查来绕过错误。
+- 新增或调整 REST 调用时，先更新 `src/api/contracts.ts`、`src/api/flowPilotApi.ts`、`src/api/remoteAdapters.ts` 与 OpenAPI 契约中实际受影响的部分；随后同步 MSW handler、mock 数据和契约/边界测试。服务端返回的非可信 JSON 必须经适配器校验和规范化后进入页面或 store。
+- API 失败必须使用现有 `ApiError` 和页面反馈模式处理；不得把远端响应直接断言为领域类型，也不要让 mock 专用实现泄漏到页面。
 - 优先使用现有 Ant Design 组件、全局主题 token 和既有页面样式，避免引入第二套 UI 组件库或孤立的视觉语言。
 - 用户可见文本以简体中文为主。新增提示应明确说明操作结果或下一步，并沿用 `message`、`Modal`、`Result` 等现有反馈模式。
 - 页面级导航应在 `App.tsx` 注册，并评估是否需要 `ProtectedRoute` 或 `PersonaGate`。不要只隐藏按钮而遗漏路由和动作级权限判断。
-- 业务数据结构优先定义或复用 `src/data/types.ts` 中的类型；共享模拟数据放入 `src/data/mock.ts`，不要在多个页面复制不同版本的同一业务实体。
+- 业务数据结构优先定义或复用 `src/data/types.ts`、`src/api/contracts.ts` 中的类型；共享初始数据放入 `src/data/mock.ts` 或相应 mock repository，避免在页面中复制不同版本的业务实体。
 - 跨页面、可持久化的业务状态放入合适的 Zustand store；短暂的表单、弹窗和页面筛选状态保留在组件内。
 - 更新 store 时保持不可变更新，并同时维护实例状态、当前节点、待办、通知和审计/时间线等相互关联的数据。
 - 超级管理员、普通角色和流程权限组是不同层次的授权概念。修改权限逻辑时同时检查 `rolePermissions.ts`、相关 store、路由入口和页面动作。
@@ -56,8 +72,8 @@ pnpm build
 
 ## 原型持久化
 
-- 当前原型使用 Zustand `persist` 和 `window.localStorage` 保存演示状态；相关 key 分布在 state、设计器和列表配置代码中。
-- 修改持久化数据形状时，应提供兼容旧数据的读取/迁移或有意识地升级存储 key，避免已有浏览器数据导致空白页或运行时异常。
+- 当前原型使用 Zustand `persist`、设计器草稿、列表配置、编号序列及 mock 运行时的定向浏览器存储。相关 key 分布在 state、api、mocks、设计器和列表配置代码中。
+- 修改持久化数据形状时，应提供兼容旧数据的读取/迁移或有意识地升级存储 key，避免已有浏览器数据导致空白页或运行时异常；读取时考虑数据不存在、JSON 损坏和旧版本字段缺失。
 - 重置演示数据必须一并清理受影响的存储 key 和编号序列。不要用清空整个 `localStorage` 的方式破坏同源下的无关数据。
 - 依赖浏览器 API 的逻辑应考虑数据不存在、JSON 损坏和旧版本字段缺失的情况。
 
@@ -67,19 +83,20 @@ pnpm build
 - 复用已有类名和布局模式，避免大范围覆盖 Ant Design 内部选择器。确需覆盖时将选择器限制在页面根类下。
 - 修改布局后检查仓库现有关键断点以及 `1180px` 最小宽度约束；新增响应式行为时不要破坏设计器、表格和侧栏的可操作性。
 - 表单必须保留必填校验、失败提示、成功反馈及按钮禁用/加载状态。危险操作应使用确认对话框，并清楚说明影响范围。
+- 可访问性和视觉相关改动应同步更新相应 E2E 用例或经人工确认后更新截图基线。
 
 ## 工作流程
 
-1. 阅读 `REQUIREMENTS.md` 的相关章节及待修改文件的相邻实现。
+1. 阅读 `REQUIREMENTS.md` 的相关章节、对应 API/部署文档及待修改文件的相邻实现。
 2. 检查 `git status`，保留用户已有改动；不要顺手重构无关代码或覆盖未提交内容。
-3. 以最小完整改动实现需求，并同步更新共享类型、模拟数据、权限判断和文档中实际受影响的部分。
-4. 运行 `pnpm typecheck` 和受影响的 Vitest；按修改风险运行覆盖率、构建及浏览器测试，交付前运行 `pnpm test:all`。
-5. 对受影响流程做浏览器验证，至少覆盖正常路径、校验失败路径和一个无权限/不同身份路径；新增稳定业务链路时同步补自动化用例。
+3. 以最小完整改动实现需求，并同步更新共享类型、API 契约、mock、状态、权限判断和文档中实际受影响的部分。
+4. 运行 `pnpm typecheck` 和受影响的 Vitest；按风险补充 API 边界、E2E、可访问性或视觉测试。涉及路由、构建配置、依赖、API 契约及完整功能链路修改时，交付前运行 `pnpm test:all`。
+5. 对受影响流程做浏览器验证，至少覆盖正常路径、校验失败路径和一个无权限/不同身份路径；涉及 remote 模式时验证 API 初始化失败与会话失效的回退行为，新增稳定业务链路时同步补自动化用例。
 
 ## 完成标准
 
-- 实现与 `REQUIREMENTS.md` 中的已确认需求一致。
+- 实现与 `REQUIREMENTS.md` 中的已确认需求及 REST 契约一致。
 - TypeScript 检查和受影响自动化测试通过；交付前的覆盖率、双构建与浏览器门禁通过。
-- 无明显控制台错误，刷新后持久化状态仍可读取。
+- 无明显控制台错误，刷新后持久化状态仍可读取，API/mock 模式切换可正常初始化。
 - 关键操作具有中文反馈，权限边界和异常状态可解释。
 - 提交内容聚焦本次任务，不包含生成产物、`node_modules` 或无关格式化改动。

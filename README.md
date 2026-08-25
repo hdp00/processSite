@@ -4,6 +4,9 @@
 
 - [Mock REST API 使用说明](document/MOCK_REST_API.md)
 - [IIS 部署说明](document/IIS_DEPLOYMENT.md)
+- [正式后端实现设计](document/BACKEND_IMPLEMENTATION_DESIGN.md)
+- [SQL Server 数据库结构](document/BACKEND_DATABASE_SCHEMA.md)
+- [后端实施决策与开工清单](document/BACKEND_IMPLEMENTATION_CHECKLIST.md)
 - [OpenAPI 3.1 契约](document/flowpilot-rest-api.openapi.yaml)
 
 ```bash
@@ -14,7 +17,7 @@ pnpm dev
 构建命令按数据来源严格分开：
 
 ```bash
-# 正式包：请求同源 /api/v1，由 IIS 代理到后端
+# 正式包：请求同源 /api/flowpilot/v1，由 IIS 代理到后端
 pnpm build
 
 # HTTP 演示包：使用页面内 Mock，不注册 Service Worker
