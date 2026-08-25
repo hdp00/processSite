@@ -63,7 +63,7 @@ debug 包不注册 Service Worker，不要求 HTTPS。其流程状态保存在�
 
 ## 3. NestJS Windows 服务
 
-- 服务器安装 Node.js 24 LTS x64，并使用仓库规定的具体补丁版本。Node.js 官方平台基线包含 Windows Server 2016 x64，但仍必须在目标服务器执行启动、SQL 驱动、Argon2、LDAP、文件流和服务重启冒烟测试。
+- 服务器安装 Node.js 24 LTS x64，并使用仓库规定的具体补丁版本。Node.js 官方平台基线包含 Windows Server 2016 x64，但仍必须在目标服务器执行启动、SQL 驱动、scrypt 参数与并发内存、LDAP、Axios 受控 HTTP 调用、SMTP、文件流和服务重启冒烟测试。生产依赖不得要求 node-gyp、Visual Studio、ODBC 或运行时下载原生二进制文件。
 - 后端发布目录为 `{FLOWPILOT_APP_DIR}\api`，包含编译产物、生产依赖、WinSW 可执行文件及不含秘密的服务模板。配置和秘密文件仍从父目录读取，不复制进发布目录。
 - 使用 WinSW 将 `node.exe` 和后端入口包装为 Windows 服务，服务名建议固定为 `FlowPilotApi`，监听 `127.0.0.1:3000`。WinSW 配置必须把 `FLOWPILOT_APP_DIR` 设为实际绝对路径，不能依赖当前工作目录。
 - 应用使用 `nestjs-pino` 把 JSON Lines 写到标准输出；WinSW 按日期和大小把标准输出/错误滚动到 `{FLOWPILOT_HOME}\Logs`。日志默认保留30天，不记录密码、Cookie、令牌、连接字符串、完整表单和附件正文。

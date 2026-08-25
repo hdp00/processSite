@@ -368,6 +368,8 @@ export const flowPilotApi = {
       apiRequest<unknown>("/workflow-permission-groups", { method: "POST", body: remoteMode ? remoteGroupInput(input) : input, ...mutation() }).then(normalizeWorkflowGroup),
     updateGroup: (groupId: string, patch: Partial<WorkflowPermissionGroup>, ifMatch?: string) =>
       apiRequest<unknown>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`, { method: "PATCH", body: remoteMode ? remoteGroupInput(patch) : patch, ifMatch }).then(normalizeWorkflowGroup),
+    deleteGroup: (groupId: string, ifMatch: string) =>
+      apiRequest<void>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`, { method: "DELETE", ifMatch }),
   },
   organization: {
     departments: async (q?: string) => normalizeDepartments(await apiRequest<unknown>("/departments", { query: { q } })),

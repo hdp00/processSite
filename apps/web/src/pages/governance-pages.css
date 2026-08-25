@@ -604,7 +604,7 @@
 
 .gov-permission-actions {
   display: grid;
-  grid-template-columns: repeat(3, 104px);
+  grid-template-columns: repeat(4, 84px);
   align-items: center;
   justify-content: start;
   gap: 4px;

@@ -40,6 +40,21 @@ flowchart LR
     N --> O["邮件 Outbox / 内网 SMTP"]
 ```
 
+### 2.1 最小依赖基线
+
+正式生产依赖采用白名单管理，并在开始实现时将直接依赖和传递依赖锁定到 `pnpm-lock.yaml`。允许的主要运行时依赖如下：
+
+- NestJS 基础与官方集成：`@nestjs/common`、`@nestjs/core`、`@nestjs/platform-express`、`@nestjs/config`、`@nestjs/typeorm`、`@nestjs/schedule`；
+- 数据与配置：`typeorm`、`mssql`、`zod`。`mssql` 只使用默认纯 JavaScript `tedious` 驱动，禁止安装需要 ODBC 和原生二进制的 `msnodesqlv8`；
+- 基础设施：`ldapts`、`nodemailer`、`axios`、`pino`、`nestjs-pino`；
+- 文件与 HTTP 安全：`busboy`、`file-type`、`yauzl`、`sanitize-html`、`content-disposition`、`helmet`、`cookie-parser`。
+
+`axios` 由基础设施层直接封装，不引入 `@nestjs/axios`。每个已登记的远端服务使用独立客户端实例和配置白名单，必须设置连接/响应超时、最大响应体及受控重试；用户输入不能决定协议、主机、端口或完整 URL，入站 Cookie、Authorization 和内部请求头不得自动透传。当前首版没有已确认的通用公网调用，不能因为已安装 `axios` 而开放任意代理接口。
+
+本地密码使用 Node.js 内置异步 `crypto.scrypt()`，服务端业务标识使用内置 `crypto.randomUUID()`，常规哈希、随机数、路径、文件流和 HTTP 基础能力优先使用 `node:` 模块。生产运行包不引入 `argon2`、`bcrypt`、`uuid`、`fs-extra`、日期工具库、模板引擎、`msnodesqlv8`、Redis/BullMQ、RabbitMQ、Kafka、Passport/JWT、`express-session`、`@nestjs/swagger`、`@nestjs/terminus`、`@nestjs/throttler`、`class-validator`、`class-transformer`、`nestjs-zod`、TypeORM CLS/事务扩展或 SWC 原生加速器。确需新增白名单外依赖时必须先记录用途、替代方案、传递依赖、原生安装脚本和 Windows Server 2016 验证结果。
+
+`@redocly/cli`、`orval`、`@nestjs/cli`、`@nestjs/testing`、Vitest、`supertest`、`smtp-server`、TypeScript 和类型声明只属于开发/测试依赖，不进入生产运行包。所有依赖使用精确版本并冻结 lockfile；服务器不执行无版本约束的安装或升级。
+
 ## 3. 流程定义、版本和动态字段
 
 ### 3.1 V1 与 V2 的保存原则
@@ -351,16 +366,16 @@ Data/Attachments/
 - 默认角色种子中，文控专员拥有 `work-task:查看`、`work-task:审核` 和 `work-task:关闭`；审核员拥有查看与审核但不默认拥有关闭。具体节点和实例仍由流程权限组做第二层授权。
 
 - `users.authentication_mode` 使用受约束枚举 `domain | password`。普通用户默认 `domain`；系统内置超级管理员固定为 `password`，仓储和领域服务都必须拒绝修改其登录方式。
-- `users.password_hash` 可空且只能在 `authentication_mode=password` 时存在。正式本地密码使用 Argon2id 散列，不保存或记录明文；域用户的本地密码散列必须为 `NULL`。数据库迁移和仓储契约测试需要校验这项组合约束。
+- `users.password_hash` 可空且只能在 `authentication_mode=password` 时存在。正式本地密码使用 Node.js 内置异步 `crypto.scrypt()` 生成版本化编码字符串，不保存或记录明文；域用户的本地密码散列必须为 `NULL`。数据库迁移和仓储契约测试需要校验这项组合约束。
 - 登录接口只接收 `loginName` 和 `password`。服务端先按规范化账号读取本地用户并检查启用状态，再根据数据库中的登录方式分流；客户端不能通过请求参数指定认证方式，避免绕过服务端配置。
 - `domain` 模式把登录账号按部署配置转换为域账号，并通过公司 AD/LDAP 认证提供方验证本次密码。域密码只允许存在于请求处理内存中，不能写入数据库、会话、审计、指标或日志；认证成功后仍以 FlowPilot 本地用户 ID 加载部门、角色、权限组和数据范围，不执行即时用户创建或域组授权同步。
 - 域服务不可达、超时或配置错误返回 `503 DOMAIN_AUTHENTICATION_UNAVAILABLE`，不得回退到本地密码；凭据不正确统一返回 `401 INVALID_CREDENTIALS`，响应不得泄露账号是否存在或采用哪种登录方式。域提供方调用应设置较短连接和操作超时，并纳入受保护的详细健康检查。
-- `password` 模式只校验 Argon2id 散列。业务需求仍允许最短 1 个字符的本地密码，因此需要通过登录速率限制降低在线猜测风险；这不等于强密码策略。
+- `password` 模式只校验版本化 scrypt 散列。业务需求仍允许最短 1 个字符的本地密码，因此需要通过登录速率限制降低在线猜测风险；这不等于强密码策略。
 - 登录失败不锁定账号；两种认证方式都按“账号 + 来源 IP”和来源 IP 总量做临时限制，超限返回 `429`。
-- Argon2id 默认使用 64 MiB 内存、3 次迭代、并行度 1、16 字节盐和 32 字节哈希；完整参数保存在编码字符串中，参数提高后在下次成功登录时渐进重哈希。登录限流默认按“账号 + 客户端 IP”15 分钟 5 次失败、按 IP 15 分钟 100 次失败，封禁 15 分钟，并允许从非敏感配置调整。
+- scrypt 基线参数为 `N=65536`、`r=8`、`p=1`、`maxmem=96 MiB`、16 字节随机盐和 32 字节派生密钥；算法标识、格式版本和完整参数随散列编码保存，使用 `timingSafeEqual` 比较，参数提高后在下次成功登录时渐进重哈希。正式参数需在目标服务器测量延迟和并发内存后确认，但不得静默降低已经保存账号的强度。登录限流默认按“账号 + 客户端 IP”15 分钟 5 次失败、按 IP 15 分钟 100 次失败，封禁 15 分钟，并允许从非敏感配置调整。
 - 新建普通用户默认 `domain` 且不接收初始密码；新建 `password` 用户必须提供初始密码。从 `domain` 切换到 `password` 时在同一命令中提供新密码，从 `password` 切换到 `domain` 时原子清空散列。登录方式变更使该用户全部现存会话失效。
 - 密码重置命令只接受 `password` 用户；对 `domain` 用户返回 `409 AUTHENTICATION_MODE_CONFLICT`。域密码由域系统维护，FlowPilot 不提供修改或重置入口。
-- 用户和角色删除使用独立的 `org-user:删除`、`org-role:删除` 权限并要求 `If-Match`。应用服务在同一事务中执行权威引用查询：用户覆盖角色、流程权限组、流程版本引用展开表、实例、任务、附件及其他历史外键；角色覆盖成员、流程权限组、流程版本和运行资格。存在引用返回稳定的 `USER_REFERENCED` 或 `ROLE_REFERENCED` 及简洁中文分类摘要，不泄露 SQL 或内部路径；有历史业务引用时只允许停用。
+- 用户、角色、部门/职务和流程权限组删除使用独立的 `org-user:删除`、`org-role:删除`、`org-department:删除`、`org-group:删除` 权限并要求 `If-Match`；普通编辑权限不能替代删除。应用服务在同一事务中执行权威引用查询：用户覆盖角色、流程权限组、流程版本引用展开表、实例、任务、附件及其他历史外键；角色覆盖成员、流程权限组、流程版本和运行资格；部门覆盖用户和下级部门；职务覆盖用户；流程权限组覆盖所有流程版本和节点配置。存在引用返回稳定错误码及简洁中文分类摘要，不泄露 SQL 或内部路径；有历史业务引用时只允许停用。
 - 当前登录账号和内置超级管理员不可删除。无引用用户删除成功时同步撤销其全部会话；审计先写入并保留，关联历史不得级联删除。前端仅展示服务端结果，不以当前页缓存代替引用检查。
 - 正式后端使用服务端不透明会话。Cookie 只保存高强度随机令牌，数据库只保存令牌散列。
 - 会话闲置 8 小时失效，绝对有效期 24 小时。用户停用或密码重置后，全部现存会话立即失效。

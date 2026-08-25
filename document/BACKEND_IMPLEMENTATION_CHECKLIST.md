@@ -7,10 +7,22 @@
 - 后端工作区使用 `apps/api`，包名建议为 `@process-site/api`；共享 OpenAPI 生成物放在独立 workspace 包中，不由页面或 NestJS DTO 手工复制。
 - 生产运行时使用 Node.js 24 LTS x64，并在开始实现时将具体补丁版本写入仓库运行时版本文件和部署清单。升级补丁版本必须重新执行 Windows Server 2016 冒烟测试。
 - 版本依据以 Node.js 官方的 [发布状态](https://nodejs.org/en/about/previous-releases) 和 [v24.x 支持平台](https://github.com/nodejs/node/blob/v24.x/BUILDING.md#platform-list) 为准；如果服务器操作系统或 Node.js 支持状态变化，部署前必须重新评估，不能通过跳过平台检查强行运行。
-- NestJS、TypeORM 0.3、`@nestjs/typeorm`、`node-mssql`、TypeScript 和所有生成器使用确切版本写入 lockfile；生产依赖不得使用未锁定的全局安装。
+- NestJS、TypeORM 0.3、`@nestjs/typeorm`、`mssql`、TypeScript 和所有生成器使用精确版本写入 package manifest 和 lockfile；生产依赖不得使用未锁定的全局安装。
 - 配置使用 `@nestjs/config` 加载，使用 Zod 在启动时校验。日志使用 `nestjs-pino` 输出结构化 JSON 到标准输出，由 WinSW 负责服务日志滚动。
 - Windows 服务固定使用 WinSW 包装 Node.js 进程。服务使用独立低权限账号，自动重启次数和退避由 WinSW 与 Windows 服务恢复策略共同配置。
 - 正式构建、数据库迁移、离线维护命令和 API 启动使用不同入口，但复用同一配置校验和依赖注入模块。
+
+### 1.1 生产依赖白名单
+
+- NestJS 与集成：`@nestjs/common`、`@nestjs/core`、`@nestjs/platform-express`、`@nestjs/config`、`@nestjs/typeorm`、`@nestjs/schedule`。
+- 数据与配置：`typeorm`、`mssql`、`zod`；`mssql` 固定使用默认纯 JavaScript `tedious`，不得安装 `msnodesqlv8`。
+- 基础设施：`ldapts`、`nodemailer`、`axios`、`pino`、`nestjs-pino`。
+- 文件与 HTTP 安全：`busboy`、`file-type`、`yauzl`、`sanitize-html`、`content-disposition`、`helmet`、`cookie-parser`。
+- `axios` 直接封装，不增加 `@nestjs/axios`；统一配置超时、最大响应体、目标地址白名单、敏感请求头隔离和仅针对安全/幂等请求的受控重试。禁止接受用户提供的完整目标 URL。
+- 密码派生、UUID、随机数、摘要、路径和文件流优先使用 Node.js 内置模块；禁止 `argon2`、`bcrypt`、`msnodesqlv8` 以及任何依赖 `node-gyp`、Visual Studio、ODBC 或运行时下载二进制文件的生产模块。
+- 不引入 Redis/BullMQ、RabbitMQ、Kafka、Passport/JWT、`express-session`、`@nestjs/swagger`、`@nestjs/terminus`、`@nestjs/throttler`、`class-validator`、`class-transformer`、`nestjs-zod`、TypeORM CLS/事务扩展、模板引擎、日期工具库、`uuid`、`fs-extra` 或 SWC 原生加速器。
+- `@redocly/cli`、`orval`、`@nestjs/cli`、`@nestjs/testing`、Vitest、`supertest`、`smtp-server`、TypeScript 和类型声明只放开发依赖，不复制到生产运行包。
+- 新增白名单外依赖前必须记录必要性、替代方案、传递依赖、安装脚本和目标服务器验证结果；依赖树新增 `.node` 文件或本机编译步骤时阻断发布。
 
 ## 2. 正式 API 契约决策
 
@@ -85,7 +97,7 @@ DOMAIN_AUTH_TLS_REJECT_UNAUTHORIZED=true
 
 ## 6. 本地密码、会话和请求安全
 
-- Argon2id 默认参数：内存 64 MiB、迭代 3 次、并行度 1、盐 16 字节、哈希 32 字节；编码后的完整参数随哈希保存。参数以后提高时在用户下次成功登录后渐进重哈希。
+- 本地密码使用 Node.js 内置异步 `crypto.scrypt()`，不安装 Argon2/bcrypt 原生模块。基线参数为 `N=65536`、`r=8`、`p=1`、`maxmem=96 MiB`、16 字节随机盐和 32 字节派生密钥；算法、格式版本和完整参数随散列编码保存，比较使用 `timingSafeEqual`。目标服务器实测后可以提高参数，已有较低参数在成功登录后渐进重哈希。
 - 登录限流默认按“规范账号 + 客户端 IP”15 分钟最多 5 次失败，并按客户端 IP 15 分钟最多 100 次失败；封禁 15 分钟，参数可配置。成功登录只清除账号维度计数，不绕过 IP 总量限制。
 - 仅信任从本机 IIS 反向代理到 `127.0.0.1` 的转发头；不得信任来自任意网络来源的 `X-Forwarded-For`。
 - Cookie 名称 `flowpilot_session`，`Path=/api/flowpilot`，`HttpOnly`、`SameSite=Strict`；当前 HTTP 部署 `Secure=false`，启用 HTTPS 后必须配置为 `true`。
@@ -133,7 +145,7 @@ FLOWPILOT_BUSINESS_TIME_ZONE=Asia/Shanghai
 - AD 和 SMTP 使用可控测试替身覆盖失败映射，并在部署环境各完成一次真实域登录和测试邮件。
 - 附件测试覆盖中断、超限、危险签名、路径穿越、Range、磁盘不足、业务事务失败、替换、重复清理和越权下载。
 - OpenAPI 生成、请求/响应校验、Problem Details、ETag、If-Match、幂等重放和 Cookie 会话必须有契约测试。
-- 用户和角色删除测试必须覆盖独立动作权限、内置项、当前账号、无引用成功、各类可变与历史引用冲突、过期 ETag、会话撤销、审计保留及并发新增引用时的事务竞态。
+- 用户、角色、部门/职务和流程权限组删除测试必须覆盖独立动作权限、内置项、当前账号、无引用成功、各类可变与历史引用冲突、过期 ETag、会话撤销、审计保留及并发新增引用时的事务竞态；仅有编辑权限时删除接口必须返回 403。
 - IIS 验收覆盖静态路由、Cookie、反向代理头、上传大小、Range、健康检查、服务重启和旧版本回滚。
 
 ## 10. 部署人员后续填写项

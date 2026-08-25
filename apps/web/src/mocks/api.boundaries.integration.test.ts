@@ -243,6 +243,43 @@ describe("Mock REST API 通用契约", () => {
       });
   });
 
+  it("部门职务和流程权限组删除使用独立权限并保留引用保护", async () => {
+    const department = await apiModule.flowPilotApi.organization.createDepartment({ name: "待删除部门" });
+    const position = await apiModule.flowPilotApi.organization.createPosition({ name: "待删除职务" });
+    const group = await apiModule.flowPilotApi.directory.createGroup({
+      name: "待删除流程权限组",
+      purposes: ["审批/受理"],
+      status: "停用",
+      directMembers: [],
+      linkedRoles: [],
+    });
+    const departmentResource = await apiModule.flowPilotApi.organization.department(department.id);
+    const positionResource = await apiModule.flowPilotApi.organization.position(position.id);
+    const groupResource = await apiModule.flowPilotApi.directory.groupResource(group.id);
+
+    localStorage.setItem("flowpilot-role-permissions-v2", JSON.stringify({
+      "ROLE-001": ["org-department:查看", "org-department:编辑", "org-group:查看", "org-group:编辑"],
+    }));
+    const deniedRequests = await Promise.all([
+      fetch(`${API}/departments/${encodeURIComponent(department.id)}`, { method: "DELETE", headers: bearer("admin", { "If-Match": departmentResource.etag ?? "*" }) }),
+      fetch(`${API}/positions/${encodeURIComponent(position.id)}`, { method: "DELETE", headers: bearer("admin", { "If-Match": positionResource.etag ?? "*" }) }),
+      fetch(`${API}/workflow-permission-groups/${encodeURIComponent(group.id)}`, { method: "DELETE", headers: bearer("admin", { "If-Match": groupResource.etag ?? "*" }) }),
+    ]);
+    expect(deniedRequests.map((response) => response.status)).toEqual([403, 403, 403]);
+
+    localStorage.removeItem("flowpilot-role-permissions-v2");
+    await expect(apiModule.flowPilotApi.organization.removeDepartment(department.id, departmentResource.etag ?? "*"))
+      .resolves.toBeUndefined();
+    await expect(apiModule.flowPilotApi.organization.removePosition(position.id, positionResource.etag ?? "*"))
+      .resolves.toBeUndefined();
+    await expect(apiModule.flowPilotApi.directory.deleteGroup(group.id, groupResource.etag ?? "*"))
+      .resolves.toBeUndefined();
+
+    const referencedGroup = await apiModule.flowPilotApi.directory.groupResource("PDF审核_研发_流程权限组");
+    await expect(apiModule.flowPilotApi.directory.deleteGroup("PDF审核_研发_流程权限组", referencedGroup.etag ?? "*"))
+      .rejects.toMatchObject({ status: 409, problem: { code: "WORKFLOW_GROUP_REFERENCED" } });
+  });
+
   it("写资源强制 If-Match，并在冲突时返回当前 ETag", async () => {
     const resource = await clientModule.apiResource<unknown>("/process-definitions/pdf-review", {
       headers: bearer("admin"),

@@ -474,6 +474,7 @@ export function DepartmentManagementPage() {
   const confirmEditorClose = useCloseEditorConfirmation();
   const personaId = usePrototypeStore((state) => state.personaId);
   const canEditOrganization = hasPersonaPermission(personaId, "org-department:编辑");
+  const canDeleteOrganization = hasPersonaPermission(personaId, "org-department:删除");
   const [section, setSection] = useState<"departments" | "jobTitles">("departments");
   const storedDepartments = useOrganizationStore((state) => state.departments);
   const setDepartments = useOrganizationStore((state) => state.setDepartments);
@@ -550,8 +551,8 @@ export function DepartmentManagementPage() {
       setDepartments((rows) => rows.filter((item) => item.key !== record.key));
       setSelectedKey("rd");
       message.success("未引用部门已删除");
-    } catch {
-      message.error("部门删除失败，请确认没有用户或下级部门引用");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "部门删除失败，请确认没有用户或下级部门引用");
     }
   };
   const changePositionStatus = async (record: JobTitleRecord) => {
@@ -573,8 +574,8 @@ export function DepartmentManagementPage() {
       await flowPilotApi.organization.removePosition(record.id, resource.etag ?? "*");
       setJobTitles((rows) => rows.filter((item) => item.id !== record.id));
       message.success("职务已删除");
-    } catch {
-      message.error("职务删除失败，请确认没有用户引用");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "职务删除失败，请确认没有用户引用");
     }
   };
 
@@ -618,10 +619,10 @@ export function DepartmentManagementPage() {
       width: 142,
       fixed: "right",
       align: "center",
-      render: (_, record) => canEditOrganization ? <Space size={4}>
-        <Tooltip title="编辑职务"><Button type="text" aria-label={`编辑职务：${record.name}`} icon={<EditOutlined />} onClick={() => openJobTitleEditor(record)} /></Tooltip>
-        <Tooltip title={record.status === "启用" ? "停用职务" : "启用职务"}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}职务：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => void changePositionStatus(record)} /></Tooltip>
-        <Tooltip title={record.users ? "已有用户使用，不能删除" : "删除职务"}><Popconfirm disabled={record.users > 0} title="确认删除这个职务？" onConfirm={() => void deletePosition(record)}><Button type="text" danger disabled={record.users > 0} icon={<DeleteOutlined />} /></Popconfirm></Tooltip>
+      render: (_, record) => canEditOrganization || canDeleteOrganization ? <Space size={4}>
+        {canEditOrganization && <Tooltip title="编辑职务"><Button type="text" aria-label={`编辑职务：${record.name}`} icon={<EditOutlined />} onClick={() => openJobTitleEditor(record)} /></Tooltip>}
+        {canEditOrganization && <Tooltip title={record.status === "启用" ? "停用职务" : "启用职务"}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}职务：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} onClick={() => void changePositionStatus(record)} /></Tooltip>}
+        {canDeleteOrganization && <Tooltip title={record.users ? "已有用户使用，不能删除" : "删除职务"}><Popconfirm disabled={record.users > 0} title="确认删除这个职务？" onConfirm={() => void deletePosition(record)}><Button type="text" danger disabled={record.users > 0} aria-label={`删除职务：${record.name}`} icon={<DeleteOutlined />} /></Popconfirm></Tooltip>}
       </Space> : null,
     },
   ];
@@ -660,9 +661,9 @@ export function DepartmentManagementPage() {
           <div className="gov-detail-section">
             <div className="gov-section-title">维护规则</div>
             <Alert type={selected.referenced ? "warning" : "success"} showIcon message={selected.referenced ? "该部门已有用户或历史流程引用，不允许删除" : "当前部门尚未被引用，可以删除"} description="停用后不能再分配给新用户；现有用户与历史数据仍保留该部门路径，待管理员完成迁移。" />
-            {canEditOrganization && <Space>
-              <Popconfirm title={`确认${selected.status === "启用" ? "停用" : "启用"}此部门？`} onConfirm={() => void changeDepartmentStatus(selected)}><Button icon={selected.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />}>{selected.status === "启用" ? "停用部门" : "启用部门"}</Button></Popconfirm>
-              <Popconfirm disabled={selected.referenced} title="确认删除此部门？" onConfirm={() => void deleteDepartment(selected)}><Button danger disabled={selected.referenced} icon={<DeleteOutlined />}>删除部门</Button></Popconfirm>
+            {(canEditOrganization || canDeleteOrganization) && <Space>
+              {canEditOrganization && <Popconfirm title={`确认${selected.status === "启用" ? "停用" : "启用"}此部门？`} onConfirm={() => void changeDepartmentStatus(selected)}><Button icon={selected.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />}>{selected.status === "启用" ? "停用部门" : "启用部门"}</Button></Popconfirm>}
+              {canDeleteOrganization && <Popconfirm disabled={selected.referenced} title="确认删除此部门？" onConfirm={() => void deleteDepartment(selected)}><Button danger disabled={selected.referenced} icon={<DeleteOutlined />}>删除部门</Button></Popconfirm>}
             </Space>}
           </div>
         </Card>
@@ -1148,6 +1149,7 @@ export function WorkflowPermissionGroupsPage() {
   const identityRoles = useIdentityStore((state) => state.roles);
   const personaId = usePrototypeStore((state) => state.personaId);
   const canEditGroups = hasPersonaPermission(personaId, "org-group:编辑");
+  const canDeleteGroups = hasPersonaPermission(personaId, "org-group:删除");
   const [keyword, setKeyword] = useState("");
   const [process, setProcess] = useState<string>();
   const [status, setStatus] = useState<string>();
@@ -1182,6 +1184,25 @@ export function WorkflowPermissionGroupsPage() {
       message.error("权限组状态更新失败，请刷新后重试");
     }
   };
+  const deleteGroup = (record: GroupRecord) => {
+    Modal.confirm({
+      title: `删除流程权限组 ${record.name}？`,
+      content: "删除前会检查全部流程版本和节点配置引用。已被引用的权限组不能删除，只能停用。",
+      okText: "检查并删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        try {
+          const resource = await flowPilotApi.directory.groupResource(record.id);
+          await flowPilotApi.directory.deleteGroup(record.id, resource.etag ?? "*");
+          setGroups((rows) => rows.filter((group) => group.id !== record.id));
+          message.success(`流程权限组 ${record.name} 已删除`);
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : "流程权限组删除失败，请刷新后重试");
+        }
+      },
+    });
+  };
   const filtered = groups.filter((group) => `${group.name}${group.id}`.toLowerCase().includes(keyword.toLowerCase()) && (!process || group.processes.includes(process)) && (!status || group.status === status));
   const directMembers = candidateUsers.filter((user) => directMemberUserIds.includes(user.id)).map((user) => user.name);
   const linkedRoles = identityRoles.filter((role) => linkedRoleIds.includes(role.id)).map((role) => role.name);
@@ -1212,7 +1233,7 @@ export function WorkflowPermissionGroupsPage() {
     { title: "有效成员", key: "effective", width: 112, render: (_, record) => <Button className="gov-count-link" type="link" onClick={() => setPreview(record)}>{effectiveMembers(record).length} 人</Button> },
     { title: "状态", dataIndex: "status", width: 118, align: "center", render: (value: EnableStatus) => <StatusTag status={value} /> },
     { title: "更新时间", dataIndex: "updatedAt", width: 150, render: (value: string) => formatDisplayDateTime(value) },
-    { title: "操作", fixed: "right", width: 142, align: "center", render: (_, record) => <Space size={4}>{canEditGroups && <Tooltip title="编辑"><Button type="text" aria-label={`编辑权限组：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}<Tooltip title="有效成员预览"><Button type="text" aria-label={`预览有效成员：${record.name}`} icon={<EyeOutlined />} onClick={() => setPreview(record)} /></Tooltip>{canEditGroups && <Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => void changeGroupStatus(record)}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}权限组：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip>}</Space> },
+    { title: "操作", fixed: "right", width: 180, align: "center", render: (_, record) => <Space size={4}>{canEditGroups && <Tooltip title="编辑"><Button type="text" aria-label={`编辑权限组：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}<Tooltip title="有效成员预览"><Button type="text" aria-label={`预览有效成员：${record.name}`} icon={<EyeOutlined />} onClick={() => setPreview(record)} /></Tooltip>{canEditGroups && <Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => void changeGroupStatus(record)}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}权限组：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip>}{canDeleteGroups && <Tooltip title={record.referenced || record.processes.length ? "已被流程版本引用，不能删除" : "删除流程权限组"}><Button danger disabled={Boolean(record.referenced || record.processes.length)} type="text" aria-label={`删除权限组：${record.name}`} icon={<DeleteOutlined />} onClick={() => deleteGroup(record)} /></Tooltip>}</Space> },
   ];
   return (
     <div className="page-stack gov-page">

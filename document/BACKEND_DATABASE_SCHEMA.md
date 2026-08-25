@@ -27,7 +27,7 @@
 - `normalized_login_name nvarchar(100)`：唯一索引。
 - `display_name nvarchar(100)`、`email nvarchar(320)`。
 - `authentication_mode nvarchar(20)`：`domain | password`。
-- `password_hash nvarchar(500) null`：仅本地密码账号保存 Argon2id 编码字符串。
+- `password_hash nvarchar(500) null`：仅本地密码账号保存包含算法标识、格式版本、scrypt 参数、随机盐和派生密钥的版本化编码字符串。
 - `department_id uniqueidentifier null`、`position_id uniqueidentifier null`。
 - `status nvarchar(20)`：`enabled | disabled`。
 - `is_builtin_super_admin bit`：数据库内只能有一条为 `1`。
@@ -47,7 +47,7 @@
 - `flowpilot.user_roles`：`user_id + role_id` 联合唯一，保存授权人和授权时间。
 - `flowpilot.role_permissions`：`role_id + permission_code` 联合唯一，保存授权人和授权时间。
 
-删除角色前必须确认没有用户关联、流程权限组关联、流程版本引用或运行实例资格依赖。删除用户和角色分别受独立动作权限控制。纯关联行可以随已获准删除的角色级联删除，业务审计不得级联删除。
+删除角色前必须确认没有用户关联、流程权限组关联、流程版本引用或运行实例资格依赖。用户、角色、部门/职务和流程权限组删除分别受独立动作权限控制，普通编辑权限不能替代删除。纯关联行可以随已获准删除的角色级联删除，业务审计不得级联删除。
 
 ### 2.3 部门和职务
 

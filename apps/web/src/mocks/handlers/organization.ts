@@ -168,7 +168,7 @@ export const organizationHandlers = [
   http.delete(`${API}/departments/:departmentId`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
-    const auth = requirePermission(request, "org-department:编辑");
+    const auth = requirePermission(request, "org-department:删除");
     if (auth.response) return auth.response;
     const current = departments();
     const record = current.find((item) => item.id === idParam(params.departmentId));
@@ -250,7 +250,7 @@ export const organizationHandlers = [
   http.delete(`${API}/positions/:positionId`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
-    const auth = requirePermission(request, "org-department:编辑");
+    const auth = requirePermission(request, "org-department:删除");
     if (auth.response) return auth.response;
     const current = positions();
     const record = current.find((item) => item.id === idParam(params.positionId));

@@ -1060,12 +1060,12 @@ const groupUpdateHandler = http.patch(`${API_ROOT}/workflow-permission-groups/:g
 const groupDeleteHandler = http.delete(`${API_ROOT}/workflow-permission-groups/:groupId`, async ({ request, params }) => {
   const scenario = await scenarioResponse(request, true);
   if (scenario) return scenario;
-  const authorized = requireAnyPermission(request, ["org-group:编辑"]);
+  const authorized = requireAnyPermission(request, ["org-group:删除"]);
   if (authorized.response) return authorized.response;
   const groupId = paramValue(params.groupId);
   const current = useIdentityStore.getState().workflowGroups.find((group) => group.id === groupId);
   if (!current) return notFound(request, "流程权限组");
-  const revisionProblem = checkIfMatch(request, groupDto(current));
+  const revisionProblem = checkIfMatch(request, groupDto(current), true);
   if (revisionProblem) return revisionProblem;
   const currentStats = groupDto(current);
   if (currentStats.referenced || currentStats.processes.length) return apiProblem(request, 409, "WORKFLOW_GROUP_REFERENCED", "流程权限组已被引用", "请先从流程定义和节点配置中解除全部引用。 ");
