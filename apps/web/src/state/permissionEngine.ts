@@ -1,7 +1,8 @@
 import { findIdentityUser, useIdentityStore } from "./useIdentityStore";
 import { allPermissionCodes } from "../data/permissionCatalog";
 
-export const ROLE_PERMISSION_STORAGE_KEY = "flowpilot-role-permissions-v2";
+export const ROLE_PERMISSION_STORAGE_KEY = "flowpilot-role-permissions-v3";
+export const PREVIOUS_ROLE_PERMISSION_STORAGE_KEY = "flowpilot-role-permissions-v2";
 export const LEGACY_ROLE_PERMISSION_STORAGE_KEY = "flowpilot-role-permissions-v1";
 export const ROLE_PERMISSIONS_CHANGED_EVENT = "flowpilot-role-permissions-changed";
 
@@ -19,6 +20,14 @@ export function normalizeRolePermissionList(permissions: string[]) {
 }
 
 const reviewerPermissions = ["work-task:查看", "work-task:审核", "work-list:查看"];
+const independentlyAddedDeletePermissions = new Set([
+  "org-user:删除",
+  "org-role:删除",
+  "org-department:删除",
+  "org-group:删除",
+]);
+const permissionsBeforeIndependentDirectoryDeletes = allPermissionCodes.filter((permission) =>
+  !independentlyAddedDeletePermissions.has(permission));
 
 export const defaultRolePermissionMap: Record<string, string[]> = {
   "ROLE-SUPER": allPermissionCodes,
@@ -34,8 +43,9 @@ export const defaultRolePermissionMap: Record<string, string[]> = {
 export function readStoredRolePermissions(): Record<string, string[]> {
   try {
     const current = window.localStorage.getItem(ROLE_PERMISSION_STORAGE_KEY);
-    const legacy = current === null ? window.localStorage.getItem(LEGACY_ROLE_PERMISSION_STORAGE_KEY) : null;
-    const stored = JSON.parse(current ?? legacy ?? "{}") as Record<string, string[]>;
+    const previous = current === null ? window.localStorage.getItem(PREVIOUS_ROLE_PERMISSION_STORAGE_KEY) : null;
+    const legacy = current === null && previous === null ? window.localStorage.getItem(LEGACY_ROLE_PERMISSION_STORAGE_KEY) : null;
+    const stored = JSON.parse(current ?? previous ?? legacy ?? "{}") as Record<string, string[]>;
     const saved = Object.fromEntries(Object.entries(stored).map(([roleId, permissions]) => [
       roleId,
       normalizeRolePermissionList(permissions),
@@ -47,7 +57,12 @@ export function readStoredRolePermissions(): Record<string, string[]> {
         "work-task:关闭",
       ]));
     }
-    if (legacy !== null) window.localStorage.setItem(ROLE_PERMISSION_STORAGE_KEY, JSON.stringify(saved));
+    const upgrading = current === null && (previous !== null || legacy !== null);
+    if (upgrading && saved["ROLE-001"]
+      && permissionsBeforeIndependentDirectoryDeletes.every((permission) => saved["ROLE-001"].includes(permission))) {
+      saved["ROLE-001"] = [...allPermissionCodes];
+    }
+    if (upgrading) window.localStorage.setItem(ROLE_PERMISSION_STORAGE_KEY, JSON.stringify(saved));
     return {
       ...defaultRolePermissionMap,
       ...saved,

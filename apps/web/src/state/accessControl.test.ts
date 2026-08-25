@@ -139,6 +139,22 @@ describe("角色权限引擎", () => {
     expect(storage.getItem(permissionModule.ROLE_PERMISSION_STORAGE_KEY)).not.toBeNull();
   });
 
+  it("升级 v2 权限时只为原全权限系统管理员补齐新增删除权限", () => {
+    const independentDeletes = ["org-user:删除", "org-role:删除", "org-department:删除", "org-group:删除"];
+    const previousFullPermissions = permissionModule.defaultRolePermissionMap["ROLE-001"]
+      .filter((permission) => !independentDeletes.includes(permission));
+    storage.setItem(permissionModule.PREVIOUS_ROLE_PERMISSION_STORAGE_KEY, JSON.stringify({
+      "ROLE-001": previousFullPermissions,
+      "ROLE-CUSTOM": ["org-user:查看", "org-user:编辑"],
+    }));
+
+    const stored = permissionModule.readStoredRolePermissions();
+    expect(stored["ROLE-001"]).toEqual(expect.arrayContaining(independentDeletes));
+    expect(stored["ROLE-CUSTOM"]).toEqual(["org-user:查看", "org-user:编辑"]);
+    expect(stored["ROLE-CUSTOM"]).not.toContain("org-user:删除");
+    expect(storage.getItem(permissionModule.ROLE_PERMISSION_STORAGE_KEY)).not.toBeNull();
+  });
+
   it("合并持久化覆盖但不允许覆盖超级管理员，并在 JSON 损坏时回退默认值", () => {
     setRolePermissionOverrides({
       "ROLE-007": ["work-task:新增", "work-task:查看"],

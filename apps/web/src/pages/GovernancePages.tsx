@@ -456,14 +456,29 @@ export function UserManagementPage() {
             <Input maxLength={120} placeholder="name@company.com" />
           </Form.Item>
           <Form.Item name="authenticationMode" label="登录方式" rules={[{ required: true, message: "请选择登录方式" }]} extra="域登录由正式后端连接公司域服务校验；浏览器 Mock 仍使用统一演示密码。"><Select options={[{ value: "domain", label: "域登录（默认）" }, { value: "password", label: "密码登录" }]} /></Form.Item>
-          {drawerUser === "new" && selectedAuthenticationMode === "password" && <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 1, message: "密码至少 1 个字符" }]} extra="仅密码登录用户需要设置；正式后端使用 Argon2id 保存散列。"><Input.Password maxLength={64} /></Form.Item>}
+          {drawerUser === "new" && selectedAuthenticationMode === "password" && <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 1, message: "密码至少 1 个字符" }]} extra="仅密码登录用户需要设置；正式后端使用 Node.js scrypt 保存版本化散列。"><Input.Password maxLength={64} /></Form.Item>}
           {drawerUser !== "new" && drawerUser?.authenticationMode === "domain" && selectedAuthenticationMode === "password" && <Form.Item name="newPassword" label="新密码" rules={[{ required: true, min: 1, message: "切换为密码登录时必须设置新密码" }]}><Input.Password maxLength={64} /></Form.Item>}
           <Form.Item name="department" label="所属部门" rules={[{ required: true, message: "请选择部门" }]} extra="可选择一级节点（如研发）或二级节点（如研发 / 软件）。"><Cascader changeOnSelect showSearch options={departmentOptions} placeholder="请选择一级或二级部门" /></Form.Item>
           {drawerUser === "new" ? <div className="gov-form-grid">
             <Form.Item name="jobTitle" label="职务" rules={[{ required: true }]}><Select options={selectableJobTitles.map((item) => ({ value: item.name, label: item.status === "停用" ? `${item.name}（已停用，仅保留历史）` : item.name }))} /></Form.Item>
             <Form.Item name="status" label="初始账号状态" valuePropName="checked"><Switch checkedChildren="启用" unCheckedChildren="停用" /></Form.Item>
           </div> : <Form.Item name="jobTitle" label="职务" rules={[{ required: true }]}><Select options={selectableJobTitles.map((item) => ({ value: item.name, label: item.status === "停用" ? `${item.name}（已停用，仅保留历史）` : item.name }))} /></Form.Item>}
-          <Form.Item name="roles" label="系统角色" rules={[{ required: true, message: "至少选择一个角色" }]} extra="超级管理员为唯一系统内置账号，不能分配给其他用户。"><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={assignableRoleOptions.map((value) => ({ value, label: value }))} /></Form.Item>
+          <Form.Item
+            name="roles"
+            label="系统角色"
+            rules={[{
+              validator: (_, value) => {
+                const hasAssignedRole = Array.isArray(value) && value.length > 0;
+                const isStoppedExistingUser = drawerUser !== "new" && drawerUser?.status === "停用";
+                return hasAssignedRole || isStoppedExistingUser
+                  ? Promise.resolve()
+                  : Promise.reject(new Error("启用账号至少需要一个角色；如需删除用户，请先停用账号"));
+              },
+            }]}
+            extra={drawerUser !== "new" && drawerUser?.status === "停用"
+              ? "停用账号可以清空全部角色，以便解除引用后删除；超级管理员角色不能分配给其他用户。"
+              : "超级管理员为唯一系统内置账号，不能分配给其他用户。"}
+          ><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={assignableRoleOptions.map((value) => ({ value, label: value }))} /></Form.Item>
         </Form>
       </Drawer>
     </div>
@@ -741,7 +756,11 @@ type RoleRecord = DomainRole;
 export function RoleManagementPage() {
   const confirmEditorClose = useCloseEditorConfirmation();
   const navigate = useNavigate();
-  const roles = useIdentityStore((state) => state.roles);
+  const storedRoles = useIdentityStore((state) => state.roles);
+  const roles = useMemo(
+    () => isBrowserMockMode ? applyRolePermissionStats(storedRoles, readStoredRolePermissions()) : storedRoles,
+    [storedRoles],
+  );
   const setRoles = useIdentityStore((state) => state.setRoles);
   const identityUsers = useIdentityStore((state) => state.users);
   const organizationJobTitles = useOrganizationStore((state) => state.jobTitles);

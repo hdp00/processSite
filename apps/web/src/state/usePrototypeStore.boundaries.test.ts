@@ -7,12 +7,14 @@ let storage: MemoryStorage;
 let identityModule: typeof import("./useIdentityStore");
 let definitionModule: typeof import("./useProcessDefinitionStore");
 let prototypeModule: typeof import("./usePrototypeStore");
+let permissionModule: typeof import("./rolePermissions");
 
 beforeAll(async () => {
   ({ localStorage: storage } = installMemoryBrowserStorage());
   identityModule = await import("./useIdentityStore");
   definitionModule = await import("./useProcessDefinitionStore");
   prototypeModule = await import("./usePrototypeStore");
+  permissionModule = await import("./rolePermissions");
 });
 
 beforeEach(() => {
@@ -196,7 +198,7 @@ describe("流程创建与审核冲突边界", () => {
     )).toBe(false);
 
     const noPermission = reviewScenario("review-no-permission");
-    storage.setItem("flowpilot-role-permissions-v2", JSON.stringify({ "ROLE-005": ["work-task:查看"] }));
+    storage.setItem(permissionModule.ROLE_PERMISSION_STORAGE_KEY, JSON.stringify({ "ROLE-005": ["work-task:查看"] }));
     setActor("lina");
     expect(prototypeModule.usePrototypeStore.getState().reviewInstance(
       noPermission.instance.id,

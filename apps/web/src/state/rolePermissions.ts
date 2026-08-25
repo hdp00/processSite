@@ -4,6 +4,7 @@ import { isSuperAdminPersona, type PersonaId } from "./usePrototypeStore";
 import {
   ROLE_PERMISSIONS_CHANGED_EVENT,
   ROLE_PERMISSION_STORAGE_KEY,
+  PREVIOUS_ROLE_PERMISSION_STORAGE_KEY,
   LEGACY_ROLE_PERMISSION_STORAGE_KEY,
   defaultRolePermissionMap,
   hasUserPermission,
@@ -14,6 +15,7 @@ import {
 export {
   ROLE_PERMISSIONS_CHANGED_EVENT,
   ROLE_PERMISSION_STORAGE_KEY,
+  PREVIOUS_ROLE_PERMISSION_STORAGE_KEY,
   LEGACY_ROLE_PERMISSION_STORAGE_KEY,
   defaultRolePermissionMap,
   normalizeRolePermissionList,

@@ -205,9 +205,13 @@ describe("Mock REST API 通用契约", () => {
       department: ["rd", "rd-software"],
       departmentPath: "研发 / 软件",
       jobTitle: "员工",
-      roles: [],
-      status: "停用",
+      roles: ["只读观察员"],
+      status: "启用",
     });
+    const createdUserResource = await apiModule.flowPilotApi.directory.userResource(disposableUser.id);
+    await apiModule.flowPilotApi.directory.updateUserStatus(disposableUser.id, "停用", createdUserResource.etag ?? "*");
+    const stoppedUserResource = await apiModule.flowPilotApi.directory.userResource(disposableUser.id);
+    await apiModule.flowPilotApi.directory.updateUser(disposableUser.id, { roles: [] }, stoppedUserResource.etag);
     const disposableUserResource = await apiModule.flowPilotApi.directory.userResource(disposableUser.id);
     await expect(clientModule.apiRequest(`/users/${disposableUser.id}`, { method: "DELETE" })).rejects.toMatchObject({
       status: 428,
@@ -257,7 +261,7 @@ describe("Mock REST API 通用契约", () => {
     const positionResource = await apiModule.flowPilotApi.organization.position(position.id);
     const groupResource = await apiModule.flowPilotApi.directory.groupResource(group.id);
 
-    localStorage.setItem("flowpilot-role-permissions-v2", JSON.stringify({
+    localStorage.setItem("flowpilot-role-permissions-v3", JSON.stringify({
       "ROLE-001": ["org-department:查看", "org-department:编辑", "org-group:查看", "org-group:编辑"],
     }));
     const deniedRequests = await Promise.all([
@@ -267,7 +271,7 @@ describe("Mock REST API 通用契约", () => {
     ]);
     expect(deniedRequests.map((response) => response.status)).toEqual([403, 403, 403]);
 
-    localStorage.removeItem("flowpilot-role-permissions-v2");
+    localStorage.removeItem("flowpilot-role-permissions-v3");
     await expect(apiModule.flowPilotApi.organization.removeDepartment(department.id, departmentResource.etag ?? "*"))
       .resolves.toBeUndefined();
     await expect(apiModule.flowPilotApi.organization.removePosition(position.id, positionResource.etag ?? "*"))
