@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:remote": "vite --mode remote",
     "preview": "vite preview",
     "build": "tsc -b && vite build --mode production",
     "build:debug": "tsc -b && vite build --mode debug",

@@ -2,7 +2,7 @@
 
 > 文档状态：已确认的首版实现基线  
 > 整理日期：2026-08-24
-> 适用范围：NestJS 正式后端、Microsoft SQL Server 2016 SP2、本地附件目录和内网部署
+> 适用范围：NestJS 正式后端、Microsoft SQL Server 2016 SP2 及以上版本、本地附件目录和内网部署
 
 ## 1. 文档定位
 
@@ -18,14 +18,14 @@
 ## 2. 已确认的总体边界
 
 - 正式后端采用 TypeScript、NestJS 和 REST API，与前端放在同一个 pnpm workspace 中。
-- 首版只支持 Microsoft SQL Server 2016 SP2，不实现 SQLite 运行时、数据库 provider 选择或跨数据库切换。
+- 首版只使用 Microsoft SQL Server，最低支持 SQL Server 2016 13.x SP2；13.x 接受 SP2/SP3，主版本 14 及以上全部接受。数据库兼容级别最低为 130，所有版本使用同一套迁移；不实现 SQLite 运行时、数据库 provider 选择或跨数据库切换。
 - ORM 固定使用稳定版 TypeORM，通过 `@nestjs/typeorm` 接入 NestJS；MSSQL 底层驱动使用稳定版 npm 包 `mssql`（node-mssql 项目）。连接参数通过部署配置提供，调整目标 SQL Server 实例不需要修改业务代码或重新构建。
 - 系统部署在公司内网的 Windows 服务器上：IIS 托管前端静态文件，并把同源 `/api/flowpilot/*` 反向代理到 Windows 服务形式运行的 NestJS。
 - 首版只运行一个 API 实例。预计每年新增流程实例不超过 2 万，附件总量不超过 500 GB。
 - 附件正文保存在服务器本地目录；数据库只保存元数据、相对存储键和业务引用。
 - 当前正式环境使用 HTTP；这是既定兼容条件，但必须明确其缺少传输加密的风险，并保留以后启用 HTTPS 的配置能力。
 - 普通用户按账号配置选择 AD/LDAP 域认证或 FlowPilot 本地密码认证，默认使用域认证；系统内置超级管理员始终使用本地密码认证。
-- SQL Server 2016 SP2 已超出官方支持周期。兼容它是部署约束，不代表安全推荐；部署方需要提供补偿性控制和升级计划。
+- SQL Server 2016 SP2 已超出官方支持周期。兼容它是部署约束，不代表安全推荐；部署方需要提供补偿性控制和升级计划。可部署到任意更高 SQL Server 主版本，但不能因此在共享 DDL 或查询中使用高于 SQL Server 2016 SP2、兼容级别 130 基线的能力。
 - 后端位于 `apps/api`，使用 Node.js 24 LTS x64；具体补丁版本及全部依赖通过仓库版本文件和 pnpm lockfile 锁定。Windows Server 2016 必须在开发开始和每次运行时升级后执行实机冒烟测试。
 - 业务时间区固定为 `Asia/Shanghai`，数据库、租约、接口和审计时间统一使用 UTC。
 
@@ -35,7 +35,7 @@ flowchart LR
     I --> N["NestJS Windows 服务：127.0.0.1"]
     N --> P["领域仓储与事务边界"]
     P --> T["TypeORM / @nestjs/typeorm"]
-    T --> M["SQL Server 2016 SP2 / mssql"]
+    T --> M["SQL Server 2016 SP2+ / mssql"]
     N --> F["本地附件目录"]
     N --> O["邮件 Outbox / 内网 SMTP"]
 ```
@@ -158,7 +158,7 @@ TypeORM 采用 Data Mapper 模式，不使用 Active Record。TypeORM Entity 是
 - `PersistenceUnitOfWork` 封装 `QueryRunner` 生命周期；事务内仓储只使用该 runner 的 `EntityManager`，禁止混用全局 Repository，确保所有写入位于同一连接和事务。
 - 关系级联、实体订阅器和懒加载默认关闭或显式限制，关键领域副作用由领域服务和事务命令明确调用，避免 ORM 隐式写入改变任务、审计或 Outbox 状态。
 
-`{FLOWPILOT_HOME}\Secrets\production.env` 集中保存集成服务和初始化敏感参数，示例模板只提供键名与占位值：
+运行配置按敏感性拆分：`{FLOWPILOT_HOME}\Config\application.env` 保存开关、端口、超时、兼容级别等非敏感参数；`{FLOWPILOT_HOME}\Secrets\production.env` 保存 SQL Server/LDAP/SMTP 地址、账号、密码和首次初始化密码。以下清单合并展示两类键，仓库模板只提供键名与占位值：
 
 ```dotenv
 # SQL Server
@@ -167,9 +167,9 @@ MSSQL_PORT=1433
 MSSQL_DATABASE=<数据库名>
 MSSQL_SCHEMA=flowpilot
 MSSQL_USER=<应用运行账号>
-MSSQL_PASSWORD=<数据库密码>
-MSSQL_ENCRYPT=false
-MSSQL_TRUST_SERVER_CERTIFICATE=true
+MSSQL_PASSWORD='<数据库密码>'
+MSSQL_ENCRYPT=true
+MSSQL_TRUST_SERVER_CERTIFICATE=false
 MSSQL_EXPECTED_COMPATIBILITY_LEVEL=130
 MSSQL_EXPECTED_COLLATION=<DBA 确认的数据库排序规则>
 MSSQL_POOL_MIN=0
@@ -184,33 +184,48 @@ DOMAIN_AUTH_BASE_DN=<目录搜索根>
 DOMAIN_AUTH_UPN_SUFFIX=<UPN 后缀>
 DOMAIN_AUTH_NETBIOS_NAME=<可选 DOMAIN 名称>
 DOMAIN_AUTH_ACCOUNT_ATTRIBUTE=sAMAccountName
+DOMAIN_AUTH_ALLOW_PLAINTEXT=false
 DOMAIN_AUTH_CONNECT_TIMEOUT_MS=3000
 DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
 DOMAIN_AUTH_TLS_REJECT_UNAUTHORIZED=true
+AUTH_LOGIN_UNAVAILABLE_WINDOW_MS=60000
+AUTH_LOGIN_UNAVAILABLE_BLOCK_DURATION_MS=60000
+AUTH_LOGIN_UNAVAILABLE_IP_LIMIT=60
 
 # SMTP
+SMTP_ENABLED=true
 SMTP_HOST=<SMTP服务器>
 SMTP_PORT=25
 SMTP_SECURE=false
+SMTP_REQUIRE_TLS=true
+SMTP_IGNORE_TLS=false
+SMTP_TLS_REJECT_UNAUTHORIZED=true
+SMTP_TLS_SERVERNAME=<使用 IP 连接且启用 TLS 时的可选证书主机名>
 SMTP_USER=<发件账号>
-SMTP_PASSWORD=<SMTP密码>
+SMTP_PASSWORD='<SMTP密码>'
 SMTP_FROM=<发件地址>
 SMTP_REPLY_TO=<可选回复地址>
+SMTP_CONNECTION_TIMEOUT_MS=5000
+SMTP_GREETING_TIMEOUT_MS=5000
+SMTP_SOCKET_TIMEOUT_MS=15000
+SMTP_MAX_CONNECTIONS=5
 FLOWPILOT_PUBLIC_BASE_URL=<包含 /flowpilot 且不带末尾斜杠的应用根地址>
 
 # 只供数据库首次初始化使用
-FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD=<超级管理员初始密码>
+FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD='<超级管理员初始密码>'
 ```
 
 - 应用启动时校验全部 SQL Server 必填配置、连接能力和数据库兼容级别。
-- SQL Server、AD/LDAP、SMTP 和超级管理员初始化参数集中从 `{FLOWPILOT_HOME}\Secrets\production.env` 读取；真实值不得提交到仓库，示例配置只能提供键名和占位符。
+- SQL Server、AD/LDAP、SMTP 的地址与凭据以及超级管理员初始化密码从 `{FLOWPILOT_HOME}\Secrets\production.env` 读取；非敏感开关、端口、超时与兼容性门槛从 `{FLOWPILOT_HOME}\Config\application.env` 读取。真实值不得提交到仓库，示例配置只能提供键名和占位符。
+- 外置文件使用 dotenv 语法；密码中包含 `#`、空格或前后空白时必须保留模板引号，秘密自身包含单引号时改用双引号并按 dotenv 规则转义，避免凭据被截断。
 - 首版不使用 DPAPI 加密配置、外部密钥平台或其他 Secret Provider。敏感配置文件为明文，依靠仓库外存放、NTFS 最小权限和运维流程保护，程序不得输出完整配置或连接字符串。
 - 修改 SQL Server 连接配置并重启服务即可连接既定实例；附件根目录、接口地址和领域行为保持不变。
 - 迁移账号仅在停机部署命令中通过单独受限配置注入，不保存在常驻应用 Secrets。应用运行账号只拥有 `flowpilot` schema 所需的最小 DML 权限。
+- SMTP 使用单例 Nodemailer 连接池，固定配置发件人并拒绝调用方覆盖；默认 `SMTP_REQUIRE_TLS=true`，禁止机会式 STARTTLS 在降级后静默发送明文凭据或正文。`SMTP_REQUIRE_TLS` 与 `SMTP_IGNORE_TLS` 互斥；只有旧内网服务器确实不支持 TLS 且部署方记录风险接受时，才同时设置 `SMTP_REQUIRE_TLS=false`、`SMTP_IGNORE_TLS=true`。使用 SMTP IP 地址且验证 TLS 证书时可用 `SMTP_TLS_SERVERNAME` 指定证书主机名。旧系统的 `CDO.Message` 和 `sp_OA*` 存储过程不迁移，数据库无需启用 OLE Automation，业务事务也不得直接调用 SMTP。
 
 ### 4.2 SQL Server 类型映射
 
-| 领域类型 | SQL Server 2016 SP2 |
+| 领域类型 | SQL Server（2016 SP2 能力基线，兼容级别 130） |
 | --- | --- |
 | UUID 实体 ID | `uniqueidentifier` |
 | 稳定业务编码或外部标识 | 按长度约束的 `nvarchar` |
@@ -234,14 +249,14 @@ FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD=<超级管理员初始密码>
 
 - TypeORM 生产配置固定使用 `synchronize: false` 和 `migrationsRun: false`；不得根据 Entity 在启动时自动同步数据库结构。
 - 每一个逻辑结构版本提供一份按编号排序、人工复核的 TypeORM `MigrationInterface`。普通结构操作可以使用 `QueryRunner` schema API，`ISJSON` 约束、筛选索引、锁相关结构和其他 SQL Server 特性使用显式 SQL；不得把自动生成的 migration 未经检查直接用于生产。
-- 迁移记录已执行版本和校验和，由独立部署命令执行；应用启动只检查结构版本，结构落后、迁移校验和不一致或兼容级别不是 130 时拒绝就绪，不自动执行 DDL。
+- 迁移记录已执行版本和校验和，由独立部署命令执行；应用启动只检查结构版本，结构落后、迁移校验和不一致或兼容级别低于 130 时拒绝就绪，不自动执行 DDL。现有配置键 `MSSQL_EXPECTED_COMPATIBILITY_LEVEL=130` 表示最低门槛而非精确匹配值，数据库实际为 140/150/160 等更高兼容级别时正常通过。
 - 迁移使用独立的高权限迁移账号，正常运行账号不应拥有随意修改结构的权限。
 - 正式升级前先停止 Windows 服务，由 DBA 备份数据库，并在生产备份的恢复副本上预演迁移和回滚方案。
 - 迁移完成后校验逐表数量、关键聚合、外键、JSON/投影一致性、Outbox、附件元数据和附件 SHA-256/存在性。
 
-## 5. SQL Server 2016 SP2 的 JSON 影响
+## 5. SQL Server 2016 SP2 能力基线的 JSON 影响
 
-SQL Server 2016 SP2 在数据库兼容级别 130 下可以使用 `ISJSON`、`JSON_VALUE`、`JSON_QUERY` 和 `OPENJSON`，但存在以下限制：
+SQL Server 2016 SP2 在数据库兼容级别 130 下可以使用 `ISJSON`、`JSON_VALUE`、`JSON_QUERY` 和 `OPENJSON`，但存在以下限制。为保证部署到更高版本及兼容级别时仍与最低基线行为一致，所有目标环境都遵循这些约束：
 
 - 没有原生 JSON 数据类型，JSON 实际保存为 `nvarchar(max)`。
 - 没有适合任意动态路径的通用 JSON 索引。
@@ -384,11 +399,11 @@ Data/Attachments/
 - 会话闲置 8 小时失效，绝对有效期 24 小时。用户停用或密码重置后，全部现存会话立即失效。
 - Cookie 名称固定为 `flowpilot_session`，设置 `Path=/api/flowpilot`、`HttpOnly`、`SameSite=Strict`；当前 HTTP 环境关闭 `Secure`，以后启用 HTTPS 时通过配置打开。登录、密码或权限变化和模拟身份切换后轮换令牌。
 - 正式 API 只接受同源浏览器调用，关闭 CORS；所有修改状态的请求优先校验 `Origin`，缺少时只接受与配置站点地址同源的 `Referer`，两者都缺少或不匹配时返回 `403 CSRF_VALIDATION_FAILED`。
-- 只信任本机 IIS 到 `127.0.0.1` 的反向代理头；不能信任任意来源提供的 `X-Forwarded-For`。
+- NestJS 只信任来自 loopback 连接的本机 IIS/ARR 反向代理头。IIS 必须先覆盖并丢弃外部请求自带的 `X-Forwarded-For`，再用与 IIS 建立连接的真实客户端地址写入新的受信头；不能透传、拼接或信任任意客户端提供的地址链。当前单层代理拓扑不从其他上游代理继承客户端 IP；以后增加上游代理时必须显式定义受信跳数和来源网段后重新评审。
 - 首版不提供 API Key、服务账号或第三方集成认证。
 - 超级管理员初始密码从 `Secrets\production.env` 读取并只散列写入一次；数据库完成初始化后不再用配置覆盖现有密码，部署人员可以删除该配置项。页面和业务 API 不能修改该账号，停机状态下可用专用离线命令重置。
 
-域服务地址、账号格式、可选绑定凭据和证书信任配置统一保存在服务器的 `Secrets\production.env`，不得进入仓库或程序发布包。用户表保存规范化裸账号，登录接口可接受裸账号、匹配配置的 UPN 或 `DOMAIN\user`。首版默认使用用户 UPN 直接绑定，再在配置 Base DN 内以经过 RFC 4515 转义的 `sAMAccountName` 筛选器确认用户；如果域策略不允许，再通过配置启用只读搜索账号，不改变登录接口和权限模型。如域环境支持，应优先使用 LDAPS；使用未加密 LDAP 时必须由部署方明确接受并记录凭据传输风险。
+域服务地址、账号格式和证书信任配置统一保存在服务器外置配置中，不得进入仓库或程序发布包。用户表保存规范化裸账号，登录接口可接受裸账号、匹配配置的 UPN 或 `DOMAIN\user`。首版使用本次用户 UPN 直接绑定，再在配置 Base DN 内同时以经过 RFC 4515 转义的 `sAMAccountName` 和同一 `userPrincipalName` 确认唯一用户，不保存常驻绑定凭据；如果域策略不允许，再通过配置启用只读搜索账号，不改变登录接口和权限模型。默认只允许 LDAPS；使用未加密 LDAP 必须显式启用 `DOMAIN_AUTH_ALLOW_PLAINTEXT` 并由部署方记录凭据明文传输风险。
 
 ### 7.1 超级管理员模拟身份
 
@@ -462,10 +477,12 @@ Data/Attachments/
 ## 11. 部署与健康检查
 
 - NestJS 只监听 `127.0.0.1`，由 IIS 提供内网入口。
+- IIS/ARR 负责把经过覆盖净化的真实客户端地址写入 `X-Forwarded-For`，NestJS 的代理信任范围固定为 loopback。上线必须从两个不同来源验证后端限流桶互不影响，并发送伪造的 `X-Forwarded-For` 验证其不会改变后端识别的客户端 IP。
 - NestJS 使用 Node.js 24 LTS x64，由 WinSW 包装成 Windows 服务。应用通过 `nestjs-pino` 输出 JSON Lines 到标准输出，WinSW 按日期和大小滚动日志，并与 Windows 服务恢复策略共同处理异常退出。
 - Windows 服务使用独立低权限账号。程序目录只读，配置目录只读，附件和日志目录分别授予必要的修改权限；IIS 应用程序池不得访问附件、配置、日志和备份目录。
 - 配置、附件、日志和备份放在代码发布目录之外的固定持久化目录；部署和回滚只替换版本化程序目录，SQL Server 通过部署配置的连接参数访问。
 - `GET /api/flowpilot/v1/health/live` 提供匿名存活检查；`GET /api/flowpilot/v1/health/ready` 提供不泄露内部信息的匿名就绪检查；`GET /api/flowpilot/v1/health/details` 要求系统运维查看权限。
+- 详细健康检查独立返回数据库/结构、匿名 RootDSE LDAP 可用性探测和 Nodemailer `verify()` 结果；只有 RootDSE 搜索成功才显示域认证正常，状态不包含账号或地址，SMTP 验证只连接并认证、不发送邮件。数据库失败使服务不可用，LDAP/SMTP 未启用或异常只形成降级状态。
 - 数据库不可用或结构版本落后时不就绪；磁盘不足、附件清理失败或邮件死信显示降级。
 - 升级允许计划停机：停止服务、由 DBA 备份数据库、执行 SQL Server 迁移、启动服务、检查健康状态。
 - 正式数据库首次初始化只创建超级管理员、内置角色权限、必要字典和结构版本，不创建演示流程、实例、用户或附件。
@@ -482,11 +499,11 @@ Data/Attachments/
 7. 实现本地附件暂存、引用、下载、清理和完整性检查。
 8. 实现 Outbox、后台租约任务、健康检查和保留清理。
 9. 实现 SQL Server 迁移预检、升级后校验和数据库/附件一致性报告。
-10. 在 SQL Server 2016 SP2、兼容级别 130 环境运行完整端到端业务场景和故障恢复场景。
+10. 在 SQL Server 2016 SP2、兼容级别 130 的最低基线和实际部署的更高版本/兼容级别环境运行完整端到端业务场景和故障恢复场景。
 
 ## 13. 首版验收重点
 
-- 同一构建产物通过部署配置连接 SQL Server 2016 SP2，数据库兼容级别 130，且不依赖 SQL Server 2017 或 SP3 才提供的能力。
+- 同一构建产物通过部署配置连接 SQL Server 2016 13.x SP2/SP3 或任意更高主版本，数据库兼容级别不低于 130，且共享迁移和查询不依赖 SQL Server 2017 或 SP3 才提供的能力。
 - TypeORM 生产配置确认关闭 `synchronize` 和 `migrationsRun`；普通 CRUD 使用 ORM，SQL Server 专用锁和复杂投影通过受控参数化 SQL 执行，二者共享同一 `QueryRunner` 事务且不存在事务外写入。
 - SQL Server 环境通过流程发布、发起、并行审批、驳回重提、重复修改、自由协作、附件和导出测试。
 - V1 的 A/B/C 实例和 V2 的 A/E/F 实例可以同时存在，详情按锁定版本展示，查询字段按当前规则投影。

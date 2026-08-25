@@ -1,0 +1,9 @@
+extends:
+  - recommended
+
+rules:
+  operation-operationId: error
+  operation-operationId-unique: error
+  no-unresolved-refs: error
+  no-identical-paths: error
+  operation-parameters-unique: error

@@ -104,7 +104,7 @@ paths:
       tags: [System]
       operationId: getOperationalHealthDetails
       summary: 获取受权限保护的详细运维状态
-      description: 仅具有系统运维查看权限的用户可访问；返回数据库、AD、SMTP、附件磁盘、后台任务、清理和死信的脱敏状态。
+      description: 仅具有系统运维查看权限的用户可访问。当前后端切片返回数据库、schema、AD/LDAP 和 SMTP 的脱敏状态；附件磁盘、后台任务、清理和死信状态随对应后端模块实现后加入。
       responses:
         "200":
           description: 详细运维状态
@@ -2741,8 +2741,7 @@ paths:
         - name: result
           in: query
           schema:
-            type: string
-            enum: [success, failure]
+            $ref: "#/components/schemas/AuditResult"
         - name: actorId
           in: query
           schema:
@@ -3240,6 +3239,7 @@ components:
         - IDEMPOTENCY_REQUEST_IN_PROGRESS
         - IMMUTABLE_BUILTIN_RESOURCE
         - RESOURCE_IN_USE
+        - USER_ROLE_REQUIRED
         - DELETE_BLOCKED
         - VERSION_NOT_EDITABLE
         - VERSION_PUBLISHED
@@ -3262,12 +3262,14 @@ components:
         - ATTACHMENT_IN_USE
         - ATTACHMENT_LIMIT_EXCEEDED
         - INVALID_ATTACHMENT_TYPE
+        - PDF_ATTACHMENT_REQUIRED
         - ATTACHMENT_RANGE_NOT_SATISFIABLE
         - INSUFFICIENT_STORAGE
         - OUTBOX_MESSAGE_NOT_RETRYABLE
         - EXPORT_NOT_READY
         - EXPORT_EXPIRED
         - RATE_LIMITED
+        - INTERNAL_SERVER_ERROR
         - DOMAIN_AUTHENTICATION_UNAVAILABLE
         - AUTHENTICATION_MODE_CONFLICT
         - IMPERSONATION_NOT_ALLOWED
@@ -3405,27 +3407,10 @@ components:
         expiresAt:
           type: string
           format: date-time
-    CreateUserRequest:
+    CreateDomainUserRequest:
       type: object
       additionalProperties: false
       required: [loginName, name, email, departmentId, positionId, roleIds, authenticationMode, status]
-      description: 启用账号必须至少分配一个启用角色；停用账号可暂时不分配角色，以便解除引用后删除。
-      allOf:
-        - if:
-            required: [authenticationMode]
-            properties:
-              authenticationMode:
-                const: password
-          then:
-            required: [initialPassword]
-        - if:
-            required: [authenticationMode]
-            properties:
-              authenticationMode:
-                const: domain
-          then:
-            not:
-              required: [initialPassword]
       properties:
         loginName:
           type: string
@@ -3452,16 +3437,59 @@ components:
             type: string
             format: uuid
         authenticationMode:
-          allOf:
-            - $ref: "#/components/schemas/AuthenticationMode"
-          default: domain
+          type: string
+          const: domain
+        status:
+          $ref: "#/components/schemas/EnabledStatus"
+    CreatePasswordUserRequest:
+      type: object
+      additionalProperties: false
+      required: [loginName, name, email, departmentId, positionId, roleIds, authenticationMode, initialPassword, status]
+      properties:
+        loginName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        email:
+          type: string
+          format: email
+        departmentId:
+          type: string
+          format: uuid
+        positionId:
+          type: string
+          format: uuid
+        roleIds:
+          type: array
+          uniqueItems: true
+          description: status=enabled 时至少包含一个启用角色；该跨字段约束由服务端校验。
+          items:
+            type: string
+            format: uuid
+        authenticationMode:
+          type: string
+          const: password
         initialPassword:
           type: string
           minLength: 1
           maxLength: 200
-          description: 仅 authenticationMode=password 时必填；域登录不得提交
+          description: authenticationMode=password 时必填
         status:
           $ref: "#/components/schemas/EnabledStatus"
+    CreateUserRequest:
+      description: 启用账号必须至少分配一个启用角色；停用账号可暂时不分配角色，以便解除引用后删除。password 模式必须提交 initialPassword，domain 模式不得提交该字段。
+      oneOf:
+        - $ref: "#/components/schemas/CreateDomainUserRequest"
+        - $ref: "#/components/schemas/CreatePasswordUserRequest"
+      discriminator:
+        propertyName: authenticationMode
+        mapping:
+          domain: "#/components/schemas/CreateDomainUserRequest"
+          password: "#/components/schemas/CreatePasswordUserRequest"
     UpdateUserRequest:
       type: object
       additionalProperties: false
@@ -5597,6 +5625,9 @@ components:
             $ref: "#/components/schemas/EmailOutboxMessageDto"
         meta:
           $ref: "#/components/schemas/PageMeta"
+    AuditResult:
+      type: string
+      enum: [success, failure]
     AuditEventDto:
       type: object
       required: [id, action, aggregateType, aggregateId, actor, occurredAt, result, traceId]
@@ -5627,8 +5658,7 @@ components:
           type: string
           format: date-time
         result:
-          type: string
-          enum: [success, failure]
+          $ref: "#/components/schemas/AuditResult"
           description: 事件执行结果；审计列表按此字段过滤，不得依赖动作名称推断
         traceId:
           type: string

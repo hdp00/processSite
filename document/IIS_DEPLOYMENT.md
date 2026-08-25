@@ -44,6 +44,8 @@ debug 包不注册 Service Worker，不要求 HTTPS。其流程状态保存在�
 - 附件根目录固定由根目录推导为 `{FLOWPILOT_HOME}\Data\Attachments`，内部继续按 `{yyyy}/.incoming` 和 `{yyyy}/objects` 分层，不单独配置 `ATTACHMENT_ROOT`。
 - `Config\application.env` 保存非敏感运行参数；AD/LDAP、SMTP、SQL Server 账号连接信息和首次初始化超级管理员密码集中保存在明文 `Secrets\production.env`。首版不使用 DPAPI 或外部密钥平台，必须通过 NTFS 权限限制为 NestJS 服务账号只读、指定部署管理员可修改，并禁止提交 Git 或复制进程序发布包。
 - 配置键、默认运行参数和部署人员后续填写项统一见 [`BACKEND_IMPLEMENTATION_CHECKLIST.md`](./BACKEND_IMPLEMENTATION_CHECKLIST.md)。仓库示例只能保留 `<占位值>`，不得写入真实主机、域名、账号或密码。
+- 外置 `.env` 使用 dotenv 语法。密码中包含 `#`、空格或前后空白时必须保留模板中的引号，否则 `#` 后内容会被解释为注释并造成凭据截断；秘密本身包含单引号时改用双引号并正确转义。填写后以服务账号权限做启动校验，日志和错误输出中不得回显解析后的值。
+- SQL Server 连接默认启用 TDS 加密并校验证书。远程数据库必须使用受信证书；只有 NestJS 与 SQL Server 确认同机并以 `127.0.0.1` 回环连接时，才可在部署记录中接受 `MSSQL_ENCRYPT=false`、`MSSQL_TRUST_SERVER_CERTIFICATE=true` 的本机例外。
 - 禁止把附件根目录放在 `App`、后端工作目录、IIS 网站目录或系统临时目录中。后端启动时应规范化并校验实际路径，违反边界时拒绝就绪。
 - IIS 不得为附件目录建立虚拟目录、静态映射或目录浏览，客户端只能通过 `/api/flowpilot/v1` 的受控附件接口访问正文。
 
@@ -107,20 +109,33 @@ http://服务器/api/flowpilot/v1/...
 
 反向代理规则应配置在主站级别，并位于主站自身的 SPA 回退规则之前。建议使用以下路径范围，不能用宽泛的 `/api/*` 抢占同一主站其他系统的接口：
 
+登录限流依赖正确的客户端 IP。主站规则必须覆盖外部请求自带的 `X-Forwarded-For`，并用与 IIS 建立连接的地址重新写入；不能保留或追加客户端提供的原值。站点级规则设置请求头前，IIS 管理员需要在服务器级 URL Rewrite“允许的服务器变量”中加入 `HTTP_X_FORWARDED_FOR`；全局规则不需要该允许项。以下 `<serverVariables>` 的默认覆盖行为会把原头替换为 `{REMOTE_ADDR}`：
+
 ```xml
 <rule name="FlowPilot API" stopProcessing="true">
   <match url="^api/flowpilot/(.*)$" />
+  <serverVariables>
+    <set name="HTTP_X_FORWARDED_FOR" value="{REMOTE_ADDR}" />
+  </serverVariables>
   <action type="Rewrite"
           url="http://127.0.0.1:3000/api/flowpilot/{R:1}"
           appendQueryString="true" />
 </rule>
 ```
 
-后端只监听 `127.0.0.1`，不直接向局域网开放。代理需要保留请求方法、请求体、Cookie、`Origin`、`Referer`、`ETag`、`If-Match` 和 `Range` 等请求头，并透传状态码、`Set-Cookie`、`Content-Type`、`Content-Disposition`、`Content-Length`、`Accept-Ranges`、`ETag`、`Content-Range` 和 Problem Details 响应。正式认证不使用 Authorization Bearer；Debug Mock 请求也不会进入 IIS。
+后端只监听 `127.0.0.1`，不直接向局域网开放，并且应用侧只信任来自 loopback 连接的代理头。代理需要保留请求方法、请求体、Cookie、`Origin`、`Referer`、`ETag`、`If-Match` 和 `Range` 等请求头，但 `X-Forwarded-For` 必须按上面的规则覆盖；同时透传状态码、`Set-Cookie`、`Content-Type`、`Content-Disposition`、`Content-Length`、`Accept-Ranges`、`ETag`、`Content-Range` 和 Problem Details 响应。正式认证不使用 Authorization Bearer；Debug Mock 请求也不会进入 IIS。当前规则适用于“浏览器直接连接 IIS”的单层代理拓扑；若以后在 IIS 前增加其他代理，必须单独定义受信来源和跳数，不能直接恢复外部地址链透传。
 
 当前正式部署允许 HTTP，但登录密码和会话在内网链路上没有传输加密；切换 HTTPS 后应同步启用 Secure Cookie。
 
-正式后端还需配置公司 AD/LDAP 域认证提供方。普通用户默认按域账号密码认证，密码登录用户和系统内置超级管理员使用 FlowPilot 本地密码；域服务异常时不得回退本地密码。部署验证至少覆盖一个域用户、一个普通密码用户和超级管理员，并确认超级管理员模拟域用户时无需目标用户密码即可返回模拟会话。域连接优先使用 LDAPS，域地址、绑定凭据和证书信任信息只能放在服务器的 `Secrets\production.env` 中。
+正式后端还需配置公司 AD/LDAP 域认证提供方。普通用户默认按域账号密码认证，密码登录用户和系统内置超级管理员使用 FlowPilot 本地密码；域服务异常时不得回退本地密码。部署验证至少覆盖一个域用户、一个普通密码用户和超级管理员，并确认超级管理员模拟域用户时无需目标用户密码即可返回模拟会话。域连接默认只允许 LDAPS；确需旧 `ldap://` 时必须显式设置 `DOMAIN_AUTH_ALLOW_PLAINTEXT=true` 并记录域密码明文传输风险。域地址、Base DN、UPN 后缀和证书信任信息只能放在服务器的 `Secrets\production.env` 中。本实现直接使用本次登录用户的 UPN/password bind，不配置或保存常驻绑定密码，用户密码也不得进入配置、日志或健康详情。
+
+SMTP 主机、认证账号、密码、固定发件人和可选 TLS 证书主机名同样只放在 `Secrets\production.env`。当前后端切片的部署验证只通过受保护健康详情执行 SMTP 连接、TLS 和认证检查，不发送邮件；完成 Outbox 与发送 worker 后，再用受控测试通知完成一次真实投递验收。SQL Server 不需要启用 OLE Automation，也不得部署旧系统的 `CDO.Message`/`sp_OA*` 发信过程。
+
+上线前使用受控测试账号验证客户端 IP 信任边界：
+
+1. 分别从两个不同来源地址执行失败登录，确认来源 A 达到账号/IP 临时限制后，来源 B 的同一账号不会共用该限流桶。
+2. 从来源 A 手工发送伪造的 `X-Forwarded-For`，确认伪造前后仍落入来源 A 的同一个限流桶，不能绕过、重置或转移限制。
+3. 若所有客户端都被识别为 `127.0.0.1`，说明 IIS 没有写入真实地址；若伪造值能改变限流结果，说明 IIS 没有覆盖外部头。任一情况都禁止上线。
 
 ## 6. 部署验证
 

@@ -5,17 +5,28 @@
   "packageManager": "pnpm@11.1.3",
   "scripts": {
     "dev": "pnpm --filter @process-site/web dev",
+    "dev:api": "pnpm --filter @process-site/api-contract build && pnpm --filter @process-site/api dev",
+    "dev:remote": "pnpm --filter @process-site/web dev:remote",
     "preview": "pnpm --filter @process-site/web preview",
-    "build": "pnpm --filter @process-site/web build",
-    "build:debug": "pnpm --filter @process-site/web build:debug",
-    "typecheck": "pnpm --filter @process-site/web typecheck",
-    "test": "pnpm --filter @process-site/web test",
+    "build": "pnpm --filter @process-site/api-contract build && pnpm --filter @process-site/api build && pnpm --filter @process-site/web build",
+    "build:api": "pnpm --filter @process-site/api-contract build && pnpm --filter @process-site/api build",
+    "build:web": "pnpm --filter @process-site/web build",
+    "build:web_mock": "pnpm --filter @process-site/web build:debug",
+    "typecheck": "pnpm --filter @process-site/api-contract build && pnpm --filter @process-site/api typecheck && pnpm --filter @process-site/web typecheck",
+    "typecheck:api": "pnpm --filter @process-site/api-contract build && pnpm --filter @process-site/api typecheck",
+    "typecheck:web": "pnpm --filter @process-site/web typecheck",
+    "test": "pnpm --filter @process-site/api-contract build && pnpm --filter @process-site/api test && pnpm --filter @process-site/web test",
+    "test:api": "pnpm --filter @process-site/api-contract build && pnpm --filter @process-site/api test",
     "test:coverage": "pnpm --filter @process-site/web test:coverage",
     "test:coverage:all": "pnpm --filter @process-site/web test:coverage:all",
     "test:e2e": "pnpm --filter @process-site/web test:e2e",
     "test:e2e:edge": "pnpm --filter @process-site/web test:e2e:edge",
     "test:visual": "pnpm --filter @process-site/web test:visual",
     "test:update-snapshots": "pnpm --filter @process-site/web test:update-snapshots",
-    "test:all": "pnpm --filter @process-site/web test:all"
+    "test:all": "pnpm backend:check && pnpm --filter @process-site/web test:all",
+    "contract:lint": "pnpm --filter @process-site/api-contract lint:openapi",
+    "contract:generate": "pnpm --filter @process-site/api-contract generate",
+    "contract:check": "pnpm --filter @process-site/api-contract check",
+    "backend:check": "pnpm contract:check && pnpm --filter @process-site/api typecheck && pnpm --filter @process-site/api test && pnpm --filter @process-site/api build"
   }
 }

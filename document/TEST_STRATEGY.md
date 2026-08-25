@@ -10,7 +10,7 @@
 | 组件测试 | Vitest、jsdom、Testing Library | 表单校验、反馈、路由门禁和组件交互 |
 | Mock API 契约测试 | Vitest、MSW Node | OpenAPI 数据形状、鉴权、Problem Details、ETag、幂等和分页 |
 | 后端单元与契约测试 | Vitest、OpenAPI 生成校验器 | NestJS 领域服务、守卫、DTO、响应契约和错误码 |
-| SQL Server 集成测试 | Vitest、真实 SQL Server 2016 SP2 | TypeORM 仓储、Migration、约束、锁、事务和投影 |
+| SQL Server 集成测试 | Vitest、SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的更高版本/兼容级别 | TypeORM 仓储、Migration、约束、锁、事务和投影 |
 | 浏览器端到端测试 | Playwright | 从登录到流程配置、发起、处理、查询和治理的用户链路 |
 | 视觉与无障碍测试 | Playwright、axe-core | 关键桌面页面的稳定视觉基线及 WCAG A/AA 自动检查 |
 
@@ -68,8 +68,8 @@ pnpm test:all              # 类型、覆盖率、双构建与全部浏览器门
 - AD 和 SMTP 使用可控替身覆盖超时、证书、错误凭据、死信和重试；部署验收再使用外置测试账号完成一次真实域登录和一次测试邮件，凭据不得进入测试代码或报告。
 - 邮件链路测试需要验证任务和结束通知生成正确的 FlowPilot 详情链接、首次发送冻结绝对 URL、重试不改变链接、链接不含令牌、未登录后安全返回详情、无权限用户不能因收到邮件读取或处理流程，以及 Outbox/每次投递尝试均可在 SQL Server 中核对。
 - 远程前端测试需要证明登录不全量下载用户、实例、任务和审计；列表使用服务端分页，完整流程版本按需加载，正式请求只依靠 Cookie 且不发送 Mock Bearer。
-- IIS 冒烟覆盖 `/health/live`、`/health/ready`、受保护的 `/health/details`、Cookie、Origin/Referer、代理客户端 IP、上传大小、Range、Windows 服务重启和程序目录回滚。
-- 在正式后端及 SQL Server 2016 SP2、数据库兼容级别 130 的实际环境通过前，测试报告必须明确标记为“未执行”，不能用 Mock 结果代替。
+- IIS 冒烟覆盖 `/health/live`、`/health/ready`、受保护的 `/health/details`、Cookie、Origin/Referer、代理客户端 IP、上传大小、Range、Windows 服务重启和程序目录回滚。代理客户端 IP 必须从两个不同来源验证限流桶彼此独立，并用伪造 `X-Forwarded-For` 验证 IIS 覆盖外部值、NestJS 仍识别真实来源，不能通过伪造头绕过限流。
+- 在正式后端、SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的更高版本/兼容级别通过前，测试报告必须明确标记为“未执行”，不能用 Mock 结果代替。
 
 ## 6. 缺陷处理
 

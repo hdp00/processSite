@@ -32,7 +32,7 @@
 - 健康接口固定为：
   - `GET /health/live`：匿名存活检查，只证明进程可响应，不访问外部依赖。
   - `GET /health/ready`：匿名就绪检查，检查配置、数据库连接、兼容级别和结构版本；失败返回 `503`，不返回秘密或内部地址。
-  - `GET /health/details`：要求已登录且具有系统运维查看权限，返回数据库、AD、SMTP、附件磁盘、后台任务、死信和清理状态。
+  - `GET /health/details`：要求已登录且具有系统运维查看权限；当前切片返回数据库、schema、AD/LDAP 和 SMTP 脱敏状态，附件磁盘、后台任务、死信和清理状态随对应模块实现后加入。
 - 流程定义导出使用 `GET /process-definitions/{definitionId}/export`，返回可下载 JSON 文档；导入继续使用 `POST /process-definitions/imports`。
 - 附件内容接口支持单区间 `Range`，完整内容返回 `200`、合法单区间返回 `206`、非法或多区间返回 `416`。磁盘保留空间不足返回 `507`。
 - 自由协作初始表单修改使用 `PATCH`；删除暂存附件必须携带打开元数据时取得的 `If-Match`。
@@ -61,8 +61,8 @@ MSSQL_DATABASE=<数据库名>
 MSSQL_SCHEMA=flowpilot
 MSSQL_USER=<应用运行账号>
 MSSQL_PASSWORD=<应用运行密码>
-MSSQL_ENCRYPT=false
-MSSQL_TRUST_SERVER_CERTIFICATE=true
+MSSQL_ENCRYPT=true
+MSSQL_TRUST_SERVER_CERTIFICATE=false
 MSSQL_EXPECTED_COMPATIBILITY_LEVEL=130
 MSSQL_EXPECTED_COLLATION=<DBA 确认的数据库排序规则>
 MSSQL_POOL_MIN=0
@@ -73,9 +73,19 @@ MSSQL_DEADLOCK_RETRY_COUNT=3
 ```
 
 - 迁移账号不写入常驻应用 Secrets；执行停机迁移时通过单独受限配置或交互式部署环境注入。
-- 数据库就绪检查验证服务器版本、兼容级别、预期 schema、迁移校验和和排序规则。
+- 数据库就绪检查验证服务器版本、兼容级别、预期 schema、迁移校验和和排序规则；SQL Server 2016 13.x 只接受 SP2/SP3，主版本 14 及以上全部接受。`MSSQL_EXPECTED_COMPATIBILITY_LEVEL=130` 表示最低门槛而不是精确值，实际兼容级别 130 及以上均可通过。
 - 用户、角色、部门、职务和流程权限组的物理启停列统一为 `is_enabled bit`，API Mapper 统一输出/接收 `enabled | disabled`；流程定义保存 `is_disabled bit` 并结合发布指针推导接口状态，多阶段对象保留 CHECK 约束状态枚举。Migration 和仓储契约测试必须防止这两类状态混用。
 - 死锁只对明确可重试且整个事务可安全重放的命令执行指数退避；SMTP、附件写入和其他外部 I/O 不得包含在重试事务中。
+
+### 4.1 当前数据库基础设施实施状态
+
+- `apps/api` 已使用显式 Data Mapper Entity、惰性且可重试的 TypeORM `DataSource` 管理器和事务专属 `QueryRunner` UoW。导入数据库模块不会连接 SQL Server，因此数据库不可用时进程仍可提供存活检查。
+- 生产选项固定为 `synchronize=false`、`migrationsRun=false`。首个人工迁移创建 `flowpilot` 身份、组织、角色权限、流程权限组、会话、模拟身份、审计与结构状态基础表；迁移和种子分别通过受控 CLI 执行。
+- 首次迁移的 SHA-256 校验和由规范化 schema DDL 集合确定性计算，校验和自身的 ledger/state 写入语句不参与指纹，单元测试独立重算并核对 64 位小写十六进制结果。
+- 内置种子在 `SERIALIZABLE` 事务中幂等创建系统部门/职务、初始职务“经理”“员工”、权限目录、超级管理员角色与唯一账号。只有账号尚不存在时才读取 `FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD` 并生成 scrypt 散列，重复执行不覆盖密码。
+- 结构检查与完整就绪检查已分离：迁移 CLI 只校验平台和结构，种子 CLI 写入后再验证当前种子版本、内置权限目录字段、超级管理员角色的完整授权及恰好一条内置超级管理员记录，保证 `db:bootstrap` 可用于已创建的空数据库；目录漂移返回稳定代码 `DATABASE_SEED_CATALOG_MISMATCH`。
+- `mssql` 默认 `tedious` 驱动只支持 TCP/IP 连接，不支持 `(localdb)\...` LocalDB 命名管道实例，也不使用 `msnodesqlv8`。检测到 LocalDB 时返回稳定诊断 `UNSUPPORTED_LOCALDB_DRIVER`，不得把它误报为普通账号或密码错误。
+- 部署联调仍需提供启用 TCP/IP 和 SQL 账号认证的 SQL Server 主机/端口、数据库名、预期排序规则及分离的迁移/运行账号。当前纯单元测试不替代 SQL Server 2016 SP2、兼容级别 130 最低基线及实际部署更高版本/兼容级别的真实迁移与仓储验收。
 
 ## 5. AD/LDAP 配置与行为
 
@@ -86,23 +96,28 @@ DOMAIN_AUTH_BASE_DN=<目录搜索根>
 DOMAIN_AUTH_UPN_SUFFIX=<UPN 后缀>
 DOMAIN_AUTH_NETBIOS_NAME=<可选 DOMAIN 名称>
 DOMAIN_AUTH_ACCOUNT_ATTRIBUTE=sAMAccountName
+DOMAIN_AUTH_ALLOW_PLAINTEXT=false
 DOMAIN_AUTH_CONNECT_TIMEOUT_MS=3000
 DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
 DOMAIN_AUTH_TLS_REJECT_UNAUTHORIZED=true
+AUTH_LOGIN_UNAVAILABLE_WINDOW_MS=60000
+AUTH_LOGIN_UNAVAILABLE_BLOCK_DURATION_MS=60000
+AUTH_LOGIN_UNAVAILABLE_IP_LIMIT=60
 ```
 
 - FlowPilot 用户表保存规范化的裸账号。登录输入可以是裸账号、匹配配置后缀的 UPN 或匹配配置名称的 `DOMAIN\user`，服务端统一规范化后查询本地用户。
-- 首版默认使用用户 UPN 直接绑定验证密码，再在配置的 Base DN 内使用经过 RFC 4515 转义的账号筛选器确认用户对象；不要求常驻域服务账号。若公司域策略不允许该方式，再通过配置增加只读搜索账号，不改变业务认证接口。
+- 首版默认使用用户 UPN 直接绑定验证密码，再在配置的 Base DN 内同时使用经过 RFC 4515 转义的账号和同一 UPN 筛选器确认唯一用户对象；不要求常驻域服务账号。若公司域策略不允许该方式，再通过配置增加只读搜索账号，不改变业务认证接口。
 - FlowPilot 先检查本地用户存在、启用状态和配置的认证模式，再调用域服务；域组不直接映射系统权限，不自动创建用户。
 - 错误凭据、域账号禁用、锁定或密码过期统一对客户端返回 `401 INVALID_CREDENTIALS`；连接、证书、DNS 或所有域地址超时返回 `503 DOMAIN_AUTHENTICATION_UNAVAILABLE`。
+- 未知、停用和本地密码错误账号也先使用匿名 RootDSE 可用性探测统一 401/503 响应，避免域故障成为账号或认证模式枚举信号；探测和域故障使用 5 秒共享缓存与并发合并。503 使用独立的客户端 IP 速率桶，不能计入账号密码失败桶。
 - LDAP 查询必须参数化或转义，密码不得进入日志、指标、审计、异常消息或健康详情。
-- 优先使用 LDAPS。若部署继续使用 LDAP，部署验收必须记录当前 HTTP 与 LDAP 均没有链路加密的风险接受。
+- 默认只允许 LDAPS。只有旧域端点确实无法提供 TLS 时，部署方才可设置 `DOMAIN_AUTH_ALLOW_PLAINTEXT=true`，并在验收中记录域密码会以明文跨网络传输的风险；不能仅通过填写 `ldap://` 静默降级。
 
 ## 6. 本地密码、会话和请求安全
 
 - 本地密码使用 Node.js 内置异步 `crypto.scrypt()`，不安装 Argon2/bcrypt 原生模块。基线参数为 `N=65536`、`r=8`、`p=1`、`maxmem=96 MiB`、16 字节随机盐和 32 字节派生密钥；算法、格式版本和完整参数随散列编码保存，比较使用 `timingSafeEqual`。目标服务器实测后可以提高参数，已有较低参数在成功登录后渐进重哈希。
 - 登录限流默认按“规范账号 + 客户端 IP”15 分钟最多 5 次失败，并按客户端 IP 15 分钟最多 100 次失败；封禁 15 分钟，参数可配置。成功登录只清除账号维度计数，不绕过 IP 总量限制。
-- 仅信任从本机 IIS 反向代理到 `127.0.0.1` 的转发头；不得信任来自任意网络来源的 `X-Forwarded-For`。
+- 仅信任从本机 IIS/ARR 反向代理到 `127.0.0.1` 的转发头。IIS 必须覆盖并丢弃外部请求已有的 `X-Forwarded-For`，再用与 IIS 建立连接的真实客户端地址写入新值；不得透传、拼接或信任客户端提供的地址链。
 - Cookie 名称 `flowpilot_session`，`Path=/api/flowpilot`，`HttpOnly`、`SameSite=Strict`；当前 HTTP 部署 `Secure=false`，启用 HTTPS 后必须配置为 `true`。
 - 登录、权限变更、密码重置、认证方式切换和开始/结束模拟身份后轮换会话令牌。闲置期在安全阈值内滑动续期，绝对 24 小时有效期不延长。
 - 所有修改请求校验同源 `Origin`；不带 Origin 时只接受与配置站点地址同源的 `Referer`。两者都缺失或不匹配时返回 `403 CSRF_VALIDATION_FAILED`。
@@ -121,17 +136,28 @@ DOMAIN_AUTH_TLS_REJECT_UNAUTHORIZED=true
 ## 8. SMTP、后台任务和运维
 
 ```dotenv
+SMTP_ENABLED=true
 SMTP_HOST=<SMTP 主机>
 SMTP_PORT=<端口>
 SMTP_SECURE=false
+SMTP_REQUIRE_TLS=true
+SMTP_IGNORE_TLS=false
+SMTP_TLS_REJECT_UNAUTHORIZED=true
+SMTP_TLS_SERVERNAME=<使用 IP 连接且启用 TLS 时的可选证书主机名>
 SMTP_USER=<可选认证账号>
 SMTP_PASSWORD=<可选认证密码>
 SMTP_FROM=<发件地址>
 SMTP_REPLY_TO=<可选回复地址>
+SMTP_CONNECTION_TIMEOUT_MS=5000
+SMTP_GREETING_TIMEOUT_MS=5000
+SMTP_SOCKET_TIMEOUT_MS=15000
+SMTP_MAX_CONNECTIONS=5
 FLOWPILOT_PUBLIC_BASE_URL=<包含 /flowpilot 且不带末尾斜杠的应用根地址，例如 http://服务器/flowpilot>
 FLOWPILOT_BUSINESS_TIME_ZONE=Asia/Shanghai
 ```
 
+- `SMTP_SECURE=true` 表示连接建立时即使用 TLS；端口 25/587 通常使用 `SMTP_SECURE=false`、`SMTP_REQUIRE_TLS=true` 强制 STARTTLS，不能使用会在降级后继续明文投递的机会式模式。只有部署方明确接受内网明文传输风险时才同时设置 `SMTP_REQUIRE_TLS=false`、`SMTP_IGNORE_TLS=true`。使用 IP 地址连接且校验证书时配置 `SMTP_TLS_SERVERNAME`。
+- 新后端不得创建或调用 `CDO.Message`、`sp_OACreate`、`sp_OASetProperty` 或其他 SQL Server OLE Automation 发信过程；固定发件人和 SMTP 凭据只进入 Nodemailer 网关，业务事务只写 Outbox。
 - 启动时必须验证 `FLOWPILOT_PUBLIC_BASE_URL` 是绝对 HTTP/HTTPS URL、路径以 `/flowpilot` 结束且不包含查询、片段、用户信息或末尾斜杠。邮件只允许拼接服务端生成的 `/processes/{instanceId}` 相对路径和可选 `taskId`，禁止接受用户输入的跳转地址。
 - 未登录用户点击邮件后先登录；前端只保存经过同源和 FlowPilot 基路径校验的返回地址，登录完成后返回流程详情。`taskId` 只用于定位任务，不是授权凭证，详情读取和处理命令仍由后端鉴权。
 - Outbox 和 `email_delivery_attempts` 均写入 SQL Server；运维列表可以查看收件人邮箱快照、主题、目标链接、状态、尝试次数、时间和脱敏错误，但不显示或保存完整邮件正文和 SMTP 凭据。
@@ -143,13 +169,13 @@ FLOWPILOT_BUSINESS_TIME_ZONE=Asia/Shanghai
 
 ## 9. 测试和交付门禁
 
-- 在真实 SQL Server 2016 SP2、兼容级别 130 环境执行仓储集成、Migration、死锁/并发和 JSON/投影测试；不能只用 Mock、内存数据库或更新版本 SQL Server 代替。
+- 在真实 SQL Server 2016 SP2、兼容级别 130 的最低基线和实际部署的更高版本/兼容级别环境执行仓储集成、Migration、死锁/并发和 JSON/投影测试；不能只用 Mock 或内存数据库代替。
 - 对空数据库和上一结构版本分别执行迁移，并验证校验和不一致、结构落后和兼容级别错误时服务拒绝就绪。
 - AD 和 SMTP 使用可控测试替身覆盖失败映射，并在部署环境各完成一次真实域登录和测试邮件。
 - 附件测试覆盖中断、超限、危险签名、路径穿越、Range、磁盘不足、业务事务失败、替换、重复清理和越权下载。
 - OpenAPI 生成、请求/响应校验、Problem Details、ETag、If-Match、幂等重放和 Cookie 会话必须有契约测试。
 - 用户、角色、部门/职务和流程权限组删除测试必须覆盖独立动作权限、内置项、当前账号、无引用成功、各类可变与历史引用冲突、过期 ETag、会话撤销、审计保留及并发新增引用时的事务竞态；仅有编辑权限时删除接口必须返回 403。
-- IIS 验收覆盖静态路由、Cookie、反向代理头、上传大小、Range、健康检查、服务重启和旧版本回滚。
+- IIS 验收覆盖静态路由、Cookie、反向代理头、上传大小、Range、健康检查、服务重启和旧版本回滚。客户端 IP 验收必须从两个不同来源执行受控失败登录，确认限流桶不会串用；再从其中一个来源伪造 `X-Forwarded-For`，确认伪造值不能绕过或重置限流。
 
 ## 10. 部署人员后续填写项
 

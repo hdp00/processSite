@@ -1,7 +1,7 @@
 # FlowPilot SQL Server 数据库结构设计
 
 > 状态：已确认，作为后端 Entity、Migration、仓储和数据库验收的结构基线  
-> 适用版本：Microsoft SQL Server 2016 SP2，数据库兼容级别 130  
+> 适用版本：Microsoft SQL Server 2016 SP2 及以上版本，数据库兼容级别最低为 130
 > ORM：TypeORM Data Mapper；生产环境禁止 `synchronize` 和启动自动迁移
 
 ## 1. 建模原则
@@ -14,6 +14,7 @@
 - 账号、角色编码、权限编码、流程编码等唯一业务标识同时保存规范化值。规范化规则为去除首尾空白并使用 Unicode 小写；唯一约束建立在规范化列上，不仅依赖数据库排序规则。
 - 只有启用/停用两种业务状态的主数据使用 `is_enabled bit`；API 层将其映射为 `status: enabled | disabled`，不得为迁就传输枚举在数据库中保存重复字符串。流程实例、任务、版本、附件和 Outbox 等多阶段生命周期对象继续使用受 CHECK 约束的 `status` 或 `state` 枚举列。
 - 新建专用数据库建议使用 DBA 批准的中文、大小写不敏感 Unicode 排序规则。实际排序规则通过 `MSSQL_EXPECTED_COLLATION` 配置并在迁移预检和就绪检查中核对；已有数据库不得由应用自行修改排序规则。
+- 迁移预检和就绪检查必须读取 `SERVERPROPERTY('ProductVersion')` 与 `SERVERPROPERTY('ProductLevel')`；主版本 `13` 的 SQL Server 2016 只接受 SP2/SP3，主版本 `14` 及以上全部接受且不再检查 `ProductLevel`。主版本低于 `13`、SQL Server 2016 服务级别不足 SP2 或数据库兼容级别低于 130 时返回稳定诊断，不在错误中输出服务器地址或连接凭据。
 - 所有外键必须显式命名并确定删除行为。业务历史表默认 `NO ACTION`；只有纯关联表允许随父记录级联删除。
 - 表名、列名、约束和索引均使用小写下划线命名；迁移脚本不得依赖 SQL Server 2017 以后能力。
 
@@ -29,7 +30,7 @@
 - `display_name nvarchar(100)`、`email nvarchar(320)`。
 - `authentication_mode nvarchar(20)`：`domain | password`。
 - `password_hash nvarchar(500) null`：仅本地密码账号保存包含算法标识、格式版本、scrypt 参数、随机盐和派生密钥的版本化编码字符串。
-- `department_id uniqueidentifier null`、`position_id uniqueidentifier null`。
+- `department_id uniqueidentifier`、`position_id uniqueidentifier`：均为必填外键；任何用户都必须归属一个有效部门和职务。
 - `is_enabled bit`：`1` 表示启用，`0` 表示停用；API 映射为 `enabled | disabled`。
 - `is_builtin_super_admin bit`：数据库内只能有一条为 `1`。
 - `revision int`、`created_at`、`updated_at`、`created_by`、`updated_by`。
@@ -44,7 +45,7 @@
 
 ### 2.2 角色和权限
 
-- `flowpilot.roles`：`id`、`code`、`normalized_code`、`name`、`description`、`is_enabled bit`、`is_builtin`、`revision` 和审计时间。
+- `flowpilot.roles`：`id`、`code`、`normalized_code`、`name`、`normalized_name`、`description`、`is_enabled bit`、`is_builtin`、`revision` 和审计时间；角色名称按应用统一规范化规则建立唯一索引，避免并发重名且不依赖数据库排序规则。
 - `flowpilot.permissions`：稳定 `code` 主键或唯一键、资源、动作、名称、排序、是否内置。权限目录由版本化种子维护，不允许页面创建任意权限代码。
 - `flowpilot.user_roles`：`user_id + role_id` 联合唯一，保存授权人和授权时间。
 - `flowpilot.role_permissions`：`role_id + permission_code` 联合唯一，保存授权人和授权时间。
@@ -54,7 +55,7 @@
 ### 2.3 部门和职务
 
 - `flowpilot.departments`：`id`、稳定 `code`、`normalized_code`、`name`、`parent_id`、`path_cache`、`sort_order`、`is_enabled bit`、`description`、`revision`。
-- `flowpilot.positions`：`id`、稳定 `code`、`normalized_code`、`name`、`sort_order`、`is_enabled bit`、`description`、`revision`。
+- `flowpilot.positions`：`id`、稳定 `code`、`normalized_code`、`name`、`normalized_name`、`sort_order`、`is_enabled bit`、`description`、`revision`；职务名称按应用统一规范化规则建立唯一索引。
 
 部门层级必须拒绝循环引用。`path_cache` 只用于列表显示和搜索，更新父部门时在同一事务中重算受影响子树；权限判断使用稳定部门 ID，不依赖显示路径。
 
@@ -216,9 +217,11 @@
 
 ## 8. 迁移和验收要求
 
-- 首次迁移依次创建 schema、基础表、外键、CHECK、唯一约束、查询索引和内置种子。
-- 每次迁移具有固定 ID 和校验和；已经在任何环境执行过的迁移文件不得改写，只能新增后续迁移。
+- 首次迁移依次创建 schema、基础表、外键、CHECK、唯一约束和查询索引；TypeORM 自身的技术迁移表位于 `dbo`，业务结构版本和校验和仍记录在 `flowpilot.schema_migrations`。
+- 结构迁移完成后由独立事务型种子 CLI 幂等创建系统内置部门/职务、初始职务“经理”“员工”、唯一超级管理员角色及账号、内置权限和关联。首次创建超级管理员时只从仓库外 `FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD` 读取密码并保存 scrypt 散列；重复执行不得覆盖已有密码。
+- 完整就绪检查除结构版本外，还必须验证 `builtin-seed` 版本与当前构建一致、内置权限的 code/resource/action/name/sort/is_builtin 与版本化目录精确一致、超级管理员角色拥有全部当前内置权限，且数据库恰好存在一条内置超级管理员记录；仅迁移未执行种子或目录发生漂移的数据库不得报告就绪。
+- 每次迁移具有固定 ID 和校验和；校验和由不含 ledger/state 自引用写入语句的规范化 schema DDL 集合在模块加载时计算 SHA-256，避免手工常量与实际 DDL 漂移。已经在任何环境执行过的迁移文件不得改写，只能新增后续迁移。
 - 迁移账号拥有 DDL 权限；应用运行账号只拥有 `flowpilot` schema 内所需的 DML 和执行权限。
-- 空数据库迁移、从上一结构版本升级、失败回滚或前向修复都必须在 SQL Server 2016 SP2、兼容级别 130 环境验证。
+- 空数据库迁移、从上一结构版本升级、失败回滚或前向修复都必须在 SQL Server 2016 SP2、兼容级别 130 的最低基线和实际部署的更高版本/兼容级别上验证；同一套迁移不得按服务器版本产生不同业务结构。
 - 验收至少核对外键、唯一约束、JSON 合法性、投影一致性、任务状态、编号连续性、附件引用、Outbox、会话撤销和结构校验和。
 - 具体列长、索引 INCLUDE 列和查询执行计划在实现阶段根据真实查询补充，但不得改变本文件规定的聚合边界和事实来源。
