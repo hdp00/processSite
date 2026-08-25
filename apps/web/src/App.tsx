@@ -1,8 +1,8 @@
 import { App as AntApp, ConfigProvider, Spin } from "antd";
 import { Result } from "antd";
 import zhCN from "antd/locale/zh_CN";
-import { lazy, Suspense, type ReactNode } from "react";
-import { Navigate, Route, RouterProvider, createBrowserRouter, createRoutesFromElements, useParams } from "react-router-dom";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { Navigate, Route, RouterProvider, createBrowserRouter, createRoutesFromElements, useLocation, useParams } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { AppBackButton } from "./components/AppBackButton";
 import { LoginPage } from "./pages/LoginPage";
@@ -10,6 +10,9 @@ import { canPersonaAccessLaunch, canPersonaLaunchDefinition, hasPersonaPermissio
 import { getPublishedVersion, useProcessDefinitionStore } from "./state/useProcessDefinitionStore";
 import { usePrototypeStore } from "./state/usePrototypeStore";
 import { canUserViewInstance } from "./state/workflowAccess";
+import { flowPilotApi } from "./api/flowPilotApi";
+import { cacheProcessDefinition, cacheProcessRuntime, cacheProcessVersion } from "./api/entityCache";
+import { useIdentityStore } from "./state/useIdentityStore";
 
 const FlowDesignerPage = lazy(() => import("./pages/FlowDesignerPage").then((module) => ({ default: module.FlowDesignerPage })));
 const FreeFlowDetailPage = lazy(() => import("./pages/FreeFlowDetailPage").then((module) => ({ default: module.FreeFlowDetailPage })));
@@ -50,14 +53,16 @@ export function PersonaGate({ scope, definitionId, permission, children }: { sco
     state.definitions.find((item) => item.id === targetDefinitionId),
   );
   const targetPublishedVersion = getPublishedVersion(targetDefinition);
+  const remoteMode = import.meta.env.VITE_API_MODE === "remote";
   const allowed = scope === "permission"
     ? Boolean(permission && hasPersonaPermission(personaId, permission))
     : targetDefinitionId
       ? Boolean(
         targetDefinition
         && !targetDefinition.disabled
-        && targetPublishedVersion
-        && canPersonaLaunchDefinition(personaId, targetDefinitionId),
+        && (remoteMode ? Boolean(targetDefinition.publishedVersionId) : Boolean(
+          targetPublishedVersion && canPersonaLaunchDefinition(personaId, targetDefinitionId)
+        )),
       )
       : canPersonaAccessLaunch(personaId);
 
@@ -72,10 +77,115 @@ export function PersonaGate({ scope, definitionId, permission, children }: { sco
   );
 }
 
+function ProcessDefinitionLoader({ children }: { children: ReactNode }) {
+  const { definitionId } = useParams<{ definitionId?: string }>();
+  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (import.meta.env.VITE_API_MODE !== "remote" || !definitionId || definitionId === "new" || definition?.versions.length) return;
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    void flowPilotApi.definitions.get(definitionId)
+      .then((loaded) => { if (!cancelled) cacheProcessDefinition(loaded); })
+      .catch(() => { if (!cancelled) setFailed(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [definitionId]);
+  if (loading) return <Spin fullscreen tip="正在加载流程版本…" />;
+  if (failed) return <Result status="error" title="流程版本加载失败" subTitle="请刷新页面后重试。" />;
+  return children;
+}
+
+function LaunchDefinitionLoader({ children }: { children: ReactNode }) {
+  const { definitionId } = useParams<{ definitionId?: string }>();
+  const location = useLocation();
+  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
+  const copySourceId = new URLSearchParams(location.search).get("copyFrom");
+  const copySource = usePrototypeStore((state) => state.instances.find((item) => item.id === copySourceId));
+  const copySourceVersionLoaded = Boolean(
+    copySource && definition?.versions.some((version) => version.id === copySource.versionId),
+  );
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const needsLaunchConfig = !definition?.versions.length;
+    const needsCopySource = Boolean(copySourceId && (!copySource || !copySourceVersionLoaded));
+    if (import.meta.env.VITE_API_MODE !== "remote" || !definitionId || (!needsLaunchConfig && !needsCopySource)) return;
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    void (async () => {
+      if (needsLaunchConfig) {
+        const resource = await flowPilotApi.definitions.launchConfig(definitionId);
+        if (cancelled) return;
+        cacheProcessDefinition(resource.data.definition);
+        const candidates = [
+          ...resource.data.firstAssigneeCandidates,
+          ...Object.values(resource.data.assigneeCandidatesByNode).flat(),
+        ];
+        useIdentityStore.getState().setUsers((users) => {
+          const byId = new Map(users.map((user) => [user.id, user]));
+          candidates.forEach((user) => {
+            const current = byId.get(user.id);
+            byId.set(user.id, { ...current, ...user, password: current?.password ?? "" });
+          });
+          return [...byId.values()];
+        });
+      }
+      if (copySourceId && (!copySource || !copySourceVersionLoaded)) {
+        const detail = copySource ? { instance: copySource, tasks: undefined } : await flowPilotApi.instances.get(copySourceId);
+        if (cancelled) return;
+        cacheProcessRuntime(detail.instance, detail.tasks);
+        const hasLockedVersion = useProcessDefinitionStore.getState().definitions
+          .find((item) => item.id === detail.instance.definitionId)
+          ?.versions.some((version) => version.id === detail.instance.versionId);
+        if (!hasLockedVersion) {
+          const lockedVersion = await flowPilotApi.definitions.version(detail.instance.definitionId, detail.instance.versionId);
+          if (!cancelled) cacheProcessVersion(detail.instance.definitionId, lockedVersion);
+        }
+      }
+    })().catch(() => { if (!cancelled) setFailed(true); }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [copySourceId, definitionId]);
+  if (loading) return <Spin fullscreen tip="正在加载发起配置…" />;
+  if (failed) return <Result status="403" title="流程当前不可发起" subTitle="流程可能已停用、取消发布或当前身份不在发起权限组中。" />;
+  return children;
+}
+
 function ProcessDetailRoute() {
   const { id } = useParams();
   const personaId = usePrototypeStore((state) => state.personaId);
   const instance = usePrototypeStore((state) => state.instances.find((item) => item.id === id));
+  const lockedVersionLoaded = useProcessDefinitionStore((state) => Boolean(
+    instance && state.definitions.find((definition) => definition.id === instance.definitionId)
+      ?.versions.some((version) => version.id === instance.versionId),
+  ));
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (import.meta.env.VITE_API_MODE !== "remote" || !id || (instance && lockedVersionLoaded)) return;
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    void (async () => {
+      const detail = instance ? { instance, tasks: undefined } : await flowPilotApi.instances.get(id);
+      if (cancelled) return;
+      cacheProcessRuntime(detail.instance, detail.tasks);
+      const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === detail.instance.definitionId);
+      if (!definition) {
+        cacheProcessDefinition(await flowPilotApi.definitions.get(detail.instance.definitionId));
+      } else if (!definition.versions.some((version) => version.id === detail.instance.versionId)) {
+        cacheProcessVersion(detail.instance.definitionId, await flowPilotApi.definitions.version(detail.instance.definitionId, detail.instance.versionId));
+      }
+    })()
+      .catch(() => { if (!cancelled) setFailed(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [id]);
+  if (loading) return <Spin fullscreen tip="正在加载流程详情…" />;
+  if (failed) return <Result status="404" title="流程不存在或无权查看" />;
   if (!instance || !canUserViewInstance(personaId, instance)) {
     return <Result status="403" title="无权查看此流程" subTitle="流程数据范围会在每次打开详情时重新校验。" extra={<AppBackButton onClick={() => window.history.back()} />} />;
   }
@@ -88,6 +198,34 @@ function ProcessPrintRoute() {
   const { id } = useParams();
   const personaId = usePrototypeStore((state) => state.personaId);
   const instance = usePrototypeStore((state) => state.instances.find((item) => item.id === id));
+  const lockedVersionLoaded = useProcessDefinitionStore((state) => Boolean(
+    instance && state.definitions.find((definition) => definition.id === instance.definitionId)
+      ?.versions.some((version) => version.id === instance.versionId),
+  ));
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (import.meta.env.VITE_API_MODE !== "remote" || !id || (instance && lockedVersionLoaded)) return;
+    let cancelled = false;
+    setLoading(true);
+    setFailed(false);
+    void (async () => {
+      const detail = instance ? { instance, tasks: undefined } : await flowPilotApi.instances.get(id);
+      if (cancelled) return;
+      cacheProcessRuntime(detail.instance, detail.tasks);
+      const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === detail.instance.definitionId);
+      if (!definition) {
+        cacheProcessDefinition(await flowPilotApi.definitions.get(detail.instance.definitionId));
+      } else if (!definition.versions.some((version) => version.id === detail.instance.versionId)) {
+        cacheProcessVersion(detail.instance.definitionId, await flowPilotApi.definitions.version(detail.instance.definitionId, detail.instance.versionId));
+      }
+    })()
+      .catch(() => { if (!cancelled) setFailed(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [id]);
+  if (loading) return <Spin fullscreen tip="正在加载打印数据…" />;
+  if (failed) return <Result status="404" title="流程不存在或无权打印" />;
   return instance && hasPersonaPermission(personaId, "work-list:打印") && canUserViewInstance(personaId, instance)
     ? <ProcessPrintPage />
     : <Result status="403" title="无权打印此流程" />;
@@ -106,17 +244,17 @@ const router = createBrowserRouter(createRoutesFromElements(
     >
       <Route index element={<Navigate to="/tasks" replace />} />
       <Route path="/launch" element={<PersonaGate scope="initiator"><ProcessLaunchCenterPage /></PersonaGate>} />
-      <Route path="/launch/:definitionId" element={<PersonaGate scope="initiator"><ProcessStartPage /></PersonaGate>} />
+      <Route path="/launch/:definitionId" element={<LaunchDefinitionLoader><PersonaGate scope="initiator"><ProcessStartPage /></PersonaGate></LaunchDefinitionLoader>} />
       <Route path="/tasks" element={<PersonaGate scope="permission" permission="work-task:查看"><TaskCenterPage /></PersonaGate>} />
       <Route path="/processes" element={<PersonaGate scope="permission" permission="work-list:查看"><ProcessListPage /></PersonaGate>} />
       <Route path="/processes/:id" element={<ProcessDetailRoute />} />
       <Route path="/free-flow/new" element={<Navigate to="/launch/free-collaboration" replace />} />
       <Route path="/admin/processes" element={<PersonaGate scope="permission" permission="config-definition:查看"><ProcessManagementPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/basic" element={<PersonaGate scope="permission" permission="config-definition:编辑"><ProcessBasicConfigPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/form" element={<PersonaGate scope="permission" permission="config-form:编辑"><FormDesignerPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/flow" element={<PersonaGate scope="permission" permission="config-definition:编辑"><FlowDesignerPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/publish" element={<PersonaGate scope="permission" permission="config-definition:发布"><ProcessPublishPage /></PersonaGate>} />
-      <Route path="/admin/processes/:definitionId/versions" element={<PersonaGate scope="permission" permission="config-definition:查看"><ProcessVersionsPage /></PersonaGate>} />
+      <Route path="/admin/processes/:definitionId/basic" element={<ProcessDefinitionLoader><PersonaGate scope="permission" permission="config-definition:编辑"><ProcessBasicConfigPage /></PersonaGate></ProcessDefinitionLoader>} />
+      <Route path="/admin/processes/:definitionId/form" element={<ProcessDefinitionLoader><PersonaGate scope="permission" permission="config-form:编辑"><FormDesignerPage /></PersonaGate></ProcessDefinitionLoader>} />
+      <Route path="/admin/processes/:definitionId/flow" element={<ProcessDefinitionLoader><PersonaGate scope="permission" permission="config-definition:编辑"><FlowDesignerPage /></PersonaGate></ProcessDefinitionLoader>} />
+      <Route path="/admin/processes/:definitionId/publish" element={<ProcessDefinitionLoader><PersonaGate scope="permission" permission="config-definition:发布"><ProcessPublishPage /></PersonaGate></ProcessDefinitionLoader>} />
+      <Route path="/admin/processes/:definitionId/versions" element={<ProcessDefinitionLoader><PersonaGate scope="permission" permission="config-definition:查看"><ProcessVersionsPage /></PersonaGate></ProcessDefinitionLoader>} />
       <Route path="/admin/users" element={<PersonaGate scope="permission" permission="org-user:查看"><UserManagementPage /></PersonaGate>} />
       <Route path="/admin/departments" element={<PersonaGate scope="permission" permission="org-department:查看"><DepartmentManagementPage /></PersonaGate>} />
       <Route path="/admin/roles" element={<PersonaGate scope="permission" permission="org-role:查看"><RoleManagementPage /></PersonaGate>} />

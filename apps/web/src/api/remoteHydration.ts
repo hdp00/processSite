@@ -1,5 +1,4 @@
-import type { PageResult, ProcessDefinitionListItem, WorkflowTaskListItem } from "./contracts";
-import type { ProcessInstance } from "../data/types";
+import type { PageResult, ProcessDefinitionListItem } from "./contracts";
 import { useIdentityStore } from "../state/useIdentityStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../state/usePrototypeStore";
@@ -22,19 +21,17 @@ const collectPages = async <T>(loader: (page: number) => Promise<PageResult<T>>)
 export const hydrateRemoteApplication = async () => {
   const loadDefinitions = async () => {
     try {
-      return await collectPages<ProcessDefinitionListItem>((page) =>
+      return collectPages<ProcessDefinitionListItem>((page) =>
         flowPilotApi.definitions.list({ page, pageSize: 100 }));
     } catch {
       return collectPages<ProcessDefinitionListItem>((page) =>
         flowPilotApi.definitions.visible({ page, pageSize: 100 }));
     }
   };
-  const [roles, workflowGroups, definitions, instances, taskItems, departments, positions] = await Promise.all([
+  const [roles, workflowGroups, definitions, departments, positions] = await Promise.all([
     collectPages((page) => flowPilotApi.directory.roles({ page, pageSize: 100 })),
     collectPages((page) => flowPilotApi.directory.groups({ page, pageSize: 100 })),
     loadDefinitions(),
-    collectPages<ProcessInstance>((page) => flowPilotApi.instances.list({ page, pageSize: 100 })),
-    collectPages<WorkflowTaskListItem>((page) => flowPilotApi.tasks.listMine({ page, pageSize: 100, view: "all" })),
     flowPilotApi.organization.departments(),
     flowPilotApi.organization.positions(),
   ]);
@@ -50,11 +47,9 @@ export const hydrateRemoteApplication = async () => {
   useProcessDefinitionStore.setState({
     definitions: definitions.map(({ status: _status, ...definition }) => definition),
   });
-  const instanceById = new Map(instances.map((instance) => [instance.id, instance]));
-  taskItems.forEach((item) => instanceById.set(item.instance.id, item.instance));
   usePrototypeStore.setState({
-    instances: [...instanceById.values()],
-    tasks: taskItems.map((item) => item.task),
+    instances: [],
+    tasks: [],
   });
   useOrganizationStore.setState({
     departments: departments.map((department) => ({

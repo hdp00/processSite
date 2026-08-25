@@ -9,6 +9,7 @@ export const ROLE_PERMISSIONS_CHANGED_EVENT = "flowpilot-role-permissions-change
 const editActionAliases = new Set(["新增", "新建", "编辑", "启停", "停用"]);
 
 export function normalizeRolePermissionList(permissions: string[]) {
+  const knownPermissions = new Set(allPermissionCodes);
   return Array.from(new Set(permissions.map((permission) => {
     if (permission === "work-task:驳回") return "work-task:审核";
     const separatorIndex = permission.lastIndexOf(":");
@@ -16,23 +17,21 @@ export function normalizeRolePermissionList(permissions: string[]) {
     const pageKey = permission.slice(0, separatorIndex);
     const action = permission.slice(separatorIndex + 1);
     return editActionAliases.has(action) ? `${pageKey}:编辑` : permission;
-  })));
+  }).filter((permission) => knownPermissions.has(permission))));
 }
 
 const reviewerPermissions = ["work-task:查看", "work-task:审核", "work-list:查看"];
-const independentlyAddedDeletePermissions = new Set([
-  "org-user:删除",
-  "org-role:删除",
+const latestDirectoryDeletePermissions = [
   "org-department:删除",
   "org-group:删除",
-]);
-const permissionsBeforeIndependentDirectoryDeletes = allPermissionCodes.filter((permission) =>
-  !independentlyAddedDeletePermissions.has(permission));
+];
+const permissionsBeforeLatestDirectoryDeletes = allPermissionCodes.filter((permission) =>
+  !latestDirectoryDeletePermissions.includes(permission));
 
 export const defaultRolePermissionMap: Record<string, string[]> = {
   "ROLE-SUPER": allPermissionCodes,
   "ROLE-001": allPermissionCodes,
-  "ROLE-002": ["work-task:查看", "work-list:查看", "work-list:打印", "config-definition:查看", "config-definition:编辑", "config-definition:发布", "config-definition:删除", "config-form:查看", "config-form:编辑", "config-form:预览"],
+  "ROLE-002": ["work-task:查看", "work-list:查看", "work-list:打印", "config-definition:查看", "config-definition:编辑", "config-definition:发布", "config-definition:删除", "config-form:编辑"],
   "ROLE-003": ["work-launch:查看", "work-launch:发起", "work-task:查看", "work-task:审核", "work-task:关闭", "work-list:查看", "work-list:复制新建", "work-list:打印"],
   "ROLE-004": reviewerPermissions,
   "ROLE-005": reviewerPermissions,
@@ -59,8 +58,8 @@ export function readStoredRolePermissions(): Record<string, string[]> {
     }
     const upgrading = current === null && (previous !== null || legacy !== null);
     if (upgrading && saved["ROLE-001"]
-      && permissionsBeforeIndependentDirectoryDeletes.every((permission) => saved["ROLE-001"].includes(permission))) {
-      saved["ROLE-001"] = [...allPermissionCodes];
+      && permissionsBeforeLatestDirectoryDeletes.every((permission) => saved["ROLE-001"].includes(permission))) {
+      saved["ROLE-001"] = Array.from(new Set([...saved["ROLE-001"], ...latestDirectoryDeletePermissions]));
     }
     if (upgrading) window.localStorage.setItem(ROLE_PERMISSION_STORAGE_KEY, JSON.stringify(saved));
     return {

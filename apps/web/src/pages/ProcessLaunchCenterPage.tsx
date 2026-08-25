@@ -7,13 +7,16 @@ import {
   TeamOutlined,
 } from "@ant-design/icons";
 import { Button, Card, Empty, Space, Tag, Typography } from "antd";
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { canPersonaLaunchDefinition } from "../state/rolePermissions";
 import { resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import "./launch-pages.css";
+import { flowPilotApi } from "../api/flowPilotApi";
+import type { LaunchableProcessDefinition } from "../api/contracts";
+import { isBrowserMockMode } from "../utils/runtimeMode";
 
 interface LaunchDefinition {
   id: string;
@@ -79,8 +82,17 @@ export function ProcessLaunchCenterPage() {
   const personaId = usePrototypeStore((state) => state.personaId);
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
+  const [remoteLaunchable, setRemoteLaunchable] = useState<LaunchableProcessDefinition[]>([]);
+  useEffect(() => {
+    if (isBrowserMockMode) return;
+    let cancelled = false;
+    void flowPilotApi.definitions.launchable()
+      .then((items) => { if (!cancelled) setRemoteLaunchable(items); })
+      .catch(() => { if (!cancelled) setRemoteLaunchable([]); });
+    return () => { cancelled = true; };
+  }, []);
   const availableDefinitions = useMemo(
-    () => managedDefinitions.flatMap((managed, index) => {
+    () => isBrowserMockMode ? managedDefinitions.flatMap((managed, index) => {
       const effective = getPublishedVersion(managed);
       if (managed.disabled || !effective) return [];
       const preset = launchDefinitions.find((item) => item.id === managed.id);
@@ -97,8 +109,21 @@ export function ProcessLaunchCenterPage() {
         tone: preset?.tone ?? (["blue", "cyan", "purple", "amber"] as const)[index % 4],
         route: `/launch/${managed.id}`,
       }];
+    }) : remoteLaunchable.map((definition, index) => {
+      const preset = launchDefinitions.find((item) => item.id === definition.definitionId);
+      return {
+        id: definition.definitionId,
+        name: definition.name,
+        description: definition.description,
+        categoryLabel: definition.type === "approval" ? "固定审批" : "自由流程",
+        version: definition.versionLabel,
+        permissionGroups: definition.starterGroups,
+        icon: preset?.icon ?? (definition.type === "approval" ? <SafetyCertificateOutlined /> : <MessageOutlined />),
+        tone: preset?.tone ?? (["blue", "cyan", "purple", "amber"] as const)[index % 4],
+        route: `/launch/${definition.definitionId}`,
+      } satisfies LaunchDefinition;
     }),
-    [managedDefinitions, personaId, workflowGroups],
+    [managedDefinitions, personaId, remoteLaunchable, workflowGroups],
   );
 
   return (

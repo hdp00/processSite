@@ -17,18 +17,23 @@ export const cacheProcessDefinition = (definition: ProcessDefinition) => {
 
 export const cacheProcessVersion = (definitionId: string, version: ProcessVersion) => {
   useProcessDefinitionStore.setState((state) => ({
-    definitions: state.definitions.map((definition) => definition.id === definitionId ? {
-      ...definition,
-      versions: definition.versions.some((item) => item.id === version.id)
+    definitions: state.definitions.map((definition) => {
+      if (definition.id !== definitionId) return definition;
+      const versions = definition.versions.some((item) => item.id === version.id)
         ? definition.versions.map((item) => item.id === version.id ? structuredClone(version) : item)
-        : [structuredClone(version), ...definition.versions],
-      updatedAt: version.updatedAt,
-      updatedBy: version.updatedBy,
-      nextVersionNumber: Math.max(
-        definition.nextVersionNumber,
-        Number(version.version.match(/\d+/)?.[0] ?? 0) + 1,
-      ),
-    } : definition),
+        : [structuredClone(version), ...definition.versions];
+      return {
+        ...definition,
+        versions,
+        versionCount: Math.max(definition.versionCount ?? 0, versions.length),
+        updatedAt: version.updatedAt,
+        updatedBy: version.updatedBy,
+        nextVersionNumber: Math.max(
+          definition.nextVersionNumber,
+          Number(version.version.match(/\d+/)?.[0] ?? 0) + 1,
+        ),
+      };
+    }),
   }));
 };
 
@@ -41,7 +46,11 @@ export const removeCachedProcessVersion = (definitionId: string, versionId: stri
     definitions: state.definitions.flatMap((definition) => {
       if (definition.id !== definitionId) return [definition];
       const versions = definition.versions.filter((version) => version.id !== versionId);
-      return versions.length ? [{ ...definition, versions }] : [];
+      return versions.length ? [{
+        ...definition,
+        versions,
+        versionCount: Math.max(versions.length, (definition.versionCount ?? definition.versions.length) - 1),
+      }] : [];
     }),
   }));
 };

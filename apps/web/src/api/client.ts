@@ -1,7 +1,7 @@
 import type { ApiEnvelope, ApiProblemDetails } from "./contracts";
 import { createClientUuid } from "../utils/clientId";
 
-type QueryValue = string | number | boolean | null | undefined | Array<string | number | boolean>;
+type QueryValue = string | number | boolean | null | undefined | Array<string | number | boolean> | Record<string, unknown>;
 
 export interface ApiRequestOptions extends Omit<RequestInit, "body" | "headers"> {
   body?: unknown;
@@ -27,7 +27,10 @@ export class ApiError extends Error {
 const API_TOKEN_KEY = "flowpilot-api-access-token";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-const apiBaseUrl = () => (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, "");
+const apiBaseUrl = () => (
+  import.meta.env.VITE_API_BASE_URL
+  || (import.meta.env.VITE_API_MODE === "remote" ? "/api/flowpilot/v1" : "/api/v1")
+).replace(/\/$/, "");
 
 const storedMockSession = () => {
   try {
@@ -41,7 +44,7 @@ const storedMockSession = () => {
 
 export const readApiAccessToken = () => {
   const token = window.sessionStorage.getItem(API_TOKEN_KEY);
-  if (import.meta.env.VITE_API_MODE === "remote") return token ?? undefined;
+  if (import.meta.env.VITE_API_MODE === "remote") return undefined;
   const session = storedMockSession();
   const personaId = session?.personaId;
   if (session?.impersonation && session.operatorUserId) return `mock:${session.operatorUserId}`;
@@ -62,6 +65,14 @@ const requestUrl = (path: string, query?: object) => {
   const url = new URL(`${apiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`, window.location.origin);
   Object.entries(query ?? {}).forEach(([key, rawValue]) => {
     const raw = rawValue as QueryValue;
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      Object.entries(raw).forEach(([nestedKey, nestedValue]) => {
+        if (nestedValue !== undefined && nestedValue !== null && nestedValue !== "") {
+          url.searchParams.append(`${key}[${nestedKey}]`, String(nestedValue));
+        }
+      });
+      return;
+    }
     const values = Array.isArray(raw) ? raw : [raw];
     values.forEach((value) => {
       if (value !== undefined && value !== null && value !== "") url.searchParams.append(key, String(value));

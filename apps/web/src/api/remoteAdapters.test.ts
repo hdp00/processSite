@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import {
+  normalizeAttachmentRecord,
+  normalizeAuditEvent,
+  normalizeDomainRole,
   normalizeDirectoryUser,
   normalizePageResult,
   normalizeProcessInstance,
   normalizeProcessVersion,
   normalizeWorkflowTask,
+  normalizeWorkflowGroup,
 } from "./remoteAdapters";
 
 describe("formal REST response adapters", () => {
@@ -121,5 +125,31 @@ describe("formal REST response adapters", () => {
 
     expect(instance).toMatchObject({ status: "审核中", currentNode: "研发审核、质量审核", priority: "紧急", fieldRevisions: { title: 2 } });
     expect(task).toMatchObject({ status: "待处理", handlingMode: "approval", editableFieldIds: ["title"], allowedActions: ["pass", "reject"] });
+  });
+
+  it("maps formal role, workflow group, attachment and audit DTOs", () => {
+    expect(normalizeDomainRole({
+      id: "role-1", code: "reviewer", name: "审核员", description: "", status: "enabled",
+      memberCount: 2, memberIds: ["user-1"], permissionCount: 5, pagePermissionCount: 2, actionPermissionCount: 5,
+    })).toMatchObject({ users: 2, pagePermissions: 2, actionPermissions: 5, memberUserIds: ["user-1"] });
+
+    expect(normalizeWorkflowGroup({
+      id: "group-1", code: "G001", name: "研发审核", purposes: ["review-or-accept"], status: "enabled",
+      directUserIds: ["user-1"], roleIds: ["role-1"], effectiveMemberCount: 3, openTaskCount: 4,
+      referencedProcesses: [{ id: "definition-1", name: "PDF 审核" }], updatedAt: "2026-08-25T08:00:00Z",
+    })).toMatchObject({ effectiveMemberCount: 3, openTasks: 4, processes: ["PDF 审核"] });
+
+    expect(normalizeAttachmentRecord({
+      id: "attachment-1", originalName: "审核.pdf", sizeBytes: 2048, contentType: "application/pdf",
+      status: "referenced", uploadedBy: { id: "user-1", name: "张三" }, uploadedAt: "2026-08-25T08:00:00Z",
+      referencedBy: [{ aggregateType: "process-instance", aggregateId: "instance-1", fieldId: "attachment" }],
+    })).toMatchObject({ name: "审核.pdf", size: 2048, uploadedById: "user-1", lifecycle: "active", instanceId: "instance-1", fieldId: "attachment" });
+
+    expect(normalizeAuditEvent({
+      id: "audit-1", action: "workflow-task.confirmed", aggregateType: "workflow-task", aggregateId: "task-1",
+      actor: { id: "user-1", name: "张三", departmentPath: "研发 / 软件" },
+      operator: { id: "admin", name: "管理员", departmentPath: "系统" }, result: "success",
+      occurredAt: "2026-08-25T08:00:00Z", details: { summary: "确认研发节点" },
+    })).toMatchObject({ category: "task", actorId: "user-1", actorName: "张三", actorDepartmentPath: "研发 / 软件", operatorName: "管理员", operatorDepartmentPath: "系统", result: "success", resourceType: "workflow-task", resourceId: "task-1", summary: "确认研发节点" });
   });
 });

@@ -107,7 +107,7 @@ const isolatedInstance = (definitionId = "pdf-review"): ProcessInstance => {
 };
 
 describe("角色权限引擎", () => {
-  it("归一化历史编辑动作、保留未知动作，并去除归一化后的重复项", () => {
+  it("归一化历史编辑动作、移除失效权限，并去除归一化后的重复项", () => {
     expect(permissionModule.normalizeRolePermissionList([
       "org-user:新增",
       "org-user:新建",
@@ -121,8 +121,6 @@ describe("角色权限引擎", () => {
       "org-user:编辑",
       "org-user:查看",
       "work-task:审核",
-      "不含分隔符",
-      "domain:sub:编辑",
     ]);
   });
 
@@ -139,17 +137,18 @@ describe("角色权限引擎", () => {
     expect(storage.getItem(permissionModule.ROLE_PERMISSION_STORAGE_KEY)).not.toBeNull();
   });
 
-  it("升级 v2 权限时只为原全权限系统管理员补齐新增删除权限", () => {
-    const independentDeletes = ["org-user:删除", "org-role:删除", "org-department:删除", "org-group:删除"];
+  it("升级 v2 权限时只补齐最新目录删除权限，不恢复曾主动移除的权限", () => {
+    const latestDeletes = ["org-department:删除", "org-group:删除"];
     const previousFullPermissions = permissionModule.defaultRolePermissionMap["ROLE-001"]
-      .filter((permission) => !independentDeletes.includes(permission));
+      .filter((permission) => !latestDeletes.includes(permission));
     storage.setItem(permissionModule.PREVIOUS_ROLE_PERMISSION_STORAGE_KEY, JSON.stringify({
       "ROLE-001": previousFullPermissions,
       "ROLE-CUSTOM": ["org-user:查看", "org-user:编辑"],
     }));
 
     const stored = permissionModule.readStoredRolePermissions();
-    expect(stored["ROLE-001"]).toEqual(expect.arrayContaining(independentDeletes));
+    expect(stored["ROLE-001"]).toEqual(expect.arrayContaining(latestDeletes));
+    expect(stored["ROLE-001"]).toContain("org-user:删除");
     expect(stored["ROLE-CUSTOM"]).toEqual(["org-user:查看", "org-user:编辑"]);
     expect(stored["ROLE-CUSTOM"]).not.toContain("org-user:删除");
     expect(storage.getItem(permissionModule.ROLE_PERMISSION_STORAGE_KEY)).not.toBeNull();
@@ -163,8 +162,8 @@ describe("角色权限引擎", () => {
     });
 
     const stored = permissionModule.readStoredRolePermissions();
-    expect(stored["ROLE-007"]).toEqual(["work-task:编辑", "work-task:查看"]);
-    expect(stored["ROLE-CUSTOM"]).toEqual(["custom-page:查看"]);
+    expect(stored["ROLE-007"]).toEqual(["work-task:查看"]);
+    expect(stored["ROLE-CUSTOM"]).toEqual([]);
     expect(stored["ROLE-SUPER"]).toContain("org-role:授权");
     expect(stored["ROLE-SUPER"]).toEqual(expect.arrayContaining([
       "org-user:删除",

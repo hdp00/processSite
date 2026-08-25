@@ -19,6 +19,7 @@ describe("审计日志中文展示", () => {
     expect(auditActionLabel(failed)).toBe("登录失败");
     expect(auditResultLabel(failed)).toBe("失败");
     expect(auditDetailText(failed)).toBe("登录名或密码不正确");
+    expect(auditResultLabel(event({ action: "user.updated", result: "failure" }))).toBe("失败");
   });
 
   it("从摘要中移除业务编码和技术标识", () => {
@@ -29,6 +30,8 @@ describe("审计日志中文展示", () => {
 
   it("英文摘要使用中文动作名称兜底", () => {
     expect(auditSummaryText(event({ summary: "User login succeeded" }))).toBe("登录");
+    expect(auditSummaryText(event({ category: "definition", action: "process-version.published", summary: "process-version.published" }))).toBe("发布版本");
+    expect(auditActionLabel(event({ category: "task", action: "workflow-task.confirmed" }))).toBe("确认完成");
   });
 
   it("变更详情只展示中文字段名称，不暴露对象编码和值", () => {

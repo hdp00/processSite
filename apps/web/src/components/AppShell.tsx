@@ -221,7 +221,7 @@ export function AppShell() {
             label: "流程清单",
             children: managedDefinitions.filter((definition) => Boolean(
               definition.publishedVersionId
-              && canUserViewDefinition(personaId, definition.id),
+              && (import.meta.env.VITE_API_MODE === "remote" || canUserViewDefinition(personaId, definition.id)),
             )).map((definition) => ({
               key: `/processes?definitionId=${definition.id}`,
               label: definition.name,

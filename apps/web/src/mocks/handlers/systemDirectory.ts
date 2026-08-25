@@ -592,6 +592,8 @@ const userCreateHandler = http.post(`${API_ROOT}/users`, async ({ request }) => 
     if (account?.toLowerCase() === "superadmin" || parsed.builtIn === true) errors.push(issue("account", "RESERVED_ACCOUNT", "不能创建系统内置账号。"));
     const resolvedRoles = resolveRoleNames(roles ?? []);
     if (resolvedRoles.invalid.length) errors.push(issue("roles", "ROLE_NOT_FOUND", `以下角色不存在或不可分配：${resolvedRoles.invalid.join("、")}。`));
+    const enabledRoleNames = new Set(useIdentityStore.getState().roles.filter((role) => role.status === "启用").map((role) => role.name));
+    if (status === "启用" && !resolvedRoles.names.some((role) => enabledRoleNames.has(role))) errors.push(issue("roles", "ROLE_REQUIRED", "启用账号至少需要一个启用角色。"));
     if (errors.length) return validationProblem(request, errors);
 
     const created: DomainUser = {
@@ -664,6 +666,8 @@ const userUpdateHandler = http.patch(`${API_ROOT}/users/:userId`, async ({ reque
   if (name && users.some((user) => user.id !== current.id && user.name === name)) errors.push(issue("name", "NAME_CONFLICT", "员工姓名已存在；当前原型的名称关联要求姓名唯一。"));
   const resolvedRoles = resolveRoleNames(roleReferences ?? []);
   if (resolvedRoles.invalid.length) errors.push(issue("roles", "ROLE_NOT_FOUND", `以下角色不存在或不可分配：${resolvedRoles.invalid.join("、")}。`));
+  const enabledRoleNames = new Set(useIdentityStore.getState().roles.filter((role) => role.status === "启用").map((role) => role.name));
+  if (status === "启用" && !resolvedRoles.names.some((role) => enabledRoleNames.has(role))) errors.push(issue("roles", "ROLE_REQUIRED", "启用账号至少需要一个启用角色。"));
   if (errors.length) return validationProblem(request, errors);
 
   const updated: DomainUser = {

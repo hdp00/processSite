@@ -31,6 +31,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
+import { cacheProcessDefinition } from "../api/entityCache";
 import { StatusPill } from "../components/StatusPill";
 import { ListFieldValue } from "../components/ListFieldValue";
 import { cloneDefaultSystemListFields, isSystemFieldVisible } from "../data/listFieldConfig";
@@ -46,6 +47,7 @@ import { downloadProcessListXlsx } from "../utils/processExcelExport";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import { formatRoundLabel } from "../utils/roundDisplay";
 import { getBusinessListColumnWidth, getSystemListColumnWidth } from "../utils/listColumnWidth";
+import { isBrowserMockMode } from "../utils/runtimeMode";
 
 export function ProcessListPage() {
   const { message: messageApi } = App.useApp();
@@ -72,6 +74,11 @@ export function ProcessListPage() {
     advancedValues: {} as Record<string, string>,
   }));
   const [exporting, setExporting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(8);
+  const [remoteRows, setRemoteRows] = useState<ProcessInstance[]>([]);
+  const [remoteTotal, setRemoteTotal] = useState(0);
+  const [remoteLoading, setRemoteLoading] = useState(false);
   const canCopyCompleted = hasPersonaPermission(personaId, "work-list:复制新建")
     && canPersonaLaunchDefinition(personaId, definition.id);
   const canPrint = hasPersonaPermission(personaId, "work-list:打印");
@@ -102,11 +109,47 @@ export function ProcessListPage() {
     setAdvancedValues({});
     setAppliedFilters({ keyword: "", status: undefined, dateRange: createDefaultDateRange(), advancedValues: {} });
     form.resetFields();
+    setPage(1);
   }, [definition.id, form]);
 
+  useEffect(() => {
+    if (isBrowserMockMode || !managedDefinition || currentVersion) return;
+    let cancelled = false;
+    void flowPilotApi.definitions.get(managedDefinition.id)
+      .then((loaded) => { if (!cancelled) cacheProcessDefinition(loaded); })
+      .catch(() => { if (!cancelled) messageApi.error("流程版本加载失败，请刷新后重试"); });
+    return () => { cancelled = true; };
+  }, [currentVersion, managedDefinition, messageApi]);
+
+  useEffect(() => {
+    if (isBrowserMockMode || !definition.id || !currentVersion) return;
+    let cancelled = false;
+    setRemoteLoading(true);
+    const normalizedRange = normalizeDayRange(appliedFilters.dateRange);
+    void flowPilotApi.instances.list({
+      page,
+      pageSize,
+      q: appliedFilters.keyword.trim() || undefined,
+      definitionId: definition.id,
+      status: appliedFilters.status,
+      createdFrom: normalizedRange[0].format("YYYY-MM-DD"),
+      createdTo: normalizedRange[1].format("YYYY-MM-DD"),
+      dynamicFilters: appliedFilters.advancedValues,
+    }).then((result) => {
+      if (cancelled) return;
+      setRemoteRows(result.items);
+      setRemoteTotal(result.page.totalElements);
+    }).catch(() => {
+      if (!cancelled) messageApi.error("流程清单加载失败，请稍后重试");
+    }).finally(() => {
+      if (!cancelled) setRemoteLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [appliedFilters, currentVersion, definition.id, messageApi, page, pageSize]);
+
   const filtered = useMemo(
-    () =>
-      instances.filter((item) => {
+    () => isBrowserMockMode
+      ? instances.filter((item) => {
         const matchesKeyword = `${item.code}${item.title}${item.documentCode}${item.initiator}`
           .toLowerCase()
           .includes(appliedFilters.keyword.trim().toLowerCase());
@@ -123,8 +166,9 @@ export function ProcessListPage() {
           && item.definitionId === definition.id
           && canUserViewInstance(personaId, item)
           && matchesAdvanced;
-      }),
-    [appliedFilters, definition.id, instances, personaId, queryFields],
+      })
+      : remoteRows,
+    [appliedFilters, definition.id, instances, personaId, queryFields, remoteRows],
   );
 
   const dynamicColumns: TableProps<ProcessInstance>["columns"] = listFields.map((field) => ({
@@ -248,6 +292,7 @@ export function ProcessListPage() {
     form.resetFields();
     setAdvancedValues({});
     setAppliedFilters({ keyword: "", status: undefined, dateRange: createDefaultDateRange(), advancedValues: {} });
+    setPage(1);
   };
 
   const exportCurrentQuery = async () => {
@@ -326,7 +371,7 @@ export function ProcessListPage() {
             <Col flex="210px">
               <Form.Item>
                 <Space>
-                  <Button type="primary" icon={<SearchOutlined />} onClick={() => setAppliedFilters({ keyword, status, dateRange: normalizeDayRange(dateRange), advancedValues: { ...advancedValues } })}>查询</Button>
+                  <Button type="primary" icon={<SearchOutlined />} onClick={() => { setPage(1); setAppliedFilters({ keyword, status, dateRange: normalizeDayRange(dateRange), advancedValues: { ...advancedValues } }); }}>查询</Button>
                   <Button icon={<ReloadOutlined />} onClick={reset}>重置</Button>
                   <Button
                     type="link"
@@ -372,7 +417,7 @@ export function ProcessListPage() {
 
       <Card className="content-card" styles={{ body: { padding: 0 } }}>
         <div className="table-result-head">
-          <div><strong>流程实例</strong><Tag bordered={false}>{filtered.length} 条</Tag></div>
+          <div><strong>流程实例</strong><Tag bordered={false}>{isBrowserMockMode ? filtered.length : remoteTotal} 条</Tag></div>
           <Space>
             <Typography.Text type="secondary">{definition.label} · 包含当前用户可见的全部历史版本实例</Typography.Text>
             <Button icon={<ExportOutlined />} loading={exporting} onClick={() => void exportCurrentQuery()}>导出 Excel</Button>
@@ -383,10 +428,11 @@ export function ProcessListPage() {
           rowKey="id"
           columns={columns}
           dataSource={filtered}
+          loading={remoteLoading}
           bordered
           size="middle"
           scroll={{ x: "max-content" }}
-          pagination={{ pageSize: 8, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录` }}
+          pagination={{ current: page, pageSize, total: isBrowserMockMode ? filtered.length : remoteTotal, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录`, onChange: setPage }}
           onRow={(record) => ({ onDoubleClick: () => navigate(`/processes/${record.id}`) })}
         />
       </Card>

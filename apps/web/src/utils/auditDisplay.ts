@@ -78,6 +78,49 @@ const actionLabels: Record<string, string> = {
   "identity:mock.reset": "重置演示数据",
 };
 
+const formalActionLabels: Record<string, string> = {
+  "process-definition.created": "创建流程",
+  "process-definition.updated": "修改流程",
+  "process-definition.disabled": "停用流程",
+  "process-definition.enabled": "启用流程",
+  "process-definition.deleted": "删除流程",
+  "process-definition.imported": "导入流程",
+  "process-definition.copied": "复制流程",
+  "process-version.created": "创建版本",
+  "process-version.updated": "保存流程版本",
+  "process-version.validated": "校验流程版本",
+  "process-version.published": "发布版本",
+  "process-version.unpublished": "取消发布",
+  "process-version.deleted": "删除版本",
+  "process-instance.created": "发起流程",
+  "process-instance.updated": "修改流程内容",
+  "process-instance.resubmitted": "重新提交",
+  "process-instance.closed": "关闭流程",
+  "process-instance.reopened": "重新打开",
+  "workflow-task.passed": "审批通过",
+  "workflow-task.confirmed": "确认完成",
+  "workflow-task.rejected": "审批驳回",
+  "workflow-task.fields-revised": "修改审核字段",
+  "free-collaboration.replied": "发表回复",
+  "free-collaboration.transferred": "变更受理人",
+  "free-collaboration.reply-edited": "编辑回复",
+  "attachment.uploaded": "上传附件",
+  "attachment.deleted": "删除附件",
+  "attachment.replaced": "替换附件",
+  "user.created": "创建用户",
+  "user.updated": "修改用户",
+  "user.deleted": "删除用户",
+  "user.status-updated": "修改用户状态",
+  "user.password-reset": "重置密码",
+  "role.created": "创建角色",
+  "role.updated": "修改角色",
+  "role.deleted": "删除角色",
+  "role.permissions-updated": "修改角色权限",
+  "workflow-permission-group.created": "创建流程权限组",
+  "workflow-permission-group.updated": "修改流程权限组",
+  "workflow-permission-group.deleted": "删除流程权限组",
+};
+
 const detailFieldLabels: Record<string, string> = {
   name: "名称",
   account: "登录名",
@@ -120,10 +163,10 @@ const changedFieldLabels = (before: Record<string, unknown>, after: Record<strin
 export const auditModuleLabel = (category: AuditEvent["category"]) => moduleLabels[category];
 
 export const auditActionLabel = (event: Pick<AuditEvent, "category" | "action">) =>
-  actionLabels[`${event.category}:${event.action}`] ?? "其他操作";
+  actionLabels[`${event.category}:${event.action}`] ?? formalActionLabels[event.action] ?? "其他操作";
 
-export const auditResultLabel = (event: Pick<AuditEvent, "action">): "成功" | "失败" =>
-  event.action.includes("failed") ? "失败" : "成功";
+export const auditResultLabel = (event: Pick<AuditEvent, "action" | "result">): "成功" | "失败" =>
+  event.result === "failure" || event.action.includes("failed") ? "失败" : "成功";
 
 export const auditSummaryText = (event: Pick<AuditEvent, "summary" | "category" | "action">) => {
   const summary = cleanText(event.summary);

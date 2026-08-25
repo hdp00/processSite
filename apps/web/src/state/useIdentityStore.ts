@@ -51,6 +51,7 @@ export interface WorkflowPermissionGroup {
   status: EnableStatus;
   referenced: boolean;
   openTasks: number;
+  effectiveMemberCount?: number;
   updatedAt: string;
 }
 

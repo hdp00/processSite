@@ -81,6 +81,9 @@ export interface ProcessDefinition {
   updatedAt: string;
   updatedBy: string;
   instanceCount: number;
+  versionCount?: number;
+  publishedVersionLabel?: string;
+  publishedInstancePrefix?: string;
 }
 
 interface CreateDefinitionInput {

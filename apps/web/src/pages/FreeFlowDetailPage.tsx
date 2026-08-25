@@ -25,10 +25,11 @@ import {
   Typography,
   message,
 } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { cacheProcessRuntime } from "../api/entityCache";
+import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
 import { StatusPill } from "../components/StatusPill";
@@ -92,6 +93,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const [reassignReason, setReassignReason] = useState("");
   const [reassignAssignee, setReassignAssignee] = useState<string>();
   const [initialEditOpen, setInitialEditOpen] = useState(false);
+  const [resourceEtag, setResourceEtag] = useState<string>();
   const [draftInitial, setDraftInitial] = useState({
     title: instance?.title ?? "",
     category: instance?.category ?? "",
@@ -150,25 +152,71 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
   const timeline = useMemo(() => instance?.freeTimeline ?? [], [instance?.freeTimeline]);
 
+  const refreshResource = async (instanceId: string) => {
+    const resource = await flowPilotApi.instances.getResource(instanceId);
+    cacheProcessRuntime(resource.data.instance, resource.data.tasks);
+    setResourceEtag(resource.etag);
+  };
+
+  useEffect(() => {
+    if (!instance?.id) return;
+    let cancelled = false;
+    void flowPilotApi.instances.getResource(instance.id).then((resource) => {
+      if (cancelled) return;
+      cacheProcessRuntime(resource.data.instance, resource.data.tasks);
+      setResourceEtag(resource.etag);
+    }).catch(() => {
+      if (!cancelled) message.error("流程最新版本加载失败，请刷新后重试");
+    });
+    return () => { cancelled = true; };
+  }, [instance?.id]);
+
   if (!instance) return null;
+
+  const applyInstanceMutation = async (mutation: (etag: string) => Promise<ProcessInstance>) => {
+    if (!resourceEtag) {
+      message.warning("流程最新版本尚未加载完成，请稍后重试");
+      return undefined;
+    }
+    try {
+      const updated = await mutation(resourceEtag);
+      cacheProcessRuntime(updated);
+      try {
+        await refreshResource(instance.id);
+      } catch {
+        setResourceEtag(undefined);
+        message.warning("操作已完成，但最新流程版本加载失败，请刷新页面后继续操作");
+      }
+      return updated;
+    } catch (error) {
+      if (error instanceof ApiError && error.problem.status === 412) {
+        void refreshResource(instance.id).catch(() => setResourceEtag(undefined));
+        message.error("流程已被其他操作更新，已重新加载最新内容，请确认后再提交");
+      } else {
+        message.error(error instanceof Error ? error.message : "操作失败，请稍后重试");
+      }
+      return undefined;
+    }
+  };
 
   const submitCollaboration = async () => {
     if (nextAssignee) {
       const assigneeName = findIdentityUser(nextAssignee)?.name ?? "所选人员";
-      const resource = await flowPilotApi.instances.getResource(instance.id);
-      cacheProcessRuntime(await flowPilotApi.freeFlows.transfer(
+      const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.transfer(
         instance.id,
         nextAssignee,
         hasReplyDraft ? replyContent : undefined,
-        resource.etag,
+        etag,
       ));
+      if (!updated) return;
       if (hasReplyDraft) setReplyContent("");
       setNextAssignee(undefined);
       message.success(hasReplyDraft ? `回复已发表，受理人已变更为${assigneeName}` : `受理人已变更为${assigneeName}`);
       return;
     }
     if (!hasReplyDraft) return message.warning("请输入回复内容");
-    cacheProcessRuntime(await flowPilotApi.freeFlows.reply(instance.id, replyContent));
+    const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.reply(instance.id, replyContent, etag));
+    if (!updated) return;
     setReplyContent("");
     message.success("回复已发表，不改变当前受理人");
   };
@@ -316,16 +364,16 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
       <Modal title="编辑我的回复" width={760} open={Boolean(editEntry)} okText="保存修改" onCancel={() => setEditEntry(undefined)} onOk={async () => {
         if (!editEntry || !hasRichContent(editContent)) return message.warning("回复内容不能为空");
-        const resource = await flowPilotApi.instances.getResource(instance.id);
-        cacheProcessRuntime(await flowPilotApi.freeFlows.editReply(instance.id, editEntry.id, editContent, resource.etag));
+        const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.editReply(instance.id, editEntry.id, editContent, etag));
+        if (!updated) return;
         setEditEntry(undefined);
         message.success("回复已更新并保留历史版本");
       }}><RichTextEditor value={editContent} onChange={setEditContent} minHeight={260} /></Modal>
 
       <Modal title="编辑初始表单" width={800} open={initialEditOpen} okText="保存修改" onCancel={() => setInitialEditOpen(false)} onOk={async () => {
         if (!draftInitial.title.trim() || !hasRichContent(draftInitial.initialContent)) return message.warning("请填写标题和初始说明");
-        const resource = await flowPilotApi.instances.getResource(instance.id);
-        cacheProcessRuntime(await flowPilotApi.freeFlows.updateSubmission(instance.id, draftInitial, resource.etag));
+        const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.updateSubmission(instance.id, draftInitial, etag));
+        if (!updated) return;
         setInitialEditOpen(false);
         message.success("初始表单已更新，修改记录已写入时间线");
       }}>
@@ -343,22 +391,22 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
       <Modal title="关闭事项" open={closeOpen} okText="确认关闭" okButtonProps={{ danger: true }} onCancel={() => setCloseOpen(false)} onOk={async () => {
         if (!closeReason.trim()) return message.warning("请填写关闭理由");
-        const resource = await flowPilotApi.instances.getResource(instance.id);
-        cacheProcessRuntime(await flowPilotApi.freeFlows.close(instance.id, closeReason, resource.etag));
+        const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.close(instance.id, closeReason, etag));
+        if (!updated) return;
         setCloseOpen(false); setCloseReason(""); message.success("事项已关闭，操作已进入时间线");
       }}><Input.TextArea rows={4} placeholder="关闭理由（必填）" value={closeReason} onChange={(event) => setCloseReason(event.target.value)} /></Modal>
 
       <Modal title="重新打开事项" open={reopenOpen} okText="重新打开" onCancel={() => setReopenOpen(false)} onOk={async () => {
         if (!reopenReason.trim() || !reopenAssignee) return message.warning("请填写理由并指定受理人");
-        const resource = await flowPilotApi.instances.getResource(instance.id);
-        cacheProcessRuntime(await flowPilotApi.freeFlows.reopen(instance.id, reopenReason, reopenAssignee, resource.etag));
+        const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.reopen(instance.id, reopenReason, reopenAssignee, etag));
+        if (!updated) return;
         setReopenOpen(false); setReopenReason(""); setReopenAssignee(undefined); message.success("事项已重新打开并生成待办");
       }}><div className="free-modal-form"><Alert type="info" showIcon message="重新打开后恢复回复和编辑能力" /><label><span>打开理由</span><Input.TextArea rows={4} value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} /></label><label><span>受理人</span><Select showSearch optionFilterProp="label" value={reopenAssignee} onChange={setReopenAssignee} options={userOptions} /></label></div></Modal>
 
       <Modal title="异常改派" open={reassignOpen} okText="确认改派" onCancel={() => setReassignOpen(false)} onOk={async () => {
         if (!reassignReason.trim() || !reassignAssignee) return message.warning("请填写改派理由并选择新受理人");
-        const resource = await flowPilotApi.instances.getResource(instance.id);
-        cacheProcessRuntime(await flowPilotApi.freeFlows.reassign(instance.id, reassignReason, reassignAssignee, resource.etag));
+        const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.reassign(instance.id, reassignReason, reassignAssignee, etag));
+        if (!updated) return;
         setReassignOpen(false); setReassignReason(""); setReassignAssignee(undefined); message.success("已改派，原待办取消并生成新待办");
       }}><div className="free-modal-form"><Alert type="warning" showIcon icon={<ExclamationCircleOutlined />} message="仅发起流程权限组可执行" description={`当前受理人：${instance.currentAssignee}。异常改派会写入时间线。`} /><label><span>新受理人</span><Select showSearch optionFilterProp="label" value={reassignAssignee} onChange={setReassignAssignee} options={userOptions.filter((option) => option.value !== instance.currentAssigneeId)} /></label><label><span>改派理由</span><Input.TextArea rows={4} value={reassignReason} onChange={(event) => setReassignReason(event.target.value)} /></label></div></Modal>
     </div>

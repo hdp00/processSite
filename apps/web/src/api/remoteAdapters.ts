@@ -1,4 +1,4 @@
-import type { AuthSession, PageResult, PermissionCatalogItem, DepartmentRecord, DirectoryUser, PositionRecord, LaunchableProcessDefinition } from "./contracts";
+import type { AttachmentRecord, AuditEvent, AuthSession, PageResult, PermissionCatalogItem, DepartmentRecord, DirectoryUser, PositionRecord, LaunchableProcessDefinition } from "./contracts";
 import type { DomainRole, WorkflowGroupPurpose, WorkflowPermissionGroup } from "../state/useIdentityStore";
 import type { ProcessBasicConfig, ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
 import type { CompleteDesignerSnapshot } from "../utils/designerStorage";
@@ -79,13 +79,79 @@ export const normalizeDomainRole = (value: unknown): DomainRole => {
     name: text(value.name),
     code: text(value.code),
     description: text(value.description),
-    pagePermissions: 0,
-    actionPermissions: number(value.permissionCount),
+    pagePermissions: number(value.pagePermissionCount),
+    actionPermissions: number(value.actionPermissionCount, number(value.permissionCount)),
     users: number(value.memberCount),
     status: enabledStatus(value.status),
     members: [],
     memberUserIds: strings(value.memberIds),
     builtIn: value.builtIn === true,
+  };
+};
+
+const attachmentLifecycle = (value: unknown): AttachmentRecord["lifecycle"] => {
+  if (value === "staged" || value === "temporary") return "temporary";
+  if (value === "cleanup-pending") return "cleanup-pending";
+  return "active";
+};
+
+export const normalizeAttachmentRecord = (value: unknown): AttachmentRecord => {
+  if (!isRecord(value)) throw new Error("附件响应格式不正确");
+  if (typeof value.name === "string" && typeof value.size === "number") return value as unknown as AttachmentRecord;
+  const uploader = isRecord(value.uploadedBy) ? value.uploadedBy : undefined;
+  const references = Array.isArray(value.referencedBy) ? value.referencedBy.filter(isRecord) : [];
+  const instanceReference = references.find((item) => item.aggregateType === "process-instance");
+  return {
+    id: text(value.id),
+    name: text(value.originalName),
+    size: number(value.sizeBytes),
+    contentType: text(value.contentType),
+    uploadedById: text(uploader?.id),
+    uploadedAt: text(value.uploadedAt),
+    instanceId: instanceReference ? text(instanceReference.aggregateId) || undefined : undefined,
+    fieldId: instanceReference ? text(instanceReference.fieldId) || undefined : undefined,
+    lifecycle: attachmentLifecycle(value.status),
+    cleanupAfter: text(value.cleanupAfter) || undefined,
+  };
+};
+
+const auditCategory = (aggregateType: string, action: string): AuditEvent["category"] => {
+  if (aggregateType.startsWith("auth") || action.startsWith("auth.")) return "authentication";
+  if (aggregateType.startsWith("process-definition") || aggregateType.startsWith("process-version")) return "definition";
+  if (aggregateType.startsWith("workflow-task")) return "task";
+  if (["user", "role", "workflow-permission-group", "department", "position"].includes(aggregateType)) return "identity";
+  return "instance";
+};
+
+export const normalizeAuditEvent = (value: unknown): AuditEvent => {
+  if (!isRecord(value)) throw new Error("审计事件响应格式不正确");
+  if (typeof value.category === "string") return value as unknown as AuditEvent;
+  const actor = isRecord(value.actor) ? value.actor : undefined;
+  const operator = isRecord(value.operator) ? value.operator : undefined;
+  const details = isRecord(value.details) ? value.details : undefined;
+  const action = text(value.action);
+  const aggregateType = text(value.aggregateType);
+  return {
+    id: text(value.id),
+    category: auditCategory(aggregateType, action),
+    action,
+    actorId: text(actor?.id) || undefined,
+    actorName: text(actor?.name) || undefined,
+    actorDepartmentPath: text(actor?.departmentPath) || undefined,
+    operatorId: text(operator?.id) || undefined,
+    operatorName: text(operator?.name) || undefined,
+    operatorDepartmentPath: text(operator?.departmentPath) || undefined,
+    impersonationId: text(value.impersonationId) || undefined,
+    resourceType: aggregateType,
+    resourceId: text(value.aggregateId),
+    occurredAt: text(value.occurredAt),
+    result: value.result === "failure" ? "failure" : "success",
+    summary: text(value.summary, text(details?.summary, action)),
+    details: {
+      ...(details ?? {}),
+      ...(value.before !== undefined ? { before: value.before } : {}),
+      ...(value.after !== undefined ? { after: value.after } : {}),
+    },
   };
 };
 
@@ -115,6 +181,7 @@ export const normalizeWorkflowGroup = (value: unknown): WorkflowPermissionGroup 
     status: enabledStatus(value.status),
     referenced: references.length > 0,
     openTasks: number(value.openTaskCount),
+    effectiveMemberCount: number(value.effectiveMemberCount),
     updatedAt: text(value.updatedAt),
   };
 };
@@ -232,6 +299,8 @@ export const normalizeProcessVersion = (value: unknown): ProcessVersion => {
 export const normalizeProcessDefinition = (value: unknown, suppliedVersions?: ProcessVersion[]): ProcessDefinition => {
   if (!isRecord(value)) throw new Error("流程定义响应格式不正确");
   const versions = suppliedVersions ?? (Array.isArray(value.versions) ? value.versions.map(normalizeProcessVersion) : []);
+  const publishedVersion = isRecord(value.publishedVersion) ? value.publishedVersion : undefined;
+  const nextVersionNumber = number(value.nextVersionNumber, versions.length + 1);
   return {
     id: text(value.id),
     code: text(value.code),
@@ -240,11 +309,14 @@ export const normalizeProcessDefinition = (value: unknown, suppliedVersions?: Pr
     type: value.type === "free" ? "free" : "approval",
     disabled: value.disabled === true,
     publishedVersionId: text(value.publishedVersionId) || undefined,
-    nextVersionNumber: number(value.nextVersionNumber, versions.length + 1),
+    nextVersionNumber,
     versions,
     updatedAt: text(value.updatedAt),
     updatedBy: actorName(value.updatedBy),
     instanceCount: number(value.instanceCount),
+    versionCount: number(value.versionCount, Math.max(versions.length, nextVersionNumber - 1)),
+    publishedVersionLabel: text(publishedVersion?.versionLabel) || undefined,
+    publishedInstancePrefix: text(value.publishedInstancePrefix) || undefined,
   };
 };
 

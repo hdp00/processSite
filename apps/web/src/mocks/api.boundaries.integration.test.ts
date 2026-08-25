@@ -213,6 +213,8 @@ describe("Mock REST API 通用契约", () => {
     const stoppedUserResource = await apiModule.flowPilotApi.directory.userResource(disposableUser.id);
     await apiModule.flowPilotApi.directory.updateUser(disposableUser.id, { roles: [] }, stoppedUserResource.etag);
     const disposableUserResource = await apiModule.flowPilotApi.directory.userResource(disposableUser.id);
+    await expect(apiModule.flowPilotApi.directory.updateUserStatus(disposableUser.id, "启用", disposableUserResource.etag ?? "*"))
+      .rejects.toMatchObject({ status: 409, problem: { code: "USER_ROLE_REQUIRED" } });
     await expect(clientModule.apiRequest(`/users/${disposableUser.id}`, { method: "DELETE" })).rejects.toMatchObject({
       status: 428,
       problem: { code: "IF_MATCH_REQUIRED" },

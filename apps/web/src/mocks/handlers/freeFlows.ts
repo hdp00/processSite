@@ -105,7 +105,7 @@ export const freeFlowHandlers = [
     return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
   }),
 
-  http.put(`${API}/process-instances/:instanceId/free-collaboration/initial-form`, async ({ request, params }) => {
+  http.patch(`${API}/process-instances/:instanceId/free-collaboration/initial-form`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
     const auth = requirePermission(request, "work-launch:发起");

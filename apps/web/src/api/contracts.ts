@@ -194,12 +194,15 @@ export interface AuditEvent {
   action: string;
   actorId?: string;
   actorName?: string;
+  actorDepartmentPath?: string;
   operatorId?: string;
   operatorName?: string;
+  operatorDepartmentPath?: string;
   impersonationId?: string;
   resourceType: string;
   resourceId: string;
   occurredAt: string;
+  result?: "success" | "failure";
   summary: string;
   details?: Record<string, unknown>;
 }
@@ -244,6 +247,15 @@ export interface ImpactPreview {
   affectedUsers: number;
   affectedOpenTasks: number;
   references: string[];
+}
+
+export interface EffectiveWorkflowMember {
+  id: string;
+  account: string;
+  name: string;
+  email: string;
+  departmentPath: string;
+  sources: string[];
 }
 
 export interface ProcessExcelDataFilter {

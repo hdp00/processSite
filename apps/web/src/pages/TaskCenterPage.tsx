@@ -40,6 +40,9 @@ import { canUserProcessTask } from "../state/workflowAccess";
 import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { isProcessInstanceResubmissionTodo } from "../utils/processInstanceAccess";
 import { formatDisplayDateTime } from "../utils/domainTime";
+import { flowPilotApi } from "../api/flowPilotApi";
+import { cacheProcessDefinition } from "../api/entityCache";
+import { isBrowserMockMode } from "../utils/runtimeMode";
 
 const ALL_FLOWS = "__all__";
 const TASK_FLOW_STORAGE_PREFIX = "flowpilot-task-center-flow-v1";
@@ -57,16 +60,69 @@ export function TaskCenterPage() {
     window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
   );
   const isSuperAdmin = isSuperAdminPersona(personaId);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [remoteInstances, setRemoteInstances] = useState<ProcessInstance[]>([]);
+  const [remoteTasks, setRemoteTasks] = useState<WorkflowTask[]>([]);
+  const [remoteTotal, setRemoteTotal] = useState(0);
+  const [remoteTabTotals, setRemoteTabTotals] = useState<Record<TaskCenterTab, number>>({ mine: 0, substitute: 0, initiated: 0 });
+  const [remoteLoading, setRemoteLoading] = useState(false);
 
   useEffect(() => {
     setSelectedTemplate(
       window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
     );
     setFlowKeyword("");
+    setPage(1);
   }, [personaId]);
 
-  const actionableTasks = useMemo(() => tasks
-    .filter((task) => task.status === "待处理" && canUserProcessTask(personaId, task)), [personaId, tasks]);
+  useEffect(() => {
+    if (isBrowserMockMode) return;
+    let cancelled = false;
+    void Promise.all([
+      flowPilotApi.tasks.listMine({ page: 1, pageSize: 1, view: "pending" }),
+      flowPilotApi.tasks.listMine({ page: 1, pageSize: 1, view: "substitutable" }),
+      flowPilotApi.instances.list({ page: 1, pageSize: 1, initiatorId: personaId, activeOnly: true }),
+    ]).then(([mine, substitute, initiated]) => {
+      if (!cancelled) setRemoteTabTotals({
+        mine: mine.page.totalElements,
+        substitute: substitute.page.totalElements,
+        initiated: initiated.page.totalElements,
+      });
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [personaId]);
+
+  useEffect(() => {
+    if (isBrowserMockMode) return;
+    let cancelled = false;
+    setRemoteLoading(true);
+    const definitionId = selectedTemplate === ALL_FLOWS ? undefined : selectedTemplate;
+    const request = tab === "initiated"
+      ? flowPilotApi.instances.list({ page, pageSize, q: keyword.trim() || undefined, definitionId, initiatorId: personaId, activeOnly: true })
+        .then((result) => ({ instances: result.items, tasks: [] as WorkflowTask[], total: result.page.totalElements }))
+      : flowPilotApi.tasks.listMine({ page, pageSize, q: keyword.trim() || undefined, definitionId, view: tab === "mine" ? "pending" : "substitutable" })
+        .then((result) => ({ instances: result.items.map((item) => item.instance), tasks: result.items.map((item) => item.task), total: result.page.totalElements }));
+    void request.then((result) => {
+      if (cancelled) return;
+      setRemoteInstances(result.instances);
+      setRemoteTasks(result.tasks);
+      setRemoteTotal(result.total);
+    }).catch(() => {
+      if (!cancelled) {
+        setRemoteInstances([]);
+        setRemoteTasks([]);
+      }
+    }).finally(() => {
+      if (!cancelled) setRemoteLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [keyword, page, pageSize, personaId, selectedTemplate, tab]);
+
+  const runtimeInstances = isBrowserMockMode ? instances : remoteInstances;
+  const runtimeTasks = isBrowserMockMode ? tasks : remoteTasks;
+  const actionableTasks = useMemo(() => runtimeTasks
+    .filter((task) => task.status === "待处理" && (!isBrowserMockMode || canUserProcessTask(personaId, task))), [personaId, runtimeTasks]);
   const actionableTasksByInstance = useMemo(() => actionableTasks.reduce((result, task) => {
     const current = result.get(task.instanceId) ?? [];
     result.set(task.instanceId, [...current, task]);
@@ -78,11 +134,11 @@ export function TaskCenterPage() {
   const substituteTaskItems = useMemo(() => isSuperAdmin ? [] : actionableTasks.filter((task) =>
     Boolean(task.defaultAssigneeId && task.defaultAssigneeId !== personaId),
   ), [actionableTasks, isSuperAdmin, personaId]);
-  const actionable = useMemo(() => instances.filter((instance) =>
+  const actionable = useMemo(() => runtimeInstances.filter((instance) =>
     instance.workflowType === "free"
       ? instance.status === "进行中" && Boolean(isSuperAdmin || identityUser?.id === instance.currentAssigneeId)
       : instance.status === "审核中" && actionableTasksByInstance.has(instance.id),
-  ), [actionableTasksByInstance, identityUser?.id, instances, isSuperAdmin]);
+  ), [actionableTasksByInstance, identityUser?.id, isSuperAdmin, runtimeInstances]);
 
   const reviewTaskInstances = actionable.filter((instance) => {
     if (isSuperAdmin || instance.workflowType === "free") return true;
@@ -92,11 +148,11 @@ export function TaskCenterPage() {
     if (isSuperAdmin || instance.workflowType === "free") return false;
     return substituteTaskItems.some((task) => task.instanceId === instance.id);
   });
-  const initiatedInstances = useMemo(() => instances.filter((instance) => {
+  const initiatedInstances = useMemo(() => runtimeInstances.filter((instance) => {
     const initiatedByCurrentUser = instance.initiatorId === personaId
       || Boolean(identityUser?.name && instance.initiator === identityUser.name);
     return initiatedByCurrentUser && instance.status !== "已完成" && instance.status !== "已关闭";
-  }), [identityUser?.name, instances, personaId]);
+  }), [identityUser?.name, personaId, runtimeInstances]);
   const rejectedInitiatedInstances = useMemo(() => identityUser
     ? initiatedInstances.filter((instance) => isProcessInstanceResubmissionTodo(instance, identityUser))
     : [], [identityUser, initiatedInstances]);
@@ -105,7 +161,9 @@ export function TaskCenterPage() {
     ...rejectedInitiatedInstances.filter((instance) => !reviewTaskInstances.some((item) => item.id === instance.id)),
   ];
 
-  const source = tab === "mine" ? myTasks : tab === "substitute" ? substituteTasks : initiatedInstances;
+  const source = isBrowserMockMode
+    ? tab === "mine" ? myTasks : tab === "substitute" ? substituteTasks : initiatedInstances
+    : remoteInstances;
   const flowCategories = useMemo(() => {
     const counts = new Map<string, number>();
     source.forEach((item) => item.definitionId && counts.set(item.definitionId, (counts.get(item.definitionId) ?? 0) + 1));
@@ -117,7 +175,7 @@ export function TaskCenterPage() {
     })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"));
   }, [definitions, source]);
   const activeTemplate = selectedTemplate !== ALL_FLOWS
-    && flowCategories.some((category) => category.template === selectedTemplate)
+    && (!isBrowserMockMode || flowCategories.some((category) => category.template === selectedTemplate))
       ? selectedTemplate
       : undefined;
   const visibleFlowCategories = flowCategories.filter((category) =>
@@ -125,11 +183,20 @@ export function TaskCenterPage() {
   );
   const selectedDefinition = definitions.find((item) => item.id === activeTemplate);
   const selectedVersion = getPublishedVersion(selectedDefinition);
+  useEffect(() => {
+    if (isBrowserMockMode || !selectedDefinition || selectedVersion) return;
+    let cancelled = false;
+    void flowPilotApi.definitions.get(selectedDefinition.id)
+      .then((loaded) => { if (!cancelled) cacheProcessDefinition(loaded); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [selectedDefinition, selectedVersion]);
   const activeCategoryLabel = activeTemplate
     ? flowCategories.find((category) => category.template === activeTemplate)?.label ?? activeTemplate
     : tab === "initiated" ? "全部发起" : "全部待办";
   const selectFlow = (template: string) => {
     setSelectedTemplate(template);
+    setPage(1);
     window.localStorage.setItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`, template);
   };
   const systemListFields = selectedVersion
@@ -317,15 +384,15 @@ export function TaskCenterPage() {
             onChange={(value) => setTab(value as TaskCenterTab)}
             options={[
               {
-                label: <span className="task-tab-label">我的待办 <span className="task-tab-count">{myTaskItems.length + rejectedInitiatedInstances.length}</span></span>,
+                label: <span className="task-tab-label">我的待办 <span className="task-tab-count">{isBrowserMockMode ? myTaskItems.length + rejectedInitiatedInstances.length : remoteTabTotals.mine}</span></span>,
                 value: "mine",
               },
               {
-                label: <span className="task-tab-label">可代办 <span className="task-tab-count">{substituteTaskItems.length}</span></span>,
+                label: <span className="task-tab-label">可代办 <span className="task-tab-count">{isBrowserMockMode ? substituteTaskItems.length : remoteTabTotals.substitute}</span></span>,
                 value: "substitute",
               },
               {
-                label: <span className="task-tab-label">我的发起 <span className="task-tab-count">{initiatedInstances.length}</span></span>,
+                label: <span className="task-tab-label">我的发起 <span className="task-tab-count">{isBrowserMockMode ? initiatedInstances.length : remoteTabTotals.initiated}</span></span>,
                 value: "initiated",
               },
             ]}
@@ -346,7 +413,7 @@ export function TaskCenterPage() {
       <div className="task-center-layout">
         <Card className="task-flow-sidebar" styles={{ body: { padding: 0 } }}>
           <div className="task-flow-sidebar__head">
-            <span><AppstoreOutlined /> 流程分类</span>
+            <span><AppstoreOutlined /> {isBrowserMockMode ? "流程分类" : "本页流程"}</span>
           </div>
           {flowCategories.length > 8 && (
             <div className="task-flow-search">
@@ -368,7 +435,7 @@ export function TaskCenterPage() {
             >
               <span className="task-flow-item__icon"><AppstoreOutlined /></span>
               <span className="task-flow-item__copy"><strong>{tab === "initiated" ? "全部发起" : "全部待办"}</strong><small>{tab === "initiated" ? "本人发起且未完成" : "所有流程"}</small></span>
-              <span className="task-flow-item__count">{source.length}</span>
+              <span className="task-flow-item__count">{isBrowserMockMode ? source.length : remoteTotal}</span>
             </button>
             {visibleFlowCategories.map((category) => (
               <button
@@ -381,7 +448,7 @@ export function TaskCenterPage() {
                   {category.workflowType === "free" ? <MessageOutlined /> : <FileTextOutlined />}
                 </span>
                 <span className="task-flow-item__copy"><strong>{category.label}</strong><small>{category.workflowType === "free" ? "自由协作" : "固定审批"}</small></span>
-                <span className="task-flow-item__count">{category.count}</span>
+                <span className="task-flow-item__count">{isBrowserMockMode ? category.count : `本页 ${category.count}`}</span>
               </button>
             ))}
           </nav>
@@ -389,7 +456,7 @@ export function TaskCenterPage() {
 
         <Card className="content-card task-list-card" styles={{ body: { padding: 0 } }}>
           <div className="task-list-context">
-            <div><strong>{activeCategoryLabel}</strong><Tag bordered={false}>{filtered.length} 项</Tag></div>
+            <div><strong>{activeCategoryLabel}</strong><Tag bordered={false}>{isBrowserMockMode ? filtered.length : remoteTotal} 项</Tag></div>
             <span>{activeTemplate ? "公共列 + 当前流程自定义列" : "全部流程仅显示公共列"}</span>
           </div>
           <Table<ProcessInstance>
@@ -398,10 +465,11 @@ export function TaskCenterPage() {
             rowKey="id"
             columns={columns}
             dataSource={filtered}
+            loading={remoteLoading}
             bordered
             size="middle"
             scroll={{ x: "max-content" }}
-            pagination={{ defaultPageSize: 20, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total) => `共 ${total} 项${tab === "initiated" ? "流程" : "任务"}` }}
+            pagination={{ current: page, pageSize, total: isBrowserMockMode ? filtered.length : remoteTotal, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total) => `共 ${total} 项${tab === "initiated" ? "流程" : "任务"}`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }}
             locale={{
               emptyText: (
                 <Empty
