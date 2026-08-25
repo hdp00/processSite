@@ -1721,7 +1721,7 @@ export const EmailOutboxMessageDto = zod.strictObject({
   "subject": zod.string(),
   "templateData": zod.record(zod.string(), zod.unknown()).optional().describe('不含完整表单、业务附件或敏感字段'),
   "targetPath": zod.string().regex(emailOutboxMessageDtoTargetPathRegExp).describe('服务端生成的 FlowPilot 相对详情路径；taskId 只用于定位，不具有授权能力'),
-  "resolvedTargetUrl": zod.url().optional().describe('第一次投递前由 FLOWPILOT_PUBLIC_BASE_URL 解析并冻结，重试继续使用同一链接；不得包含令牌或敏感参数'),
+  "resolvedTargetUrl": zod.url().optional().describe('由触发写请求命中的 FLOWPILOT_PUBLIC_BASE_URLS 配置项解析并冻结；无请求系统事件使用第一项，重试继续使用同一链接；不得包含令牌或敏感参数'),
   "status": EmailOutboxStatus,
   "attemptCount": zod.int().min(emailOutboxMessageDtoAttemptCountMin),
   "nextAttemptAt": zod.iso.datetime({"offset":true}).optional(),

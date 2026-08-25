@@ -27,6 +27,8 @@ debug 包不注册 Service Worker，不要求 HTTPS。其流程状态保存在�
 ├─ {实际程序目录名称}\
 │  ├─ web\
 │  └─ api\
+│     └─ config\
+│        └─ defaults.env
 ├─ Config\
 │  └─ application.env
 ├─ Secrets\
@@ -42,7 +44,7 @@ debug 包不注册 Service Worker，不要求 HTTPS。其流程状态保存在�
 - `FLOWPILOT_APP_DIR` 是部署时选定的实际程序目录，不固定盘符、路径或目录名称；以后发布、回滚和清理程序只操作该目录。`Config`、`Secrets`、`Data`、`Logs`、`Temp` 和 `Backup` 都是其同级持久化目录，不放进发布包，也不能位于 IIS 网站物理目录内。
 - `FLOWPILOT_HOME` 根据 `FLOWPILOT_APP_DIR` 的父目录动态确定。部署脚本和 Windows 服务注册信息必须提供或可靠定位实际程序目录，不得依赖 Windows 服务当前工作目录推导路径。
 - 附件根目录固定由根目录推导为 `{FLOWPILOT_HOME}\Data\Attachments`，内部继续按 `{yyyy}/.incoming` 和 `{yyyy}/objects` 分层，不单独配置 `ATTACHMENT_ROOT`。
-- `Config\application.env` 保存非敏感运行参数；AD/LDAP、SMTP、SQL Server 账号连接信息和首次初始化超级管理员密码集中保存在明文 `Secrets\production.env`。首版不使用 DPAPI 或外部密钥平台，必须通过 NTFS 权限限制为 NestJS 服务账号只读、指定部署管理员可修改，并禁止提交 Git 或复制进程序发布包。
+- `api\config\defaults.env` 随后端发布，只保存稳定且非敏感的默认值；发布包不得修改它来承载环境差异。外置 `Config\application.env` 只保存必须确认的非敏感环境值和显式覆盖；AD/LDAP、SMTP、SQL Server 环境地址与凭据及首次初始化超级管理员密码集中保存在明文 `Secrets\production.env`。外置值优先于随代码默认值。首版不使用 DPAPI 或外部密钥平台，必须通过 NTFS 权限限制外置文件为 NestJS 服务账号只读、指定部署管理员可修改，并禁止提交 Git 或复制进程序发布包。
 - 配置键、默认运行参数和部署人员后续填写项统一见 [`BACKEND_IMPLEMENTATION_CHECKLIST.md`](./BACKEND_IMPLEMENTATION_CHECKLIST.md)。仓库示例只能保留 `<占位值>`，不得写入真实主机、域名、账号或密码。
 - 外置 `.env` 使用 dotenv 语法。密码中包含 `#`、空格或前后空白时必须保留模板中的引号，否则 `#` 后内容会被解释为注释并造成凭据截断；秘密本身包含单引号时改用双引号并正确转义。填写后以服务账号权限做启动校验，日志和错误输出中不得回显解析后的值。
 - SQL Server 连接默认启用 TDS 加密并校验证书。远程数据库必须使用受信证书；只有 NestJS 与 SQL Server 确认同机并以 `127.0.0.1` 回环连接时，才可在部署记录中接受 `MSSQL_ENCRYPT=false`、`MSSQL_TRUST_SERVER_CERTIFICATE=true` 的本机例外。
@@ -67,7 +69,7 @@ debug 包不注册 Service Worker，不要求 HTTPS。其流程状态保存在�
 
 - 服务器安装 Node.js 24 LTS x64，并使用仓库规定的具体补丁版本。Node.js 官方平台基线包含 Windows Server 2016 x64，但仍必须在目标服务器执行启动、SQL 驱动、scrypt 参数与并发内存、LDAP、Axios 受控 HTTP 调用、SMTP、文件流和服务重启冒烟测试。生产依赖不得要求 node-gyp、Visual Studio、ODBC 或运行时下载原生二进制文件。
 - 后端发布物固定为 ESM 构建，WinSW 必须直接启动已经验证的 `.js` ESM 入口；不得在服务器使用 `ts-node`、运行时 Babel、CommonJS 兼容补丁或临时 loader。部署冒烟同时覆盖 TypeORM Migration CLI 和受控维护 CLI 的 ESM 入口。
-- 后端发布目录为 `{FLOWPILOT_APP_DIR}\api`，包含编译产物、生产依赖、WinSW 可执行文件及不含秘密的服务模板。配置和秘密文件仍从父目录读取，不复制进发布目录。
+- 后端发布目录为 `{FLOWPILOT_APP_DIR}\api`，包含编译产物、生产依赖、WinSW 可执行文件及不含秘密的服务模板和 `config\defaults.env`。环境配置和秘密文件仍从父目录读取，不复制进发布目录。
 - 使用 WinSW 将 `node.exe` 和后端入口包装为 Windows 服务，服务名建议固定为 `FlowPilotApi`，监听 `127.0.0.1:3000`。WinSW 配置必须把 `FLOWPILOT_APP_DIR` 设为实际绝对路径，不能依赖当前工作目录。
 - 应用使用 `nestjs-pino` 把 JSON Lines 写到标准输出；WinSW 按日期和大小把标准输出/错误滚动到 `{FLOWPILOT_HOME}\Logs`。日志默认保留30天，不记录密码、Cookie、令牌、连接字符串、完整表单和附件正文。
 - 服务账号使用独立低权限 Windows 账号。注册后配置异常退出自动重启和退避；数据库结构落后属于服务可运行但不就绪，不得通过自动迁移绕过。
@@ -125,7 +127,7 @@ http://服务器/api/flowpilot/v1/...
 
 后端只监听 `127.0.0.1`，不直接向局域网开放，并且应用侧只信任来自 loopback 连接的代理头。代理需要保留请求方法、请求体、Cookie、`Origin`、`Referer`、`ETag`、`If-Match` 和 `Range` 等请求头，但 `X-Forwarded-For` 必须按上面的规则覆盖；同时透传状态码、`Set-Cookie`、`Content-Type`、`Content-Disposition`、`Content-Length`、`Accept-Ranges`、`ETag`、`Content-Range` 和 Problem Details 响应。正式认证不使用 Authorization Bearer；Debug Mock 请求也不会进入 IIS。当前规则适用于“浏览器直接连接 IIS”的单层代理拓扑；若以后在 IIS 前增加其他代理，必须单独定义受信来源和跳数，不能直接恢复外部地址链透传。
 
-当前正式部署允许 HTTP，但登录密码和会话在内网链路上没有传输加密；切换 HTTPS 后应同步启用 Secure Cookie。
+当前正式部署允许 HTTP，但登录密码和会话在内网链路上没有传输加密；切换 HTTPS 后应同步启用 Secure Cookie。同一后端允许 IIS 提供多个内外网绑定，所有实际入口必须以分号写入 `FLOWPILOT_PUBLIC_BASE_URLS`。邮件使用触发写请求命中的已验证入口，无浏览器请求的系统任务才使用第一项。全部入口必须统一使用 HTTP 或 HTTPS；真正暴露到公网时必须统一采用 HTTPS，并优先使用具有受信证书的 DNS 名称而不是裸 IP。
 
 正式后端还需配置公司 AD/LDAP 域认证提供方。普通用户默认按域账号密码认证，密码登录用户和系统内置超级管理员使用 FlowPilot 本地密码；域服务异常时不得回退本地密码。部署验证至少覆盖一个域用户、一个普通密码用户和超级管理员，并确认超级管理员模拟域用户时无需目标用户密码即可返回模拟会话。域连接默认只允许 LDAPS；确需旧 `ldap://` 时必须显式设置 `DOMAIN_AUTH_ALLOW_PLAINTEXT=true` 并记录域密码明文传输风险。域地址、Base DN、UPN 后缀和证书信任信息只能放在服务器的 `Secrets\production.env` 中。本实现直接使用本次登录用户的 UPN/password bind，不配置或保存常驻绑定密码，用户密码也不得进入配置、日志或健康详情。
 

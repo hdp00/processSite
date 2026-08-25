@@ -1,10 +1,16 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { EnvironmentValidationError, isUnsupportedLocalDbServer, validateEnvironment } from "./environment.js";
+import {
+  EnvironmentValidationError,
+  isUnsupportedLocalDbServer,
+  resolveBundledEnvironmentDefaultsFilePath,
+  resolveEnvironmentFilePaths,
+  validateEnvironment
+} from "./environment.js";
 
 const validEnvironment = () => ({
   NODE_ENV: "test",
-  FLOWPILOT_PUBLIC_BASE_URL: "http://127.0.0.1/flowpilot",
+  FLOWPILOT_PUBLIC_BASE_URLS: "http://127.0.0.1/flowpilot",
   MSSQL_SERVER: "127.0.0.1",
   MSSQL_DATABASE: "FlowPilot",
   MSSQL_USER: "flowpilot_app",
@@ -35,7 +41,12 @@ describe("validateEnvironment", () => {
   it("rejects an invalid public application path", () => {
     expect(() => validateEnvironment({
       ...validEnvironment(),
-      FLOWPILOT_PUBLIC_BASE_URL: "http://127.0.0.1/"
+      FLOWPILOT_PUBLIC_BASE_URLS: "http://127.0.0.1/"
+    })).toThrow(EnvironmentValidationError);
+
+    expect(() => validateEnvironment({
+      ...validEnvironment(),
+      FLOWPILOT_PUBLIC_BASE_URLS: "not-a-url"
     })).toThrow(EnvironmentValidationError);
   });
 
@@ -49,9 +60,31 @@ describe("validateEnvironment", () => {
   it("requires Secure cookies for an HTTPS public URL", () => {
     expect(() => validateEnvironment({
       ...validEnvironment(),
-      FLOWPILOT_PUBLIC_BASE_URL: "https://flowpilot.example/flowpilot",
+      FLOWPILOT_PUBLIC_BASE_URLS: "https://flowpilot.example/flowpilot",
       FLOWPILOT_COOKIE_SECURE: "false"
     })).toThrow(/FLOWPILOT_COOKIE_SECURE/);
+  });
+
+  it("accepts multiple unique site addresses with one protocol", () => {
+    const environment = validateEnvironment({
+      ...validEnvironment(),
+      FLOWPILOT_PUBLIC_BASE_URLS: "http://10.0.0.10/flowpilot; http://203.0.113.10/flowpilot"
+    });
+
+    expect(environment.FLOWPILOT_PUBLIC_BASE_URLS).toContain(";");
+  });
+
+  it("rejects duplicate origins and mixed HTTP/HTTPS site addresses", () => {
+    expect(() => validateEnvironment({
+      ...validEnvironment(),
+      FLOWPILOT_PUBLIC_BASE_URLS: "http://flowpilot.example/flowpilot;http://flowpilot.example/flowpilot"
+    })).toThrow(/重复/);
+
+    expect(() => validateEnvironment({
+      ...validEnvironment(),
+      FLOWPILOT_PUBLIC_BASE_URLS: "http://flowpilot.internal/flowpilot;https://flowpilot.external/flowpilot",
+      FLOWPILOT_COOKIE_SECURE: "true"
+    })).toThrow(/统一使用 HTTP 或 HTTPS/);
   });
 
   it("requires LDAP settings when domain authentication is enabled", () => {
@@ -161,6 +194,43 @@ describe("production environment template", () => {
       "FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD"
     ]) {
       expect(example).toMatch(new RegExp(`^${key}='[^']+'$`, "mu"));
+    }
+  });
+});
+
+describe("bundled environment defaults", () => {
+  it("loads bundled defaults after both external override files", () => {
+    const defaultsPath = resolveBundledEnvironmentDefaultsFilePath();
+    const paths = resolveEnvironmentFilePaths();
+
+    expect(defaultsPath.replaceAll("\\", "/")).toMatch(/apps\/api\/config\/defaults\.env$/u);
+    expect(paths.at(-1)).toBe(defaultsPath);
+  });
+
+  it("contains only stable non-secret settings", () => {
+    const defaults = readFileSync(resolveBundledEnvironmentDefaultsFilePath(), "utf8");
+
+    expect(defaults).toMatch(/^MSSQL_EXPECTED_COMPATIBILITY_LEVEL=130$/mu);
+    expect(defaults).toMatch(/^DOMAIN_AUTH_ALLOW_PLAINTEXT=false$/mu);
+    expect(defaults).toMatch(/^SMTP_REQUIRE_TLS=true$/mu);
+
+    for (const key of [
+      "FLOWPILOT_PUBLIC_BASE_URLS",
+      "FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD",
+      "MSSQL_SERVER",
+      "MSSQL_DATABASE",
+      "MSSQL_USER",
+      "MSSQL_PASSWORD",
+      "MSSQL_EXPECTED_COLLATION",
+      "DOMAIN_AUTH_URLS",
+      "DOMAIN_AUTH_BASE_DN",
+      "DOMAIN_AUTH_UPN_SUFFIX",
+      "SMTP_HOST",
+      "SMTP_USER",
+      "SMTP_PASSWORD",
+      "SMTP_FROM"
+    ]) {
+      expect(defaults).not.toMatch(new RegExp(`^${key}=`, "mu"));
     }
   });
 });

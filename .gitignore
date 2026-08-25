@@ -14,3 +14,4 @@ apps/Config/*.env
 apps/Secrets/
 apps/api/Secrets/
 apps/api/Config/*.env
+!apps/api/config/defaults.env

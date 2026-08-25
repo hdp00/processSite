@@ -195,10 +195,10 @@
 
 ### 6.3 邮件 Outbox
 
-- `flowpilot.email_outbox`：`id`、revision、业务事件唯一键、事件类型、`instance_id`、可空 `task_id`、模板、收件人用户与邮箱快照、主题、经过最小化的模板数据 JSON、`target_path`、可空 `resolved_target_url`、状态、计划时间、尝试次数、租约、最后错误、创建/发送/死信时间。`target_path` 只允许 `/processes/{instanceId}` 及受控 `taskId` 查询参数；不得保存任意外部 URL。
+- `flowpilot.email_outbox`：`id`、revision、业务事件唯一键、事件类型、`instance_id`、可空 `task_id`、模板、收件人用户与邮箱快照、主题、经过最小化的模板数据 JSON、`target_path`、`link_base_url`、可空 `resolved_target_url`、状态、计划时间、尝试次数、租约、最后错误、创建/发送/死信时间。`link_base_url` 只能由服务端从当前写请求已验证的配置入口中选择；无请求系统事件使用配置第一项。`target_path` 只允许 `/processes/{instanceId}` 及受控 `taskId` 查询参数；不得接受或保存客户端提供的任意外部 URL。
 - `flowpilot.email_delivery_attempts`：`id`、`outbox_id`、尝试序号、开始/结束时间、结果、经过脱敏的错误类别和服务器响应摘要；`(outbox_id, attempt_number)` 唯一。
 
-业务事务只写 Outbox。SMTP 发送、重试和死信转换在事务提交后执行。worker 第一次领取记录时使用 `FLOWPILOT_PUBLIC_BASE_URL` 和 `target_path` 解析绝对链接，在发送前把结果写入 `resolved_target_url`；后续重试复用同一快照，避免配置变化导致同一邮件重试内容不同。数据库保存投递所需的最小模板数据和实际链接，但不保存完整 MIME、完整渲染正文、业务附件、SMTP 密码或会话凭据。
+业务事务只写 Outbox。触发业务事件的写请求在通过 CSRF 来源校验后，将命中的 `FLOWPILOT_PUBLIC_BASE_URLS` 配置项保存为 `link_base_url`；没有浏览器请求上下文的系统事件使用第一项。SMTP 发送、重试和死信转换在事务提交后执行。worker 第一次领取记录时使用已冻结的 `link_base_url` 和 `target_path` 解析绝对链接，在发送前把结果写入 `resolved_target_url`；后续重试复用同一快照，避免入口或配置变化导致同一邮件重试内容不同。数据库保存投递所需的最小模板数据和实际链接，但不保存完整 MIME、完整渲染正文、业务附件、SMTP 密码或会话凭据。
 
 ### 6.4 后台租约和结构版本
 

@@ -9,7 +9,7 @@
 - 生产运行时使用 Node.js 24 LTS x64，并在开始实现时将具体补丁版本写入仓库运行时版本文件和部署清单。升级补丁版本必须重新执行 Windows Server 2016 冒烟测试。
 - 版本依据以 Node.js 官方的 [发布状态](https://nodejs.org/en/about/previous-releases) 和 [v24.x 支持平台](https://github.com/nodejs/node/blob/v24.x/BUILDING.md#platform-list) 为准；如果服务器操作系统或 Node.js 支持状态变化，部署前必须重新评估，不能通过跳过平台检查强行运行。
 - NestJS、TypeORM 0.3、`@nestjs/typeorm`、`mssql`、TypeScript 和所有生成器使用精确版本写入 package manifest 和 lockfile；生产依赖不得使用未锁定的全局安装。
-- 配置使用 `@nestjs/config` 加载，使用 Zod 在启动时校验。日志使用 `nestjs-pino` 输出结构化 JSON 到标准输出，由 WinSW 负责服务日志滚动。
+- 配置使用 `@nestjs/config` 加载，使用 Zod 在启动时校验。稳定且非敏感的默认值保存在随代码发布的 `apps/api/config/defaults.env`，外置 Secrets、外置 Config 和进程环境变量按优先级覆盖。日志使用 `nestjs-pino` 输出结构化 JSON 到标准输出，由 WinSW 负责服务日志滚动。
 - Windows 服务固定使用 WinSW 包装 Node.js 进程。服务使用独立低权限账号，自动重启次数和退避由 WinSW 与 Windows 服务恢复策略共同配置。
 - 正式构建、数据库迁移、离线维护命令和 API 启动使用不同入口，但复用同一配置校验和依赖注入模块。
 
@@ -52,24 +52,15 @@
 
 ## 4. SQL Server 部署配置
 
-真实值全部由部署人员填写：
+部署人员只填写以下 SQL Server 环境值；schema、加密、兼容门槛、连接池、超时和死锁重试使用 `apps/api/config/defaults.env` 的安全默认值，需要调整时才在外置 `application.env` 覆盖：
 
 ```dotenv
 MSSQL_SERVER=<SQL Server 主机或实例地址>
-MSSQL_PORT=1433
+MSSQL_PORT=<TCP端口>
 MSSQL_DATABASE=<数据库名>
-MSSQL_SCHEMA=flowpilot
 MSSQL_USER=<应用运行账号>
 MSSQL_PASSWORD=<应用运行密码>
-MSSQL_ENCRYPT=true
-MSSQL_TRUST_SERVER_CERTIFICATE=false
-MSSQL_EXPECTED_COMPATIBILITY_LEVEL=130
 MSSQL_EXPECTED_COLLATION=<DBA 确认的数据库排序规则>
-MSSQL_POOL_MIN=0
-MSSQL_POOL_MAX=20
-MSSQL_CONNECT_TIMEOUT_MS=5000
-MSSQL_REQUEST_TIMEOUT_MS=30000
-MSSQL_DEADLOCK_RETRY_COUNT=3
 ```
 
 - 迁移账号不写入常驻应用 Secrets；执行停机迁移时通过单独受限配置或交互式部署环境注入。
@@ -90,20 +81,13 @@ MSSQL_DEADLOCK_RETRY_COUNT=3
 ## 5. AD/LDAP 配置与行为
 
 ```dotenv
-DOMAIN_AUTH_ENABLED=true
 DOMAIN_AUTH_URLS=<一个或多个 LDAP/LDAPS 地址，按配置顺序尝试>
 DOMAIN_AUTH_BASE_DN=<目录搜索根>
 DOMAIN_AUTH_UPN_SUFFIX=<UPN 后缀>
-DOMAIN_AUTH_NETBIOS_NAME=<可选 DOMAIN 名称>
-DOMAIN_AUTH_ACCOUNT_ATTRIBUTE=sAMAccountName
-DOMAIN_AUTH_ALLOW_PLAINTEXT=false
-DOMAIN_AUTH_CONNECT_TIMEOUT_MS=3000
-DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
-DOMAIN_AUTH_TLS_REJECT_UNAUTHORIZED=true
-AUTH_LOGIN_UNAVAILABLE_WINDOW_MS=60000
-AUTH_LOGIN_UNAVAILABLE_BLOCK_DURATION_MS=60000
-AUTH_LOGIN_UNAVAILABLE_IP_LIMIT=60
+# DOMAIN_AUTH_NETBIOS_NAME=<可选 DOMAIN 名称>
 ```
+
+域认证启用状态、账号属性、连接/操作超时、503 限流和 TLS 校验使用随代码默认值；只有禁用域认证或接受旧 `ldap://` 明文风险时，才在外置 `application.env` 增加对应覆盖。
 
 - FlowPilot 用户表保存规范化的裸账号。登录输入可以是裸账号、匹配配置后缀的 UPN 或匹配配置名称的 `DOMAIN\user`，服务端统一规范化后查询本地用户。
 - 首版默认使用用户 UPN 直接绑定验证密码，再在配置的 Base DN 内同时使用经过 RFC 4515 转义的账号和同一 UPN 筛选器确认唯一用户对象；不要求常驻域服务账号。若公司域策略不允许该方式，再通过配置增加只读搜索账号，不改变业务认证接口。
@@ -136,29 +120,20 @@ AUTH_LOGIN_UNAVAILABLE_IP_LIMIT=60
 ## 8. SMTP、后台任务和运维
 
 ```dotenv
-SMTP_ENABLED=true
 SMTP_HOST=<SMTP 主机>
-SMTP_PORT=<端口>
-SMTP_SECURE=false
-SMTP_REQUIRE_TLS=true
-SMTP_IGNORE_TLS=false
-SMTP_TLS_REJECT_UNAUTHORIZED=true
-SMTP_TLS_SERVERNAME=<使用 IP 连接且启用 TLS 时的可选证书主机名>
 SMTP_USER=<可选认证账号>
 SMTP_PASSWORD=<可选认证密码>
 SMTP_FROM=<发件地址>
-SMTP_REPLY_TO=<可选回复地址>
-SMTP_CONNECTION_TIMEOUT_MS=5000
-SMTP_GREETING_TIMEOUT_MS=5000
-SMTP_SOCKET_TIMEOUT_MS=15000
-SMTP_MAX_CONNECTIONS=5
-FLOWPILOT_PUBLIC_BASE_URL=<包含 /flowpilot 且不带末尾斜杠的应用根地址，例如 http://服务器/flowpilot>
-FLOWPILOT_BUSINESS_TIME_ZONE=Asia/Shanghai
+FLOWPILOT_PUBLIC_BASE_URLS=<分号分隔的一个或多个 /flowpilot 应用根地址，第一项为无请求系统任务的回退地址>
+# SMTP_TLS_SERVERNAME=<使用 IP 连接且启用 TLS 时的可选证书主机名>
+# SMTP_REPLY_TO=<可选回复地址>
 ```
+
+SMTP 端口、TLS、证书校验、超时和连接池使用随代码安全默认值；只有禁用 SMTP、改用隐式 TLS 端口，或接受旧明文 SMTP 风险时，才在外置 `application.env` 增加对应覆盖。
 
 - `SMTP_SECURE=true` 表示连接建立时即使用 TLS；端口 25/587 通常使用 `SMTP_SECURE=false`、`SMTP_REQUIRE_TLS=true` 强制 STARTTLS，不能使用会在降级后继续明文投递的机会式模式。只有部署方明确接受内网明文传输风险时才同时设置 `SMTP_REQUIRE_TLS=false`、`SMTP_IGNORE_TLS=true`。使用 IP 地址连接且校验证书时配置 `SMTP_TLS_SERVERNAME`。
 - 新后端不得创建或调用 `CDO.Message`、`sp_OACreate`、`sp_OASetProperty` 或其他 SQL Server OLE Automation 发信过程；固定发件人和 SMTP 凭据只进入 Nodemailer 网关，业务事务只写 Outbox。
-- 启动时必须验证 `FLOWPILOT_PUBLIC_BASE_URL` 是绝对 HTTP/HTTPS URL、路径以 `/flowpilot` 结束且不包含查询、片段、用户信息或末尾斜杠。邮件只允许拼接服务端生成的 `/processes/{instanceId}` 相对路径和可选 `taskId`，禁止接受用户输入的跳转地址。
+- 启动时必须逐项验证 `FLOWPILOT_PUBLIC_BASE_URLS`：使用分号分隔、每项都是绝对 HTTP/HTTPS URL、路径以 `/flowpilot` 结束且不包含查询、片段、用户信息或末尾斜杠，不允许重复来源或混合 HTTP/HTTPS。全部来源用于 CSRF 校验；写请求命中的配置入口随 Outbox 冻结，无浏览器请求的系统事件才使用第一项。邮件只允许拼接服务端生成的 `/processes/{instanceId}` 相对路径和可选 `taskId`，禁止接受用户输入的跳转地址或根据 `Host`、未经校验的转发头改写目标主机。
 - 未登录用户点击邮件后先登录；前端只保存经过同源和 FlowPilot 基路径校验的返回地址，登录完成后返回流程详情。`taskId` 只用于定位任务，不是授权凭证，详情读取和处理命令仍由后端鉴权。
 - Outbox 和 `email_delivery_attempts` 均写入 SQL Server；运维列表可以查看收件人邮箱快照、主题、目标链接、状态、尝试次数、时间和脱敏错误，但不显示或保存完整邮件正文和 SMTP 凭据。
 - 邮件、附件清理、过期会话、幂等清理均使用数据库租约。默认每分钟扫描一次，每批最多 50 条，租约 5 分钟；附件大批量清理单独限制并发，避免占满磁盘 I/O。

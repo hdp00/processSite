@@ -14,16 +14,54 @@ const booleanFromEnvironment = z.preprocess((value) => {
 const positiveInteger = (defaultValue: number) => z.coerce.number().int().positive().default(defaultValue);
 const nonNegativeInteger = (defaultValue: number) => z.coerce.number().int().nonnegative().default(defaultValue);
 
-const publicBaseUrl = z.string().url().superRefine((value, context) => {
-  const url = new URL(value);
-  if (!(["http:", "https:"].includes(url.protocol))) {
-    context.addIssue({ code: "custom", message: "必须使用 HTTP 或 HTTPS 协议" });
+export function parsePublicBaseUrls(value: string): string[] {
+  return value.split(";").map((item) => item.trim()).filter(Boolean);
+}
+
+function publicBaseUrlsUseHttps(value: string): boolean {
+  return parsePublicBaseUrls(value).some((item) => {
+    try {
+      return new URL(item).protocol === "https:";
+    } catch {
+      return false;
+    }
+  });
+}
+
+const publicBaseUrls = z.string().trim().min(1).superRefine((value, context) => {
+  const rawUrls = value.split(";");
+  if (rawUrls.some((item) => item.trim().length === 0)) {
+    context.addIssue({ code: "custom", message: "多个地址必须使用分号分隔且不能包含空项" });
+    return;
   }
-  if (url.username || url.password || url.search || url.hash) {
-    context.addIssue({ code: "custom", message: "不能包含用户信息、查询参数或片段" });
+
+  const origins = new Set<string>();
+  const protocols = new Set<string>();
+  for (const item of rawUrls) {
+    const normalized = item.trim();
+    try {
+      const url = new URL(normalized);
+      if (!(["http:", "https:"].includes(url.protocol))) {
+        context.addIssue({ code: "custom", message: "必须使用 HTTP 或 HTTPS 协议" });
+      }
+      if (url.username || url.password || url.search || url.hash) {
+        context.addIssue({ code: "custom", message: "不能包含用户信息、查询参数或片段" });
+      }
+      if (url.pathname !== "/flowpilot" || normalized.endsWith("/")) {
+        context.addIssue({ code: "custom", message: "每个地址的路径必须以 /flowpilot 结束且不能有末尾斜杠" });
+      }
+      if (origins.has(url.origin)) {
+        context.addIssue({ code: "custom", message: "不能配置重复的站点来源" });
+      }
+      origins.add(url.origin);
+      protocols.add(url.protocol);
+    } catch {
+      context.addIssue({ code: "custom", message: "站点地址格式无效" });
+    }
   }
-  if (url.pathname !== "/flowpilot" || value.endsWith("/")) {
-    context.addIssue({ code: "custom", message: "路径必须以 /flowpilot 结束且不能有末尾斜杠" });
+
+  if (protocols.size > 1) {
+    context.addIssue({ code: "custom", message: "全部站点地址必须统一使用 HTTP 或 HTTPS" });
   }
 });
 
@@ -60,7 +98,7 @@ export const environmentSchema = z.object({
   APP_PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   APP_VERSION: z.string().min(1).default("0.1.0"),
   HTTP_JSON_LIMIT_BYTES: positiveInteger(1_048_576),
-  FLOWPILOT_PUBLIC_BASE_URL: publicBaseUrl,
+  FLOWPILOT_PUBLIC_BASE_URLS: publicBaseUrls,
   FLOWPILOT_BUSINESS_TIME_ZONE: z.literal("Asia/Shanghai").default("Asia/Shanghai"),
   FLOWPILOT_COOKIE_SECURE: booleanFromEnvironment.default(false),
   AUTH_LOGIN_FAILURE_WINDOW_MS: positiveInteger(15 * 60 * 1_000),
@@ -117,7 +155,10 @@ export const environmentSchema = z.object({
   SMTP_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(5).default(5),
   FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD: z.string().min(1).max(200).optional()
 }).superRefine((value, context) => {
-  if (new URL(value.FLOWPILOT_PUBLIC_BASE_URL).protocol === "https:" && !value.FLOWPILOT_COOKIE_SECURE) {
+  if (
+    publicBaseUrlsUseHttps(value.FLOWPILOT_PUBLIC_BASE_URLS)
+    && !value.FLOWPILOT_COOKIE_SECURE
+  ) {
     context.addIssue({
       code: "custom",
       path: ["FLOWPILOT_COOKIE_SECURE"],
@@ -223,6 +264,10 @@ export function validateEnvironment(input: Record<string, unknown>): AppEnvironm
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 
+export function resolveBundledEnvironmentDefaultsFilePath(): string {
+  return resolve(moduleDirectory, "..", "..", "config", "defaults.env");
+}
+
 export function resolveFlowPilotAppDirectory(): string {
   if (process.env.FLOWPILOT_APP_DIR) return resolve(process.env.FLOWPILOT_APP_DIR);
   return resolve(moduleDirectory, "..", "..");
@@ -241,7 +286,8 @@ export function resolveEnvironmentFilePaths(): string[] {
       : resolve(flowPilotHome, "Secrets", "production.env"),
     process.env.FLOWPILOT_CONFIG_FILE
       ? resolve(process.env.FLOWPILOT_CONFIG_FILE)
-      : resolve(flowPilotHome, "Config", "application.env")
+      : resolve(flowPilotHome, "Config", "application.env"),
+    resolveBundledEnvironmentDefaultsFilePath()
   ];
 }
 

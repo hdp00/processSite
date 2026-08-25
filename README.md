@@ -18,7 +18,7 @@ pnpm dev
 
 ## 本地联调正式后端
 
-后端配置必须从仓库外的 `{FLOWPILOT_HOME}\Config\application.env` 与 `{FLOWPILOT_HOME}\Secrets\production.env` 提供；本地开发先把 `FLOWPILOT_HOME` 指向该外置根目录，也可以分别设置 `FLOWPILOT_CONFIG_FILE` 与 `FLOWPILOT_SECRETS_FILE` 的绝对路径。仓库只保留 [`apps/api/config`](apps/api/config) 中的占位示例。首次初始化时临时提供 `FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD`，种子只在超级管理员尚不存在时读取并写入散列，重复执行不会覆盖现有密码。
+后端稳定且非敏感的运行默认值随代码保存在 [`apps/api/config/defaults.env`](apps/api/config/defaults.env)；部署人员只需在仓库外的 `{FLOWPILOT_HOME}\Config\application.env` 填写必须确认的非敏感环境值，在 `{FLOWPILOT_HOME}\Secrets\production.env` 填写 SQL Server、LDAP 和 SMTP 的环境地址与凭据。多个内外网入口通过 `FLOWPILOT_PUBLIC_BASE_URLS` 以分号配置；邮件跟随触发业务事件的已验证入口，无浏览器请求的系统任务才使用第一项。外置文件和进程环境变量优先于随代码默认值。本地开发先把 `FLOWPILOT_HOME` 指向该外置根目录，也可以分别设置 `FLOWPILOT_CONFIG_FILE` 与 `FLOWPILOT_SECRETS_FILE` 的绝对路径。首次初始化时临时提供 `FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD`，种子只在超级管理员尚不存在时读取并写入散列，重复执行不会覆盖现有密码。
 
 本地 API 未使用默认 `127.0.0.1:3000` 时，在被 Git 忽略的 `apps/web/.env.remote.local` 中用 `VITE_API_PROXY_TARGET` 覆盖前端开发代理目标。
 

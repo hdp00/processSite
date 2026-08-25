@@ -158,65 +158,39 @@ TypeORM 采用 Data Mapper 模式，不使用 Active Record。TypeORM Entity 是
 - `PersistenceUnitOfWork` 封装 `QueryRunner` 生命周期；事务内仓储只使用该 runner 的 `EntityManager`，禁止混用全局 Repository，确保所有写入位于同一连接和事务。
 - 关系级联、实体订阅器和懒加载默认关闭或显式限制，关键领域副作用由领域服务和事务命令明确调用，避免 ORM 隐式写入改变任务、审计或 Outbox 状态。
 
-运行配置按敏感性拆分：`{FLOWPILOT_HOME}\Config\application.env` 保存开关、端口、超时、兼容级别等非敏感参数；`{FLOWPILOT_HOME}\Secrets\production.env` 保存 SQL Server/LDAP/SMTP 地址、账号、密码和首次初始化密码。以下清单合并展示两类键，仓库模板只提供键名与占位值：
+运行配置分为三层，按“进程环境变量、外置 Secrets、外置 Config、随代码默认值”的顺序覆盖：
+
+- `api/config/defaults.env` 随后端版本发布，只保存稳定且非敏感的端口、超时、连接池、兼容门槛和安全默认值，不允许写入 SQL/LDAP/SMTP/公开站点等部署环境地址、数据库名、账号、密码或证书私钥。
+- `{FLOWPILOT_HOME}\Config\application.env` 只保存部署时必须确认的非敏感环境值，以及确有必要并经过风险确认的默认覆盖。
+- `{FLOWPILOT_HOME}\Secrets\production.env` 只保存 SQL Server/LDAP/SMTP 的环境地址、账号、密码和首次初始化密码。
+
+外置 `application.env` 的最小内容：
 
 ```dotenv
-# SQL Server
-MSSQL_SERVER=<SQL Server 主机或实例地址>
-MSSQL_PORT=1433
+FLOWPILOT_PUBLIC_BASE_URLS=<分号分隔的一个或多个 /flowpilot 应用根地址，第一项为无请求系统任务的回退地址>
+MSSQL_EXPECTED_COLLATION=<DBA 确认的数据库排序规则>
+```
+
+外置 `production.env` 的部署内容：
+
+```dotenv
+MSSQL_SERVER=<SQL Server TCP 主机>
+MSSQL_PORT=<SQL Server TCP 端口>
 MSSQL_DATABASE=<数据库名>
-MSSQL_SCHEMA=flowpilot
 MSSQL_USER=<应用运行账号>
 MSSQL_PASSWORD='<数据库密码>'
-MSSQL_ENCRYPT=true
-MSSQL_TRUST_SERVER_CERTIFICATE=false
-MSSQL_EXPECTED_COMPATIBILITY_LEVEL=130
-MSSQL_EXPECTED_COLLATION=<DBA 确认的数据库排序规则>
-MSSQL_POOL_MIN=0
-MSSQL_POOL_MAX=20
-MSSQL_CONNECT_TIMEOUT_MS=5000
-MSSQL_REQUEST_TIMEOUT_MS=30000
-
-# AD/LDAP
-DOMAIN_AUTH_ENABLED=true
 DOMAIN_AUTH_URLS=<一个或多个 LDAP/LDAPS 地址>
 DOMAIN_AUTH_BASE_DN=<目录搜索根>
 DOMAIN_AUTH_UPN_SUFFIX=<UPN 后缀>
-DOMAIN_AUTH_NETBIOS_NAME=<可选 DOMAIN 名称>
-DOMAIN_AUTH_ACCOUNT_ATTRIBUTE=sAMAccountName
-DOMAIN_AUTH_ALLOW_PLAINTEXT=false
-DOMAIN_AUTH_CONNECT_TIMEOUT_MS=3000
-DOMAIN_AUTH_OPERATION_TIMEOUT_MS=5000
-DOMAIN_AUTH_TLS_REJECT_UNAUTHORIZED=true
-AUTH_LOGIN_UNAVAILABLE_WINDOW_MS=60000
-AUTH_LOGIN_UNAVAILABLE_BLOCK_DURATION_MS=60000
-AUTH_LOGIN_UNAVAILABLE_IP_LIMIT=60
-
-# SMTP
-SMTP_ENABLED=true
 SMTP_HOST=<SMTP服务器>
-SMTP_PORT=25
-SMTP_SECURE=false
-SMTP_REQUIRE_TLS=true
-SMTP_IGNORE_TLS=false
-SMTP_TLS_REJECT_UNAUTHORIZED=true
-SMTP_TLS_SERVERNAME=<使用 IP 连接且启用 TLS 时的可选证书主机名>
 SMTP_USER=<发件账号>
 SMTP_PASSWORD='<SMTP密码>'
 SMTP_FROM=<发件地址>
-SMTP_REPLY_TO=<可选回复地址>
-SMTP_CONNECTION_TIMEOUT_MS=5000
-SMTP_GREETING_TIMEOUT_MS=5000
-SMTP_SOCKET_TIMEOUT_MS=15000
-SMTP_MAX_CONNECTIONS=5
-FLOWPILOT_PUBLIC_BASE_URL=<包含 /flowpilot 且不带末尾斜杠的应用根地址>
-
-# 只供数据库首次初始化使用
 FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD='<超级管理员初始密码>'
 ```
 
 - 应用启动时校验全部 SQL Server 必填配置、连接能力和数据库兼容级别。
-- SQL Server、AD/LDAP、SMTP 的地址与凭据以及超级管理员初始化密码从 `{FLOWPILOT_HOME}\Secrets\production.env` 读取；非敏感开关、端口、超时与兼容性门槛从 `{FLOWPILOT_HOME}\Config\application.env` 读取。真实值不得提交到仓库，示例配置只能提供键名和占位符。
+- SQL Server、AD/LDAP、SMTP 的地址与凭据以及超级管理员初始化密码从 `{FLOWPILOT_HOME}\Secrets\production.env` 读取；站点根地址和数据库排序规则从 `{FLOWPILOT_HOME}\Config\application.env` 读取；其余默认值来自随代码发布的 `api/config/defaults.env`。真实环境值不得提交到仓库，外置示例配置只能提供键名和占位符。
 - 外置文件使用 dotenv 语法；密码中包含 `#`、空格或前后空白时必须保留模板引号，秘密自身包含单引号时改用双引号并按 dotenv 规则转义，避免凭据被截断。
 - 首版不使用 DPAPI 加密配置、外部密钥平台或其他 Secret Provider。敏感配置文件为明文，依靠仓库外存放、NTFS 最小权限和运维流程保护，程序不得输出完整配置或连接字符串。
 - 修改 SQL Server 连接配置并重启服务即可连接既定实例；附件根目录、接口地址和领域行为保持不变。
@@ -296,8 +270,10 @@ SQL Server 2016 SP2 在数据库兼容级别 130 下可以使用 `ISJSON`、`JSO
 ├─ {实际程序目录名称}\         FLOWPILOT_APP_DIR，可重新部署
 │  ├─ web\
 │  └─ api\
+│     └─ config\
+│        └─ defaults.env       随版本发布的非敏感默认值
 ├─ Config\
-│  └─ application.env          非敏感运行参数
+│  └─ application.env          必须确认的非敏感环境值和覆盖
 ├─ Secrets\
 │  └─ production.env           敏感参数，禁止进入 Git
 ├─ Data\
@@ -453,7 +429,7 @@ Data/Attachments/
 ### 9.2 Outbox
 
 - 需要发送邮件时，在业务事务中只写 Outbox 记录；事务提交后由后台任务调用 SMTP。
-- 任务激活邮件的受控目标路径为 `/processes/{instanceId}?taskId={taskId}`，结束邮件为 `/processes/{instanceId}`。`FLOWPILOT_PUBLIC_BASE_URL` 必须配置为包含 `/flowpilot` 的应用根地址；worker 第一次发送前解析并持久化绝对 URL，所有重试复用该 URL。链接中不得放置令牌或其他授权信息，登录后的返回地址只接受同源 FlowPilot 相对路径。
+- 任务激活邮件的受控目标路径为 `/processes/{instanceId}?taskId={taskId}`，结束邮件为 `/processes/{instanceId}`。`FLOWPILOT_PUBLIC_BASE_URLS` 必须配置一个或多个以分号分隔且包含 `/flowpilot` 的应用根地址。全部地址均进入 CSRF 受信来源集合；触发邮件事件的写请求将命中的配置项作为 `link_base_url` 随 Outbox 冻结，worker 第一次发送前解析并持久化绝对 URL，所有重试复用该 URL。无浏览器请求的系统事件才使用第一项，不得根据客户端 `Host` 或未经校验的转发头改变邮件地址。链接中不得放置令牌或其他授权信息，登录后的返回地址只接受已配置来源下的 FlowPilot 相对路径。
 - Outbox 和每次投递尝试均持久化到 SQL Server。Outbox 保存事件、实例/任务、收件人与邮箱快照、主题、最小模板数据、目标路径、解析后的链接、状态、计划/发送/死信时间、尝试次数和最后错误；投递尝试表保存每次 SMTP 调用的时间、结果和脱敏摘要。不得保存完整 MIME、完整渲染正文、业务附件、密码或 SMTP 凭据。
 - 首次失败后按 1、5、15、60、360 分钟重试，累计 6 次仍失败时进入死信。
 - 管理员可以手工安排死信重试；SMTP 故障不回滚已提交业务事务。
@@ -463,7 +439,7 @@ Data/Attachments/
 - 邮件、附件清理、过期会话和幂等记录清理由 API 进程内调度器执行。
 - 调度任务使用数据库状态和带超时的租约领取，服务重启后可以恢复卡住的处理中任务，不能只依赖内存计时器。
 - 当前只有一个 API 实例，但租约设计仍需防止任务重入和同一任务重复处理。
-- 默认每分钟扫描、每批最多 50 条、租约 5 分钟；邮件发送并发默认 5，单次 SMTP 超时 15 秒。具体值属于 `Config\application.env` 非敏感参数。
+- 默认每分钟扫描、每批最多 50 条、租约 5 分钟；邮件发送并发默认 5，单次 SMTP 超时 15 秒。稳定默认值随代码发布，需要调整时才在外置 `Config\application.env` 覆盖。
 
 ## 10. 数据保留、日志和备份
 
