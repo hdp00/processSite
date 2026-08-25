@@ -12,6 +12,7 @@
 - 可变聚合使用从 `1` 开始的 `int revision`。任何会改变该聚合 REST 表示、权限判断或后续命令结果的写入，都必须在同一事务中增加 revision。
 - JSON 使用 `nvarchar(max)` 并增加 `ISJSON` 约束；JSON 是流程版本完整快照和实例最新表单值的事实来源，但不作为范围查询、排序和跨版本统计的主要索引来源。
 - 账号、角色编码、权限编码、流程编码等唯一业务标识同时保存规范化值。规范化规则为去除首尾空白并使用 Unicode 小写；唯一约束建立在规范化列上，不仅依赖数据库排序规则。
+- 只有启用/停用两种业务状态的主数据使用 `is_enabled bit`；API 层将其映射为 `status: enabled | disabled`，不得为迁就传输枚举在数据库中保存重复字符串。流程实例、任务、版本、附件和 Outbox 等多阶段生命周期对象继续使用受 CHECK 约束的 `status` 或 `state` 枚举列。
 - 新建专用数据库建议使用 DBA 批准的中文、大小写不敏感 Unicode 排序规则。实际排序规则通过 `MSSQL_EXPECTED_COLLATION` 配置并在迁移预检和就绪检查中核对；已有数据库不得由应用自行修改排序规则。
 - 所有外键必须显式命名并确定删除行为。业务历史表默认 `NO ACTION`；只有纯关联表允许随父记录级联删除。
 - 表名、列名、约束和索引均使用小写下划线命名；迁移脚本不得依赖 SQL Server 2017 以后能力。
@@ -29,7 +30,7 @@
 - `authentication_mode nvarchar(20)`：`domain | password`。
 - `password_hash nvarchar(500) null`：仅本地密码账号保存包含算法标识、格式版本、scrypt 参数、随机盐和派生密钥的版本化编码字符串。
 - `department_id uniqueidentifier null`、`position_id uniqueidentifier null`。
-- `status nvarchar(20)`：`enabled | disabled`。
+- `is_enabled bit`：`1` 表示启用，`0` 表示停用；API 映射为 `enabled | disabled`。
 - `is_builtin_super_admin bit`：数据库内只能有一条为 `1`。
 - `revision int`、`created_at`、`updated_at`、`created_by`、`updated_by`。
 
@@ -37,12 +38,13 @@
 
 - `authentication_mode='password'` 时 `password_hash` 必须非空；`domain` 时必须为空。
 - 内置超级管理员必须为 `password` 模式且不允许停用、删除或切换认证方式。
+- 使用 `WHERE is_builtin_super_admin=1` 的筛选唯一索引保证至多一条内置超级管理员记录；首次种子与就绪检查必须保证正式数据库恰好存在一条，不能只依赖应用内约定。
 - 部门和职务使用 `NO ACTION` 外键；存在用户引用时不能删除，只能停用。
 - 删除普通用户前必须确认不是当前登录账号，并检查角色、流程权限组、流程版本引用展开表、实例、任务、附件及其他历史业务外键。可变关联需要先显式解除；存在历史记录时只能停用。删除成功后在同一事务中撤销其全部会话，审计记录不得级联删除。
 
 ### 2.2 角色和权限
 
-- `flowpilot.roles`：`id`、`code`、`normalized_code`、`name`、`description`、`status`、`is_builtin`、`revision` 和审计时间。
+- `flowpilot.roles`：`id`、`code`、`normalized_code`、`name`、`description`、`is_enabled bit`、`is_builtin`、`revision` 和审计时间。
 - `flowpilot.permissions`：稳定 `code` 主键或唯一键、资源、动作、名称、排序、是否内置。权限目录由版本化种子维护，不允许页面创建任意权限代码。
 - `flowpilot.user_roles`：`user_id + role_id` 联合唯一，保存授权人和授权时间。
 - `flowpilot.role_permissions`：`role_id + permission_code` 联合唯一，保存授权人和授权时间。
@@ -51,14 +53,14 @@
 
 ### 2.3 部门和职务
 
-- `flowpilot.departments`：`id`、稳定 `code`、`normalized_code`、`name`、`parent_id`、`path_cache`、`sort_order`、`status`、`description`、`revision`。
-- `flowpilot.positions`：`id`、稳定 `code`、`normalized_code`、`name`、`sort_order`、`status`、`description`、`revision`。
+- `flowpilot.departments`：`id`、稳定 `code`、`normalized_code`、`name`、`parent_id`、`path_cache`、`sort_order`、`is_enabled bit`、`description`、`revision`。
+- `flowpilot.positions`：`id`、稳定 `code`、`normalized_code`、`name`、`sort_order`、`is_enabled bit`、`description`、`revision`。
 
 部门层级必须拒绝循环引用。`path_cache` 只用于列表显示和搜索，更新父部门时在同一事务中重算受影响子树；权限判断使用稳定部门 ID，不依赖显示路径。
 
 ### 2.4 流程权限组
 
-- `flowpilot.workflow_permission_groups`：`id`、`code`、`normalized_code`、`name`、`description`、`status`、`revision`。
+- `flowpilot.workflow_permission_groups`：`id`、`code`、`normalized_code`、`name`、`description`、`is_enabled bit`、`revision`。
 - `flowpilot.workflow_group_users`：直接成员，`group_id + user_id` 联合唯一。
 - `flowpilot.workflow_group_roles`：关联角色，`group_id + role_id` 联合唯一。
 
@@ -68,10 +70,11 @@
 
 ### 3.1 `flowpilot.workflow_definitions`
 
-主要列：`id`、`code`、`normalized_code`、`name`、`description`、`type`、`status`、`published_version_id null`、`next_version_number`、`instance_count`、`revision` 和审计时间。
+主要列：`id`、`code`、`normalized_code`、`name`、`description`、`type`、`is_disabled bit`、`published_version_id null`、`next_version_number`、`instance_count`、`revision` 和审计时间。
 
 - `code` 全局唯一且创建后不可修改。
 - `published_version_id` 必须属于当前定义；该一致性由同一发布事务和仓储契约保证。
+- API 的 `unpublished | published | disabled` 定义状态由 `is_disabled` 与 `published_version_id` 推导，不在数据库重复保存可相互冲突的状态字符串。
 - `instance_count` 是可重建缓存，实例创建事务内递增；验收工具必须能与实例事实表核对。
 
 ### 3.2 `flowpilot.workflow_definition_versions`

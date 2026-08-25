@@ -30,6 +30,9 @@
 
 所有命令从仓库根目录运行：
 
+- 正式后端开工后，契约检查必须先运行锁定版本的 `@redocly/cli` lint，再运行 `orval` 生成共享 TypeScript 类型、Zod 请求校验器和 Axios 客户端，并检查重新生成后没有工作树差异。快速正则检查不能替代该门禁。
+- 后端 ESM 门禁必须覆盖 API 启动、TypeORM DataSource/Migration CLI、Vitest、维护 CLI、`file-type` 导入和 WinSW 实际编译入口，禁止测试使用 CommonJS 而生产改用另一种模块格式。
+
 ```bash
 pnpm test                  # 单元、领域集成和组件测试
 pnpm test:coverage         # 核心领域覆盖率门禁与 HTML 报告

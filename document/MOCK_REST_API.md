@@ -147,7 +147,7 @@ await flowPilotApi.system.updateMockSettings({
 1. 以 OpenAPI 生成共享 TypeScript 类型、前端客户端和请求校验器，并对 NestJS 响应做契约测试。
 2. 保持正式基础路径 `/api/flowpilot/v1`、错误码、分页、ETag 与幂等语义，逐域替换 Mock 兼容 DTO。
 3. 将会话改为 HttpOnly/SameSite Cookie；移除 `mock:<userId>` Bearer 方案。
-4. 将领域命令迁移到 NestJS、TypeORM 和 SQL Server：常规持久化使用领域仓储与 TypeORM，锁语义和复杂投影通过事务专属 `QueryRunner` 执行参数化 SQL，底层 MSSQL 驱动使用 `node-mssql`。
+4. 将领域命令迁移到 NestJS、TypeORM 和 SQL Server：常规持久化使用领域仓储与 TypeORM，锁语义和复杂投影通过事务专属 `QueryRunner` 执行参数化 SQL，底层 MSSQL 驱动使用 npm 包 `mssql`。
 5. 将附件迁移到服务器文件目录，将邮件迁移到持久化 Outbox worker；Excel 继续由浏览器生成，后端只实现导出数据集查询和权限控制。
 6. 逐页切换到生成客户端；登录只水合会话、权限和小型字典，用户、实例、任务、审计和 Outbox 改为服务端分页，流程完整版本按需加载。最后设置 `VITE_API_MODE=remote` 并删除浏览器业务数据双写和正式模式 Bearer 逻辑。
 7. 对 OpenAPI、领域服务、Handler、组件集成和关键 E2E 分层测试。

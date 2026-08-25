@@ -5,6 +5,7 @@
 ## 1. 固定技术与工程结构
 
 - 后端工作区使用 `apps/api`，包名建议为 `@process-site/api`；共享 OpenAPI 生成物放在独立 workspace 包中，不由页面或 NestJS DTO 手工复制。
+- `apps/api/package.json` 固定设置 `"type": "module"`，TypeScript 固定使用 `module: "NodeNext"` 和 `moduleResolution: "NodeNext"`；TypeORM Migration、Vitest、维护 CLI、构建产物和 WinSW 启动入口全部按 ESM 验证。
 - 生产运行时使用 Node.js 24 LTS x64，并在开始实现时将具体补丁版本写入仓库运行时版本文件和部署清单。升级补丁版本必须重新执行 Windows Server 2016 冒烟测试。
 - 版本依据以 Node.js 官方的 [发布状态](https://nodejs.org/en/about/previous-releases) 和 [v24.x 支持平台](https://github.com/nodejs/node/blob/v24.x/BUILDING.md#platform-list) 为准；如果服务器操作系统或 Node.js 支持状态变化，部署前必须重新评估，不能通过跳过平台检查强行运行。
 - NestJS、TypeORM 0.3、`@nestjs/typeorm`、`mssql`、TypeScript 和所有生成器使用精确版本写入 package manifest 和 lockfile；生产依赖不得使用未锁定的全局安装。
@@ -47,6 +48,7 @@
 - 流程定义列表返回摘要；打开设计器、发布页、详情或历史实例时按需读取完整版本。缓存必须有清晰失效规则，不能成为权限或事实来源。
 - 页面写操作统一调用服务端领域命令。Zustand 只保存界面状态和可丢弃查询缓存，不再执行生产业务状态机。
 - OpenAPI 生成共享 TypeScript 类型、请求验证器和前端客户端。生成命令必须可重复，生成物与契约差异纳入测试。
+- 开工门禁必须实际执行锁定版本的 `@redocly/cli` lint 和 `orval` 生成；生成目标包括共享 TypeScript 类型、Zod 请求校验器和 Axios 客户端。重新生成后工作树存在差异、重复路径/operationId、缺失引用或生成失败时不得进入业务实现或交付。
 
 ## 4. SQL Server 部署配置
 
@@ -72,6 +74,7 @@ MSSQL_DEADLOCK_RETRY_COUNT=3
 
 - 迁移账号不写入常驻应用 Secrets；执行停机迁移时通过单独受限配置或交互式部署环境注入。
 - 数据库就绪检查验证服务器版本、兼容级别、预期 schema、迁移校验和和排序规则。
+- 用户、角色、部门、职务和流程权限组的物理启停列统一为 `is_enabled bit`，API Mapper 统一输出/接收 `enabled | disabled`；流程定义保存 `is_disabled bit` 并结合发布指针推导接口状态，多阶段对象保留 CHECK 约束状态枚举。Migration 和仓储契约测试必须防止这两类状态混用。
 - 死锁只对明确可重试且整个事务可安全重放的命令执行指数退避；SMTP、附件写入和其他外部 I/O 不得包含在重试事务中。
 
 ## 5. AD/LDAP 配置与行为

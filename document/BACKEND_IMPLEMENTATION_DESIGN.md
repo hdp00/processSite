@@ -19,7 +19,7 @@
 
 - 正式后端采用 TypeScript、NestJS 和 REST API，与前端放在同一个 pnpm workspace 中。
 - 首版只支持 Microsoft SQL Server 2016 SP2，不实现 SQLite 运行时、数据库 provider 选择或跨数据库切换。
-- ORM 固定使用稳定版 TypeORM，通过 `@nestjs/typeorm` 接入 NestJS；MSSQL 底层驱动继续使用稳定版 `node-mssql`。连接参数通过部署配置提供，调整目标 SQL Server 实例不需要修改业务代码或重新构建。
+- ORM 固定使用稳定版 TypeORM，通过 `@nestjs/typeorm` 接入 NestJS；MSSQL 底层驱动使用稳定版 npm 包 `mssql`（node-mssql 项目）。连接参数通过部署配置提供，调整目标 SQL Server 实例不需要修改业务代码或重新构建。
 - 系统部署在公司内网的 Windows 服务器上：IIS 托管前端静态文件，并把同源 `/api/flowpilot/*` 反向代理到 Windows 服务形式运行的 NestJS。
 - 首版只运行一个 API 实例。预计每年新增流程实例不超过 2 万，附件总量不超过 500 GB。
 - 附件正文保存在服务器本地目录；数据库只保存元数据、相对存储键和业务引用。
@@ -35,7 +35,7 @@ flowchart LR
     I --> N["NestJS Windows 服务：127.0.0.1"]
     N --> P["领域仓储与事务边界"]
     P --> T["TypeORM / @nestjs/typeorm"]
-    T --> M["SQL Server 2016 SP2 / node-mssql"]
+    T --> M["SQL Server 2016 SP2 / mssql"]
     N --> F["本地附件目录"]
     N --> O["邮件 Outbox / 内网 SMTP"]
 ```
@@ -54,6 +54,8 @@ flowchart LR
 本地密码使用 Node.js 内置异步 `crypto.scrypt()`，服务端业务标识使用内置 `crypto.randomUUID()`，常规哈希、随机数、路径、文件流和 HTTP 基础能力优先使用 `node:` 模块。生产运行包不引入 `argon2`、`bcrypt`、`uuid`、`fs-extra`、日期工具库、模板引擎、`msnodesqlv8`、Redis/BullMQ、RabbitMQ、Kafka、Passport/JWT、`express-session`、`@nestjs/swagger`、`@nestjs/terminus`、`@nestjs/throttler`、`class-validator`、`class-transformer`、`nestjs-zod`、TypeORM CLS/事务扩展或 SWC 原生加速器。确需新增白名单外依赖时必须先记录用途、替代方案、传递依赖、原生安装脚本和 Windows Server 2016 验证结果。
 
 `@redocly/cli`、`orval`、`@nestjs/cli`、`@nestjs/testing`、Vitest、`supertest`、`smtp-server`、TypeScript 和类型声明只属于开发/测试依赖，不进入生产运行包。所有依赖使用精确版本并冻结 lockfile；服务器不执行无版本约束的安装或升级。
+
+`apps/api` 从创建开始固定为 ESM：包清单设置 `"type": "module"`，TypeScript 设置 `module: "NodeNext"` 与 `moduleResolution: "NodeNext"`。源码使用标准 ESM 导入和 `node:` 内置模块前缀；路径解析使用 `import.meta.url`，不依赖 CommonJS 的 `require`、`__dirname` 或运行目录。TypeORM DataSource、Migration CLI、Vitest、受控维护 CLI、WinSW 启动入口和仅 ESM 的 `file-type` 必须在同一构建模式下验证，不允许生产运行时临时转译或动态修补模块格式。
 
 ## 3. 流程定义、版本和动态字段
 
@@ -150,7 +152,7 @@ flowchart LR
 
 TypeORM 采用 Data Mapper 模式，不使用 Active Record。TypeORM Entity 是数据访问层的持久化模型，与领域实体和 API DTO 分离，三者通过显式 Mapper 转换；领域层不得使用 TypeORM 装饰器。
 
-- 领域服务不得直接导入 TypeORM Repository、`EntityManager`、`QueryRunner`、`DataSource`、`node-mssql` 连接池或数据库驱动类型。
+- 领域服务不得直接导入 TypeORM Repository、`EntityManager`、`QueryRunner`、`DataSource`、`mssql` 连接池或数据库驱动类型。
 - 普通单表 CRUD、稳定关联和常规分页查询优先使用 TypeORM Repository 或 QueryBuilder，避免重复手写基础 SQL。
 - 编号分配、版本发布、并发任务领取、复杂动态字段投影和带 `UPDLOCK/HOLDLOCK` 的 SQL Server 专用语句，可以在数据访问层通过事务专属 `QueryRunner` 执行参数化原生 SQL，不要求为了形式上的 ORM 纯度改写成低效查询。
 - `PersistenceUnitOfWork` 封装 `QueryRunner` 生命周期；事务内仓储只使用该 runner 的 `EntityManager`，禁止混用全局 Repository，确保所有写入位于同一连接和事务。
@@ -222,7 +224,7 @@ FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD=<超级管理员初始密码>
 
 ### 4.3 事务与并发
 
-- SQL Server 使用 TypeORM 管理的 `node-mssql` 连接池和显式 `QueryRunner` 事务；编号分配、版本发布和任务抢占按场景使用 `SERIALIZABLE`、`UPDLOCK/HOLDLOCK` 或等价机制。
+- SQL Server 使用 TypeORM 管理的 `mssql` 连接池和显式 `QueryRunner` 事务；编号分配、版本发布和任务抢占按场景使用 `SERIALIZABLE`、`UPDLOCK/HOLDLOCK` 或等价机制。
 - 隔离级别在每个事务开始时显式指定，不通过可能泄漏到后续池连接的驱动级连接设置改变；提交、回滚和 `release()` 必须由统一 UoW 在 `finally` 中完成。
 - 数据库事务中不得发送 SMTP、移动附件正文或调用其他外部服务。
 - 发起实例、提交审核、重新提交和发布版本等命令必须保持领域原子性。
@@ -404,6 +406,7 @@ Data/Attachments/
 
 - 正式 API 基础路径固定为 `/api/flowpilot/v1`：`api` 表示站点 API 入口，`flowpilot` 用于共享 IIS 主站下的系统隔离，`v1` 表示接口主版本。NestJS 全局前缀与 URI 版本配置只能组合生成一次该路径，不能出现 `/v1/v1`。
 - OpenAPI 3.1 是正式接口的唯一事实来源，用来生成共享 TypeScript 类型、请求校验器和前端客户端；生成物不得手工编辑。
+- 契约门禁固定包含 `@redocly/cli` lint、`orval` 生成共享 TypeScript 类型/Zod 校验器/Axios 客户端，以及重新生成后的无差异检查。重复路径、重复 `operationId`、缺失引用、无法生成或生成漂移都必须阻断构建；正则或人工抽查只用于快速诊断，不能代替正式门禁。
 - NestJS 实际响应需要通过契约测试，避免实现和 OpenAPI 漂移。
 - 错误使用 Problem Details 风格，包含稳定业务错误码和 traceId，不把数据库异常或绝对路径直接返回前端。
 - 写命令支持 `Idempotency-Key`；资源更新支持 `ETag/If-Match` 和 revision。

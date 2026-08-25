@@ -1,7 +1,7 @@
 # 公司内部流程审核平台——需求文档
 
 > 文档状态：持续更新  
-> 当前版本：2.06
+> 当前版本：2.07
 > 最后更新：2026-08-25
 > 当前阶段：正式后端设计与首版实现准备
 
@@ -932,7 +932,7 @@
 - 包管理器：pnpm，项目中不使用 npm 或 yarn 管理依赖
 - UI 组件库：Ant Design
 - 运行数据库：Microsoft SQL Server
-- ORM 与数据访问：TypeORM + `@nestjs/typeorm`，MSSQL 驱动使用 `node-mssql`；最低兼容 Microsoft SQL Server 2016 SP2，数据库兼容级别 130
+- ORM 与数据访问：TypeORM + `@nestjs/typeorm`，MSSQL 驱动使用 npm 包 `mssql`（node-mssql 项目）；最低兼容 Microsoft SQL Server 2016 SP2，数据库兼容级别 130
 - 后端框架：NestJS
 - 流程设计器：React Flow
 - 表单拖拽与排序：dnd-kit
@@ -983,10 +983,11 @@
 
 正式后端使用 TypeScript、NestJS 和 REST API，并与前端作为同一个 pnpm workspace 管理。OpenAPI 3.1 文档是接口契约的唯一事实来源，用于生成共享 TypeScript 类型、请求校验器和前端客户端；生成物不得手工维护，NestJS 响应需要通过契约测试。
 
-- 后端工作区固定为 `apps/api`。生产运行时使用 Node.js 24 LTS x64，开始实现时锁定具体补丁版本及 NestJS、TypeORM、`node-mssql` 等依赖版本，并在 Windows Server 2016 上执行安装、启动、原生依赖和服务重启冒烟测试。
-- 正式生产依赖执行最小白名单管理，优先使用纯 JavaScript/TypeScript 模块和 Node.js 内置能力；禁止引入需要 `node-gyp`、Visual Studio、ODBC 或运行时下载二进制文件的模块。`node-mssql` 只使用默认纯 JavaScript `tedious` 驱动，不安装 `msnodesqlv8`。
+- 后端工作区固定为 `apps/api`。生产运行时使用 Node.js 24 LTS x64，后端包固定使用 ESM（`package.json` 设置 `type=module`），TypeScript 的 `module` 与 `moduleResolution` 使用 `NodeNext`；不得先以 CommonJS 开工再在附件模块阶段临时改造。开始实现时锁定具体 Node.js 补丁版本及 NestJS、TypeORM、`mssql` 等依赖版本，并在 Windows Server 2016 上执行安装、启动、依赖、ESM 加载和服务重启冒烟测试。
+- 正式生产依赖执行最小白名单管理，优先使用纯 JavaScript/TypeScript 模块和 Node.js 内置能力；禁止引入需要 `node-gyp`、Visual Studio、ODBC 或运行时下载二进制文件的模块。`mssql` 只使用默认纯 JavaScript `tedious` 驱动，不安装 `msnodesqlv8`。
 - `axios` 作为统一 HTTP 客户端直接封装在基础设施层，所有调用必须配置连接/响应超时、最大响应体、受控重试和目标地址白名单；不得将用户输入直接拼接成请求目标，不得把入站 Cookie、Authorization 或其他敏感请求头透传给外部地址。
 - 生产依赖和开发依赖必须分离并锁定精确版本；OpenAPI 生成、契约检查和测试工具不进入服务器生产运行包。依赖升级不得自动改变数据库结构、认证算法、文件格式或业务行为，Node.js、NestJS、TypeORM、SQL 驱动及任何新增原生依赖升级前必须重新通过 Windows Server 2016 与 SQL Server 2016 SP2 验证。
+- `@redocly/cli` 必须对正式 OpenAPI 3.1 文档执行 lint，`orval` 必须从同一契约可重复生成共享 TypeScript 类型、Zod 请求校验器和 Axios 客户端。格式检查、无重复路径/operationId、无缺失引用、生成成功和重新生成后无未提交差异共同构成后端开工及交付门禁；手工结构检查不能替代正式工具验证。
 - 正式 OpenAPI 只使用 `flowpilot_session` HttpOnly Cookie；Mock Bearer 只存在于 Debug Mock 适配层。正式模式不得在浏览器保存或发送访问令牌。
 - 健康检查固定为匿名存活 `/health/live`、匿名就绪 `/health/ready` 和受系统运维查看权限保护的 `/health/details`。投影重建、附件清单及完整性检查、迁移、种子校验和超级管理员离线重置使用受控 CLI，不开放普通 REST 维护写接口。
 - 流程定义 JSON 导出使用 `GET /process-definitions/{definitionId}/export`；自由协作初始表单修改使用 `PATCH`；附件删除遵循 `If-Match`，附件内容支持单区间 Range 和 `200/206/416`，附件卷空间不足返回 `507`。
@@ -996,16 +997,17 @@
 
 首版后端只实现 Microsoft SQL Server 数据持久化，不实现 SQLite 适配器、双方言迁移、运行时数据库选择或 SQLite 到 SQL Server 数据迁移：
 
-- ORM 固定使用稳定版 TypeORM，并通过 NestJS 官方 `@nestjs/typeorm` 集成；MSSQL 底层驱动使用稳定版 `node-mssql`。服务器地址、端口、数据库名、SQL 账号、密码和连接安全选项通过部署配置提供，修改连接配置并重启服务即可连接既定 SQL Server 实例，不需要修改业务代码或重新构建。
+- ORM 固定使用稳定版 TypeORM，并通过 NestJS 官方 `@nestjs/typeorm` 集成；MSSQL 底层驱动使用稳定版 npm 包 `mssql`。服务器地址、端口、数据库名、SQL 账号、密码和连接安全选项通过部署配置提供，修改连接配置并重启服务即可连接既定 SQL Server 实例，不需要修改业务代码或重新构建。
 - SQL Server 最低验证目标为 SQL Server 2016 SP2、数据库兼容级别 130，并使用 SQL 账号认证；SQL 和迁移脚本不得依赖 SQL Server 2017 及以后版本或 SP3 才提供的能力。
 - SQL Server 2016 SP2 已超出官方支持周期；该版本仅作为既定兼容基线，不代表安全推荐，部署方需承担补偿性安全措施并制定后续升级计划。
-- TypeORM 采用 Data Mapper 模式，持久化 Entity 与领域模型分离；业务服务只依赖领域仓储和统一 `PersistenceUnitOfWork`，不得直接依赖 TypeORM Repository、`EntityManager`、`QueryRunner`、连接池或 `node-mssql`。普通 CRUD 和稳定关系查询优先由 TypeORM Repository/QueryBuilder 实现，编号分配、版本发布、任务抢占、复杂动态投影和 SQL Server 锁提示等能力允许在数据访问层通过同一事务 `QueryRunner` 执行参数化原生 SQL。
-- SQL Server 使用 TypeORM 管理的 `node-mssql` 连接池和显式事务；`PersistenceUnitOfWork` 持有事务专属 `QueryRunner`，事务内所有仓储必须使用该 runner 的 `EntityManager`，不得混用全局 Repository。在必要场景显式使用 `SERIALIZABLE` 或 `UPDLOCK/HOLDLOCK`，数据库事务内不得执行 SMTP、附件写入或其他外部 I/O。
+- TypeORM 采用 Data Mapper 模式，持久化 Entity 与领域模型分离；业务服务只依赖领域仓储和统一 `PersistenceUnitOfWork`，不得直接依赖 TypeORM Repository、`EntityManager`、`QueryRunner`、连接池或 `mssql`。普通 CRUD 和稳定关系查询优先由 TypeORM Repository/QueryBuilder 实现，编号分配、版本发布、任务抢占、复杂动态投影和 SQL Server 锁提示等能力允许在数据访问层通过同一事务 `QueryRunner` 执行参数化原生 SQL。
+- SQL Server 使用 TypeORM 管理的 `mssql` 连接池和显式事务；`PersistenceUnitOfWork` 持有事务专属 `QueryRunner`，事务内所有仓储必须使用该 runner 的 `EntityManager`，不得混用全局 Repository。在必要场景显式使用 `SERIALIZABLE` 或 `UPDLOCK/HOLDLOCK`，数据库事务内不得执行 SMTP、附件写入或其他外部 I/O。
 - 生产环境固定设置 `synchronize=false` 和 `migrationsRun=false`，禁止 ORM 在应用启动时自动修改结构。每次逻辑结构变更提供一个人工复核的 TypeORM `MigrationInterface`，复杂约束、索引和 SQL Server 特性通过 `QueryRunner` 执行显式 SQL；迁移由独立部署命令和高权限迁移账号执行，应用启动只校验结构版本，结构落后时拒绝就绪。
 - UUID、布尔值、UTC 时间、JSON、枚举和整数 revision 在领域层使用统一类型，并映射到约定的 SQL Server 类型；乐观锁统一使用整数 revision，不使用 SQL Server `rowversion`。
 - 流程版本和实例表单使用 JSON 保存完整结构或最新值。SQL Server 2016 SP2 使用 `nvarchar(max)` 并增加 `ISJSON` 约束。SQL Server 2016 SP2 虽提供 `JSON_VALUE`、`JSON_QUERY` 和 `OPENJSON`，但没有原生 JSON 类型和通用 JSON 索引，且 `JSON_VALUE` 的标量文本返回存在 4000 字符限制；这些函数只用于校验、诊断或受控迁移，业务查询不得依赖它们。
 - 允许查询、列表展示或导出的动态标量字段需要同步写入类型化投影表，并按照流程定义、稳定字段标识和值类型建立普通关系索引。JSON 最新值与投影值必须在同一数据库事务中更新，任一写入失败时整体回滚；系统需提供可重复执行的投影校验和重建命令。数字范围、日期范围、排序和跨版本查询均读取投影表，不直接扫描 JSON。
 - 业务表统一放在独立 `flowpilot` schema。实体主键使用应用生成的 `uniqueidentifier`，时间保存为 UTC `datetime2(3)`，业务显示和附件年份使用 `Asia/Shanghai`。账号和各类业务编码使用规范化列建立唯一约束，不能只依赖数据库排序规则。
+- 用户、角色、部门、职务和流程权限组等仅具有启用/停用语义的主数据，数据库物理列统一使用 `is_enabled bit`，API 继续映射为 `status: enabled | disabled`；流程实例、任务、版本、附件、Outbox 等具有三个及以上生命周期阶段的对象继续使用受 CHECK 约束的状态枚举列。流程定义单独保存 `is_disabled bit`，接口展示状态由该标志与当前发布版本指针推导。
 - SQL Server 地址、数据库、应用账号、连接安全选项、预期排序规则、连接池和超时全部由外置配置提供。迁移账号与应用运行账号分离；迁移账号不作为常驻应用秘密保存。
 
 所有客户端均通过 NestJS REST API 访问业务数据，不允许绕过后端直接连接 SQL Server。首版继续按单个后端服务实例设计，预计每年新增流程实例不超过2万、附件总量不超过500 GB。
@@ -1061,6 +1063,7 @@
 
 | 版本 | 日期 | 变更内容 |
 | --- | --- | --- |
+| 2.07 | 2026-08-25 | 同步后端开工前文档基线：`apps/api` 固定采用 ESM 与 TypeScript NodeNext；Redocly lint、Orval 类型/Zod/Axios 生成及无漂移检查成为契约门禁；用户、角色、部门、职务和流程权限组的数据库启停列统一为 `is_enabled bit`，流程定义保存 `is_disabled bit` 并推导接口状态，多阶段领域对象继续使用状态枚举。 |
 | 2.06 | 2026-08-25 | 完成全权限删除动作审查：新增独立的部门/职务删除和流程权限组删除权限；前端按钮、Mock 鉴权及正式契约不再复用编辑权限。部门/职务和流程权限组仍执行 ETag 与引用检查，流程实例、任务、审计及编辑器内部子项不新增独立删除权限。 |
 | 2.05 | 2026-08-25 | 权限管理动作权限改为紧凑四列单行网格，新增删除权限后仍与查看、编辑、授权等动作位于同一行，并保持各页面动作列上下对齐。 |
 | 2.04 | 2026-08-25 | 确认后端最小依赖白名单与升级约束：生产依赖优先采用纯 JavaScript/TypeScript，SQL Server 固定使用 `mssql` 默认 `tedious` 驱动；本地密码由原生 Argon2id 模块调整为 Node.js 内置异步 `scrypt`，邮件改为直接使用 `nodemailer`，并按要求加入直接封装的 `axios`；禁止原生编译模块、额外消息基础设施和重复框架封装，开发工具不进入生产包。 |
