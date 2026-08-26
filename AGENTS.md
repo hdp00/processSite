@@ -26,8 +26,8 @@
 ## 运行、API 模式与部署
 
 - Vite 应用基路径固定为 `/flowpilot/`。本地入口为 `http://127.0.0.1:5173/flowpilot/`；不要假定应用部署在站点根路径。
-- 未设置 `VITE_API_MODE`（开发环境）或设置 `VITE_API_MODE=mock` 时，应用启动 MSW mock。设置 `VITE_API_MODE=remote` 时，应用访问 `VITE_API_BASE_URL`（默认 `/api/v1`），并在启动时读取当前会话和水合远端数据。
-- API 访问令牌保存在 `sessionStorage`；原型和 mock 数据使用定向的 `localStorage` 键。修改存储形状、令牌逻辑或重置逻辑时，兼容旧数据或有意识地升级键名，绝不清空整个 `localStorage`。
+- 未设置 `VITE_API_MODE`（开发环境）或设置 `VITE_API_MODE=mock` 时，应用启动 MSW mock。设置 `VITE_API_MODE=remote` 时，应用访问 `VITE_API_BASE_URL`（默认 `/api/flowpilot/v1`），并在启动时读取当前会话和水合远端数据。
+- `sessionStorage` 中的 API 访问令牌只属于原型/Mock Bearer 兼容层；正式 remote 模式只使用同源 `flowpilot_session` HttpOnly Cookie，前端不得保存或发送访问令牌。原型和 mock 数据使用定向的 `localStorage` 键。修改存储形状、令牌逻辑或重置逻辑时，兼容旧数据或有意识地升级键名，绝不清空整个 `localStorage`。
 - IIS 部署使用 `apps/web/public/web.config`，并以 `/flowpilot` 作为应用路径。修改 Vite 基路径、客户端路由回退或 API 代理假设时，一并检查该文件和 `document/IIS_DEPLOYMENT.md`。
 
 ## 常用命令

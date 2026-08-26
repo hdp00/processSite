@@ -1,5 +1,7 @@
 # FlowPilot 全面代码审查报告
 
+> 架构变更说明（2026-08-26）：本报告是 2026-08-20 的历史审查证据，正文中的 NestJS 代表当时目标，不追溯改写。当前正式后端目标已切换为 .NET 10 / ASP.NET Core 10，见 `REQUIREMENTS.md` 2.18 与后端实现设计。
+
 > 审查日期：2026-08-20  
 > 审查范围：`apps/web`、`document/flowpilot-rest-api.openapi.yaml`、根目录工程配置  
 > 需求基线：`REQUIREMENTS.md` 1.53  

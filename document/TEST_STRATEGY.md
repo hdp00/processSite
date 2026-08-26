@@ -1,6 +1,6 @@
 # FlowPilot 自动化测试策略
 
-> 适用范围：当前 React 前端、浏览器 Mock REST API，以及未来同一 OpenAPI 契约下的 NestJS 后端。
+> 适用范围：当前 React 前端、浏览器 Mock REST API，以及同一 OpenAPI 契约下的 .NET 10 / ASP.NET Core 10 后端。
 
 ## 1. 测试分层
 
@@ -9,8 +9,8 @@
 | 单元与领域测试 | Vitest（Node） | 流程拓扑、版本、权限、数据迁移、编号、导出等纯逻辑 |
 | 组件测试 | Vitest、jsdom、Testing Library | 表单校验、反馈、路由门禁和组件交互 |
 | Mock API 契约测试 | Vitest、MSW Node | OpenAPI 数据形状、鉴权、Problem Details、ETag、幂等和分页 |
-| 后端单元与契约测试 | Vitest、OpenAPI 生成校验器 | NestJS 领域服务、守卫、DTO、响应契约和错误码 |
-| SQL Server 集成测试 | Vitest、SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的更高版本/兼容级别 | TypeORM 仓储、Migration、约束、锁、事务和投影 |
+| 后端单元与契约测试 | xUnit、WebApplicationFactory、实现侧 OpenAPI 语义比较 | ASP.NET Core 领域服务、Middleware、Controller、DTO、响应契约和错误码 |
+| SQL Server 集成测试 | xUnit、真实 SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的较新版本 | EF Core 仓储、Migration/DBA SQL、约束、锁、事务和投影 |
 | 浏览器端到端测试 | Playwright | 从登录到流程配置、发起、处理、查询和治理的用户链路 |
 | 视觉与无障碍测试 | Playwright、axe-core | 关键桌面页面的稳定视觉基线及 WCAG A/AA 自动检查 |
 
@@ -30,8 +30,9 @@
 
 所有命令从仓库根目录运行：
 
-- 正式后端开工后，契约检查必须先运行锁定版本的 `@redocly/cli` lint，再运行 `orval` 生成共享 TypeScript 类型、Zod 请求校验器和 Axios 客户端，并检查重新生成后没有工作树差异。快速正则检查不能替代该门禁。
-- 后端 ESM 门禁必须覆盖 API 启动、TypeORM DataSource/Migration CLI、Vitest、维护 CLI、`file-type` 导入和 WinSW 实际编译入口，禁止测试使用 CommonJS 而生产改用另一种模块格式。
+- 正式后端开工后，契约检查必须先运行锁定版本的 `@redocly/cli` lint，再运行 `orval` 生成前端 TypeScript 类型和 Axios 客户端，并检查重新生成后没有工作树差异。ASP.NET Core 通过 `Microsoft.AspNetCore.OpenApi` 输出实现文档，与规范执行语义比较。快速正则检查不能替代该门禁。
+- .NET 门禁覆盖 restore locked mode、Release build、xUnit、维护 CLI、`dotnet publish -r win-x64`、原生 Windows Service 启动和重启；不把 C# DTO 或服务端校验交给前端 Zod 生成物。
+- Mapperly 的未映射成员、无法转换、枚举和 nullability 诊断必须在 Release build 中作为错误处理。关键 Entity/Domain/DTO 映射用 xUnit 验证，确保敏感字段、主键、revision、状态和审计字段不会被请求 DTO 意外覆盖。
 
 ```bash
 pnpm test                  # 单元、领域集成和组件测试
@@ -43,6 +44,17 @@ pnpm test:visual           # Chromium 视觉回归
 pnpm test:update-snapshots # 人工确认后的视觉基线更新
 pnpm test:all              # 类型、覆盖率、双构建与全部浏览器门禁
 ```
+
+.NET 后端创建后，从 `apps/api` solution 目录运行：
+
+```powershell
+dotnet restore --locked-mode
+dotnet build -c Release --no-restore
+dotnet test -c Release --no-build
+dotnet publish src/FlowPilot.Api/FlowPilot.Api.csproj -c Release -r win-x64 --no-restore
+```
+
+SQL Server 集成测试必须通过独立测试配置连接真实 SQL Server 2016 SP2/兼容级别 130 最低基线，并复验实际部署的较新 SQL Server 版本/兼容级别；测试凭据不得进入仓库或测试报告。
 
 核心与全源码覆盖率分别输出到 `apps/web/coverage/core` 和 `apps/web/coverage/all-source`；Playwright HTML 报告和失败附件输出到 `apps/web/test-results`。这些生成物均不提交 Git。
 
@@ -58,18 +70,21 @@ pnpm test:all              # 类型、覆盖率、双构建与全部浏览器门
 ## 5. 正式后端复用边界
 
 - 黑盒场景通过 `FLOWPILOT_TEST_TARGET=mock|remote` 和 `FLOWPILOT_TEST_BASE_URL` 选择目标；账号凭据仅从环境变量读取。
-- OpenAPI 操作矩阵、Problem Details、ETag、幂等和权限场景应原样对 NestJS 重跑，不添加测试专用生产接口。
+- OpenAPI 操作矩阵、Problem Details、ETag、幂等和权限场景应原样对 ASP.NET Core 重跑，不添加测试专用生产接口。
 - 正式认证测试至少覆盖：域用户成功/失败、域服务不可用且不回退本地密码、普通密码用户成功与失败时均不调用或探测 LDAP、固定密码模式超级管理员、未知账号的域可用性探测、两种登录方式切换后的会话失效，以及域用户禁止本地密码重置。
 - 模拟身份测试需要证明只有真实登录的内置超级管理员可以调用；域用户和密码用户作为目标时均不校验目标凭据，响应直接返回双身份会话，权限按生效用户计算且审计同时保留真实操作者。
 - 正式后端实现后，SQL Server 数据访问层必须执行仓储契约和完整业务场景套件；另外验证结构迁移、事务回滚、任务抢占、附件状态机和 Outbox 恢复。
-- Migration 同时从空数据库和上一结构版本执行；校验迁移校验和、兼容级别、排序规则、失败后的前向修复，以及结构落后时 `/health/ready` 返回 `503`。
+- 任务中心契约和数据库测试必须分别覆盖 `approval`、`free-collaboration`、`resubmission` discriminator，证明后两类不要求审批节点；审批决定接口收到非审批任务 ID 时必须拒绝，不能按虚拟节点处理。
+- 自由协作测试必须验证唯一当前受理人与唯一 pending 任务一致，转交、改派、关闭和重开均原子更新任务、时间线、参与人投影与实例 `updated_at`；回复编辑只保留最新正文和编辑审计元数据，数据库与 API 均不得泄漏旧正文。
+- EF migration 与 DBA SQL 同时从空数据库和上一结构版本执行；校验迁移校验和、兼容级别、排序规则、失败后的前向修复，以及结构落后时 `/health/ready` 返回 `503`。应用启动不得自动迁移。
 - 并发测试至少覆盖同一任务双提交、编号竞争、发布指针竞争、If-Match 过期、字段级 revision 冲突、同幂等键重放与不同请求体复用。
-- 附件测试至少覆盖流式中断、危险签名、路径穿越、同卷原子移动、合法单区间 `206`、非法或多区间 `416`、磁盘保留空间不足 `507`、事务失败后的暂存文件和重复清理。
+- 附件测试至少覆盖小写 GUID `N` 格式及前两位分片算法、`{yyyy}/.incoming` 到 `{yyyy}/objects/{shard}` 的流式中断和同卷原子移动、已引用未移动及已移动未更新键的幂等恢复、`uploading/staged/active/cleanup-pending/failed/deleted` 状态迁移、危险签名、路径穿越、合法单区间 `206`、非法或多区间 `416`、磁盘保留空间不足 `507`、事务失败后的暂存文件和重复清理。
+- 路径测试通过注入临时部署树，验证从 `current\api` 和真实 `releases\{releaseId}\api` 均能在 6 层上限内找到唯一 `flowpilot.root`，并覆盖标记缺失、重复、超出深度、磁盘根、联接逃逸和 Config/Secrets/Data/Logs/Temp/Backup 边界；Windows Service 冒烟必须故意使用不同的当前工作目录，且 `FLOWPILOT_HOME` 等旧路径变量不能改变结果。
 - AD 和 SMTP 使用可控替身覆盖超时、证书、错误凭据、死信和重试；部署验收再使用外置测试账号完成一次真实域登录和一次测试邮件，凭据不得进入测试代码或报告。
 - 邮件链路测试需要验证任务和结束通知生成正确的 FlowPilot 详情链接：内外网入口分别发起写请求时，后端把 `Origin`（缺失时才用 `Referer`）与可信代理后的 protocol/host 精确比较并冻结对应的 `${origin}/flowpilot`；来源不匹配时返回 403。还要验证无请求事件继承实例已验证入口、缺失时明确失败而不猜地址、首次发送冻结绝对 URL、重试不改变链接、链接不含令牌、未登录后安全返回详情、无权限用户不能因收到邮件读取或处理流程，以及 Outbox/每次投递尝试均可在 SQL Server 中核对。
 - 远程前端测试需要证明登录不全量下载用户、实例、任务和审计；列表使用服务端分页，完整流程版本按需加载，正式请求只依靠 Cookie 且不发送 Mock Bearer。
-- IIS 冒烟覆盖 `/health/live`、`/health/ready`、受保护的 `/health/details`、Cookie、Origin/Referer、代理客户端 IP、上传大小、Range、Windows 服务重启和程序目录回滚。代理测试必须从两个不同来源验证限流桶彼此独立，通过每个允许的内外网绑定验证同源请求及邮件入口，并伪造 `X-Forwarded-For`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`，证明 IIS 覆盖全部外部值、NestJS 仍识别真实来源和 authority，不能通过伪造头绕过限流/同源校验或改变邮件链接；未知 Host 必须在反代前被拒绝。
-- 在正式后端、SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的更高版本/兼容级别通过前，测试报告必须明确标记为“未执行”，不能用 Mock 结果代替。
+- IIS 冒烟覆盖 `/health/live`、`/health/ready`、受保护的 `/health/details`、Cookie、Origin/Referer、代理客户端 IP、上传大小、Range、原生 .NET Windows Service 重启，以及 API/Web 统一切换到新 release 和切回 previous。代理测试必须从两个不同来源验证限流桶彼此独立，通过每个允许的内外网绑定验证同源请求及邮件入口，并伪造 `X-Forwarded-For`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`，证明 IIS 覆盖全部外部值、ASP.NET Core 仍识别真实来源和 authority，不能通过伪造头绕过限流/同源校验或改变邮件链接；未知 Host 必须在反代前被拒绝。
+- 在正式 .NET 后端、真实 SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的较新版本通过前，测试报告必须明确标记为“未执行”；不能用 Mock、SQLite、EF InMemory 替代，也不能只测试较新 SQL Server 而跳过最低基线。
 
 ## 6. 缺陷处理
 

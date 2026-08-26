@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-当前仓库没有启动真实后端。开发和 debug 演示模式使用 MSW 2 的页面内 Fetch/XHR 拦截器处理请求，不注册 Service Worker，因此通过普通 HTTP 部署到 IIS 时也可以运行。页面仍通过标准 HTTP 语义访问 Mock API，而不是直接调用 Mock handler 或 Zustand action。
+当前仓库没有可按目标架构启动的真实 .NET 后端；已有 NestJS 文件是待替换旧骨架。开发和 debug 演示模式使用 MSW 2 的页面内 Fetch/XHR 拦截器处理请求，不注册 Service Worker，因此通过普通 HTTP 部署到 IIS 时也可以运行。页面仍通过标准 HTTP 语义访问 Mock API，而不是直接调用 Mock handler 或 Zustand action。
 
 - 正式接口契约：[`flowpilot-rest-api.openapi.yaml`](./flowpilot-rest-api.openapi.yaml)
 - 类型化客户端：`apps/web/src/api/flowPilotApi.ts`
@@ -10,7 +10,7 @@
 - 浏览器 Mock 入口：`apps/web/src/mocks/browser.ts`
 - 领域 Handler：`apps/web/src/mocks/handlers`
 
-Mock 层是当前前端领域模型的兼容适配器；OpenAPI 是 NestJS 正式实现的目标契约。统一客户端会把 Mock 响应包和 OpenAPI 直接 DTO 映射到同一前端领域模型，并以 OpenAPI 中的服务端校验、事务和并发约束为准；正式模式不调用 Mock 私有聚合接口。
+Mock 层是当前前端领域模型的兼容适配器；OpenAPI 是 ASP.NET Core 正式实现的目标契约。统一客户端会把 Mock 响应包和 OpenAPI 直接 DTO 映射到同一前端领域模型，并以 OpenAPI 中的服务端校验、事务和并发约束为准；正式模式不调用 Mock 私有聚合接口。
 
 ## 2. 运行方式
 
@@ -33,8 +33,11 @@ debug 构建固定使用 `/flowpilot/mock-api/v1`，请求只在当前页面内�
 
 ```dotenv
 VITE_API_MODE=remote
-VITE_API_BASE_URL=http://127.0.0.1:3000/api/flowpilot/v1
+VITE_API_BASE_URL=/api/flowpilot/v1
+VITE_API_PROXY_TARGET=http://127.0.0.1:3000
 ```
+
+开发浏览器仍然请求同源 `/api/flowpilot/v1`，由 Vite 代理到本地 Kestrel；不要把跨域直连作为默认开发方式。这样 Cookie、Origin/Referer 和生产关闭 CORS 的行为可以保持一致。
 
 正式构建使用：
 
@@ -87,16 +90,16 @@ try {
 | 流程定义与版本 | `/process-definitions`、`/process-definitions/imports` | 新建/复制/原子导入、版本、分区设计器保存、校验、发布、取消发布、删除；正式契约另含定义 JSON 导出 |
 | 发起配置 | `/me/launchable-process-definitions`、`/process-definitions/{id}/launch-config` | 数据范围裁剪、锁定发布版本、候选人员解析 |
 | 流程实例 | `/process-instances` | 分页查询、创建、首审前修改、重新提交、关闭、复制新建 |
-| 审批任务 | `/me/workflow-tasks`、`/workflow-tasks/{id}` | 我的待办/可代办、审批/确认/驳回、重复字段修改 |
+| 任务中心 | `/me/workflow-tasks`、`/workflow-tasks/{id}` | 当前 Mock 保留原型待办适配；正式契约已改为通过 `taskType` 区分审批、自由协作受理和待重新提交，尚待代码迁移。审批/确认/驳回、重复字段修改只属于审批任务 |
 | 自由协作 | `/process-instances/{id}/free-collaboration/*` | 回复、转交、编辑、异常改派、关闭、重新打开 |
-| 附件 | `/attachments`、`/process-instances/{id}/fields/{fieldId}/attachment` | 当前 Mock 的 multipart、大小/类型校验、权限下载和旧单文件替换兼容路由；正式契约统一采用“先暂存、随业务命令引用”并支持 Range/507 |
+| 附件 | `/attachments`、`/process-instances/{id}/fields/{fieldId}/attachment` | 当前 Mock 的 multipart、大小/类型校验、权限下载和旧单文件替换兼容路由仍可能使用 `temporary`；正式契约统一采用 `staged/active/cleanup-pending`、先暂存后引用并支持 Range/507，尚待代码迁移 |
 | 邮件 Outbox | `/email-outbox` | 收件人解析、去重、发送结果、失败重试演示 |
 | Excel 导出 | `/exports/process-instances/data` | 重新校验权限和查询条件，返回当前查询全部导出数据，由浏览器生成 `.xlsx` |
 | 操作审计 | `/audit-events` | 分页筛选、详情、关键写操作留痕 |
 
 完整路径、参数、DTO、响应码和示例以 OpenAPI 文件为准。
 
-当前浏览器 Mock 为避免依赖公司域环境，所有演示账号继续使用本地演示密码；它不模拟 AD/LDAP 可用性，也不把演示密码当作正式用户登录方式。正式后端按用户的 `authenticationMode` 在域认证和 Node.js 内置 scrypt 本地密码之间分流。超级管理员在 Mock 中切换演示身份时与正式模拟身份语义一致：不校验目标身份密码，直接返回切换后的会话状态。
+当前浏览器 Mock 为避免依赖公司域环境，所有演示账号继续使用本地演示密码；它不模拟 AD/LDAP 可用性，也不把演示密码当作正式用户登录方式。正式后端按用户的 `authenticationMode` 在 `System.DirectoryServices.Protocols` 域认证和 ASP.NET Core `PasswordHasher<TUser>` 本地密码之间分流。超级管理员在 Mock 中切换演示身份时与正式模拟身份语义一致：不校验目标身份密码，直接返回切换后的会话状态。
 
 ## 5. 并发、权限和幂等
 
@@ -140,17 +143,17 @@ await flowPilotApi.system.updateMockSettings({
 
 - 当前流程、身份和运行实例暂时复用带 schema 迁移的原型仓库；已迁移页面不应再直接调用同一领域 action。
 - 附件 Blob 与元数据写入 IndexedDB；PDF 替换在同一仓储事务中更新引用并清理旧文件。
-- 自由协作初始表单更新与正式契约统一使用 `PATCH`；回复、转交、编辑、异常改派、关闭和重新打开均要求最新 ETag。删除暂存附件时客户端先读取附件资源 ETag，再携带 `If-Match` 调用删除接口。
+- 自由协作初始表单更新与正式契约统一使用 `PATCH`；回复、转交、编辑、异常改派、关闭和重新打开均要求最新 ETag。当前原型数据仍可能含历史 `revisions`，但正式契约只保留最新正文及编辑人/编辑时间；后续代码迁移必须停止新增旧正文，并在适配时忽略旧修订数组。删除暂存附件时客户端先读取附件资源 ETag，再携带 `If-Match` 调用删除接口。
 - Mock 审计、幂等记录、邮件 Outbox 与场景设置在浏览器持久化；重置接口只清理 FlowPilot 自己的 key。
 - 邮件只模拟 Outbox 状态，不连接 SMTP，也不会在浏览器关闭后后台发送。
 - Excel 在浏览器中使用 ExcelJS 生成真正的 `.xlsx`；Mock 和正式后端都只返回已鉴权、已筛选的列定义与数据行，不生成或保存 Excel 文件。单次最多返回 10000 行，超过上限要求用户缩小查询范围。
 
 ## 8. 正式后端迁移清单
 
-1. 以 OpenAPI 生成共享 TypeScript 类型、前端客户端和请求校验器，并对 NestJS 响应做契约测试。
+1. 以 OpenAPI 通过 Orval 生成前端 TypeScript 类型和 Axios 客户端，并对 ASP.NET Core 实际响应和实现侧 OpenAPI 做语义契约测试。
 2. 保持正式基础路径 `/api/flowpilot/v1`、错误码、分页、ETag 与幂等语义，逐域替换 Mock 兼容 DTO。
 3. 将会话改为 HttpOnly/SameSite Cookie；移除 `mock:<userId>` Bearer 方案。
-4. 将领域命令迁移到 NestJS、TypeORM 和 SQL Server：常规持久化使用领域仓储与 TypeORM，锁语义和复杂投影通过事务专属 `QueryRunner` 执行参数化 SQL，底层 MSSQL 驱动使用 npm 包 `mssql`。
+4. 将领域命令迁移到 ASP.NET Core、EF Core 10 和 SQL Server 2016 SP2 及之后版本：常规持久化使用领域仓储与 EF Core，锁语义和复杂投影通过共享同一 `DbConnection`/`DbTransaction` 的参数化 SqlClient 命令执行；共享 SQL 仍以 2016 SP2/兼容级别 130 为最低能力基线。
 5. 将附件迁移到服务器文件目录，将邮件迁移到持久化 Outbox worker；Excel 继续由浏览器生成，后端只实现导出数据集查询和权限控制。
 6. 逐页切换到生成客户端；登录只水合会话、权限和小型字典，用户、实例、任务、审计和 Outbox 改为服务端分页，流程完整版本按需加载。最后设置 `VITE_API_MODE=remote` 并删除浏览器业务数据双写和正式模式 Bearer 逻辑。
 7. 对 OpenAPI、领域服务、Handler、组件集成和关键 E2E 分层测试。
