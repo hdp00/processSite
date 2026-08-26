@@ -230,6 +230,26 @@ describe("AuthService", () => {
     expect(provider.probeAvailability).not.toHaveBeenCalled();
   });
 
+  it("rejects a wrong ordinary local password without probing domain availability", async () => {
+    const persistence = new FakeAuthPersistence();
+    persistence.addUser(userRecord({
+      loginName: "local-user",
+      normalizedLoginName: "local-user",
+    }));
+    const provider = domainProvider("unavailable", "unavailable");
+    const service = new AuthService(persistence, limiter(), provider);
+
+    await expect(service.login(
+      { loginName: "local-user", password: "wrong-local-password" },
+      "10.0.0.31",
+    )).rejects.toMatchObject({
+      problem: { status: 401, code: "INVALID_CREDENTIALS" },
+    });
+
+    expect(provider.authenticate).not.toHaveBeenCalled();
+    expect(provider.probeAvailability).not.toHaveBeenCalled();
+  });
+
   it("maps a rejected domain bind to generic invalid credentials and never falls back to a stored password", async () => {
     const persistence = new FakeAuthPersistence();
     persistence.addUser(userRecord({
@@ -430,7 +450,7 @@ describe("AuthService", () => {
     expect(provider.probeAvailability).toHaveBeenCalledOnce();
   });
 
-  it("returns domain unavailable for a wrong local password during an outage without probing a correct local login", async () => {
+  it("keeps every built-in super administrator login outcome independent from a domain outage", async () => {
     const persistence = new FakeAuthPersistence();
     persistence.addUser(userRecord({ builtInSuperAdmin: true }));
     const outageProvider = domainProvider("unavailable", "unavailable");
@@ -440,9 +460,10 @@ describe("AuthService", () => {
       { loginName: "superadmin", password: "wrong-local-password" },
       "10.0.0.22",
     )).rejects.toMatchObject({
-      problem: { status: 503, code: "DOMAIN_AUTHENTICATION_UNAVAILABLE" },
+      problem: { status: 401, code: "INVALID_CREDENTIALS" },
     });
-    expect(outageProvider.probeAvailability).toHaveBeenCalledOnce();
+    expect(outageProvider.authenticate).not.toHaveBeenCalled();
+    expect(outageProvider.probeAvailability).not.toHaveBeenCalled();
 
     const successfulProvider = domainProvider("unavailable", "unavailable");
     const successfulService = new AuthService(persistence, limiter(), successfulProvider);
@@ -451,6 +472,26 @@ describe("AuthService", () => {
       "10.0.0.23",
     )).resolves.toMatchObject({ dto: { superAdmin: true } });
     expect(successfulProvider.probeAvailability).not.toHaveBeenCalled();
+  });
+
+  it("does not call domain authentication when the built-in super administrator record is invalid", async () => {
+    const persistence = new FakeAuthPersistence();
+    persistence.addUser(userRecord({
+      authenticationMode: "domain",
+      builtInSuperAdmin: true,
+    }));
+    const provider = domainProvider("authenticated", "reachable");
+    const service = new AuthService(persistence, limiter(), provider);
+
+    await expect(service.login(
+      { loginName: "superadmin", password: "local-password" },
+      "10.0.0.30",
+    )).rejects.toMatchObject({
+      problem: { status: 401, code: "INVALID_CREDENTIALS" },
+    });
+
+    expect(provider.authenticate).not.toHaveBeenCalled();
+    expect(provider.probeAvailability).not.toHaveBeenCalled();
   });
 
   it("gives the built-in super administrator every catalog permission", async () => {

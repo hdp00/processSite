@@ -4,7 +4,7 @@
 
 ## 数据库初始化
 
-稳定且非敏感的默认值随后端保存在 [`config/defaults.env`](./config/defaults.env)，部署时不需要复制或逐项填写。先从精简模板创建仓库外的 `{FLOWPILOT_HOME}\Config\application.env` 与 `{FLOWPILOT_HOME}\Secrets\production.env`：前者只填写应用公开地址、数据库排序规则和确有必要的安全默认覆盖，后者只填写 SQL Server、LDAP、SMTP 的环境地址与凭据。`FLOWPILOT_PUBLIC_BASE_URLS` 可用分号配置多个内外网入口，全部入口均允许同源写操作。后端把写请求的 `Origin/Referer` 精确映射到配置项，邮件随 Outbox 冻结该入口；无浏览器请求的系统任务才使用第一项。所有入口必须统一使用 HTTP 或 HTTPS，不能根据 `Host` 或未经校验的转发头推导。本地源码运行时应显式把 `FLOWPILOT_HOME` 指向此外置根目录；也可以用 `FLOWPILOT_CONFIG_FILE`、`FLOWPILOT_SECRETS_FILE` 分别指定两个文件的绝对路径。读取优先级为进程环境变量、`production.env`、`application.env`、随代码 `defaults.env`。首次初始化必须临时提供 `FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD`，该值不会写入仓库或日志，已有超级管理员的密码不会在重复初始化时被覆盖。
+稳定且非敏感的默认值随后端保存在 [`config/defaults.env`](./config/defaults.env)，部署时不需要复制或逐项填写。先从精简模板创建仓库外的 `{FLOWPILOT_HOME}\Config\application.env` 与 `{FLOWPILOT_HOME}\Secrets\production.env`：前者只填写数据库排序规则和确有必要的安全默认覆盖，后者只填写 SQL Server、LDAP、SMTP 的环境地址与凭据。内外网站点入口不再写入环境文件；后端优先校验浏览器写请求的 `Origin`，仅在其缺失时校验 `Referer`，并与来自本机可信 IIS/ARR 的协议和主机精确比较，通过后自动把 `${origin}/flowpilot` 冻结到请求上下文。IIS 必须覆盖外部传入的 `X-Forwarded-For`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`，并限制站点绑定，后端不会从未经校验的头猜测邮件地址。本地源码运行时应显式把 `FLOWPILOT_HOME` 指向此外置根目录；也可以用 `FLOWPILOT_CONFIG_FILE`、`FLOWPILOT_SECRETS_FILE` 分别指定两个文件的绝对路径。读取优先级为进程环境变量、`production.env`、`application.env`、随代码 `defaults.env`。首次初始化必须临时提供 `FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD`，该值不会写入仓库或日志，已有超级管理员的密码不会在重复初始化时被覆盖。
 
 初始化命令不会创建数据库。DBA 必须先创建目标数据库、设置不低于 130 的兼容级别与部署确认的排序规则。服务器最低为 SQL Server 2016 13.x SP2：13.x 接受 SP2/SP3，主版本 14 及以上正常通过且不检查 `ProductLevel`。`MSSQL_EXPECTED_COMPATIBILITY_LEVEL=130` 保留为配置键，但表示最低门槛，实际兼容级别可以是 130/140/150/160 或更高值。停机迁移账号和常驻运行账号应分离，运行账号只授予 `flowpilot` schema 所需权限，不得使用 `sysadmin`。
 
@@ -27,7 +27,7 @@ pnpm --filter @process-site/api db:seed
 
 `DOMAIN_AUTH_URLS` 可用分号或逗号配置多个 `ldap://`/`ldaps://` 地址并按顺序容错。部署值只填写在仓库外的 `Secrets\production.env`，键名见 [`config/production.env.example`](./config/production.env.example)。默认只允许 LDAPS；旧域端点确实无法提供 TLS 时，必须在外置 `application.env` 显式设置 `DOMAIN_AUTH_ALLOW_PLAINTEXT=true` 并记录域密码明文传输风险，不能修改随代码默认文件或仅填写 `ldap://` 静默降级。受保护的详细健康接口执行匿名 RootDSE 探测；只有搜索成功才显示正常，探测结果与域基础设施故障使用 5 秒共享缓存并合并并发请求，不保存或使用服务账号密码。
 
-为避免域故障暴露本地账号是否存在、是否停用或采用哪种认证方式，所有不能确认 LDAP 可达的失败登录统一返回 `503 DOMAIN_AUTHENTICATION_UNAVAILABLE`；只有已确认 LDAP 可达时才把错误凭据计入账号/IP 的 401 失败桶。503 另按客户端 IP 限制，默认每分钟 60 次并封禁一分钟，部署时应结合内网 NAT 规模调整 `AUTH_LOGIN_UNAVAILABLE_*` 参数。
+已识别为 `password` 模式的用户只校验本地 scrypt 散列，密码错误或账号停用直接返回 `401 INVALID_CREDENTIALS` 并计入账号/IP 失败桶，不调用 LDAP，也不探测 LDAP 可用性。`domain` 模式只调用域认证；未知账号可执行匿名 RootDSE 探测以统一域侧失败响应。域基础设施不可用时返回 `503 DOMAIN_AUTHENTICATION_UNAVAILABLE`，并使用独立的客户端 IP 限制，默认每分钟 60 次、封禁一分钟；部署时应结合内网 NAT 规模调整 `AUTH_LOGIN_UNAVAILABLE_*` 参数。
 
 `production.env` 由 dotenv 语法解析。密码或其他秘密中只要可能包含 `#`、空格或前后空白，就必须使用单引号包裹；若秘密本身包含单引号，则改用双引号并按 dotenv 规则转义。仓库模板已对三个密码占位项加引号，填写时保留引号但不得把真实值提交到 Git。
 

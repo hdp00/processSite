@@ -14,57 +14,6 @@ const booleanFromEnvironment = z.preprocess((value) => {
 const positiveInteger = (defaultValue: number) => z.coerce.number().int().positive().default(defaultValue);
 const nonNegativeInteger = (defaultValue: number) => z.coerce.number().int().nonnegative().default(defaultValue);
 
-export function parsePublicBaseUrls(value: string): string[] {
-  return value.split(";").map((item) => item.trim()).filter(Boolean);
-}
-
-function publicBaseUrlsUseHttps(value: string): boolean {
-  return parsePublicBaseUrls(value).some((item) => {
-    try {
-      return new URL(item).protocol === "https:";
-    } catch {
-      return false;
-    }
-  });
-}
-
-const publicBaseUrls = z.string().trim().min(1).superRefine((value, context) => {
-  const rawUrls = value.split(";");
-  if (rawUrls.some((item) => item.trim().length === 0)) {
-    context.addIssue({ code: "custom", message: "多个地址必须使用分号分隔且不能包含空项" });
-    return;
-  }
-
-  const origins = new Set<string>();
-  const protocols = new Set<string>();
-  for (const item of rawUrls) {
-    const normalized = item.trim();
-    try {
-      const url = new URL(normalized);
-      if (!(["http:", "https:"].includes(url.protocol))) {
-        context.addIssue({ code: "custom", message: "必须使用 HTTP 或 HTTPS 协议" });
-      }
-      if (url.username || url.password || url.search || url.hash) {
-        context.addIssue({ code: "custom", message: "不能包含用户信息、查询参数或片段" });
-      }
-      if (url.pathname !== "/flowpilot" || normalized.endsWith("/")) {
-        context.addIssue({ code: "custom", message: "每个地址的路径必须以 /flowpilot 结束且不能有末尾斜杠" });
-      }
-      if (origins.has(url.origin)) {
-        context.addIssue({ code: "custom", message: "不能配置重复的站点来源" });
-      }
-      origins.add(url.origin);
-      protocols.add(url.protocol);
-    } catch {
-      context.addIssue({ code: "custom", message: "站点地址格式无效" });
-    }
-  }
-
-  if (protocols.size > 1) {
-    context.addIssue({ code: "custom", message: "全部站点地址必须统一使用 HTTP 或 HTTPS" });
-  }
-});
-
 const domainAuthUrls = z.string().trim().min(1).superRefine((value, context) => {
   const urls = value.split(/[;,]/u).map((item) => item.trim()).filter(Boolean);
   if (urls.length === 0) {
@@ -98,7 +47,6 @@ export const environmentSchema = z.object({
   APP_PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   APP_VERSION: z.string().min(1).default("0.1.0"),
   HTTP_JSON_LIMIT_BYTES: positiveInteger(1_048_576),
-  FLOWPILOT_PUBLIC_BASE_URLS: publicBaseUrls,
   FLOWPILOT_BUSINESS_TIME_ZONE: z.literal("Asia/Shanghai").default("Asia/Shanghai"),
   FLOWPILOT_COOKIE_SECURE: booleanFromEnvironment.default(false),
   AUTH_LOGIN_FAILURE_WINDOW_MS: positiveInteger(15 * 60 * 1_000),
@@ -155,16 +103,6 @@ export const environmentSchema = z.object({
   SMTP_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(5).default(5),
   FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD: z.string().min(1).max(200).optional()
 }).superRefine((value, context) => {
-  if (
-    publicBaseUrlsUseHttps(value.FLOWPILOT_PUBLIC_BASE_URLS)
-    && !value.FLOWPILOT_COOKIE_SECURE
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["FLOWPILOT_COOKIE_SECURE"],
-      message: "HTTPS 部署必须启用 Secure Cookie"
-    });
-  }
   if (value.MSSQL_POOL_MAX < value.MSSQL_POOL_MIN) {
     context.addIssue({
       code: "custom",

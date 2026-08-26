@@ -160,14 +160,13 @@ TypeORM 采用 Data Mapper 模式，不使用 Active Record。TypeORM Entity 是
 
 运行配置分为三层，按“进程环境变量、外置 Secrets、外置 Config、随代码默认值”的顺序覆盖：
 
-- `api/config/defaults.env` 随后端版本发布，只保存稳定且非敏感的端口、超时、连接池、兼容门槛和安全默认值，不允许写入 SQL/LDAP/SMTP/公开站点等部署环境地址、数据库名、账号、密码或证书私钥。
+- `api/config/defaults.env` 随后端版本发布，只保存稳定且非敏感的端口、超时、连接池、兼容门槛和安全默认值，不允许写入 SQL/LDAP/SMTP 等部署环境地址、数据库名、账号、密码或证书私钥；站点入口由请求自动验证和解析，不进入配置文件。
 - `{FLOWPILOT_HOME}\Config\application.env` 只保存部署时必须确认的非敏感环境值，以及确有必要并经过风险确认的默认覆盖。
 - `{FLOWPILOT_HOME}\Secrets\production.env` 只保存 SQL Server/LDAP/SMTP 的环境地址、账号、密码和首次初始化密码。
 
 外置 `application.env` 的最小内容：
 
 ```dotenv
-FLOWPILOT_PUBLIC_BASE_URLS=<分号分隔的一个或多个 /flowpilot 应用根地址，第一项为无请求系统任务的回退地址>
 MSSQL_EXPECTED_COLLATION=<DBA 确认的数据库排序规则>
 ```
 
@@ -190,7 +189,7 @@ FLOWPILOT_BOOTSTRAP_ADMIN_PASSWORD='<超级管理员初始密码>'
 ```
 
 - 应用启动时校验全部 SQL Server 必填配置、连接能力和数据库兼容级别。
-- SQL Server、AD/LDAP、SMTP 的地址与凭据以及超级管理员初始化密码从 `{FLOWPILOT_HOME}\Secrets\production.env` 读取；站点根地址和数据库排序规则从 `{FLOWPILOT_HOME}\Config\application.env` 读取；其余默认值来自随代码发布的 `api/config/defaults.env`。真实环境值不得提交到仓库，外置示例配置只能提供键名和占位符。
+- SQL Server、AD/LDAP、SMTP 的地址与凭据以及超级管理员初始化密码从 `{FLOWPILOT_HOME}\Secrets\production.env` 读取；数据库排序规则从 `{FLOWPILOT_HOME}\Config\application.env` 读取；其余默认值来自随代码发布的 `api/config/defaults.env`。站点根地址不进入环境文件，由写请求的已验证 origin 自动生成。真实环境值不得提交到仓库，外置示例配置只能提供键名和占位符。
 - 外置文件使用 dotenv 语法；密码中包含 `#`、空格或前后空白时必须保留模板引号，秘密自身包含单引号时改用双引号并按 dotenv 规则转义，避免凭据被截断。
 - 首版不使用 DPAPI 加密配置、外部密钥平台或其他 Secret Provider。敏感配置文件为明文，依靠仓库外存放、NTFS 最小权限和运维流程保护，程序不得输出完整配置或连接字符串。
 - 修改 SQL Server 连接配置并重启服务即可连接既定实例；附件根目录、接口地址和领域行为保持不变。
@@ -362,8 +361,8 @@ Data/Attachments/
 - `users.password_hash` 可空且只能在 `authentication_mode=password` 时存在。正式本地密码使用 Node.js 内置异步 `crypto.scrypt()` 生成版本化编码字符串，不保存或记录明文；域用户的本地密码散列必须为 `NULL`。数据库迁移和仓储契约测试需要校验这项组合约束。
 - 登录接口只接收 `loginName` 和 `password`。服务端先按规范化账号读取本地用户并检查启用状态，再根据数据库中的登录方式分流；客户端不能通过请求参数指定认证方式，避免绕过服务端配置。
 - `domain` 模式把登录账号按部署配置转换为域账号，并通过公司 AD/LDAP 认证提供方验证本次密码。域密码只允许存在于请求处理内存中，不能写入数据库、会话、审计、指标或日志；认证成功后仍以 FlowPilot 本地用户 ID 加载部门、角色、权限组和数据范围，不执行即时用户创建或域组授权同步。
-- 域服务不可达、超时或配置错误返回 `503 DOMAIN_AUTHENTICATION_UNAVAILABLE`，不得回退到本地密码；凭据不正确统一返回 `401 INVALID_CREDENTIALS`，响应不得泄露账号是否存在或采用哪种登录方式。域提供方调用应设置较短连接和操作超时，并纳入受保护的详细健康检查。
-- `password` 模式只校验版本化 scrypt 散列。业务需求仍允许最短 1 个字符的本地密码，因此需要通过登录速率限制降低在线猜测风险；这不等于强密码策略。
+- 域服务不可达、超时或配置错误时，`domain` 模式返回 `503 DOMAIN_AUTHENTICATION_UNAVAILABLE`，不得回退到本地密码；域提供方调用应设置较短连接和操作超时，并纳入受保护的详细健康检查。未知账号可通过匿名 RootDSE 探测统一域侧失败响应。
+- `password` 模式只校验版本化 scrypt 散列，成功、密码错误或账号停用均不得调用或探测 LDAP；失败直接返回 `401 INVALID_CREDENTIALS` 并进入凭据失败限流。业务需求仍允许最短 1 个字符的本地密码，因此需要通过登录速率限制降低在线猜测风险；这不等于强密码策略。
 - 登录失败不锁定账号；两种认证方式都按“账号 + 来源 IP”和来源 IP 总量做临时限制，超限返回 `429`。
 - scrypt 基线参数为 `N=65536`、`r=8`、`p=1`、`maxmem=96 MiB`、16 字节随机盐和 32 字节派生密钥；算法标识、格式版本和完整参数随散列编码保存，使用 `timingSafeEqual` 比较，参数提高后在下次成功登录时渐进重哈希。正式参数需在目标服务器测量延迟和并发内存后确认，但不得静默降低已经保存账号的强度。登录限流默认按“账号 + 客户端 IP”15 分钟 5 次失败、按 IP 15 分钟 100 次失败，封禁 15 分钟，并允许从非敏感配置调整。
 - 新建普通用户默认 `domain` 且不接收初始密码；新建 `password` 用户必须提供初始密码。从 `domain` 切换到 `password` 时在同一命令中提供新密码，从 `password` 切换到 `domain` 时原子清空散列。登录方式变更使该用户全部现存会话失效。
@@ -374,8 +373,8 @@ Data/Attachments/
 - 正式后端使用服务端不透明会话。Cookie 只保存高强度随机令牌，数据库只保存令牌散列。
 - 会话闲置 8 小时失效，绝对有效期 24 小时。用户停用或密码重置后，全部现存会话立即失效。
 - Cookie 名称固定为 `flowpilot_session`，设置 `Path=/api/flowpilot`、`HttpOnly`、`SameSite=Strict`；当前 HTTP 环境关闭 `Secure`，以后启用 HTTPS 时通过配置打开。登录、密码或权限变化和模拟身份切换后轮换令牌。
-- 正式 API 只接受同源浏览器调用，关闭 CORS；所有修改状态的请求优先校验 `Origin`，缺少时只接受与配置站点地址同源的 `Referer`，两者都缺少或不匹配时返回 `403 CSRF_VALIDATION_FAILED`。
-- NestJS 只信任来自 loopback 连接的本机 IIS/ARR 反向代理头。IIS 必须先覆盖并丢弃外部请求自带的 `X-Forwarded-For`，再用与 IIS 建立连接的真实客户端地址写入新的受信头；不能透传、拼接或信任任意客户端提供的地址链。当前单层代理拓扑不从其他上游代理继承客户端 IP；以后增加上游代理时必须显式定义受信跳数和来源网段后重新评审。
+- 正式 API 只接受同源浏览器调用，关闭 CORS；所有修改状态的请求优先校验 `Origin`，只有该头缺失时才使用 `Referer`。后端把来源的 origin 与 Express 从可信代理得到的 `request.protocol` 和 `request.host` 精确比较；两者缺少、格式非法或不匹配时返回 `403 CSRF_VALIDATION_FAILED`，通过后把 `${origin}/flowpilot` 附加到请求上下文。
+- NestJS 只信任来自 loopback 连接的本机 IIS/ARR 反向代理头。IIS 必须先覆盖并丢弃外部请求自带的 `X-Forwarded-For`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`，分别写入真实客户端地址、当前已匹配站点绑定的主机和协议；不能透传、拼接或信任任意客户端提供的值。IIS 必须限制 FlowPilot 的实际内外网绑定并在反代前拒绝未知 `Host`，裸 IP 入口也只允许对应 IP 与端口。当前单层代理拓扑不从其他上游代理继承地址链；以后增加上游代理时必须显式定义受信跳数、来源网段和 authority 传递规则后重新评审。
 - 首版不提供 API Key、服务账号或第三方集成认证。
 - 超级管理员初始密码从 `Secrets\production.env` 读取并只散列写入一次；数据库完成初始化后不再用配置覆盖现有密码，部署人员可以删除该配置项。页面和业务 API 不能修改该账号，停机状态下可用专用离线命令重置。
 
@@ -429,7 +428,7 @@ Data/Attachments/
 ### 9.2 Outbox
 
 - 需要发送邮件时，在业务事务中只写 Outbox 记录；事务提交后由后台任务调用 SMTP。
-- 任务激活邮件的受控目标路径为 `/processes/{instanceId}?taskId={taskId}`，结束邮件为 `/processes/{instanceId}`。`FLOWPILOT_PUBLIC_BASE_URLS` 必须配置一个或多个以分号分隔且包含 `/flowpilot` 的应用根地址。全部地址均进入 CSRF 受信来源集合；触发邮件事件的写请求将命中的配置项作为 `link_base_url` 随 Outbox 冻结，worker 第一次发送前解析并持久化绝对 URL，所有重试复用该 URL。无浏览器请求的系统事件才使用第一项，不得根据客户端 `Host` 或未经校验的转发头改变邮件地址。链接中不得放置令牌或其他授权信息，登录后的返回地址只接受已配置来源下的 FlowPilot 相对路径。
+- 任务激活邮件的受控目标路径为 `/processes/{instanceId}?taskId={taskId}`，结束邮件为 `/processes/{instanceId}`。触发邮件事件的浏览器写请求通过同源校验后，将自动得到的 `${origin}/flowpilot` 作为 `link_base_url` 随 Outbox 冻结，同时刷新实例保存的已验证入口；worker 第一次发送前解析并持久化绝对 URL，所有重试复用该 URL。无浏览器请求上下文的事件只能继承实例已验证入口；没有可继承值时明确记录失败并进入死信，不得猜测 loopback、服务器名、任意 `Host` 或其他地址。链接中不得放置令牌或其他授权信息，登录后的返回地址只接受同源且位于 FlowPilot 基路径下的相对路径。
 - Outbox 和每次投递尝试均持久化到 SQL Server。Outbox 保存事件、实例/任务、收件人与邮箱快照、主题、最小模板数据、目标路径、解析后的链接、状态、计划/发送/死信时间、尝试次数和最后错误；投递尝试表保存每次 SMTP 调用的时间、结果和脱敏摘要。不得保存完整 MIME、完整渲染正文、业务附件、密码或 SMTP 凭据。
 - 首次失败后按 1、5、15、60、360 分钟重试，累计 6 次仍失败时进入死信。
 - 管理员可以手工安排死信重试；SMTP 故障不回滚已提交业务事务。
@@ -453,7 +452,7 @@ Data/Attachments/
 ## 11. 部署与健康检查
 
 - NestJS 只监听 `127.0.0.1`，由 IIS 提供内网入口。
-- IIS/ARR 负责把经过覆盖净化的真实客户端地址写入 `X-Forwarded-For`，NestJS 的代理信任范围固定为 loopback。上线必须从两个不同来源验证后端限流桶互不影响，并发送伪造的 `X-Forwarded-For` 验证其不会改变后端识别的客户端 IP。
+- IIS/ARR 负责覆盖 `X-Forwarded-For`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`，把真实客户端地址及已匹配站点绑定的主机、协议传给后端；NestJS 的代理信任范围固定为 loopback。上线必须从两个不同来源验证后端限流桶互不影响，并伪造全部三个外部转发头，确认它们既不能改变客户端 IP，也不能绕过同源校验或改变邮件入口。
 - NestJS 使用 Node.js 24 LTS x64，由 WinSW 包装成 Windows 服务。应用通过 `nestjs-pino` 输出 JSON Lines 到标准输出，WinSW 按日期和大小滚动日志，并与 Windows 服务恢复策略共同处理异常退出。
 - Windows 服务使用独立低权限账号。程序目录只读，配置目录只读，附件和日志目录分别授予必要的修改权限；IIS 应用程序池不得访问附件、配置、日志和备份目录。
 - 配置、附件、日志和备份放在代码发布目录之外的固定持久化目录；部署和回滚只替换版本化程序目录，SQL Server 通过部署配置的连接参数访问。

@@ -1783,7 +1783,7 @@ export interface EmailOutboxMessageDto {
      * @pattern ^/processes/[0-9a-fA-F-]{36}(?:\?taskId=[0-9a-fA-F-]{36})?$
      */
   targetPath: string;
-  /** 由触发写请求命中的 FLOWPILOT_PUBLIC_BASE_URLS 配置项解析并冻结；无请求系统事件使用第一项，重试继续使用同一链接；不得包含令牌或敏感参数 */
+  /** 浏览器写请求将 Origin（缺失时才用 Referer）与可信代理后的 protocol/host 精确比较并冻结对应的 origin/flowpilot；无请求事件继承实例已验证入口，缺失时明确失败；重试继续使用同一链接且不得包含令牌或敏感参数 */
   readonly resolvedTargetUrl?: string;
   status: EmailOutboxStatus;
   /** @minimum 0 */

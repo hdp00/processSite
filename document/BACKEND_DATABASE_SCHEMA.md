@@ -113,11 +113,11 @@
 
 - `id`、`instance_number`、`definition_id`、`version_id`。
 - `initiator_user_id`、`actual_initiator_user_id`，用于模拟身份场景保留生效用户和真实操作者。
-- `title`、`status`、`current_round`、`current_node_summary`。
+- `title`、`status`、`current_round`、`current_node_summary`、可空 `verified_entry_base_url`。
 - `form_values_json nvarchar(max)`、`field_revisions_json nvarchar(max)`。
 - `created_at`、`submitted_at`、`completed_at`、`closed_at`、`revision`。
 
-`instance_number` 全局唯一。定义、版本、发起人均使用 `NO ACTION` 外键。实例永久保留，不提供物理删除。
+`instance_number` 全局唯一。定义、版本、发起人均使用 `NO ACTION` 外键。实例永久保留，不提供物理删除。`verified_entry_base_url` 只能由通过同源校验的浏览器业务写请求写入或刷新，保存该实例最近一次已验证的 `${origin}/flowpilot`，供以后没有浏览器请求上下文的事件继承；不得接受客户端正文中的地址。
 
 ### 4.2 `flowpilot.instance_field_values`
 
@@ -195,10 +195,10 @@
 
 ### 6.3 邮件 Outbox
 
-- `flowpilot.email_outbox`：`id`、revision、业务事件唯一键、事件类型、`instance_id`、可空 `task_id`、模板、收件人用户与邮箱快照、主题、经过最小化的模板数据 JSON、`target_path`、`link_base_url`、可空 `resolved_target_url`、状态、计划时间、尝试次数、租约、最后错误、创建/发送/死信时间。`link_base_url` 只能由服务端从当前写请求已验证的配置入口中选择；无请求系统事件使用配置第一项。`target_path` 只允许 `/processes/{instanceId}` 及受控 `taskId` 查询参数；不得接受或保存客户端提供的任意外部 URL。
+- `flowpilot.email_outbox`：`id`、revision、业务事件唯一键、事件类型、`instance_id`、可空 `task_id`、模板、收件人用户与邮箱快照、主题、经过最小化的模板数据 JSON、`target_path`、可空 `link_base_url`、可空 `resolved_target_url`、状态、计划时间、尝试次数、租约、最后错误、创建/发送/死信时间。浏览器写请求产生事件时，`link_base_url` 只能保存后端同源校验成功后自动得到的 `${origin}/flowpilot`；无请求事件只能继承实例的 `verified_entry_base_url`。两者都不存在时记录明确的死信/配置错误且不得发送。`target_path` 只允许 `/processes/{instanceId}` 及受控 `taskId` 查询参数；不得接受或保存客户端提供的任意外部 URL。
 - `flowpilot.email_delivery_attempts`：`id`、`outbox_id`、尝试序号、开始/结束时间、结果、经过脱敏的错误类别和服务器响应摘要；`(outbox_id, attempt_number)` 唯一。
 
-业务事务只写 Outbox。触发业务事件的写请求在通过 CSRF 来源校验后，将命中的 `FLOWPILOT_PUBLIC_BASE_URLS` 配置项保存为 `link_base_url`；没有浏览器请求上下文的系统事件使用第一项。SMTP 发送、重试和死信转换在事务提交后执行。worker 第一次领取记录时使用已冻结的 `link_base_url` 和 `target_path` 解析绝对链接，在发送前把结果写入 `resolved_target_url`；后续重试复用同一快照，避免入口或配置变化导致同一邮件重试内容不同。数据库保存投递所需的最小模板数据和实际链接，但不保存完整 MIME、完整渲染正文、业务附件、SMTP 密码或会话凭据。
+业务事务只写 Outbox。触发业务事件的浏览器写请求在通过 CSRF 来源校验后，将来源 origin 与可信代理后的 protocol/host 精确比较，并把自动得到的 `${origin}/flowpilot` 同时保存为 Outbox `link_base_url` 和实例 `verified_entry_base_url`；没有浏览器请求上下文的事件继承实例值。没有可继承值时仍保留可追踪的失败记录并进入死信，不得回退到 loopback、服务器名、客户端正文或未经校验的请求头。SMTP 发送、重试和死信转换在事务提交后执行。worker 第一次领取记录时使用已冻结的 `link_base_url` 和 `target_path` 解析绝对链接，在发送前把结果写入 `resolved_target_url`；后续重试复用同一快照，避免入口变化导致同一邮件重试内容不同。数据库保存投递所需的最小模板数据和实际链接，但不保存完整 MIME、完整渲染正文、业务附件、SMTP 密码或会话凭据。
 
 ### 6.4 后台租约和结构版本
 

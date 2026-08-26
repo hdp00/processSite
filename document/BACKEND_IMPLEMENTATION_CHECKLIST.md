@@ -93,7 +93,7 @@ DOMAIN_AUTH_UPN_SUFFIX=<UPN 后缀>
 - 首版默认使用用户 UPN 直接绑定验证密码，再在配置的 Base DN 内同时使用经过 RFC 4515 转义的账号和同一 UPN 筛选器确认唯一用户对象；不要求常驻域服务账号。若公司域策略不允许该方式，再通过配置增加只读搜索账号，不改变业务认证接口。
 - FlowPilot 先检查本地用户存在、启用状态和配置的认证模式，再调用域服务；域组不直接映射系统权限，不自动创建用户。
 - 错误凭据、域账号禁用、锁定或密码过期统一对客户端返回 `401 INVALID_CREDENTIALS`；连接、证书、DNS 或所有域地址超时返回 `503 DOMAIN_AUTHENTICATION_UNAVAILABLE`。
-- 未知、停用和本地密码错误账号也先使用匿名 RootDSE 可用性探测统一 401/503 响应，避免域故障成为账号或认证模式枚举信号；探测和域故障使用 5 秒共享缓存与并发合并。503 使用独立的客户端 IP 速率桶，不能计入账号密码失败桶。
+- 已识别为密码登录的用户只校验本地散列，密码错误或账号停用直接返回 401 并计入凭据失败桶，不调用或探测 LDAP。域登录用户使用 LDAP，未知账号可使用匿名 RootDSE 探测统一域侧 401/503 响应；探测和域故障使用 5 秒共享缓存与并发合并。503 使用独立的客户端 IP 速率桶，不能计入账号密码失败桶。
 - LDAP 查询必须参数化或转义，密码不得进入日志、指标、审计、异常消息或健康详情。
 - 默认只允许 LDAPS。只有旧域端点确实无法提供 TLS 时，部署方才可设置 `DOMAIN_AUTH_ALLOW_PLAINTEXT=true`，并在验收中记录域密码会以明文跨网络传输的风险；不能仅通过填写 `ldap://` 静默降级。
 
@@ -101,10 +101,10 @@ DOMAIN_AUTH_UPN_SUFFIX=<UPN 后缀>
 
 - 本地密码使用 Node.js 内置异步 `crypto.scrypt()`，不安装 Argon2/bcrypt 原生模块。基线参数为 `N=65536`、`r=8`、`p=1`、`maxmem=96 MiB`、16 字节随机盐和 32 字节派生密钥；算法、格式版本和完整参数随散列编码保存，比较使用 `timingSafeEqual`。目标服务器实测后可以提高参数，已有较低参数在成功登录后渐进重哈希。
 - 登录限流默认按“规范账号 + 客户端 IP”15 分钟最多 5 次失败，并按客户端 IP 15 分钟最多 100 次失败；封禁 15 分钟，参数可配置。成功登录只清除账号维度计数，不绕过 IP 总量限制。
-- 仅信任从本机 IIS/ARR 反向代理到 `127.0.0.1` 的转发头。IIS 必须覆盖并丢弃外部请求已有的 `X-Forwarded-For`，再用与 IIS 建立连接的真实客户端地址写入新值；不得透传、拼接或信任客户端提供的地址链。
+- 仅信任从本机 IIS/ARR 反向代理到 `127.0.0.1` 的转发头。IIS 必须覆盖并丢弃外部请求已有的 `X-Forwarded-For`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`，分别写入真实客户端地址、当前已匹配站点绑定的主机和协议；不得透传、拼接或信任客户端提供的值。IIS 同时限制实际内外网站点绑定，并在反代前拒绝未知 `Host`。
 - Cookie 名称 `flowpilot_session`，`Path=/api/flowpilot`，`HttpOnly`、`SameSite=Strict`；当前 HTTP 部署 `Secure=false`，启用 HTTPS 后必须配置为 `true`。
 - 登录、权限变更、密码重置、认证方式切换和开始/结束模拟身份后轮换会话令牌。闲置期在安全阈值内滑动续期，绝对 24 小时有效期不延长。
-- 所有修改请求校验同源 `Origin`；不带 Origin 时只接受与配置站点地址同源的 `Referer`。两者都缺失或不匹配时返回 `403 CSRF_VALIDATION_FAILED`。
+- 所有修改请求优先校验 `Origin`；只有该头缺失时才使用 `Referer`，并将来源 origin 与可信代理后的 protocol 和 host 精确比较。两者缺失、格式非法或不匹配时返回 `403 CSRF_VALIDATION_FAILED`；通过后把 `${origin}/flowpilot` 冻结到请求上下文。
 - 请求头、JSON、查询字符串、multipart 字段数量和富文本长度都设置服务器端上限；超限在进入领域事务前拒绝。
 
 ## 7. 附件实现参数
@@ -124,7 +124,6 @@ SMTP_HOST=<SMTP 主机>
 SMTP_USER=<可选认证账号>
 SMTP_PASSWORD=<可选认证密码>
 SMTP_FROM=<发件地址>
-FLOWPILOT_PUBLIC_BASE_URLS=<分号分隔的一个或多个 /flowpilot 应用根地址，第一项为无请求系统任务的回退地址>
 # SMTP_TLS_SERVERNAME=<使用 IP 连接且启用 TLS 时的可选证书主机名>
 # SMTP_REPLY_TO=<可选回复地址>
 ```
@@ -133,7 +132,7 @@ SMTP 端口、TLS、证书校验、超时和连接池使用随代码安全默认
 
 - `SMTP_SECURE=true` 表示连接建立时即使用 TLS；端口 25/587 通常使用 `SMTP_SECURE=false`、`SMTP_REQUIRE_TLS=true` 强制 STARTTLS，不能使用会在降级后继续明文投递的机会式模式。只有部署方明确接受内网明文传输风险时才同时设置 `SMTP_REQUIRE_TLS=false`、`SMTP_IGNORE_TLS=true`。使用 IP 地址连接且校验证书时配置 `SMTP_TLS_SERVERNAME`。
 - 新后端不得创建或调用 `CDO.Message`、`sp_OACreate`、`sp_OASetProperty` 或其他 SQL Server OLE Automation 发信过程；固定发件人和 SMTP 凭据只进入 Nodemailer 网关，业务事务只写 Outbox。
-- 启动时必须逐项验证 `FLOWPILOT_PUBLIC_BASE_URLS`：使用分号分隔、每项都是绝对 HTTP/HTTPS URL、路径以 `/flowpilot` 结束且不包含查询、片段、用户信息或末尾斜杠，不允许重复来源或混合 HTTP/HTTPS。全部来源用于 CSRF 校验；写请求命中的配置入口随 Outbox 冻结，无浏览器请求的系统事件才使用第一项。邮件只允许拼接服务端生成的 `/processes/{instanceId}` 相对路径和可选 `taskId`，禁止接受用户输入的跳转地址或根据 `Host`、未经校验的转发头改写目标主机。
+- 站点根地址不进入环境文件。触发邮件事件的浏览器写请求必须把 `Origin`（缺失时才用 `Referer`）与可信代理后的 protocol/host 精确比较，并把自动得到的 `${origin}/flowpilot` 随 Outbox 冻结；无请求事件只继承实例已保存的验证入口，没有可继承值时明确失败并进入死信。邮件只允许拼接服务端生成的 `/processes/{instanceId}` 相对路径和可选 `taskId`，禁止接受用户输入的跳转地址或根据 loopback、服务器名、任意 `Host`、未经校验的转发头猜测目标主机。
 - 未登录用户点击邮件后先登录；前端只保存经过同源和 FlowPilot 基路径校验的返回地址，登录完成后返回流程详情。`taskId` 只用于定位任务，不是授权凭证，详情读取和处理命令仍由后端鉴权。
 - Outbox 和 `email_delivery_attempts` 均写入 SQL Server；运维列表可以查看收件人邮箱快照、主题、目标链接、状态、尝试次数、时间和脱敏错误，但不显示或保存完整邮件正文和 SMTP 凭据。
 - 邮件、附件清理、过期会话、幂等清理均使用数据库租约。默认每分钟扫描一次，每批最多 50 条，租约 5 分钟；附件大批量清理单独限制并发，避免占满磁盘 I/O。
@@ -150,7 +149,7 @@ SMTP 端口、TLS、证书校验、超时和连接池使用随代码安全默认
 - 附件测试覆盖中断、超限、危险签名、路径穿越、Range、磁盘不足、业务事务失败、替换、重复清理和越权下载。
 - OpenAPI 生成、请求/响应校验、Problem Details、ETag、If-Match、幂等重放和 Cookie 会话必须有契约测试。
 - 用户、角色、部门/职务和流程权限组删除测试必须覆盖独立动作权限、内置项、当前账号、无引用成功、各类可变与历史引用冲突、过期 ETag、会话撤销、审计保留及并发新增引用时的事务竞态；仅有编辑权限时删除接口必须返回 403。
-- IIS 验收覆盖静态路由、Cookie、反向代理头、上传大小、Range、健康检查、服务重启和旧版本回滚。客户端 IP 验收必须从两个不同来源执行受控失败登录，确认限流桶不会串用；再从其中一个来源伪造 `X-Forwarded-For`，确认伪造值不能绕过或重置限流。
+- IIS 验收覆盖静态路由、Cookie、反向代理头、上传大小、Range、健康检查、服务重启和旧版本回滚。客户端 IP 验收必须从两个不同来源执行受控失败登录，确认限流桶不会串用；还要伪造 `X-Forwarded-For`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`，确认 IIS 全部覆盖，伪造值不能绕过限流/同源校验或改变冻结的邮件入口，并确认未知 Host 在反代前被拒绝。
 
 ## 10. 部署人员后续填写项
 
@@ -159,7 +158,7 @@ SMTP 端口、TLS、证书校验、超时和连接池使用随代码安全默认
 - 实际程序目录和 Windows 服务账号。
 - SQL Server 主机、数据库、应用账号、迁移账号和排序规则。
 - LDAP/LDAPS 地址、Base DN、UPN 后缀、NetBIOS 名称和证书信任方式。
-- SMTP 地址、认证信息、发件人与系统内网访问地址。
+- SMTP 地址、认证信息与发件人。
 - 首次初始化超级管理员密码。
 - IIS 主机名、端口、应用路径和以后启用 HTTPS 时的证书。
 

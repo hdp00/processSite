@@ -1,11 +1,12 @@
 import type { CanActivate, ExecutionContext } from "@nestjs/common";
 import { Injectable } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
-import { parsePublicBaseUrls, type AppEnvironment } from "../../config/environment.js";
 import { ProblemException } from "../http/problem-details.js";
 
 const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
+const appBasePath = "/flowpilot";
+const supportedProtocols = new Set(["http", "https"]);
+const validHost = /^(?:\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::[0-9]{1,5})?$/iu;
 const publicBaseUrlRequestContext = Symbol("flowpilot.publicBaseUrl");
 
 type RequestWithPublicBaseUrl = Request & {
@@ -18,24 +19,18 @@ export function getRequestPublicBaseUrl(request: Request): string | undefined {
 
 @Injectable()
 export class CsrfOriginGuard implements CanActivate {
-  private readonly trustedBaseUrlsByOrigin: ReadonlyMap<string, string>;
-
-  constructor(config: ConfigService<AppEnvironment, true>) {
-    this.trustedBaseUrlsByOrigin = new Map(
-      parsePublicBaseUrls(config.get("FLOWPILOT_PUBLIC_BASE_URLS", { infer: true }))
-        .map((item) => [new URL(item).origin, item] as const)
-    );
-  }
-
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
     if (safeMethods.has(request.method.toUpperCase())) return true;
 
     const origin = request.header("Origin");
     const referer = request.header("Referer");
-    const requestBaseUrl = this.resolveTrustedBaseUrl(origin ?? referer);
-    if (requestBaseUrl && (origin || referer)) {
-      (request as RequestWithPublicBaseUrl)[publicBaseUrlRequestContext] = requestBaseUrl;
+    const browserOrigin = this.resolveBrowserOrigin(origin ?? referer, origin !== undefined);
+    const requestOrigin = this.hasMultipleForwardedAuthorityValues(request)
+      ? undefined
+      : this.resolveRequestOrigin(request);
+    if (browserOrigin && requestOrigin && browserOrigin === requestOrigin) {
+      (request as RequestWithPublicBaseUrl)[publicBaseUrlRequestContext] = `${requestOrigin}${appBasePath}`;
       return true;
     }
 
@@ -47,10 +42,47 @@ export class CsrfOriginGuard implements CanActivate {
     });
   }
 
-  private resolveTrustedBaseUrl(value: string | undefined): string | undefined {
-    if (!value) return undefined;
+  private hasMultipleForwardedAuthorityValues(request: Request): boolean {
+    return ["X-Forwarded-Host", "X-Forwarded-Proto"].some((name) => (
+      request.header(name)?.includes(",") ?? false
+    ));
+  }
+
+  private resolveBrowserOrigin(value: string | undefined, originHeader: boolean): string | undefined {
+    if (!value || value !== value.trim()) return undefined;
     try {
-      return this.trustedBaseUrlsByOrigin.get(new URL(value).origin);
+      const url = new URL(value);
+      if (
+        !supportedProtocols.has(url.protocol.slice(0, -1))
+        || !validHost.test(url.host)
+        || url.username
+        || url.password
+        || (originHeader && (url.pathname !== "/" || url.search || url.hash))
+      ) {
+        return undefined;
+      }
+      return url.origin;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private resolveRequestOrigin(request: Request): string | undefined {
+    // Express only uses forwarded protocol/host here because main.ts trusts loopback;
+    // IIS must overwrite both headers before proxying the request.
+    const protocol = request.protocol.toLowerCase();
+    const host = request.host;
+    if (
+      !supportedProtocols.has(protocol)
+      || !host
+      || host !== host.trim()
+      || !validHost.test(host)
+    ) {
+      return undefined;
+    }
+
+    try {
+      return new URL(`${protocol}://${host}`).origin;
     } catch {
       return undefined;
     }

@@ -99,7 +99,7 @@ export class AuthService {
         ? await this.persistence.findUserByNormalizedLoginName(normalizedLoginName)
         : undefined;
 
-      if (user?.enabled && user.authenticationMode === "domain") {
+      if (user?.enabled && user.authenticationMode === "domain" && !user.builtInSuperAdmin) {
         const timingEqualizer = this.equalizePasswordVerificationTiming(input.password).then(
           () => true,
           () => false,
@@ -127,6 +127,10 @@ export class AuthService {
           user?.enabled && user.authenticationMode === "password" ? user.passwordHash : undefined,
         );
         if (!user?.enabled || user.authenticationMode !== "password" || !verification.matches) {
+          if (user?.authenticationMode === "password" || user?.builtInSuperAdmin) {
+            this.loginRateLimiter.recordFailure(rateLimitLoginName, clientIp, now.getTime());
+            throw invalidCredentials();
+          }
           return await this.rejectInvalidCredentialsAfterAvailabilityProbe(
             rateLimitLoginName,
             clientIp,
