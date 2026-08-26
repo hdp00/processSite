@@ -17,7 +17,7 @@
  * 浏览器原型的 MSW 适配层可以在独立 Mock 地址使用演示 Bearer；该方案不属于
  * 本正式契约。正式后端只使用 HttpOnly 会话 Cookie。
  *
- * OpenAPI spec version: 1.4.3
+ * OpenAPI spec version: 1.5.0
  */
 import * as zod from 'zod';
 
@@ -1391,7 +1391,7 @@ export const TimelineEventDto = zod.strictObject({
 export type TimelineEventDto = zod.input<typeof TimelineEventDto>;
 export type TimelineEventDtoOutput = zod.output<typeof TimelineEventDto>;
 
-export const AttachmentStatus = zod.enum(['staged', 'referenced', 'cleanup-pending']);
+export const AttachmentStatus = zod.enum(['staged', 'active', 'cleanup-pending']).describe('普通业务接口可见状态；上传中、失败和已删除仅供内部恢复及运维使用');
 
 export type AttachmentStatus = zod.input<typeof AttachmentStatus>;
 export type AttachmentStatusOutput = zod.output<typeof AttachmentStatus>;
@@ -1478,6 +1478,7 @@ export const WorkflowTaskDto = zod.strictObject({
   "instanceId": zod.uuid(),
   "definitionId": zod.uuid(),
   "versionId": zod.uuid(),
+  "taskType": zod.enum(['approval']),
   "nodeId": zod.string(),
   "nodeName": zod.string(),
   "handlingMode": ApprovalHandlingMode,
@@ -1503,27 +1504,21 @@ export const WorkflowTaskDto = zod.strictObject({
 export type WorkflowTaskDto = zod.input<typeof WorkflowTaskDto>;
 export type WorkflowTaskDtoOutput = zod.output<typeof WorkflowTaskDto>;
 
-export const FreeReplyRevisionDto = zod.strictObject({
-  "content": zod.string(),
-  "editedAt": zod.iso.datetime({"offset":true})
-});
-
-export type FreeReplyRevisionDto = zod.input<typeof FreeReplyRevisionDto>;
-export type FreeReplyRevisionDtoOutput = zod.output<typeof FreeReplyRevisionDto>;
-
 
 
 
 export const FreeTimelineEntryDto = zod.strictObject({
   "id": zod.uuid(),
   "revision": zod.int().min(1),
-  "type": zod.enum(['created', 'reply', 'transferred', 'closed', 'reopened', 'form-edited', 'reassigned']),
+  "type": zod.enum(['created', 'reply', 'reply-edited', 'transferred', 'closed', 'reopened', 'form-edited', 'reassigned']),
   "actor": UserRef,
   "occurredAt": zod.iso.datetime({"offset":true}),
   "content": zod.string().optional(),
   "assignee": UserRef.optional(),
   "previousAssignee": UserRef.optional(),
-  "revisions": zod.array(FreeReplyRevisionDto).optional(),
+  "relatedEntryId": zod.uuid().optional().describe('reply-edited 事件指向被编辑回复；其他事件为空'),
+  "editedBy": UserRef.optional(),
+  "editedAt": zod.iso.datetime({"offset":true}).optional(),
   "fieldChanges": zod.array(FieldChangeDto).optional(),
   "attachments": zod.array(AttachmentDto).optional()
 });
@@ -1548,13 +1543,65 @@ export const ProcessInstanceDetailDto = ProcessInstanceSummaryDto.and(zod.strict
 export type ProcessInstanceDetailDto = zod.input<typeof ProcessInstanceDetailDto>;
 export type ProcessInstanceDetailDtoOutput = zod.output<typeof ProcessInstanceDetailDto>;
 
-export const WorkflowTaskPage = zod.strictObject({
-  "items": zod.array(WorkflowTaskDto),
+export const TaskCenterAllowedAction = zod.enum(['pass', 'confirm', 'reject', 'revise-fields', 'reply', 'change-assignee', 'resubmit']);
+
+export type TaskCenterAllowedAction = zod.input<typeof TaskCenterAllowedAction>;
+export type TaskCenterAllowedActionOutput = zod.output<typeof TaskCenterAllowedAction>;
+
+
+
+
+export const FreeCollaborationTaskDto = zod.strictObject({
+  "id": zod.uuid(),
+  "revision": zod.int().min(1),
+  "instanceId": zod.uuid(),
+  "definitionId": zod.uuid(),
+  "versionId": zod.uuid(),
+  "taskType": zod.enum(['free-collaboration']),
+  "assignee": UserRef,
+  "status": WorkflowTaskStatus,
+  "allowedActions": zod.array(TaskCenterAllowedAction),
+  "createdAt": zod.iso.datetime({"offset":true}),
+  "completedAt": zod.iso.datetime({"offset":true}).optional()
+});
+
+export type FreeCollaborationTaskDto = zod.input<typeof FreeCollaborationTaskDto>;
+export type FreeCollaborationTaskDtoOutput = zod.output<typeof FreeCollaborationTaskDto>;
+
+
+
+
+
+export const ResubmissionTaskDto = zod.strictObject({
+  "id": zod.uuid(),
+  "revision": zod.int().min(1),
+  "instanceId": zod.uuid(),
+  "definitionId": zod.uuid(),
+  "versionId": zod.uuid(),
+  "taskType": zod.enum(['resubmission']),
+  "assignee": UserRef,
+  "status": WorkflowTaskStatus,
+  "round": zod.int().min(1),
+  "allowedActions": zod.array(TaskCenterAllowedAction),
+  "createdAt": zod.iso.datetime({"offset":true}),
+  "completedAt": zod.iso.datetime({"offset":true}).optional()
+});
+
+export type ResubmissionTaskDto = zod.input<typeof ResubmissionTaskDto>;
+export type ResubmissionTaskDtoOutput = zod.output<typeof ResubmissionTaskDto>;
+
+export const TaskCenterItemDto = zod.discriminatedUnion('taskType', [WorkflowTaskDto,FreeCollaborationTaskDto,ResubmissionTaskDto]);
+
+export type TaskCenterItemDto = zod.input<typeof TaskCenterItemDto>;
+export type TaskCenterItemDtoOutput = zod.output<typeof TaskCenterItemDto>;
+
+export const TaskCenterItemPage = zod.strictObject({
+  "items": zod.array(TaskCenterItemDto),
   "meta": PageMeta
 });
 
-export type WorkflowTaskPage = zod.input<typeof WorkflowTaskPage>;
-export type WorkflowTaskPageOutput = zod.output<typeof WorkflowTaskPage>;
+export type TaskCenterItemPage = zod.input<typeof TaskCenterItemPage>;
+export type TaskCenterItemPageOutput = zod.output<typeof TaskCenterItemPage>;
 
 export const BaseFieldRevisionsMinOne = 0;
 
@@ -1845,12 +1892,16 @@ export type ProcessExcelDatasetDtoOutput = zod.output<typeof ProcessExcelDataset
  */
 export const GetLiveness200Response = LivenessDto
 
+export const GetLiveness400Response = ProblemDetails
+
 
 /**
  * 检查配置、SQL Server 连接、兼容级别、schema 和迁移版本；不返回秘密、连接字符串或内部地址。
  * @summary 检查服务是否可以接收正式业务请求
  */
 export const GetReadiness200Response = ReadinessDto
+
+export const GetReadiness400Response = ProblemDetails
 
 export const GetReadiness503Response = ReadinessDto
 
@@ -1867,7 +1918,7 @@ export const GetOperationalHealthDetails403Response = ProblemDetails
 
 
 /**
- * 后端根据用户记录中的 authenticationMode 选择域认证或本地密码认证；客户端不能指定认证方式。域服务不可用时不得回退本地密码。
+ * 后端根据用户记录中的 authenticationMode 选择域认证或本地密码认证；客户端不能指定认证方式。域服务不可用时不得回退本地密码。即使尚未登录，本写请求也必须通过 Origin/Referer 同源校验，拒绝登录 CSRF。
  * @summary 登录并建立会话
  */
 export const LoginBody = LoginRequest
@@ -1878,17 +1929,22 @@ export const Login400Response = ProblemDetails
 
 export const Login401Response = ProblemDetails
 
+export const Login403Response = ProblemDetails
+
 export const Login429Response = ProblemDetails
 
 export const Login503Response = ProblemDetails
 
 
 /**
+ * 必须通过 Origin/Referer 同源校验；无论服务端会话是否仍存在，成功响应都清除同一路径的会话 Cookie。
  * @summary 注销当前会话
  */
 export const Logout204Response = zod.void()
 
 export const Logout401Response = ProblemDetails
+
+export const Logout403Response = ProblemDetails
 
 
 /**
@@ -3475,6 +3531,7 @@ export const UpdateProcessInstanceBeforeFirstDecision428Response = ProblemDetail
 
 
 /**
+ * 仅实际流程创建人或超级管理员可以执行；同一事务完成待重新提交任务、保存表单和附件引用，并生成下一轮审批任务。
  * @summary 驳回后重新提交并创建完整新审核轮次
  */
 export const ResubmitRejectedProcessInstanceParams = zod.strictObject({
@@ -3550,7 +3607,8 @@ export const CloseProcessInstance428Response = ProblemDetails
 
 
 /**
- * @summary 查询我的待办或可代办任务
+ * 返回审批、自由协作和待重新提交三种任务的判别联合；自由协作和重新提交任务没有审批节点。
+ * @summary 查询任务中心中的我的待办或可代办任务
  */
 export const listMyWorkflowTasksQueryPageDefault = 1;
 
@@ -3571,7 +3629,7 @@ export const ListMyWorkflowTasksQueryParams = zod.strictObject({
   "definitionId": zod.uuid().optional()
 })
 
-export const ListMyWorkflowTasks200Response = WorkflowTaskPage
+export const ListMyWorkflowTasks200Response = TaskCenterItemPage
 
 export const ListMyWorkflowTasks400Response = ProblemDetails
 
@@ -3587,7 +3645,7 @@ export const GetWorkflowTaskParams = zod.strictObject({
   "taskId": zod.uuid()
 })
 
-export const GetWorkflowTask200Response = WorkflowTaskDto
+export const GetWorkflowTask200Response = TaskCenterItemDto
 
 export const GetWorkflowTask401Response = ProblemDetails
 
@@ -3597,6 +3655,7 @@ export const GetWorkflowTask404Response = ProblemDetails
 
 
 /**
+ * 仅接受 taskType=approval；自由协作和待重新提交任务调用本端点返回 409。
  * 以条件更新保证默认责任人与代办人员并发时首个成功提交生效。确认节点只接受
  * confirm；审批节点接受 pass/reject。授权字段修改、结果、实际处理人、后续激活、
  * 并行取消、实例状态、时间线和 Outbox 原子保存。
@@ -3637,6 +3696,7 @@ export const DecideWorkflowTask428Response = ProblemDetails
 
 
 /**
+ * 仅接受 taskType=approval；自由协作和待重新提交任务调用本端点返回 409。
  * 只允许原实际处理人或超级管理员；节点必须开启重复修改，原结果必须为通过或
  * 确认，实例不得处于驳回待处理或已关闭。每次请求追加一条不可变差异记录，不
  * 重复生成审核记录，也不反向重算已激活、跳过或完成的节点。

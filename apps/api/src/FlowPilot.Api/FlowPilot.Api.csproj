@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <AssemblyName>FlowPilot.Api</AssemblyName>
+    <RootNamespace>FlowPilot.Api</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\FlowPilot.Application\FlowPilot.Application.csproj" />
+    <ProjectReference Include="..\FlowPilot.Contracts\FlowPilot.Contracts.csproj" />
+    <ProjectReference Include="..\FlowPilot.Infrastructure\FlowPilot.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.File" />
+  </ItemGroup>
+</Project>

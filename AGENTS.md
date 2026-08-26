@@ -4,14 +4,15 @@
 
 ## 项目定位
 
-- 这是公司内部流程审核平台的前端交互原型。应用已定义 REST API 边界，默认通过 MSW 在浏览器端模拟服务；仓库中尚无可部署的后端服务实现。
+- 这是公司内部流程审核平台。前端交互原型已定义 REST API 边界，默认通过 MSW 在浏览器端模拟服务；`apps/api/FlowPilot.sln` 已落地 .NET 工程基础和健康检查切片，认证会话及其他业务 API 尚未完成。
 - `REQUIREMENTS.md` 是需求的统一来源。实现业务变更前先查找对应章节；需求发生新增、调整或删除时，同步维护该文档及其变更记录。
 - `document/flowpilot-rest-api.openapi.yaml` 是前后端 REST 契约来源；`document/MOCK_REST_API.md`、`document/BACKEND_IMPLEMENTATION_DESIGN.md` 和 `document/IIS_DEPLOYMENT.md` 分别说明 mock 行为、后端落地设计和 IIS 部署。修改 API 行为、契约、部署方式或 mock 规则时，检查并同步对应文档。
-- 原型的重点是业务流程完整、交互可演示、角色权限一致，以及 API 边界可替换。不要把尚未确认的讨论项当作已确认需求，也不要在未获明确要求时添加真实认证、数据库、文件存储或后端服务。
+- 当前完整业务演示仍以前端 Mock 为基线。后续按已确认需求逐个完成可验证的纵向切片；不要把尚未确认的讨论项当作需求，也不要为未实现接口返回占位成功响应。
 
 ## 技术栈与目录
 
 - 包管理器：pnpm 11，工作区配置位于 `pnpm-workspace.yaml`。
+- 后端：`apps/api/FlowPilot.sln`，使用 .NET 10、ASP.NET Core 10 Controller Web API 和分层 C# 项目；NuGet 依赖不由 pnpm 管理。
 - Web 应用：`apps/web`，使用 React 19、TypeScript、Vite、Ant Design 6、React Router 7、Zustand、MSW、Playwright 和 Vitest。
 - `apps/web/src/api`：REST 客户端、前端契约类型、远端 DTO 适配器、缓存和远端数据水合。页面应经由 `flowPilotApi` 访问服务，不要自行发起 `fetch` 或绕过响应规范化。
 - `apps/web/src/mocks`：浏览器 mock API、请求处理器和 mock 运行时；默认开发模式由 `main.tsx` 启动。mock 数据与行为须与 OpenAPI 契约及远端适配器保持一致。
@@ -37,6 +38,12 @@
 ```bash
 pnpm install
 pnpm dev
+pnpm restore:api
+pnpm dev:api
+pnpm build:api
+pnpm test:api
+pnpm publish:api
+pnpm backend:check
 pnpm test
 pnpm test:coverage
 pnpm test:coverage:all
@@ -51,10 +58,11 @@ pnpm build
 ```
 
 - 开发服务器默认监听 `http://127.0.0.1:5173`。
-- `pnpm test` 运行 Vitest 单元、领域集成、组件和 API/mock 契约测试；`pnpm test:coverage` 执行核心领域覆盖率门禁，`pnpm test:coverage:all` 生成全源码覆盖率报告。
+- `pnpm dev:api` 运行 ASP.NET Core API；`pnpm build:api` 执行 Release 构建，`pnpm test:api` 运行 .NET 解决方案测试，`pnpm publish:api` 生成本地发布暂存产物。
+- `pnpm test` 先构建 OpenAPI 合同包，再运行 .NET 测试与前端 Vitest；`pnpm test:coverage` 执行前端核心领域覆盖率门禁，`pnpm test:coverage:all` 生成前端全源码覆盖率报告。
 - `pnpm test:e2e` 运行 Chromium 全量端到端测试；`pnpm test:e2e:edge` 运行 Microsoft Edge 的 `@smoke` 用例；`pnpm test:visual` 运行 Chromium 视觉回归，`pnpm test:update-snapshots` 仅在人工确认视觉变更后更新基线。
 - E2E 默认构建 debug 包并启动本地 preview mock 服务。要测试已部署服务，设置 `FLOWPILOT_TEST_TARGET=remote` 和 `FLOWPILOT_TEST_BASE_URL`；必要时用 `FLOWPILOT_TEST_PORT` 指定本地 preview 端口。
-- 日常修改至少运行 `pnpm typecheck` 和受影响测试；涉及路由、构建配置、依赖、API 契约、mock 或交付前修改时运行 `pnpm test:all`。仓库未配置 lint 脚本，不要声称运行了 lint 或不存在的检查。
+- 前端日常修改至少运行 `pnpm typecheck` 和受影响测试；后端修改至少运行 `pnpm build:api` 和 `pnpm test:api`。涉及路由、构建配置、依赖、API 契约、mock 或交付前修改时运行 `pnpm test:all`。仓库未配置 lint 脚本，不要声称运行了 lint 或不存在的检查。
 
 ## 实现约定
 

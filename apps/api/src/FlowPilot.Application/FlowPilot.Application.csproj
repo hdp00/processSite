@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\FlowPilot.Contracts\FlowPilot.Contracts.csproj" />
+    <ProjectReference Include="..\FlowPilot.Domain\FlowPilot.Domain.csproj" />
+  </ItemGroup>
+</Project>

@@ -17,7 +17,7 @@
  * 浏览器原型的 MSW 适配层可以在独立 Mock 地址使用演示 Bearer；该方案不属于
  * 本正式契约。正式后端只使用 HttpOnly 会话 Cookie。
  *
- * OpenAPI spec version: 1.4.3
+ * OpenAPI spec version: 1.5.0
  */
 import axios from 'axios';
 import type {
@@ -1428,12 +1428,15 @@ export type ProcessInstanceDetailDtoFormValues = {[key: string]: JsonValue};
  */
 export type ProcessInstanceDetailDtoFieldRevisions = {[key: string]: number};
 
+/**
+ * 普通业务接口可见状态；上传中、失败和已删除仅供内部恢复及运维使用
+ */
 export type AttachmentStatus = typeof AttachmentStatus[keyof typeof AttachmentStatus];
 
 
 export const AttachmentStatus = {
   staged: 'staged',
-  referenced: 'referenced',
+  active: 'active',
   'cleanup-pending': 'cleanup-pending',
 } as const;
 
@@ -1467,6 +1470,13 @@ export interface AttachmentDto {
   readonly referencedBy?: readonly AttachmentDtoReferencedByItem[];
   readonly contentUrl?: string;
 }
+
+export type WorkflowTaskDtoTaskType = typeof WorkflowTaskDtoTaskType[keyof typeof WorkflowTaskDtoTaskType];
+
+
+export const WorkflowTaskDtoTaskType = {
+  approval: 'approval',
+} as const;
 
 export type WorkflowTaskStatus = typeof WorkflowTaskStatus[keyof typeof WorkflowTaskStatus];
 
@@ -1538,6 +1548,7 @@ export interface WorkflowTaskDto {
   instanceId: string;
   definitionId: string;
   versionId: string;
+  taskType: WorkflowTaskDtoTaskType;
   nodeId: string;
   nodeName: string;
   handlingMode: ApprovalHandlingMode;
@@ -1567,17 +1578,13 @@ export type FreeTimelineEntryDtoType = typeof FreeTimelineEntryDtoType[keyof typ
 export const FreeTimelineEntryDtoType = {
   created: 'created',
   reply: 'reply',
+  'reply-edited': 'reply-edited',
   transferred: 'transferred',
   closed: 'closed',
   reopened: 'reopened',
   'form-edited': 'form-edited',
   reassigned: 'reassigned',
 } as const;
-
-export interface FreeReplyRevisionDto {
-  content: string;
-  editedAt: string;
-}
 
 export interface FreeTimelineEntryDto {
   id: string;
@@ -1589,7 +1596,10 @@ export interface FreeTimelineEntryDto {
   content?: string;
   assignee?: UserRef;
   previousAssignee?: UserRef;
-  revisions?: FreeReplyRevisionDto[];
+  /** reply-edited 事件指向被编辑回复；其他事件为空 */
+  relatedEntryId?: string;
+  editedBy?: UserRef;
+  editedAt?: string;
   fieldChanges?: FieldChangeDto[];
   attachments?: AttachmentDto[];
 }
@@ -1605,8 +1615,69 @@ export type ProcessInstanceDetailDto = ProcessInstanceSummaryDto & {
   freeTimeline?: FreeTimelineEntryDto[];
 };
 
-export interface WorkflowTaskPage {
-  items: WorkflowTaskDto[];
+export type TaskCenterAllowedAction = typeof TaskCenterAllowedAction[keyof typeof TaskCenterAllowedAction];
+
+
+export const TaskCenterAllowedAction = {
+  pass: 'pass',
+  confirm: 'confirm',
+  reject: 'reject',
+  'revise-fields': 'revise-fields',
+  reply: 'reply',
+  'change-assignee': 'change-assignee',
+  resubmit: 'resubmit',
+} as const;
+
+export type FreeCollaborationTaskDtoTaskType = typeof FreeCollaborationTaskDtoTaskType[keyof typeof FreeCollaborationTaskDtoTaskType];
+
+
+export const FreeCollaborationTaskDtoTaskType = {
+  'free-collaboration': 'free-collaboration',
+} as const;
+
+export interface FreeCollaborationTaskDto {
+  id: string;
+  /** @minimum 1 */
+  revision: number;
+  instanceId: string;
+  definitionId: string;
+  versionId: string;
+  taskType: FreeCollaborationTaskDtoTaskType;
+  assignee: UserRef;
+  status: WorkflowTaskStatus;
+  allowedActions: TaskCenterAllowedAction[];
+  createdAt: string;
+  completedAt?: string;
+}
+
+export type ResubmissionTaskDtoTaskType = typeof ResubmissionTaskDtoTaskType[keyof typeof ResubmissionTaskDtoTaskType];
+
+
+export const ResubmissionTaskDtoTaskType = {
+  resubmission: 'resubmission',
+} as const;
+
+export interface ResubmissionTaskDto {
+  id: string;
+  /** @minimum 1 */
+  revision: number;
+  instanceId: string;
+  definitionId: string;
+  versionId: string;
+  taskType: ResubmissionTaskDtoTaskType;
+  assignee: UserRef;
+  status: WorkflowTaskStatus;
+  /** @minimum 1 */
+  round: number;
+  allowedActions: TaskCenterAllowedAction[];
+  createdAt: string;
+  completedAt?: string;
+}
+
+export type TaskCenterItemDto = WorkflowTaskDto | FreeCollaborationTaskDto | ResubmissionTaskDto;
+
+export interface TaskCenterItemPage {
+  items: TaskCenterItemDto[];
   meta: PageMeta;
 }
 
@@ -2882,7 +2953,7 @@ const getOperationalHealthDetails = (
   }
 
 /**
- * 后端根据用户记录中的 authenticationMode 选择域认证或本地密码认证；客户端不能指定认证方式。域服务不可用时不得回退本地密码。
+ * 后端根据用户记录中的 authenticationMode 选择域认证或本地密码认证；客户端不能指定认证方式。域服务不可用时不得回退本地密码。即使尚未登录，本写请求也必须通过 Origin/Referer 同源校验，拒绝登录 CSRF。
  * @summary 登录并建立会话
  */
 const login = (
@@ -2895,6 +2966,7 @@ const login = (
   }
 
 /**
+ * 必须通过 Origin/Referer 同源校验；无论服务端会话是否仍存在，成功响应都清除同一路径的会话 Cookie。
  * @summary 注销当前会话
  */
 const logout = (
@@ -3778,6 +3850,7 @@ const updateProcessInstanceBeforeFirstDecision = (
   }
 
 /**
+ * 仅实际流程创建人或超级管理员可以执行；同一事务完成待重新提交任务、保存表单和附件引用，并生成下一轮审批任务。
  * @summary 驳回后重新提交并创建完整新审核轮次
  */
 const resubmitRejectedProcessInstance = (
@@ -3811,11 +3884,12 @@ const closeProcessInstance = (
   }
 
 /**
- * @summary 查询我的待办或可代办任务
+ * 返回审批、自由协作和待重新提交三种任务的判别联合；自由协作和重新提交任务没有审批节点。
+ * @summary 查询任务中心中的我的待办或可代办任务
  */
 const listMyWorkflowTasks = (
     params: ListMyWorkflowTasksParams, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<WorkflowTaskPage>> => {
+ ): Promise<AxiosResponse<TaskCenterItemPage>> => {
     return axiosInstance.get(
       `/api/flowpilot/v1/me/workflow-tasks`,{
     ...options,
@@ -3828,13 +3902,14 @@ const listMyWorkflowTasks = (
  */
 const getWorkflowTask = (
     taskId: string, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<WorkflowTaskDto>> => {
+ ): Promise<AxiosResponse<TaskCenterItemDto>> => {
     return axiosInstance.get(
       `/api/flowpilot/v1/workflow-tasks/${taskId}`,options
     );
   }
 
 /**
+ * 仅接受 taskType=approval；自由协作和待重新提交任务调用本端点返回 409。
  * 以条件更新保证默认责任人与代办人员并发时首个成功提交生效。确认节点只接受
  * confirm；审批节点接受 pass/reject。授权字段修改、结果、实际处理人、后续激活、
  * 并行取消、实例状态、时间线和 Outbox 原子保存。
@@ -3854,6 +3929,7 @@ const decideWorkflowTask = (
   }
 
 /**
+ * 仅接受 taskType=approval；自由协作和待重新提交任务调用本端点返回 409。
  * 只允许原实际处理人或超级管理员；节点必须开启重复修改，原结果必须为通过或
  * 确认，实例不得处于驳回待处理或已关闭。每次请求追加一条不可变差异记录，不
  * 重复生成审核记录，也不反向重算已激活、跳过或完成的节点。
@@ -4211,8 +4287,8 @@ export type GetProcessInstanceResult = AxiosResponse<ProcessInstanceDetailDto>
 export type UpdateProcessInstanceBeforeFirstDecisionResult = AxiosResponse<ProcessInstanceDetailDto>
 export type ResubmitRejectedProcessInstanceResult = AxiosResponse<ProcessInstanceDetailDto>
 export type CloseProcessInstanceResult = AxiosResponse<ProcessInstanceDetailDto>
-export type ListMyWorkflowTasksResult = AxiosResponse<WorkflowTaskPage>
-export type GetWorkflowTaskResult = AxiosResponse<WorkflowTaskDto>
+export type ListMyWorkflowTasksResult = AxiosResponse<TaskCenterItemPage>
+export type GetWorkflowTaskResult = AxiosResponse<TaskCenterItemDto>
 export type DecideWorkflowTaskResult = AxiosResponse<TaskDecisionResponse>
 export type ReviseCompletedWorkflowTaskFieldsResult = AxiosResponse<ReviseTaskFieldsResponse>
 export type UpdateFreeCollaborationInitialFormResult = AxiosResponse<ProcessInstanceDetailDto>

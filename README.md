@@ -1,8 +1,8 @@
 # FlowPilot 流程审核平台
 
-当前可运行部分是 React 前端交互原型，开发环境默认启用浏览器内 Mock REST API，无需启动后端即可演示登录、流程定义、实例、任务、附件、邮件 Outbox、审计和 Excel 导出。
+当前完整可演示部分是 React 前端交互原型，开发环境默认启用浏览器内 Mock REST API，无需启动后端即可演示登录、流程定义、实例、任务、附件、邮件 Outbox、审计和 Excel 导出。
 
-正式后端目标架构已确定为 .NET 10 / ASP.NET Core 10 Controller Web API、EF Core 10 和 SQL Server 2016 SP2 及之后版本。仓库中现有 `apps/api` 是此前的 NestJS 试验骨架，尚未迁移，不能视为当前目标实现或生产后端。本次架构切换先完成文档同步，后续再替换后端代码。
+正式后端使用 .NET 10 / ASP.NET Core 10 Controller Web API、EF Core 10 和 SQL Server 2016 SP2 及之后版本。旧 NestJS 骨架已删除，`apps/api/FlowPilot.sln` 已落地分层工程基础和健康检查切片；认证会话及其他业务 API 仍未完成，当前不能代替浏览器 Mock 运行完整流程。
 
 - [统一需求](REQUIREMENTS.md)
 - [Mock REST API 使用说明](document/MOCK_REST_API.md)
@@ -32,7 +32,7 @@ pnpm build
 pnpm build:debug
 ```
 
-## 正式后端目标
+## 正式后端
 
 - 后端位置继续为 `apps/api`，但使用独立 .NET solution 和 NuGet；前端继续使用 pnpm。
 - 持久化实体、领域模型和 API DTO 之间使用 Mapperly 编译期生成映射；业务命令和领域规则不交给映射器执行。
@@ -44,7 +44,18 @@ pnpm build:debug
 - 附件位于程序目录之外的 `{部署根目录}\Data\Attachments\{yyyy}`，例如 2026 年附件进入 `2026` 目录。
 - OpenAPI YAML 保持唯一对外契约；Orval 生成前端 TypeScript/Axios 客户端，C# DTO 和校验由 ASP.NET Core 实现并通过语义契约测试。
 
-后端尚未迁移前，不要继续使用旧 NestJS 的 `pnpm dev:api`、`.env`、TypeORM migration 或 WinSW 部署流程。
+后端工程命令（从仓库根目录运行）：
+
+```bash
+pnpm restore:api
+pnpm dev:api
+pnpm build:api
+pnpm test:api
+pnpm publish:api
+pnpm backend:check
+```
+
+当前健康检查切片仅用于验证工程、配置和基础运行边界；不要将其视为已完成的认证或业务后端。
 
 ## 测试
 
@@ -57,4 +68,4 @@ pnpm test:e2e:edge
 pnpm test:all
 ```
 
-后续 .NET 工程增加 `dotnet test`，并在真实 SQL Server 2016 SP2/兼容级别 130 最低基线以及实际部署的较新 SQL Server 版本上运行数据库集成测试。现有 Mock/前端测试不能代替正式后端的事务、LDAP、SMTP、磁盘附件或 Windows Service 验收。
+`pnpm test` 现在同时运行 .NET 解决方案测试和前端 Vitest；数据库集成测试还需在真实 SQL Server 2016 SP2/兼容级别 130 最低基线以及实际部署版本上运行。现有 Mock/前端测试不能代替正式后端的事务、LDAP、SMTP、磁盘附件或 Windows Service 验收。
