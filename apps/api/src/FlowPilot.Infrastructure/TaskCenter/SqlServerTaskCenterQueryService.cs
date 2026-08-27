@@ -176,7 +176,7 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
                AND [v].[definition_id] = [i].[definition_id]
             INNER JOIN [flowpilot].[users] AS [initiator]
                 ON [initiator].[id] = [i].[initiator_user_id]
-            INNER JOIN [flowpilot].[departments] AS [initiator_department]
+            LEFT JOIN [flowpilot].[departments] AS [initiator_department]
                 ON [initiator_department].[id] = [initiator].[department_id]
             LEFT JOIN [flowpilot].[users] AS [current_assignee]
                 ON [current_assignee].[id] = [i].[current_assignee_id]
@@ -226,7 +226,7 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
             [current_assignee].[display_name] AS [current_assignee_name],
             [initiator].[id] AS [initiator_id],
             [initiator].[display_name] AS [initiator_name],
-            [initiator_department].[path_cache] AS [initiator_department_path],
+            COALESCE([initiator_department].[path_cache], N'') AS [initiator_department_path],
             [i].[created_at] AS [instance_created_at],
             [i].[updated_at] AS [instance_updated_at],
             [i].[form_values_json],
@@ -446,7 +446,7 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
                AND [v].[definition_id] = [i].[definition_id]
             INNER JOIN [flowpilot].[users] AS [initiator]
                 ON [initiator].[id] = [i].[initiator_user_id]
-            INNER JOIN [flowpilot].[departments] AS [initiator_department]
+            LEFT JOIN [flowpilot].[departments] AS [initiator_department]
                 ON [initiator_department].[id] = [initiator].[department_id]
             LEFT JOIN [flowpilot].[users] AS [current_assignee]
                 ON [current_assignee].[id] = [i].[current_assignee_id]
@@ -471,7 +471,7 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
             [current_assignee].[display_name] AS [current_assignee_name],
             [initiator].[id] AS [initiator_id],
             [initiator].[display_name] AS [initiator_name],
-            [initiator_department].[path_cache] AS [initiator_department_path],
+            COALESCE([initiator_department].[path_cache], N'') AS [initiator_department_path],
             [i].[created_at] AS [instance_created_at],
             [i].[updated_at] AS [instance_updated_at],
             [i].[form_values_json],

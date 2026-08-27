@@ -79,7 +79,7 @@ const roleSeed: DomainRole[] = [
 ];
 
 const primaryUsers: DomainUser[] = [
-  { id: "superadmin", account: "superadmin", email: companyEmail("superadmin"), name: "超级管理员", password: "1", authenticationMode: "password", department: ["system"], departmentPath: "系统内置", jobTitle: "系统内置", roles: ["超级管理员"], status: "启用", lastLogin: "从未登录", builtIn: true },
+  { id: "superadmin", account: "superadmin", email: "", name: "超级管理员", password: "1", authenticationMode: "password", department: [], departmentPath: "", jobTitle: "", roles: ["超级管理员"], status: "启用", lastLogin: "从未登录", builtIn: true },
   { id: "admin", account: "admin", email: companyEmail("admin"), name: "周杰", password: "1", authenticationMode: "domain", department: ["document"], departmentPath: "文控", jobTitle: "经理", roles: ["系统管理员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 09:18" },
   { id: "wangmin", account: "wangmin", email: companyEmail("wangmin"), name: "王敏", password: "1", authenticationMode: "domain", department: ["document"], departmentPath: "文控", jobTitle: "员工", roles: ["文控专员", "流程管理员"], status: "启用", lastLogin: "2026-08-13 10:32" },
   { id: "zhangwei", account: "zhangwei", email: companyEmail("zhangwei"), name: "张伟", password: "1", authenticationMode: "domain", department: ["rd", "rd-software"], departmentPath: "研发 / 软件", jobTitle: "员工", roles: ["研发审核员"], status: "启用", lastLogin: "2026-08-13 09:26" },
@@ -171,6 +171,7 @@ const canonicalizeIdentityRelations = (
 ) => {
   const usersWithRoleIds = users.map((user) => ({
     ...user,
+    ...(user.builtIn ? { email: "", department: [], departmentPath: "", jobTitle: "" } : {}),
     authenticationMode: user.builtIn ? "password" as const : user.authenticationMode ?? "domain",
     roleIds: user.roleIds ?? roles.filter((role) => user.roles.includes(role.name)).map((role) => role.id),
   }));
@@ -299,13 +300,13 @@ export const useIdentityStore = create<IdentityState>()(
     }),
     {
       name: "flowpilot-identity-domain-v1",
-      version: 6,
+      version: 7,
       migrate: (persisted) => {
         const state = persisted as Partial<IdentityState>;
         return repairPersistedIdentityRelations(
           Array.isArray(state.users) ? state.users.map((user) => ({
             ...user,
-            email: user.email?.trim() || companyEmail(user.account),
+            email: user.builtIn ? "" : user.email?.trim() || companyEmail(user.account),
             password: user.password || "1",
             authenticationMode: user.builtIn ? "password" : user.authenticationMode ?? "domain",
             roles: [...(user.roles ?? [])],

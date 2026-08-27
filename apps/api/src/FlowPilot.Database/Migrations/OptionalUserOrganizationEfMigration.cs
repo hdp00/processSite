@@ -5,37 +5,20 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace FlowPilot.Database.Migrations;
 
 [DbContext(typeof(FlowPilotDbContext))]
-[Migration("202608260001_initial_schema")]
-public sealed class InitialSchemaEfMigration : Migration
+[Migration("202608270001_optional_user_organization")]
+public sealed class OptionalUserOrganizationEfMigration : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
         ArgumentNullException.ThrowIfNull(migrationBuilder);
-
-        var migration = MigrationCatalog.Migrations.Single(item => item.Id == "202608260001");
+        var migration = MigrationCatalog.Migrations.Single(item => item.Id == "202608270001");
         migrationBuilder.Sql(migration.Sql);
         migrationBuilder.Sql(
             $"""
             INSERT INTO [flowpilot].[schema_migrations]
-            (
-                [migration_id],
-                [name],
-                [checksum],
-                [started_at],
-                [completed_at],
-                [tool_version],
-                [result]
-            )
+                ([migration_id], [name], [checksum], [started_at], [completed_at], [tool_version], [result])
             VALUES
-            (
-                N'{migration.Id}',
-                N'{migration.Name}',
-                '{migration.Checksum}',
-                SYSUTCDATETIME(),
-                SYSUTCDATETIME(),
-                N'ef-core-10.0.11',
-                N'succeeded'
-            );
+                (N'{migration.Id}', N'{migration.Name}', '{migration.Checksum}', SYSUTCDATETIME(), SYSUTCDATETIME(), N'ef-core-10.0.11', N'succeeded');
             """);
     }
 

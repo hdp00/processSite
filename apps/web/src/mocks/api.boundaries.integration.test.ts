@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { installMemoryBrowserStorage, type MemoryStorage } from "../test/memoryStorage";
 
@@ -89,6 +90,19 @@ beforeEach(async () => {
 });
 
 describe("Mock REST API 通用契约", () => {
+  it("后端网关不可用时普通请求和下载均返回可理解的中文提示", async () => {
+    server.use(http.get(`${API}/unavailable`, () => new HttpResponse("Bad Gateway", { status: 502 })));
+
+    await expect(clientModule.apiRequest("/unavailable")).rejects.toMatchObject({
+      status: 502,
+      message: "无法连接后端服务，请确认后端已启动，或稍后重试。",
+    });
+    await expect(clientModule.apiDownload("/unavailable")).rejects.toMatchObject({
+      status: 502,
+      message: "无法连接后端服务，请确认后端已启动，或稍后重试。",
+    });
+  });
+
   it("演示数据重置只允许真实登录的内置超级管理员，模拟切换不能提升权限", async () => {
     const initialDefinitionCount = definitionModule.useProcessDefinitionStore.getState().definitions.length;
 
@@ -214,12 +228,15 @@ describe("Mock REST API 通用契约", () => {
     await apiModule.flowPilotApi.directory.updateUser(disposableUser.id, { roles: [] }, stoppedUserResource.etag);
     const disposableUserResource = await apiModule.flowPilotApi.directory.userResource(disposableUser.id);
     await expect(apiModule.flowPilotApi.directory.updateUserStatus(disposableUser.id, "启用", disposableUserResource.etag ?? "*"))
-      .rejects.toMatchObject({ status: 409, problem: { code: "USER_ROLE_REQUIRED" } });
+      .resolves.toMatchObject({ status: "启用", roles: [] });
+    const enabledUserResource = await apiModule.flowPilotApi.directory.userResource(disposableUser.id);
+    await apiModule.flowPilotApi.directory.updateUserStatus(disposableUser.id, "停用", enabledUserResource.etag ?? "*");
+    const deletableUserResource = await apiModule.flowPilotApi.directory.userResource(disposableUser.id);
     await expect(clientModule.apiRequest(`/users/${disposableUser.id}`, { method: "DELETE" })).rejects.toMatchObject({
       status: 428,
       problem: { code: "IF_MATCH_REQUIRED" },
     });
-    await expect(apiModule.flowPilotApi.directory.deleteUser(disposableUser.id, disposableUserResource.etag ?? "*"))
+    await expect(apiModule.flowPilotApi.directory.deleteUser(disposableUser.id, deletableUserResource.etag ?? "*"))
       .resolves.toBeUndefined();
     await expect(apiModule.flowPilotApi.directory.user(disposableUser.id)).rejects.toMatchObject({ status: 404 });
 

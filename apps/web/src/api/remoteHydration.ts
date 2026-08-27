@@ -36,23 +36,9 @@ const loadRemoteDefinitions = async () => {
   return [];
 };
 
-/**
- * 登录和会话恢复时只加载当前阶段已经由正式后端提供的流程定义切片。
- * 数据全部成功取得后再替换缓存，避免临时失败把原缓存清成空数据。
- */
+/** 登录和会话恢复时加载页面所需的小型目录数据，不在此下载完整用户列表。 */
 export const hydrateRemoteProcessDefinitions = async () => {
-  const definitions = await loadRemoteDefinitions();
-  const session = usePrototypeStore.getState();
-  const sessionUsers = useIdentityStore.getState().users.filter((user) =>
-    user.id === session.personaId || user.id === session.operatorUserId,
-  );
-
-  useIdentityStore.setState({ users: sessionUsers, roles: [], workflowGroups: [] });
-  useProcessDefinitionStore.setState({
-    definitions: definitions.map(({ status: _status, ...definition }) => definition),
-  });
-  usePrototypeStore.setState({ instances: [], tasks: [] });
-  useOrganizationStore.setState({ departments: [], jobTitles: [] });
+  await hydrateRemoteApplication();
 };
 
 /**

@@ -84,15 +84,6 @@ export const organizationHandlers = [
     const body = await parseJsonBody<{ status?: "启用" | "停用" }>(request);
     if (body instanceof Response) return body;
     if (!body.status || !["启用", "停用"].includes(body.status)) return apiProblem(request, 422, "STATUS_INVALID", "用户状态无效", "status 必须是启用或停用。 ");
-    const enabledRoles = useIdentityStore.getState().roles.filter((role) => role.status === "启用");
-    const enabledRoleIds = new Set(enabledRoles.map((role) => role.id));
-    const enabledRoleNames = new Set(enabledRoles.map((role) => role.name));
-    const hasEnabledRole = user.roleIds
-      ? user.roleIds.some((roleId) => enabledRoleIds.has(roleId))
-      : user.roles.some((roleName) => enabledRoleNames.has(roleName));
-    if (body.status === "启用" && !hasEnabledRole) {
-      return apiProblem(request, 409, "USER_ROLE_REQUIRED", "账号缺少角色", "请先为用户分配至少一个启用角色，再启用账号。 ");
-    }
     const updated = { ...user, status: body.status };
     useIdentityStore.getState().setUsers((users) => users.map((item) => item.id === user.id ? updated : item));
     audit(auth.actor.id, auth.actor.name, "update-user-status", "user", user.id, `${body.status}用户 ${user.name}`);

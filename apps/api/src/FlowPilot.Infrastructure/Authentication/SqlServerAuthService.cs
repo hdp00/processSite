@@ -370,11 +370,11 @@ public sealed class SqlServerAuthService : IAuthService
             reader.IsDBNull(6) ? null : reader.GetString(6),
             reader.GetBoolean(7),
             reader.GetBoolean(8),
-            reader.GetGuid(9),
-            reader.GetString(10),
-            reader.GetString(11),
-            reader.GetGuid(12),
-            reader.GetString(13),
+            reader.IsDBNull(9) ? null : reader.GetGuid(9),
+            reader.IsDBNull(10) ? null : reader.GetString(10),
+            reader.IsDBNull(11) ? null : reader.GetString(11),
+            reader.IsDBNull(12) ? null : reader.GetGuid(12),
+            reader.IsDBNull(13) ? null : reader.GetString(13),
             AsUtc(reader.GetDateTime(14)),
             AsUtc(reader.GetDateTime(15)));
     }
@@ -566,8 +566,12 @@ public sealed class SqlServerAuthService : IAuthService
             user.Email,
             user.AuthenticationMode,
             user.IsEnabled ? EnabledStatus : "disabled",
-            new DepartmentRefDto(user.DepartmentId, user.DepartmentName, user.DepartmentPath),
-            new PositionRefDto(user.PositionId, user.PositionName),
+            user.DepartmentId is { } departmentId
+                ? new DepartmentRefDto(departmentId, user.DepartmentName!, user.DepartmentPath!)
+                : null,
+            user.PositionId is { } positionId
+                ? new PositionRefDto(positionId, user.PositionName!)
+                : null,
             roles,
             user.IsBuiltinSuperAdmin,
             user.CreatedAt,
@@ -727,9 +731,9 @@ public sealed class SqlServerAuthService : IAuthService
             [u].[created_at],
             [u].[updated_at]
         FROM [flowpilot].[users] AS [u]
-        INNER JOIN [flowpilot].[departments] AS [d]
+        LEFT JOIN [flowpilot].[departments] AS [d]
             ON [d].[id] = [u].[department_id]
-        INNER JOIN [flowpilot].[positions] AS [p]
+        LEFT JOIN [flowpilot].[positions] AS [p]
             ON [p].[id] = [u].[position_id]
         """;
 
@@ -743,11 +747,11 @@ public sealed class SqlServerAuthService : IAuthService
         string? PasswordHash,
         bool IsEnabled,
         bool IsBuiltinSuperAdmin,
-        Guid DepartmentId,
-        string DepartmentName,
-        string DepartmentPath,
-        Guid PositionId,
-        string PositionName,
+        Guid? DepartmentId,
+        string? DepartmentName,
+        string? DepartmentPath,
+        Guid? PositionId,
+        string? PositionName,
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt);
 

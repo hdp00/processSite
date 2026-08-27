@@ -3292,7 +3292,6 @@ components:
         - IDEMPOTENCY_REQUEST_IN_PROGRESS
         - IMMUTABLE_BUILTIN_RESOURCE
         - RESOURCE_IN_USE
-        - USER_ROLE_REQUIRED
         - DELETE_BLOCKED
         - VERSION_NOT_EDITABLE
         - VERSION_PUBLISHED
@@ -3463,7 +3462,7 @@ components:
     CreateDomainUserRequest:
       type: object
       additionalProperties: false
-      required: [loginName, name, email, departmentId, positionId, roleIds, authenticationMode, status]
+      required: [loginName, name, email, roleIds, authenticationMode, status]
       properties:
         loginName:
           type: string
@@ -3477,15 +3476,15 @@ components:
           type: string
           format: email
         departmentId:
-          type: string
+          type: [string, "null"]
           format: uuid
         positionId:
-          type: string
+          type: [string, "null"]
           format: uuid
         roleIds:
           type: array
           uniqueItems: true
-          description: status=enabled 时至少包含一个启用角色；该跨字段约束由服务端校验。
+          description: 可为空；用户没有角色时不获得普通角色权限。
           items:
             type: string
             format: uuid
@@ -3497,7 +3496,7 @@ components:
     CreatePasswordUserRequest:
       type: object
       additionalProperties: false
-      required: [loginName, name, email, departmentId, positionId, roleIds, authenticationMode, initialPassword, status]
+      required: [loginName, name, email, roleIds, authenticationMode, initialPassword, status]
       properties:
         loginName:
           type: string
@@ -3511,15 +3510,15 @@ components:
           type: string
           format: email
         departmentId:
-          type: string
+          type: [string, "null"]
           format: uuid
         positionId:
-          type: string
+          type: [string, "null"]
           format: uuid
         roleIds:
           type: array
           uniqueItems: true
-          description: status=enabled 时至少包含一个启用角色；该跨字段约束由服务端校验。
+          description: 可为空；用户没有角色时不获得普通角色权限。
           items:
             type: string
             format: uuid
@@ -3534,7 +3533,7 @@ components:
         status:
           $ref: "#/components/schemas/EnabledStatus"
     CreateUserRequest:
-      description: 启用账号必须至少分配一个启用角色；停用账号可暂时不分配角色，以便解除引用后删除。password 模式必须提交 initialPassword，domain 模式不得提交该字段。
+      description: 部门、职务和角色均可为空。password 模式必须提交 initialPassword，domain 模式不得提交该字段。
       oneOf:
         - $ref: "#/components/schemas/CreateDomainUserRequest"
         - $ref: "#/components/schemas/CreatePasswordUserRequest"
@@ -3557,15 +3556,15 @@ components:
           type: string
           format: email
         departmentId:
-          type: string
+          type: [string, "null"]
           format: uuid
         positionId:
-          type: string
+          type: [string, "null"]
           format: uuid
         roleIds:
           type: array
           uniqueItems: true
-          description: 更新后的账号如为 enabled，最终角色集合不得为空且至少包含一个启用角色。
+          description: 可提交空数组以清空角色，账号状态不影响该约束。
           items:
             type: string
             format: uuid
@@ -3580,7 +3579,7 @@ components:
       type: object
       additionalProperties: false
       required: [status]
-      description: 将账号启用前，服务端必须确认账号至少具有一个启用角色，否则返回 409 USER_ROLE_REQUIRED。
+      description: 启用或停用账号；角色可以为空。
       properties:
         status:
           $ref: "#/components/schemas/EnabledStatus"
@@ -3609,15 +3608,19 @@ components:
           type: string
         email:
           type: string
-          format: email
+          description: 普通用户为有效邮箱；超级管理员固定为空字符串。
         authenticationMode:
           $ref: "#/components/schemas/AuthenticationMode"
         status:
           $ref: "#/components/schemas/EnabledStatus"
         department:
-          $ref: "#/components/schemas/DepartmentRef"
+          oneOf:
+            - $ref: "#/components/schemas/DepartmentRef"
+            - type: "null"
         position:
-          $ref: "#/components/schemas/PositionRef"
+          oneOf:
+            - $ref: "#/components/schemas/PositionRef"
+            - type: "null"
         roles:
           type: array
           items:

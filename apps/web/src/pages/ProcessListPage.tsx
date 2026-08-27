@@ -315,7 +315,7 @@ export function ProcessListPage() {
       }
       messageApi.success(`已导出当前查询范围内的 ${dataset.rowCount} 条记录`);
     } catch (error) {
-      messageApi.error(error instanceof ApiError ? error.problem.detail : "Excel 导出失败，请稍后重试");
+      messageApi.error(error instanceof ApiError ? error.message : "Excel 导出失败，请稍后重试");
     } finally {
       hideLoading();
       setExporting(false);

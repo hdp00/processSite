@@ -235,8 +235,8 @@ public sealed partial class SqlServerOrganizationService
                 Add(command, "@email", SqlDbType.NVarChar, input.Email, 320);
                 Add(command, "@authentication_mode", SqlDbType.NVarChar, input.AuthenticationMode, 20);
                 AddNullable(command, "@password_hash", SqlDbType.NVarChar, passwordHash, 500);
-                Add(command, "@department_id", SqlDbType.UniqueIdentifier, input.DepartmentId);
-                Add(command, "@position_id", SqlDbType.UniqueIdentifier, input.PositionId);
+                AddNullable(command, "@department_id", SqlDbType.UniqueIdentifier, input.DepartmentId);
+                AddNullable(command, "@position_id", SqlDbType.UniqueIdentifier, input.PositionId);
                 Add(command, "@is_enabled", SqlDbType.Bit, input.IsEnabled);
                 Add(command, "@now", SqlDbType.DateTime2, now.UtcDateTime);
                 Add(command, "@actor_id", SqlDbType.UniqueIdentifier, actor.EffectiveUserId);
@@ -329,9 +329,11 @@ public sealed partial class SqlServerOrganizationService
             SELECT
                 (SELECT COUNT_BIG(1) FROM [flowpilot].[users] WITH (UPDLOCK, HOLDLOCK)
                  WHERE [normalized_login_name] = @normalized_login_name),
-                (SELECT COUNT_BIG(1) FROM [flowpilot].[departments] WITH (UPDLOCK, HOLDLOCK)
+                (SELECT CASE WHEN @department_id IS NULL THEN 1 ELSE COUNT_BIG(1) END
+                 FROM [flowpilot].[departments] WITH (UPDLOCK, HOLDLOCK)
                  WHERE [id] = @department_id AND [is_enabled] = 1),
-                (SELECT COUNT_BIG(1) FROM [flowpilot].[positions] WITH (UPDLOCK, HOLDLOCK)
+                (SELECT CASE WHEN @position_id IS NULL THEN 1 ELSE COUNT_BIG(1) END
+                 FROM [flowpilot].[positions] WITH (UPDLOCK, HOLDLOCK)
                  WHERE [id] = @position_id AND [is_enabled] = 1),
                 (SELECT COUNT_BIG(1)
                  FROM OPENJSON(@role_ids) WITH ([id] uniqueidentifier '$') AS [requested]
@@ -342,8 +344,8 @@ public sealed partial class SqlServerOrganizationService
                  WHERE [r].[id] IS NULL);
             """;
         Add(command, "@normalized_login_name", SqlDbType.NVarChar, input.NormalizedLoginName, 100);
-        Add(command, "@department_id", SqlDbType.UniqueIdentifier, input.DepartmentId);
-        Add(command, "@position_id", SqlDbType.UniqueIdentifier, input.PositionId);
+        AddNullable(command, "@department_id", SqlDbType.UniqueIdentifier, input.DepartmentId);
+        AddNullable(command, "@position_id", SqlDbType.UniqueIdentifier, input.PositionId);
         Add(command, "@role_ids", SqlDbType.NVarChar,
             JsonSerializer.Serialize(input.RoleIds, JsonOptions), -1);
         await using var reader = await command.ExecuteReaderAsync(
@@ -443,8 +445,8 @@ public sealed partial class SqlServerOrganizationService
                     ORDER BY [r].[name], [r].[id]
                     FOR JSON PATH), N'[]')
             FROM [flowpilot].[users] AS [u]
-            INNER JOIN [flowpilot].[departments] AS [d] ON [d].[id] = [u].[department_id]
-            INNER JOIN [flowpilot].[positions] AS [p] ON [p].[id] = [u].[position_id]
+            LEFT JOIN [flowpilot].[departments] AS [d] ON [d].[id] = [u].[department_id]
+            LEFT JOIN [flowpilot].[positions] AS [p] ON [p].[id] = [u].[position_id]
             WHERE [u].[id] = @id;
             """;
         Add(command, "@id", SqlDbType.UniqueIdentifier, userId);
@@ -464,8 +466,8 @@ public sealed partial class SqlServerOrganizationService
             reader.GetString(4),
             reader.GetString(5),
             reader.GetBoolean(6) ? "enabled" : "disabled",
-            new DepartmentRefDto(reader.GetGuid(8), reader.GetString(9), reader.GetString(10)),
-            new PositionRefDto(reader.GetGuid(11), reader.GetString(12)),
+            reader.IsDBNull(8) ? null : new DepartmentRefDto(reader.GetGuid(8), reader.GetString(9), reader.GetString(10)),
+            reader.IsDBNull(11) ? null : new PositionRefDto(reader.GetGuid(11), reader.GetString(12)),
             DeserializeArray<RoleRefDto>(reader.GetString(15)),
             reader.GetBoolean(7),
             AsUtc(reader.GetDateTime(13)),
@@ -639,11 +641,6 @@ public sealed partial class SqlServerOrganizationService
             issues.Add(Issue("roleIds", "DUPLICATE", "用户角色不能重复。"));
         }
 
-        if (enabled == true && roles.Length == 0)
-        {
-            issues.Add(Issue("roleIds", "MIN_ITEMS", "启用用户必须至少分配一个启用角色。"));
-        }
-
         return issues.Count > 0
             ? new NormalizedUserResult(null, IdentityValidationFailure("用户校验失败", issues))
             : new NormalizedUserResult(
@@ -688,8 +685,8 @@ public sealed partial class SqlServerOrganizationService
         string Email,
         string AuthenticationMode,
         string? InitialPassword,
-        Guid DepartmentId,
-        Guid PositionId,
+        Guid? DepartmentId,
+        Guid? PositionId,
         bool IsEnabled,
         IReadOnlyList<Guid> RoleIds);
 

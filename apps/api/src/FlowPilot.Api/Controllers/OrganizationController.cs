@@ -21,6 +21,15 @@ public sealed class OrganizationController(
         "config-definition:编辑",
     ];
 
+    private static readonly string[] ReferenceDataReadPermissions =
+    [
+        .. DirectoryReadPermissions,
+        "work-launch:查看",
+        "work-task:查看",
+        "work-list:查看",
+        "system-monitor:查看",
+    ];
+
     [HttpGet("users")]
     [ProducesResponseType<OrganizationPageDto<UserDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -119,7 +128,7 @@ public sealed class OrganizationController(
             return AuthenticationRequired();
         }
 
-        if (!HasAnyPermission(session, DirectoryReadPermissions))
+        if (!HasAnyPermission(session, ReferenceDataReadPermissions))
         {
             return Forbidden("当前账号没有读取角色目录的权限。");
         }
@@ -132,6 +141,94 @@ public sealed class OrganizationController(
         return Ok(await organizationService.ListRolesAsync(
             CreatePageQuery(parameters),
             cancellationToken).ConfigureAwait(false));
+    }
+
+    [HttpGet("permissions")]
+    [ProducesResponseType<IReadOnlyList<PermissionDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<IReadOnlyList<PermissionDto>>> ListPermissions(
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasAnyPermission(session, "org-role:查看", "org-role:授权"))
+        {
+            return Forbidden("当前账号没有读取权限目录的权限。");
+        }
+
+        return Ok(await organizationService.ListPermissionsAsync(cancellationToken).ConfigureAwait(false));
+    }
+
+    [HttpGet("roles/{roleId:guid}/permissions")]
+    [ProducesResponseType<RolePermissionsDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<RolePermissionsDto>> GetRolePermissions(
+        Guid roleId,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasAnyPermission(session, "org-role:查看", "org-role:授权"))
+        {
+            return Forbidden("当前账号没有读取角色权限的权限。");
+        }
+
+        var permissions = await organizationService.GetRolePermissionsAsync(roleId, cancellationToken)
+            .ConfigureAwait(false);
+        if (permissions is null)
+        {
+            return ProblemResponse(
+                StatusCodes.Status404NotFound,
+                "ROLE_NOT_FOUND",
+                "角色不存在",
+                "未找到指定的角色。");
+        }
+
+        Response.Headers.ETag = new Revision(permissions.Revision).ToStrongEntityTag();
+        return Ok(permissions);
+    }
+
+    [HttpPut("roles/{roleId:guid}/permissions")]
+    [ProducesResponseType<RolePermissionsDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<RolePermissionsDto>> ReplaceRolePermissions(
+        Guid roleId,
+        [FromBody] ReplaceRolePermissionsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-role:授权"))
+        {
+            return Forbidden("当前账号没有配置角色权限的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        var result = await organizationService.ReplaceRolePermissionsAsync(
+            roleId,
+            request,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+        var value = result.Value!.Data;
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        return Ok(value);
     }
 
     [HttpPost("roles")]
@@ -191,7 +288,7 @@ public sealed class OrganizationController(
             return AuthenticationRequired();
         }
 
-        if (!HasAnyPermission(session, DirectoryReadPermissions.Append("org-department:查看").ToArray()))
+        if (!HasAnyPermission(session, ReferenceDataReadPermissions.Append("org-department:查看").ToArray()))
         {
             return Forbidden("当前账号没有读取部门目录的权限。");
         }
@@ -216,7 +313,7 @@ public sealed class OrganizationController(
             return AuthenticationRequired();
         }
 
-        if (!HasAnyPermission(session, DirectoryReadPermissions.Append("org-department:查看").ToArray()))
+        if (!HasAnyPermission(session, ReferenceDataReadPermissions.Append("org-department:查看").ToArray()))
         {
             return Forbidden("当前账号没有读取职务目录的权限。");
         }
@@ -246,7 +343,7 @@ public sealed class OrganizationController(
             return AuthenticationRequired();
         }
 
-        if (!HasAnyPermission(session, "org-group:查看", "config-definition:查看", "config-definition:编辑"))
+        if (!HasAnyPermission(session, ReferenceDataReadPermissions))
         {
             return Forbidden("当前账号没有读取流程权限组的权限。");
         }

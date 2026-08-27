@@ -6,20 +6,8 @@ namespace FlowPilot.Application.Security;
 
 public static class BuiltinCatalog
 {
-    public const string SeedVersion = "202608260001";
+    public const string SeedVersion = "202608270001";
     public const int PermissionSnapshotVersion = 1;
-
-    public static Guid SystemDepartmentId { get; } =
-        Guid.Parse("f6a9320c-68c7-4f74-8ab0-f85e1dc564a2");
-
-    public const string SystemDepartmentCode = "system";
-    public const string SystemDepartmentName = "系统内置";
-
-    public static Guid SystemPositionId { get; } =
-        Guid.Parse("65a87fa5-f816-4475-88f3-857f3da4eb88");
-
-    public const string SystemPositionCode = "system";
-    public const string SystemPositionName = "系统内置";
 
     public static Guid ManagerPositionId { get; } =
         Guid.Parse("e9ac43b2-4ad7-4560-b857-5505a4a08def");
@@ -44,7 +32,7 @@ public static class BuiltinCatalog
 
     public const string SuperAdminLoginName = "superadmin";
     public const string SuperAdminDisplayName = "超级管理员";
-    public const string SuperAdminEmail = "superadmin@company.local";
+    public const string SuperAdminEmail = "";
 
     private static readonly BuiltinPermissionEntry[] PermissionItems =
     [

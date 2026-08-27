@@ -235,7 +235,7 @@ const defaultInstanceDateRange = () => {
   return { dateFrom: isoDate(start), dateTo: isoDate(end) };
 };
 const remotePurpose = (purpose: string) => purpose === "发起" ? "start" : purpose === "关闭" ? "close" : "review-or-accept";
-const positionIdByName = (name: string) => useOrganizationStore.getState().jobTitles.find((item) => item.name === name)?.id ?? name;
+const positionIdByName = (name: string) => useOrganizationStore.getState().jobTitles.find((item) => item.name === name)?.id;
 const roleIdsByNames = (names: string[]) => {
   const roles = useIdentityStore.getState().roles;
   return names.map((name) => roles.find((role) => role.name === name)?.id).filter((id): id is string => Boolean(id));
@@ -268,8 +268,8 @@ const remoteUserInput = (input: Partial<DomainUser> & { password?: string; newPa
   ...(input.name !== undefined ? { name: input.name } : {}),
   ...(input.email !== undefined ? { email: input.email } : {}),
   ...(input.authenticationMode !== undefined ? { authenticationMode: input.authenticationMode } : {}),
-  ...(input.department !== undefined ? { departmentId: input.department.at(-1) } : {}),
-  ...(input.jobTitle !== undefined ? { positionId: positionIdByName(input.jobTitle) } : {}),
+  ...(input.department !== undefined ? { departmentId: input.department.at(-1) ?? null } : {}),
+  ...(input.jobTitle !== undefined ? { positionId: input.jobTitle ? positionIdByName(input.jobTitle) ?? null : null } : {}),
   ...(input.roles !== undefined ? { roleIds: roleIdsByNames(input.roles) } : {}),
   ...(input.status !== undefined ? { status: remoteStatus(input.status) } : {}),
   ...(input.password ? { initialPassword: input.password } : {}),

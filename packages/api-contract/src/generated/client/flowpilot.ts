@@ -120,7 +120,6 @@ export const ProblemCode = {
   IDEMPOTENCY_REQUEST_IN_PROGRESS: 'IDEMPOTENCY_REQUEST_IN_PROGRESS',
   IMMUTABLE_BUILTIN_RESOURCE: 'IMMUTABLE_BUILTIN_RESOURCE',
   RESOURCE_IN_USE: 'RESOURCE_IN_USE',
-  USER_ROLE_REQUIRED: 'USER_ROLE_REQUIRED',
   DELETE_BLOCKED: 'DELETE_BLOCKED',
   VERSION_NOT_EDITABLE: 'VERSION_NOT_EDITABLE',
   VERSION_PUBLISHED: 'VERSION_PUBLISHED',
@@ -267,11 +266,12 @@ export interface UserDto {
   revision: number;
   loginName: string;
   name: string;
+  /** 普通用户为有效邮箱；超级管理员固定为空字符串。 */
   email: string;
   authenticationMode: AuthenticationMode;
   status: EnabledStatus;
-  department: DepartmentRef;
-  position: PositionRef;
+  department: DepartmentRef | null;
+  position: PositionRef | null;
   roles: RoleRef[];
   superAdmin: boolean;
   createdAt: string;
@@ -332,9 +332,11 @@ export interface CreateDomainUserRequest {
      */
   name: string;
   email: string;
-  departmentId: string;
-  positionId: string;
-  /** status=enabled 时至少包含一个启用角色；该跨字段约束由服务端校验。 */
+  /** @nullable */
+  departmentId?: string | null;
+  /** @nullable */
+  positionId?: string | null;
+  /** 可为空；用户没有角色时不获得普通角色权限。 */
   roleIds: string[];
   authenticationMode: CreateDomainUserRequestAuthenticationMode;
   status: EnabledStatus;
@@ -359,9 +361,11 @@ export interface CreatePasswordUserRequest {
      */
   name: string;
   email: string;
-  departmentId: string;
-  positionId: string;
-  /** status=enabled 时至少包含一个启用角色；该跨字段约束由服务端校验。 */
+  /** @nullable */
+  departmentId?: string | null;
+  /** @nullable */
+  positionId?: string | null;
+  /** 可为空；用户没有角色时不获得普通角色权限。 */
   roleIds: string[];
   authenticationMode: CreatePasswordUserRequestAuthenticationMode;
   /**
@@ -374,7 +378,7 @@ export interface CreatePasswordUserRequest {
 }
 
 /**
- * 启用账号必须至少分配一个启用角色；停用账号可暂时不分配角色，以便解除引用后删除。password 模式必须提交 initialPassword，domain 模式不得提交该字段。
+ * 部门、职务和角色均可为空。password 模式必须提交 initialPassword，domain 模式不得提交该字段。
  */
 export type CreateUserRequest = CreateDomainUserRequest | CreatePasswordUserRequest;
 
@@ -388,9 +392,11 @@ export interface UpdateUserRequest {
      */
   name?: string;
   email?: string;
-  departmentId?: string;
-  positionId?: string;
-  /** 更新后的账号如为 enabled，最终角色集合不得为空且至少包含一个启用角色。 */
+  /** @nullable */
+  departmentId?: string | null;
+  /** @nullable */
+  positionId?: string | null;
+  /** 可提交空数组以清空角色，账号状态不影响该约束。 */
   roleIds?: string[];
   authenticationMode?: AuthenticationMode;
   /**
@@ -402,7 +408,7 @@ export interface UpdateUserRequest {
 }
 
 /**
- * 将账号启用前，服务端必须确认账号至少具有一个启用角色，否则返回 409 USER_ROLE_REQUIRED。
+ * 启用或停用账号；角色可以为空。
  */
 export interface SetStatusRequest {
   status: EnabledStatus;

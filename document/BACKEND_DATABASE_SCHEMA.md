@@ -28,10 +28,10 @@
 - `id uniqueidentifier` 主键。
 - `login_name nvarchar(100)`：界面显示和登录输入使用的规范账号，不包含密码或域地址。
 - `normalized_login_name nvarchar(100)`：唯一索引。
-- `display_name nvarchar(100)`、`email nvarchar(320)`。
+- `display_name nvarchar(100)`、`email nvarchar(320)`；普通用户邮箱非空，超级管理员固定为空字符串。
 - `authentication_mode nvarchar(20)`：`domain | password`。
 - `password_hash nvarchar(500) null`：仅本地密码账号保存 ASP.NET Core `PasswordHasher<TUser>` 生成的自描述、版本化编码字符串；应用通过 `SuccessRehashNeeded` 处理参数升级，不由数据库解释内部格式。
-- `department_id uniqueidentifier`、`position_id uniqueidentifier`：均为必填外键；任何用户都必须归属一个有效部门和职务。
+- `department_id uniqueidentifier null`、`position_id uniqueidentifier null`：可空外键，普通用户按需要维护；超级管理员两项固定为空。
 - `is_enabled bit`：`1` 表示启用，`0` 表示停用；API 映射为 `enabled | disabled`。
 - `is_builtin_super_admin bit`：数据库内只能有一条为 `1`。
 - `revision int`、`created_at`、`updated_at`、`created_by`、`updated_by`。
@@ -240,7 +240,7 @@ Outbox 的业务事件唯一键必须包含事件稳定标识、激活序号和�
 ## 8. 迁移和验收要求
 
 - 首次迁移依次创建 schema、基础表、外键、CHECK、唯一约束和查询索引；EF Core migration 作为结构演进依据，生产由 DBA 执行已审查 SQL，业务结构版本和校验和记录在 `flowpilot.schema_migrations`。
-- 结构迁移完成后由独立事务型种子 CLI 幂等创建系统内置部门/职务、初始职务“经理”“员工”、唯一超级管理员角色及账号、内置权限和关联。首次创建超级管理员时只从仓库外 Secrets JSON 读取初始密码并通过 `PasswordHasher<TUser>` 保存散列；重复执行不得覆盖已有密码。
+- 结构迁移完成后由独立事务型种子 CLI 幂等创建初始职务“经理”“员工”、唯一超级管理员角色及账号、内置权限和关联；不创建“系统内部”部门或职务占位项。超级管理员邮箱、部门和职务为空。首次创建超级管理员时只从仓库外 Secrets JSON 读取初始密码并通过 `PasswordHasher<TUser>` 保存散列；重复执行不得覆盖已有密码。
 - 就绪检查验证结构版本和 `builtin-seed` 版本与当前构建一致；权限目录、超级管理员及其关联由幂等种子事务一次性维护，数据库约束负责唯一性和引用完整性。
 - 每次迁移具有固定 ID 和校验和；校验和由不含 ledger/state 自引用写入语句的规范化 schema DDL 集合在模块加载时计算 SHA-256，避免手工常量与实际 DDL 漂移。已经在任何环境执行过的迁移文件不得改写，只能新增后续迁移。
 - 迁移账号拥有 DDL 权限；应用运行账号只拥有 `flowpilot` schema 内所需的 DML、执行权限、迁移/种子版本读取权限，以及核对表、列、具名约束、显式索引和触发器名称所需的元数据可见性，不拥有 DDL 权限。

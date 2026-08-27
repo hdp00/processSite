@@ -239,14 +239,6 @@ export function UserManagementPage() {
     });
   };
   const changeUserStatus = async (record: UserRecord) => {
-    const enabledRoleIds = new Set(roles.filter((role) => role.status === "启用").map((role) => role.id));
-    const enabledRoleNames = new Set(roles.filter((role) => role.status === "启用").map((role) => role.name));
-    const hasEnabledRole = record.roleIds?.some((roleId) => enabledRoleIds.has(roleId))
-      ?? record.roles.some((roleName) => enabledRoleNames.has(roleName));
-    if (record.status === "停用" && !hasEnabledRole) {
-      message.warning("请先为用户分配至少一个角色，再启用账号");
-      return;
-    }
     try {
       const resource = await flowPilotApi.directory.userResource(record.id);
       const updated = await flowPilotApi.directory.updateUserStatus(
@@ -304,7 +296,6 @@ export function UserManagementPage() {
     });
   };
 
-  const activeJobTitles = jobTitles.filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
   const roleOptions = roles.map((role) => role.name);
   const assignableRoleOptions = roles.filter((role) => !role.builtIn && role.status === "启用").map((role) => role.name);
   const managerTitleName = jobTitles.find((item) => item.id === "JOB-001")?.name;
@@ -367,7 +358,7 @@ export function UserManagementPage() {
     setEditorDirty(false);
     form.resetFields();
     form.setFieldsValue(user === "new" ? {
-      account: "", email: "", name: "", authenticationMode: "domain", password: "", newPassword: "", department: [], jobTitle: activeJobTitles.find((item) => item.id === "JOB-002")?.name ?? activeJobTitles[0]?.name, roles: [], status: true,
+      account: "", email: "", name: "", authenticationMode: "domain", password: "", newPassword: "", department: [], jobTitle: undefined, roles: [], status: true,
     } : { ...user, newPassword: "" });
     if (user !== "new") {
       void flowPilotApi.directory.userResource(user.id).then((resource) => setEditorEtag(resource.etag)).catch(() => message.error("用户最新版本加载失败，请刷新后重试"));
@@ -376,11 +367,11 @@ export function UserManagementPage() {
 
   const columns: TableProps<UserRecord>["columns"] = [
     { title: "用户", dataIndex: "name", width: 190, fixed: "left", render: (_, record) => <Space size={6}><PersonChip name={record.name} detail={record.account} />{record.builtIn ? <Tag color="gold" icon={<LockOutlined />}>内置</Tag> : null}</Space> },
-    { title: "邮箱", dataIndex: "email", width: 220, ellipsis: true },
+    { title: "邮箱", dataIndex: "email", width: 220, ellipsis: true, render: (value: string) => value || "—" },
     { title: "登录方式", dataIndex: "authenticationMode", width: 106, render: (mode: AuthenticationMode) => <Tag color={mode === "domain" ? "blue" : "default"}>{authenticationModeLabel[mode]}</Tag> },
-    { title: "部门", dataIndex: "departmentPath", width: 160, ellipsis: true },
-    { title: "职务", dataIndex: "jobTitle", width: 100, render: (value: JobTitle) => <Tag color={value === managerTitleName ? "purple" : "default"}>{value}</Tag> },
-    { title: "角色（可多选）", dataIndex: "roles", width: 260, render: (roles: string[]) => <Space size={[4, 4]} wrap>{roles.map((role) => <Tag key={role} color={role === "超级管理员" ? "gold" : role === "流程管理员" ? "blue" : undefined}>{role}</Tag>)}</Space> },
+    { title: "部门", dataIndex: "departmentPath", width: 160, ellipsis: true, render: (value: string) => value || "—" },
+    { title: "职务", dataIndex: "jobTitle", width: 100, render: (value: JobTitle) => value ? <Tag color={value === managerTitleName ? "purple" : "default"}>{value}</Tag> : "—" },
+    { title: "角色（可多选）", dataIndex: "roles", width: 260, render: (roles: string[]) => roles.length ? <Space size={[4, 4]} wrap>{roles.map((role) => <Tag key={role} color={role === "超级管理员" ? "gold" : role === "流程管理员" ? "blue" : undefined}>{role}</Tag>)}</Space> : "—" },
     { title: "状态", dataIndex: "status", width: 88, render: (status: EnableStatus) => <StatusTag status={status} /> },
     { title: "最近登录", dataIndex: "lastLogin", width: 154, render: (value: string) => formatDisplayDateTime(value) },
     {
@@ -427,10 +418,13 @@ export function UserManagementPage() {
           type="info"
           showIcon
           message={drawerUser === "new" ? "普通用户默认使用域登录" : "可调整普通用户的登录方式"}
-          description={drawerUser === "new" ? "域登录不设置本地密码；密码登录必须填写初始密码。部门、职务与角色仍相互独立。" : "切换为密码登录时需要设置新密码；切换为域登录后，密码由域系统维护。账号状态仍通过列表操作处理。"}
+          description={drawerUser === "new" ? "域登录不设置本地密码；密码登录必须填写初始密码。部门、职务和角色均可留空。" : "切换为密码登录时需要设置新密码；部门、职务和角色均可留空。账号状态仍通过列表操作处理。"}
         />
         <Form form={form} layout="vertical" requiredMark="optional" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
-          const path = values.department.length === 1 ? departmentOptions.find((item) => item.value === values.department[0])?.label : `${departmentOptions.find((item) => item.value === values.department[0])?.label} / ${departmentOptions.find((item) => item.value === values.department[0])?.children?.find((item) => item.value === values.department[1])?.label}`;
+          const department = Array.isArray(values.department) ? values.department : [];
+          const rootDepartment = departmentOptions.find((item) => item.value === department[0]);
+          const childDepartment = rootDepartment?.children?.find((item) => item.value === department[1]);
+          const path = department.length === 0 ? "" : department.length === 1 ? rootDepartment?.label ?? "" : `${rootDepartment?.label ?? ""} / ${childDepartment?.label ?? ""}`;
           try {
             if (drawerUser === "new") {
               const created = await flowPilotApi.directory.createUser({ account: values.account, email: String(values.email).trim(), authenticationMode: values.authenticationMode, password: values.authenticationMode === "password" ? values.password : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用" });
@@ -467,26 +461,15 @@ export function UserManagementPage() {
           <Form.Item name="authenticationMode" label="登录方式" rules={[{ required: true, message: "请选择登录方式" }]} extra="域登录由正式后端连接公司域服务校验；浏览器 Mock 仍使用统一演示密码。"><Select options={[{ value: "domain", label: "域登录（默认）" }, { value: "password", label: "密码登录" }]} /></Form.Item>
           {drawerUser === "new" && selectedAuthenticationMode === "password" && <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 1, message: "密码至少 1 个字符" }]} extra="仅密码登录用户需要设置；正式后端使用 Node.js scrypt 保存版本化散列。"><Input.Password maxLength={64} /></Form.Item>}
           {drawerUser !== "new" && drawerUser?.authenticationMode === "domain" && selectedAuthenticationMode === "password" && <Form.Item name="newPassword" label="新密码" rules={[{ required: true, min: 1, message: "切换为密码登录时必须设置新密码" }]}><Input.Password maxLength={64} /></Form.Item>}
-          <Form.Item name="department" label="所属部门" rules={[{ required: true, message: "请选择部门" }]} extra="可选择一级节点（如研发）或二级节点（如研发 / 软件）。"><Cascader changeOnSelect showSearch options={departmentOptions} placeholder="请选择一级或二级部门" /></Form.Item>
+          <Form.Item name="department" label="所属部门" extra="可留空，也可选择一级或二级部门。"><Cascader changeOnSelect showSearch allowClear options={departmentOptions} placeholder="未设置" /></Form.Item>
           {drawerUser === "new" ? <div className="gov-form-grid">
-            <Form.Item name="jobTitle" label="职务" rules={[{ required: true }]}><Select options={selectableJobTitles.map((item) => ({ value: item.name, label: item.status === "停用" ? `${item.name}（已停用，仅保留历史）` : item.name }))} /></Form.Item>
+            <Form.Item name="jobTitle" label="职务"><Select allowClear placeholder="未设置" options={selectableJobTitles.map((item) => ({ value: item.name, label: item.status === "停用" ? `${item.name}（已停用，仅保留历史）` : item.name }))} /></Form.Item>
             <Form.Item name="status" label="初始账号状态" valuePropName="checked"><Switch checkedChildren="启用" unCheckedChildren="停用" /></Form.Item>
-          </div> : <Form.Item name="jobTitle" label="职务" rules={[{ required: true }]}><Select options={selectableJobTitles.map((item) => ({ value: item.name, label: item.status === "停用" ? `${item.name}（已停用，仅保留历史）` : item.name }))} /></Form.Item>}
+          </div> : <Form.Item name="jobTitle" label="职务"><Select allowClear placeholder="未设置" options={selectableJobTitles.map((item) => ({ value: item.name, label: item.status === "停用" ? `${item.name}（已停用，仅保留历史）` : item.name }))} /></Form.Item>}
           <Form.Item
             name="roles"
             label="系统角色"
-            rules={[{
-              validator: (_, value) => {
-                const hasAssignedRole = Array.isArray(value) && value.length > 0;
-                const isStoppedExistingUser = drawerUser !== "new" && drawerUser?.status === "停用";
-                return hasAssignedRole || isStoppedExistingUser
-                  ? Promise.resolve()
-                  : Promise.reject(new Error("启用账号至少需要一个角色；如需删除用户，请先停用账号"));
-              },
-            }]}
-            extra={drawerUser !== "new" && drawerUser?.status === "停用"
-              ? "停用账号可以清空全部角色，以便解除引用后删除；超级管理员角色不能分配给其他用户。"
-              : "超级管理员为唯一系统内置账号，不能分配给其他用户。"}
+            extra="角色可留空；超级管理员角色不能分配给其他用户。"
           ><Select mode="multiple" showSearch optionFilterProp="label" maxTagCount="responsive" options={assignableRoleOptions.map((value) => ({ value, label: value }))} /></Form.Item>
         </Form>
       </Drawer>
@@ -506,12 +489,16 @@ export function DepartmentManagementPage() {
   const setJobTitles = useOrganizationStore((state) => state.setJobTitles);
   const identityUsers = useIdentityStore((state) => state.users);
   const departments = useMemo(() => storedDepartments.map((department) => {
-    const users = identityUsers.filter((user) => user.department.includes(department.key)).length;
+    const users = isBrowserMockMode
+      ? identityUsers.filter((user) => user.department.includes(department.key)).length
+      : department.users;
     return { ...department, users, referenced: users > 0 };
   }), [identityUsers, storedDepartments]);
   const jobTitles = useMemo(() => storedJobTitles.map((jobTitle) => ({
     ...jobTitle,
-    users: identityUsers.filter((user) => user.jobTitle === jobTitle.name).length,
+    users: isBrowserMockMode
+      ? identityUsers.filter((user) => user.jobTitle === jobTitle.name).length
+      : jobTitle.users,
   })), [identityUsers, storedJobTitles]);
   const [selectedKey, setSelectedKey] = useState("rd");
   const [editor, setEditor] = useState<{ mode: "new-root" | "new-child" | "edit"; record?: DepartmentRecord } | null>(null);
@@ -610,6 +597,7 @@ export function DepartmentManagementPage() {
     children: departments.filter((item) => item.parentKey === root.key).sort((a, b) => a.sort - b.sort).map((child) => ({ key: child.key, title: <span className="gov-tree-title"><span>{child.name}</span><Tag bordered={false}>{child.users} 人</Tag>{child.status === "停用" ? <StatusPill status="停用" compact /> : null}</span> })),
   }));
   const openDepartmentEditor = (mode: "new-root" | "new-child" | "edit") => {
+    if (mode !== "new-root" && !selected) return;
     const record = mode === "edit" ? selected : undefined;
     setEditor({ mode, record });
     setDepartmentEtag(undefined);
@@ -673,7 +661,8 @@ export function DepartmentManagementPage() {
           <Input allowClear prefix={<SearchOutlined />} placeholder="搜索部门" className="gov-tree-search" />
           <Tree blockNode defaultExpandAll selectedKeys={[selectedKey]} treeData={treeData} onSelect={(keys) => keys[0] && setSelectedKey(String(keys[0]))} />
         </Card>
-        <Card className="content-card gov-detail-card" title="部门详情" extra={canEditOrganization ? <Space><Button icon={<EditOutlined />} onClick={() => openDepartmentEditor("edit")}>编辑</Button><Button type="primary" icon={<PlusOutlined />} disabled={selected.level === 2} onClick={() => openDepartmentEditor("new-child")}>添加下级</Button></Space> : null}>
+        <Card className="content-card gov-detail-card" title="部门详情" extra={canEditOrganization && selected ? <Space><Button icon={<EditOutlined />} onClick={() => openDepartmentEditor("edit")}>编辑</Button><Button type="primary" icon={<PlusOutlined />} disabled={selected.level === 2} onClick={() => openDepartmentEditor("new-child")}>添加下级</Button></Space> : null}>
+          {selected ? <>
           <div className="gov-detail-hero-row"><span className="gov-detail-icon"><ApartmentOutlined /></span><div><Typography.Title level={4}>{selected.name}</Typography.Title><Typography.Text type="secondary">完整路径：{selected.path}</Typography.Text></div><StatusTag status={selected.status} /></div>
           <Descriptions bordered column={2} size="middle" items={[
             { key: "level", label: "部门层级", children: `${selected.level} 级` },
@@ -690,6 +679,7 @@ export function DepartmentManagementPage() {
               {canDeleteOrganization && <Popconfirm disabled={selected.referenced} title="确认删除此部门？" onConfirm={() => void deleteDepartment(selected)}><Button danger disabled={selected.referenced} icon={<DeleteOutlined />}>删除部门</Button></Popconfirm>}
             </Space>}
           </div>
+          </> : <Alert showIcon type="info" message="暂无部门" description="当前可以不维护部门；需要使用部门时再新增即可。" />}
         </Card>
       </div>
       </> : <>
@@ -699,18 +689,20 @@ export function DepartmentManagementPage() {
           <Table<JobTitleRecord> rowKey="id" columns={jobTitleColumns} dataSource={[...jobTitles].sort((a, b) => a.sort - b.sort)} scroll={{ x: 850 }} pagination={false} />
         </Card>
       </>}
-      <Drawer width={520} open={section === "departments" && editor !== null} onClose={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })} title={editor?.mode === "edit" ? "编辑部门" : editor?.mode === "new-child" ? `在“${selected.name}”下新增二级部门` : "新增一级部门"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
-        {editor?.mode === "new-child" && selected.level === 2 ? <Alert type="error" showIcon message="二级部门不能继续添加下级" /> : null}
+      <Drawer width={520} open={section === "departments" && editor !== null} onClose={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })} title={editor?.mode === "edit" ? "编辑部门" : editor?.mode === "new-child" ? `在“${selected?.name ?? ""}”下新增二级部门` : "新增一级部门"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
+        {editor?.mode === "new-child" && selected?.level === 2 ? <Alert type="error" showIcon message="二级部门不能继续添加下级" /> : null}
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
           try {
             if (editor?.mode === "edit") {
+              if (!selected) throw new Error("未选择部门");
               if (!departmentEtag) throw new Error("部门最新版本尚未加载完成");
               const saved = await flowPilotApi.organization.updateDepartment(selected.key, { name: values.name, sortOrder: values.sort, status: values.status ? "启用" : "停用", description: values.description }, departmentEtag);
               cacheDepartment(saved);
               message.success("部门信息已保存");
             } else {
               const isChild = editor?.mode === "new-child";
-              const saved = await flowPilotApi.organization.createDepartment({ name: values.name, parentId: isChild ? selected.key : undefined, sortOrder: values.sort, description: values.description });
+              if (isChild && !selected) throw new Error("未选择上级部门");
+              const saved = await flowPilotApi.organization.createDepartment({ name: values.name, parentId: isChild ? selected!.key : undefined, sortOrder: values.sort, description: values.description });
               cacheDepartment(saved);
               setSelectedKey(saved.id);
               message.success("部门已创建");
@@ -1000,12 +992,12 @@ export function PermissionManagementPage() {
     [identityRoles, permissionsByRole],
   );
   const requestedRoleId = searchParams.get("roleId");
-  const initialRoleId = availableRoles.some((role) => role.id === requestedRoleId) ? requestedRoleId! : "ROLE-002";
+  const initialRoleId = availableRoles.some((role) => role.id === requestedRoleId) ? requestedRoleId! : availableRoles[0]?.id ?? "";
   const [roleId, setRoleId] = useState(initialRoleId);
   const [granted, setGranted] = useState(() => new Set(permissionsByRole[initialRoleId] ?? []));
   const [pendingRoleId, setPendingRoleId] = useState<string | null>(null);
   const currentRole = availableRoles.find((role) => role.id === roleId) ?? availableRoles[0];
-  const isBuiltInRole = Boolean(currentRole.builtIn);
+  const isBuiltInRole = Boolean(currentRole?.builtIn);
   const isDirty = !permissionSetsEqual(granted, permissionsByRole[roleId] ?? []);
   const permissionStats = summarizePermissions(granted);
   const blocker = useBlocker(useCallback(
@@ -1017,6 +1009,17 @@ export function PermissionManagementPage() {
     event.preventDefault();
     event.returnValue = "";
   }, [isDirty]));
+  useEffect(() => {
+    const nextRoleId = availableRoles.some((role) => role.id === roleId)
+      ? roleId
+      : availableRoles.some((role) => role.id === requestedRoleId)
+        ? requestedRoleId!
+        : availableRoles[0]?.id ?? "";
+    if (nextRoleId === roleId) return;
+    setRoleId(nextRoleId);
+    setGranted(new Set(permissionsByRole[nextRoleId] ?? []));
+    if (nextRoleId) setSearchParams({ roleId: nextRoleId }, { replace: true });
+  }, [availableRoles, permissionsByRole, requestedRoleId, roleId, setSearchParams]);
   useEffect(() => {
     let cancelled = false;
     void flowPilotApi.organization.permissionCatalog().then((items) => {
@@ -1040,6 +1043,7 @@ export function PermissionManagementPage() {
     return () => { cancelled = true; };
   }, []);
   useEffect(() => {
+    if (!roleId) return;
     let cancelled = false;
     void flowPilotApi.organization.rolePermissions(roleId).then((resource) => {
       if (cancelled) return;
@@ -1099,7 +1103,7 @@ export function PermissionManagementPage() {
   const savePermissions = async () => {
     try {
       await persistPermissions();
-      message.success(`${currentRole.name} 的权限已保存`);
+      message.success(`${currentRole?.name ?? "当前角色"} 的权限已保存`);
     } catch {
       message.error("权限保存失败，请刷新后重试");
     }
@@ -1114,7 +1118,7 @@ export function PermissionManagementPage() {
         description={isBuiltInRole ? "该角色始终拥有全部页面和动作权限，并可越过流程权限组执行所有流程的发起与审核；它不会出现在流程人员名单或候选人选择器中。" : "日常新增、修改和启用/停用统一由“编辑”权限控制；发布、授权、重置密码、导出等敏感动作仍单独授权。某个流程节点由谁处理，仍由“流程权限组”配置。"}
       />
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}>
-        <div className="gov-permission-toolbar"><div><Select aria-label="选择要配置的角色" showSearch optionFilterProp="label" value={roleId} onChange={selectRole} options={availableRoles.map((role) => ({ value: role.id, label: `${role.name}${role.builtIn ? " · 系统内置" : role.status === "停用" ? " · 已停用" : ""}` }))} /></div><Space><Tag color={isBuiltInRole ? "gold" : isDirty ? "gold" : "green"}>{isBuiltInRole ? "全部权限 · 不可修改" : isDirty ? "有未保存修改" : "已保存"}</Tag><Button disabled={isBuiltInRole || !isDirty} onClick={() => { setGranted(new Set(permissionsByRole[roleId] ?? [])); message.info("已恢复当前角色上次保存的权限"); }}>恢复</Button><Button disabled={isBuiltInRole || !isDirty} type="primary" icon={isBuiltInRole ? <LockOutlined /> : <SafetyCertificateOutlined />} onClick={savePermissions}>保存权限</Button></Space></div>
+        <div className="gov-permission-toolbar"><div><Select aria-label="选择要配置的角色" showSearch optionFilterProp="label" placeholder="暂无角色" value={roleId || undefined} onChange={selectRole} options={availableRoles.map((role) => ({ value: role.id, label: `${role.name}${role.builtIn ? " · 系统内置" : role.status === "停用" ? " · 已停用" : ""}` }))} /></div><Space><Tag color={isBuiltInRole ? "gold" : isDirty ? "gold" : "green"}>{isBuiltInRole ? "全部权限 · 不可修改" : isDirty ? "有未保存修改" : "已保存"}</Tag><Button disabled={!roleId || isBuiltInRole || !isDirty} onClick={() => { setGranted(new Set(permissionsByRole[roleId] ?? [])); message.info("已恢复当前角色上次保存的权限"); }}>恢复</Button><Button disabled={!roleId || isBuiltInRole || !isDirty} type="primary" icon={isBuiltInRole ? <LockOutlined /> : <SafetyCertificateOutlined />} onClick={savePermissions}>保存权限</Button></Space></div>
         <div className="gov-permission-summary"><div><strong>{permissionStats.pagePermissions}</strong><span>已授权页面</span></div><Progress percent={Math.round(granted.size / catalogRows.reduce((sum, row) => sum + row.actions.length, 0) * 100)} showInfo={false} /><Typography.Text type="secondary">已选择 {permissionStats.actionPermissions} 个动作；保存后角色列表统计同步更新，不会改变流程待办。</Typography.Text></div>
         <div className="gov-permission-matrix">
           <div className="gov-permission-row gov-permission-head"><span>模块 / 页面</span><span>页面说明</span><span>动作权限</span></div>
@@ -1133,7 +1137,7 @@ export function PermissionManagementPage() {
           <Button key="save" type="primary" onClick={() => { void persistPermissions().then((nextMap) => { if (pendingRoleId) switchRole(pendingRoleId, nextMap); setPendingRoleId(null); }).catch(() => message.error("权限保存失败，请刷新后重试")); }}>保存并切换</Button>,
         ]}
       >
-        <Typography.Paragraph>你修改了“{currentRole.name}”的权限。切换角色前请选择如何处理这些修改。</Typography.Paragraph>
+        <Typography.Paragraph>你修改了“{currentRole?.name ?? "当前角色"}”的权限。切换角色前请选择如何处理这些修改。</Typography.Paragraph>
       </Modal>
       <Modal
         open={blocker.state === "blocked"}
@@ -1147,7 +1151,7 @@ export function PermissionManagementPage() {
           <Button key="save" type="primary" onClick={() => { void persistPermissions().then(() => { if (blocker.state === "blocked") blocker.proceed(); }).catch(() => message.error("权限保存失败，请刷新后重试")); }}>保存并离开</Button>,
         ]}
       >
-        <Typography.Paragraph>“{currentRole.name}”存在未保存的权限修改。直接离开会丢失这些修改。</Typography.Paragraph>
+        <Typography.Paragraph>“{currentRole?.name ?? "当前角色"}”存在未保存的权限修改。直接离开会丢失这些修改。</Typography.Paragraph>
       </Modal>
     </div>
   );

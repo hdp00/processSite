@@ -51,6 +51,25 @@ public sealed record RoleDto(
     int PagePermissionCount,
     int ActionPermissionCount);
 
+public sealed record PermissionDto(
+    string Code,
+    string Name,
+    string Category,
+    string Kind,
+    string Description);
+
+public sealed record RolePermissionsDto(
+    Guid RoleId,
+    int Revision,
+    IReadOnlyList<string> PermissionCodes);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ReplaceRolePermissionsRequest
+{
+    [Required]
+    public required IReadOnlyList<string> PermissionCodes { get; init; }
+}
+
 public sealed record ProcessDefinitionRefDto(Guid Id, string Code, string Name);
 
 public sealed record WorkflowPermissionGroupDto(
@@ -112,9 +131,9 @@ public sealed record CreateUserRequest
     [Required, EmailAddress, StringLength(320)]
     public required string Email { get; init; }
 
-    public required Guid DepartmentId { get; init; }
+    public Guid? DepartmentId { get; init; }
 
-    public required Guid PositionId { get; init; }
+    public Guid? PositionId { get; init; }
 
     [Required]
     public required IReadOnlyList<Guid> RoleIds { get; init; }
@@ -235,6 +254,21 @@ public interface IOrganizationService
 
     Task<OrganizationPageDto<RoleDto>> ListRolesAsync(
         OrganizationPageQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<PermissionDto>> ListPermissionsAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<RolePermissionsDto?> GetRolePermissionsAsync(
+        Guid roleId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<RolePermissionsDto>> ReplaceRolePermissionsAsync(
+        Guid roleId,
+        ReplaceRolePermissionsRequest request,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<DepartmentDto>> ListDepartmentsAsync(

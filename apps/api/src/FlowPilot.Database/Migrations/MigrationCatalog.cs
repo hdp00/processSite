@@ -6,10 +6,12 @@ namespace FlowPilot.Database.Migrations;
 
 public static class MigrationCatalog
 {
-    public const string CurrentSchemaVersion = "202608260001";
-    private const string CurrentMigrationName = "initial_schema";
-    private const string CurrentResourceSuffix =
-        ".Migrations.202608260001_initial_schema.sql";
+    public const string CurrentSchemaVersion = "202608270001";
+    private static readonly (string Id, string Name, string ResourceSuffix)[] MigrationDefinitions =
+    [
+        ("202608260001", "initial_schema", ".Migrations.202608260001_initial_schema.sql"),
+        ("202608270001", "optional_user_organization", ".Migrations.202608270001_optional_user_organization.sql"),
+    ];
 
     private static readonly Lazy<ReadOnlyCollection<SchemaMigration>> DefaultMigrations =
         new(LoadDefaultMigrations, LazyThreadSafetyMode.ExecutionAndPublication);
@@ -19,34 +21,34 @@ public static class MigrationCatalog
     private static ReadOnlyCollection<SchemaMigration> LoadDefaultMigrations()
     {
         var assembly = typeof(MigrationCatalog).Assembly;
-        var matches = assembly
-            .GetManifestResourceNames()
-            .Where(name => name.EndsWith(CurrentResourceSuffix, StringComparison.Ordinal))
-            .ToArray();
-
-        if (matches.Length != 1)
-        {
-            throw new DatabaseMigrationException(DatabaseMigrationFailure.MigrationCatalogInvalid);
-        }
-
         try
         {
-            using var stream = assembly.GetManifestResourceStream(matches[0]);
-            if (stream is null)
+            var resourceNames = assembly.GetManifestResourceNames();
+            var migrations = new List<SchemaMigration>(MigrationDefinitions.Length);
+            foreach (var definition in MigrationDefinitions)
             {
-                throw new DatabaseMigrationException(DatabaseMigrationFailure.MigrationCatalogInvalid);
+                var matches = resourceNames
+                    .Where(name => name.EndsWith(definition.ResourceSuffix, StringComparison.Ordinal))
+                    .ToArray();
+                if (matches.Length != 1)
+                {
+                    throw new DatabaseMigrationException(DatabaseMigrationFailure.MigrationCatalogInvalid);
+                }
+
+                using var stream = assembly.GetManifestResourceStream(matches[0]);
+                if (stream is null)
+                {
+                    throw new DatabaseMigrationException(DatabaseMigrationFailure.MigrationCatalogInvalid);
+                }
+
+                using var reader = new StreamReader(
+                    stream,
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true),
+                    detectEncodingFromByteOrderMarks: true);
+                migrations.Add(new SchemaMigration(definition.Id, definition.Name, reader.ReadToEnd()));
             }
 
-            using var reader = new StreamReader(
-                stream,
-                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true),
-                detectEncodingFromByteOrderMarks: true);
-            var migration = new SchemaMigration(
-                CurrentSchemaVersion,
-                CurrentMigrationName,
-                reader.ReadToEnd());
-
-            return Array.AsReadOnly([migration]);
+            return Array.AsReadOnly(migrations.ToArray());
         }
         catch (DatabaseMigrationException)
         {

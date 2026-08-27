@@ -580,8 +580,6 @@ const userCreateHandler = http.post(`${API_ROOT}/users`, async ({ request }) => 
     if (authenticationMode === "password" && !password) errors.push(issue("password", "REQUIRED", "密码登录用户必须设置初始密码。"));
     if (authenticationMode === "domain" && password !== undefined) errors.push(issue("password", "PASSWORD_NOT_ALLOWED", "域登录用户不设置本地密码。"));
     if (!name) errors.push(issue("name", "REQUIRED", "请输入员工姓名。"));
-    if (!department?.length) errors.push(issue("department", "REQUIRED", "请选择所属部门。"));
-    if (!jobTitle) errors.push(issue("jobTitle", "REQUIRED", "请选择职务。"));
     if (roles === undefined) errors.push(issue("roles", "INVALID_TYPE", "角色必须是字符串数组。"));
     if (!ACTIVE_STATUSES.has(status as EnableStatus)) errors.push(issue("status", "INVALID_STATUS", "账号状态无效。"));
 
@@ -592,8 +590,6 @@ const userCreateHandler = http.post(`${API_ROOT}/users`, async ({ request }) => 
     if (account?.toLowerCase() === "superadmin" || parsed.builtIn === true) errors.push(issue("account", "RESERVED_ACCOUNT", "不能创建系统内置账号。"));
     const resolvedRoles = resolveRoleNames(roles ?? []);
     if (resolvedRoles.invalid.length) errors.push(issue("roles", "ROLE_NOT_FOUND", `以下角色不存在或不可分配：${resolvedRoles.invalid.join("、")}。`));
-    const enabledRoleNames = new Set(useIdentityStore.getState().roles.filter((role) => role.status === "启用").map((role) => role.name));
-    if (status === "启用" && !resolvedRoles.names.some((role) => enabledRoleNames.has(role))) errors.push(issue("roles", "ROLE_REQUIRED", "启用账号至少需要一个启用角色。"));
     if (errors.length) return validationProblem(request, errors);
 
     const created: DomainUser = {
@@ -651,8 +647,6 @@ const userUpdateHandler = http.patch(`${API_ROOT}/users/:userId`, async ({ reque
   if (!email) errors.push(issue("email", "REQUIRED", "请输入邮箱。"));
   else if (!EMAIL_PATTERN.test(email)) errors.push(issue("email", "INVALID_EMAIL", "邮箱格式不正确。"));
   if (!name) errors.push(issue("name", "REQUIRED", "请输入员工姓名。"));
-  if (!department?.length) errors.push(issue("department", "REQUIRED", "请选择所属部门。"));
-  if (!jobTitle) errors.push(issue("jobTitle", "REQUIRED", "请选择职务。"));
   if (roleReferences === undefined) errors.push(issue("roles", "INVALID_TYPE", "角色必须是字符串数组。"));
   if (!AUTHENTICATION_MODES.has(authenticationMode as AuthenticationMode)) errors.push(issue("authenticationMode", "INVALID_AUTHENTICATION_MODE", "登录方式无效。"));
   const switchingToPassword = current.authenticationMode === "domain" && authenticationMode === "password";
@@ -666,8 +660,6 @@ const userUpdateHandler = http.patch(`${API_ROOT}/users/:userId`, async ({ reque
   if (name && users.some((user) => user.id !== current.id && user.name === name)) errors.push(issue("name", "NAME_CONFLICT", "员工姓名已存在；当前原型的名称关联要求姓名唯一。"));
   const resolvedRoles = resolveRoleNames(roleReferences ?? []);
   if (resolvedRoles.invalid.length) errors.push(issue("roles", "ROLE_NOT_FOUND", `以下角色不存在或不可分配：${resolvedRoles.invalid.join("、")}。`));
-  const enabledRoleNames = new Set(useIdentityStore.getState().roles.filter((role) => role.status === "启用").map((role) => role.name));
-  if (status === "启用" && !resolvedRoles.names.some((role) => enabledRoleNames.has(role))) errors.push(issue("roles", "ROLE_REQUIRED", "启用账号至少需要一个启用角色。"));
   if (errors.length) return validationProblem(request, errors);
 
   const updated: DomainUser = {

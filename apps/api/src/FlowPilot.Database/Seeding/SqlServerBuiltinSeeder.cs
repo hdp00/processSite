@@ -55,7 +55,7 @@ public sealed class BuiltinSeedException : InvalidOperationException
 public static class SqlServerBuiltinSeeder
 {
     private const string SeedLockResource = "FlowPilot:builtin-seed";
-    private const string SeedResourceSuffix = ".Seeding.202608260001_builtin_seed.sql";
+    private const string SeedResourceSuffix = ".Seeding.202608270001_builtin_seed.sql";
     private const string InitialPasswordPlaceholder = "<仅首次初始化使用>";
     private const int MaximumInitialPasswordLength = 200;
 
@@ -363,13 +363,6 @@ public static class SqlServerBuiltinSeeder
 
     private static void AddCatalogParameters(SqlCommand command, string? initialPasswordHash)
     {
-        AddGuid(command, "@system_department_id", BuiltinCatalog.SystemDepartmentId);
-        AddNVarChar(command, "@system_department_code", 100, BuiltinCatalog.SystemDepartmentCode);
-        AddNVarChar(command, "@system_department_name", 200, BuiltinCatalog.SystemDepartmentName);
-
-        AddGuid(command, "@system_position_id", BuiltinCatalog.SystemPositionId);
-        AddNVarChar(command, "@system_position_code", 100, BuiltinCatalog.SystemPositionCode);
-        AddNVarChar(command, "@system_position_name", 200, BuiltinCatalog.SystemPositionName);
         AddGuid(command, "@manager_position_id", BuiltinCatalog.ManagerPositionId);
         AddNVarChar(command, "@manager_position_code", 100, BuiltinCatalog.ManagerPositionCode);
         AddNVarChar(command, "@manager_position_name", 200, BuiltinCatalog.ManagerPositionName);

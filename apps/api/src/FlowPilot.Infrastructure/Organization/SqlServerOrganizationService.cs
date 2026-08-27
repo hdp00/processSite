@@ -69,8 +69,8 @@ public sealed partial class SqlServerOrganizationService : IOrganizationService
                     FOR JSON PATH
                 ), N'[]')
             FROM [flowpilot].[users] AS [u]
-            INNER JOIN [flowpilot].[departments] AS [d] ON [d].[id] = [u].[department_id]
-            INNER JOIN [flowpilot].[positions] AS [p] ON [p].[id] = [u].[position_id]
+            LEFT JOIN [flowpilot].[departments] AS [d] ON [d].[id] = [u].[department_id]
+            LEFT JOIN [flowpilot].[positions] AS [p] ON [p].[id] = [u].[position_id]
             WHERE (@search IS NULL OR [u].[login_name] LIKE @search ESCAPE N'\'
                 OR [u].[display_name] LIKE @search ESCAPE N'\'
                 OR [u].[email] LIKE @search ESCAPE N'\')
@@ -104,8 +104,8 @@ public sealed partial class SqlServerOrganizationService : IOrganizationService
                 reader.GetString(4),
                 reader.GetString(5),
                 reader.GetBoolean(6) ? "enabled" : "disabled",
-                new DepartmentRefDto(reader.GetGuid(8), reader.GetString(9), reader.GetString(10)),
-                new PositionRefDto(reader.GetGuid(11), reader.GetString(12)),
+                reader.IsDBNull(8) ? null : new DepartmentRefDto(reader.GetGuid(8), reader.GetString(9), reader.GetString(10)),
+                reader.IsDBNull(11) ? null : new PositionRefDto(reader.GetGuid(11), reader.GetString(12)),
                 DeserializeArray<RoleRefDto>(reader.GetString(15)),
                 reader.GetBoolean(7),
                 AsUtc(reader.GetDateTime(13)),
@@ -459,7 +459,7 @@ public sealed partial class SqlServerOrganizationService : IOrganizationService
                 WHERE [gr].[group_id] = @group_id
             )
             SELECT
-                [u].[id], [u].[display_name], [u].[login_name], [u].[email], [d].[path_cache],
+                [u].[id], [u].[display_name], [u].[login_name], [u].[email], COALESCE([d].[path_cache], N''),
                 CONVERT(bit, CASE WHEN EXISTS
                     (SELECT 1 FROM [flowpilot].[workflow_group_users] AS [direct]
                      WHERE [direct].[group_id] = @group_id AND [direct].[user_id] = [u].[id])
@@ -478,7 +478,7 @@ public sealed partial class SqlServerOrganizationService : IOrganizationService
                 ON [u].[id] = [member].[user_id]
                AND [u].[is_enabled] = 1
                AND [u].[is_builtin_super_admin] = 0
-            INNER JOIN [flowpilot].[departments] AS [d] ON [d].[id] = [u].[department_id]
+            LEFT JOIN [flowpilot].[departments] AS [d] ON [d].[id] = [u].[department_id]
             WHERE @search IS NULL OR [u].[display_name] LIKE @search ESCAPE N'\'
                 OR [u].[login_name] LIKE @search ESCAPE N'\'
             ORDER BY [u].[display_name], [u].[id]

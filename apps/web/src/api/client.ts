@@ -17,7 +17,7 @@ export class ApiError extends Error {
   readonly problem: ApiProblemDetails;
 
   constructor(problem: ApiProblemDetails) {
-    super(problem.detail || problem.title);
+    super(toUserFacingApiMessage(problem));
     this.name = "ApiError";
     this.status = problem.status;
     this.problem = problem;
@@ -26,6 +26,34 @@ export class ApiError extends Error {
 
 const API_TOKEN_KEY = "flowpilot-api-access-token";
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+const statusMessage = (status: number) => {
+  if (status === 0 || status === 502 || status === 503) {
+    return "无法连接后端服务，请确认后端已启动，或稍后重试。";
+  }
+  if (status === 408 || status === 504) return "后端服务响应超时，请稍后重试。";
+  if (status === 401) return "登录状态已失效，请重新登录。";
+  if (status === 403) return "当前账号没有执行此操作的权限。";
+  if (status === 404) return "请求的数据或功能不存在，请刷新页面后重试。";
+  if (status === 409 || status === 412) return "数据已发生变化，请刷新后重试。";
+  if (status === 429) return "操作过于频繁，请稍后重试。";
+  if (status >= 500) return "服务器处理请求时发生错误，请稍后重试。";
+  if (status >= 400) return "请求未能完成，请检查输入后重试。";
+  return "操作失败，请稍后重试。";
+};
+
+const toUserFacingApiMessage = (problem: ApiProblemDetails) => {
+  if (problem.code === "NETWORK_ERROR") return statusMessage(0);
+  if (problem.code === "REQUEST_TIMEOUT") return statusMessage(408);
+  if (problem.status >= 500 || problem.code === "HTTP_ERROR") return statusMessage(problem.status);
+
+  // 业务 Problem Details 的中文 detail 对用户通常比统一状态文案更有帮助。
+  // 原始 problem 仍完整保留在 ApiError.problem 中，便于调试和按 traceId 排查。
+  const detail = problem.detail?.trim();
+  if (detail) return detail;
+  const title = problem.title?.trim();
+  return title || statusMessage(problem.status);
+};
 
 const apiBaseUrl = () => (
   import.meta.env.VITE_API_BASE_URL
@@ -83,11 +111,53 @@ const requestUrl = (path: string, query?: object) => {
 
 const fallbackProblem = (response: Response, requestId: string): ApiProblemDetails => ({
   type: "about:blank",
-  title: response.statusText || "请求失败",
+  title: "请求失败",
   status: response.status,
-  detail: `REST API 返回 HTTP ${response.status}`,
+  detail: statusMessage(response.status),
   instance: response.url,
   code: "HTTP_ERROR",
+  traceId: requestId,
+});
+
+const responseProblem = async (response: Response, requestId: string) => {
+  const fallback = fallbackProblem(response, requestId);
+  if (!response.headers.get("content-type")?.includes("json")) return fallback;
+
+  try {
+    const value = await response.json() as Partial<ApiProblemDetails> | null;
+    if (!value || typeof value !== "object") return fallback;
+    return {
+      ...fallback,
+      type: typeof value.type === "string" ? value.type : fallback.type,
+      title: typeof value.title === "string" ? value.title : fallback.title,
+      detail: typeof value.detail === "string" ? value.detail : fallback.detail,
+      code: typeof value.code === "string" ? value.code : fallback.code,
+      traceId: typeof value.traceId === "string" ? value.traceId : fallback.traceId,
+      errors: Array.isArray(value.errors) ? value.errors : undefined,
+      currentEtag: typeof value.currentEtag === "string" ? value.currentEtag : undefined,
+    } satisfies ApiProblemDetails;
+  } catch {
+    return fallback;
+  }
+};
+
+const connectionProblem = (path: string, requestId: string): ApiProblemDetails => ({
+  type: "https://flowpilot.local/problems/network-error",
+  title: "无法连接后端服务",
+  status: 0,
+  detail: statusMessage(0),
+  instance: path,
+  code: "NETWORK_ERROR",
+  traceId: requestId,
+});
+
+const timeoutProblem = (path: string, requestId: string): ApiProblemDetails => ({
+  type: "https://flowpilot.local/problems/request-timeout",
+  title: "请求超时",
+  status: 408,
+  detail: statusMessage(408),
+  instance: path,
+  code: "REQUEST_TIMEOUT",
   traceId: requestId,
 });
 
@@ -146,10 +216,7 @@ async function performApiRequest<T>(path: string, options: ApiRequestOptions = {
       signal: controller.signal,
     });
     if (!response.ok) {
-      const problem = response.headers.get("content-type")?.includes("json")
-        ? await response.json() as ApiProblemDetails
-        : fallbackProblem(response, requestId);
-      throw new ApiError(problem);
+      throw new ApiError(await responseProblem(response, requestId));
     }
     if (response.status === 204) return {
       data: undefined as T,
@@ -169,25 +236,9 @@ async function performApiRequest<T>(path: string, options: ApiRequestOptions = {
   } catch (error) {
     if (error instanceof ApiError) throw error;
     if (controller.signal.aborted) {
-      throw new ApiError({
-        type: "https://flowpilot.local/problems/request-timeout",
-        title: "请求超时",
-        status: 408,
-        detail: "REST API 请求超时，请稍后重试。",
-        instance: path,
-        code: "REQUEST_TIMEOUT",
-        traceId: requestId,
-      });
+      throw new ApiError(timeoutProblem(path, requestId));
     }
-    throw new ApiError({
-      type: "https://flowpilot.local/problems/network-error",
-      title: "网络连接失败",
-      status: 0,
-      detail: error instanceof Error ? error.message : "无法连接 REST API。",
-      instance: path,
-      code: "NETWORK_ERROR",
-      traceId: requestId,
-    });
+    throw new ApiError(connectionProblem(path, requestId));
   } finally {
     window.clearTimeout(timeout);
     signal?.removeEventListener("abort", abortFromCaller);
@@ -202,17 +253,47 @@ export const apiResource = <T>(path: string, options: ApiRequestOptions = {}) =>
   performApiRequest<T>(path, options);
 
 export async function apiDownload(path: string, options: ApiRequestOptions = {}) {
-  const headers = new Headers(options.headers);
+  const {
+    query,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    idempotencyKey,
+    ifMatch,
+    headers: customHeaders,
+    signal,
+    ...requestInit
+  } = options;
+  const controller = new AbortController();
+  const requestId = `request-${createClientUuid()}`;
+  const timeout = window.setTimeout(() => controller.abort(new DOMException("REST API 请求超时", "TimeoutError")), timeoutMs);
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", abortFromCaller, { once: true });
+
+  const headers = new Headers(customHeaders);
+  headers.set("X-Request-Id", requestId);
   const token = readApiAccessToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(requestUrl(path, options.query), { ...options, headers, body: undefined });
-  if (!response.ok) {
-    const problem = response.headers.get("content-type")?.includes("json")
-      ? await response.json() as ApiProblemDetails
-      : fallbackProblem(response, response.headers.get("X-Request-Id") ?? "download");
-    throw new ApiError(problem);
+  if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
+  if (ifMatch) headers.set("If-Match", ifMatch);
+
+  try {
+    const response = await fetch(requestUrl(path, query), {
+      ...requestInit,
+      headers,
+      body: undefined,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new ApiError(await responseProblem(response, response.headers.get("X-Request-Id") ?? requestId));
+    }
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const fileName = decodeURIComponent(disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1] ?? "download.bin");
+    return { blob: await response.blob(), fileName };
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (controller.signal.aborted) throw new ApiError(timeoutProblem(path, requestId));
+    throw new ApiError(connectionProblem(path, requestId));
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
-  const disposition = response.headers.get("Content-Disposition") ?? "";
-  const fileName = decodeURIComponent(disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1] ?? "download.bin");
-  return { blob: await response.blob(), fileName };
 }
