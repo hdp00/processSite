@@ -5,6 +5,10 @@
       "commandName": "Project",
       "commandLineArgs": "initialize"
     },
+    "Seed": {
+      "commandName": "Project",
+      "commandLineArgs": "seed"
+    },
     "Verify": {
       "commandName": "Project",
       "commandLineArgs": "verify"

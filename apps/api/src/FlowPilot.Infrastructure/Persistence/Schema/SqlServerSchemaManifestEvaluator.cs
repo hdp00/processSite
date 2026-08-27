@@ -9,19 +9,48 @@ public static class SqlServerSchemaManifestEvaluator
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        return manifest.Tables.SetEquals(snapshot.Tables) &&
-            manifest.Columns.SetEquals(snapshot.Columns) &&
-            manifest.Constraints.SetEquals(snapshot.Constraints) &&
-            manifest.Indexes.SetEquals(snapshot.Indexes) &&
-            manifest.Triggers.SetEquals(snapshot.Triggers) &&
-            manifest.ColumnSignatures.SetEquals(snapshot.ColumnSignatures) &&
-            manifest.CheckConstraintSignatures.SetEquals(snapshot.CheckConstraintSignatures) &&
-            manifest.ForeignKeySignatures.SetEquals(snapshot.ForeignKeySignatures) &&
-            manifest.KeyConstraintSignatures.SetEquals(snapshot.KeyConstraintSignatures) &&
-            manifest.IndexSignatures.SetEquals(snapshot.IndexSignatures) &&
-            manifest.TriggerSignatures.SetEquals(snapshot.TriggerSignatures) &&
-            snapshot.OtherObjects.Count == 0
-                ? SqlServerSchemaValidationResult.Valid
-                : SqlServerSchemaValidationResult.StructureMismatch;
+        var differences = new List<string>();
+        AddDifferences("tables", manifest.Tables, snapshot.Tables, differences);
+        AddDifferences("columns", manifest.Columns, snapshot.Columns, differences);
+        AddDifferences("constraints", manifest.Constraints, snapshot.Constraints, differences);
+        AddDifferences("indexes", manifest.Indexes, snapshot.Indexes, differences);
+        AddDifferences("triggers", manifest.Triggers, snapshot.Triggers, differences);
+
+        return differences.Count == 0
+            ? SqlServerSchemaValidationResult.Valid
+            : SqlServerSchemaValidationResult.StructureMismatchWithDifferences(differences);
+    }
+
+    private static void AddDifferences(
+        string category,
+        IReadOnlySet<string> expected,
+        IReadOnlySet<string> actual,
+        List<string> destination)
+    {
+        if (expected.SetEquals(actual))
+        {
+            return;
+        }
+
+        var missing = expected.Except(actual, StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var unexpected = actual.Except(expected, StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var examples = new List<string>(2);
+        if (missing.Length > 0)
+        {
+            examples.Add($"missingExample={missing[0]}");
+        }
+
+        if (unexpected.Length > 0)
+        {
+            examples.Add($"unexpectedExample={unexpected[0]}");
+        }
+
+        destination.Add(
+            $"{category}: missing={missing.Length}, unexpected={unexpected.Length}; " +
+            string.Join("; ", examples));
     }
 }

@@ -7,7 +7,14 @@ import type {
   ProcessVersion,
 } from "../state/useProcessDefinitionStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import type { CompleteDesignerSnapshot } from "../utils/designerStorage";
+import type {
+  CompleteDesignerSnapshot,
+  StoredDesignerField,
+  StoredDesignerTableColumn,
+  StoredFlowDesignerSnapshot,
+  StoredNodeCondition,
+} from "../utils/designerStorage";
+import type { DesignerChoiceOption } from "../utils/designerOptions";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useIdentityStore } from "../state/useIdentityStore";
 import { useOrganizationStore } from "../state/useOrganizationStore";
@@ -55,6 +62,7 @@ import type {
   SavedProcessVersionResult,
   WorkflowDecisionResult,
   WorkflowRevisionResult,
+  WorkflowTaskDetailItem,
   WorkflowTaskListItem,
 } from "./contracts";
 
@@ -81,6 +89,13 @@ export interface WorkflowTaskQuery extends PageQuery {
 
 const mutation = () => ({ idempotencyKey: createIdempotencyKey() });
 const remoteMode = import.meta.env.VITE_API_MODE === "remote";
+
+export const clearRemoteApplicationCache = () => {
+  useIdentityStore.setState({ users: [], roles: [], workflowGroups: [] });
+  useProcessDefinitionStore.setState({ definitions: [] });
+  usePrototypeStore.setState({ instances: [], tasks: [] });
+  useOrganizationStore.setState({ departments: [], jobTitles: [] });
+};
 
 const mappedResource = async <T>(resource: Promise<ApiResourceResult<unknown>>, map: (value: unknown) => T) => {
   const result = await resource;
@@ -111,7 +126,7 @@ const definitionPageRequest = async (path: string, query: object): Promise<PageR
   const page = normalizePageResult(raw, (item) => item);
   const items = await Promise.all(page.items.map(async (item) => {
     let versions: ProcessVersion[] | undefined;
-    if (!remoteMode && isRecord(item) && Array.isArray(item.versions)) {
+    if (isRecord(item) && Array.isArray(item.versions)) {
       versions = await fullVersionsRequest(String(item.id ?? ""), item.versions);
     }
     const definition = normalizeProcessDefinition(item, versions);
@@ -156,23 +171,44 @@ const normalizeInstanceDetail = (value: unknown): ProcessInstanceDetail => {
   };
 };
 
+const normalizeTaskFromEnvelope = (source: unknown, envelope: Record<string, unknown>): WorkflowTask => {
+  const task = normalizeWorkflowTask(source);
+  const handlingMode = envelope.handlingMode === "confirmation" || task.handlingMode === "confirmation"
+    ? "confirmation"
+    : task.handlingMode;
+  const allowedActions = Array.isArray(envelope.allowedActions)
+    ? envelope.allowedActions.filter((action): action is NonNullable<WorkflowTask["allowedActions"]>[number] =>
+      typeof action === "string" && ["pass", "confirm", "reject", "revise-fields", "reply", "change-assignee", "resubmit"].includes(action))
+    : task.allowedActions;
+  return { ...task, handlingMode, allowedActions };
+};
+
 const normalizeTaskListItem = async (value: unknown): Promise<WorkflowTaskListItem> => {
   if (!isRecord(value)) throw new Error("任务列表响应格式不正确");
-  const taskSource = isRecord(value.task) ? value.task : value;
-  const task = normalizeWorkflowTask(taskSource);
+  const taskSources = Array.isArray(value.tasks)
+    ? value.tasks
+    : [isRecord(value.task) ? value.task : value];
+  const tasks = taskSources.map((task) => normalizeTaskFromEnvelope(task, value));
+  const firstTask = tasks[0];
+  if (!firstTask) throw new Error("任务列表响应缺少任务数据");
+  const instance = value.instance
+    ? normalizeProcessInstance(value.instance)
+    : normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(firstTask.instanceId)}`)).instance;
+  return { tasks, instance };
+};
+
+const normalizeTaskDetailItem = async (value: unknown): Promise<WorkflowTaskDetailItem> => {
+  if (!isRecord(value)) throw new Error("任务详情响应格式不正确");
+  const task = normalizeTaskFromEnvelope(isRecord(value.task) ? value.task : value, value);
   const instance = value.instance
     ? normalizeProcessInstance(value.instance)
     : normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(task.instanceId)}`)).instance;
-  const handlingMode = value.handlingMode === "confirmation" || task.handlingMode === "confirmation" ? "confirmation" : "approval";
-  const allowedActions = Array.isArray(value.allowedActions)
-    ? value.allowedActions as WorkflowTaskListItem["allowedActions"]
-    : task.allowedActions ?? (handlingMode === "confirmation" ? ["confirm"] : ["pass", "reject"]);
-  return { task, instance, handlingMode, allowedActions };
+  return { task, instance };
 };
 
 const taskPageRequest = async (query: object): Promise<PageResult<WorkflowTaskListItem>> => {
   const raw = await apiRequest<unknown>("/me/workflow-tasks", {
-    query: remoteMode ? { ...defaultInstanceDateRange(), ...query } : query,
+    query,
   });
   const page = normalizePageResult(raw, (item) => item);
   return { items: await Promise.all(page.items.map(normalizeTaskListItem)), page: page.page };
@@ -267,6 +303,158 @@ const remoteBasicInput = (input: ProcessBasicConfig) => ({
   visibleUserIds: input.visibleUsers,
 });
 
+const remoteDesignerOptions = (options?: DesignerChoiceOption[]): DesignerChoiceOption[] =>
+  (options ?? []).map((option) => ({
+    id: option.id,
+    label: option.label,
+    ...(option.children?.length ? { children: remoteDesignerOptions(option.children) } : {}),
+  }));
+
+const remoteDesignerCondition = (condition?: StoredNodeCondition) => {
+  if (!condition?.rules.length) return undefined;
+  return {
+    mode: condition.mode,
+    rules: condition.rules.map((rule) => ({
+      id: rule.id,
+      fieldId: rule.fieldId,
+      operator: rule.operator,
+      ...(rule.value !== undefined ? { value: structuredClone(rule.value) } : {}),
+    })),
+  };
+};
+
+const remoteTableColumn = (column: StoredDesignerTableColumn) => ({
+  id: column.id,
+  label: column.label,
+  type: column.type ?? "text",
+  required: column.required ?? false,
+  ...(column.defaultValue !== undefined ? { defaultValue: structuredClone(column.defaultValue) } : {}),
+  ...(column.width !== undefined ? { width: column.width } : {}),
+  ...(column.align !== undefined ? { align: column.align } : {}),
+  reviewEditable: column.reviewEditable ?? false,
+  ...(column.options !== undefined ? { options: remoteDesignerOptions(column.options) } : {}),
+});
+
+const remoteDesignerFieldType = (field: StoredDesignerField) => {
+  if (field.type === "richtext") return "rich-text";
+  if (field.type === "text" && field.multiline) return "textarea";
+  return field.type;
+};
+
+const remoteDesignerField = (field: StoredDesignerField) => {
+  const displayCondition = remoteDesignerCondition(field.displayCondition);
+  return {
+    id: field.id,
+    type: remoteDesignerFieldType(field),
+    label: field.label,
+    ...(field.description !== undefined ? { description: field.description } : {}),
+    ...(field.placeholder !== undefined ? { placeholder: field.placeholder } : {}),
+    required: field.required ?? false,
+    ...(field.defaultValue !== undefined ? { defaultValue: structuredClone(field.defaultValue) } : {}),
+    listVisible: field.listVisible ?? false,
+    taskVisible: field.taskVisible ?? false,
+    queryable: field.queryable ?? false,
+    exportVisible: field.exportVisible ?? field.listVisible ?? false,
+    inputStage: field.inputStage ?? (field.reviewEditable ? "both" : "initiator"),
+    ...(displayCondition ? { displayCondition } : {}),
+    ...(field.options !== undefined ? { options: remoteDesignerOptions(field.options) } : {}),
+    ...(field.attachment ? {
+      attachment: {
+        ...(field.attachment.maxSizeMb !== undefined ? { maxSizeMb: field.attachment.maxSizeMb } : {}),
+        ...(field.attachment.maxCount !== undefined ? { maxCount: field.attachment.maxCount } : {}),
+        ...(field.attachment.inlinePdf !== undefined ? { inlinePdf: field.attachment.inlinePdf } : {}),
+        ...(field.attachment.allowedExtensions !== undefined
+          ? { allowedExtensions: [...field.attachment.allowedExtensions] }
+          : {}),
+        ...(field.attachment.excelToPdf !== undefined ? { excelToPdf: field.attachment.excelToPdf } : {}),
+        ...(field.attachment.maxPreviewPages !== undefined
+          ? { maxPreviewPages: field.attachment.maxPreviewPages }
+          : {}),
+      },
+    } : {}),
+    ...(field.columns !== undefined ? { columns: field.columns.map(remoteTableColumn) } : {}),
+  };
+};
+
+const remoteSystemFieldKey = (key: CompleteDesignerSnapshot["systemFields"][number]["key"]) => ({
+  code: "instanceCode",
+  template: "processName",
+  templateVersion: "processVersion",
+  status: "status",
+  currentNode: "currentNode",
+  round: "currentRound",
+  initiator: "initiator",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+} as const)[key];
+
+const remoteFormDesignerInput = (input: Pick<CompleteDesignerSnapshot, "form" | "systemFields">) => ({
+  form: {
+    fields: input.form.fields.map(remoteDesignerField),
+    ...(input.form.savedAt !== undefined ? { savedAt: input.form.savedAt } : {}),
+  },
+  systemFields: input.systemFields.map((field) => ({
+    key: remoteSystemFieldKey(field.key),
+    label: field.label,
+    taskVisible: field.taskVisible,
+    processListVisible: field.processListVisible,
+    exportVisible: field.exportVisible,
+  })),
+});
+
+const remoteFlowDesignerSnapshot = (flow: StoredFlowDesignerSnapshot) => ({
+  nodes: flow.nodes.map((node) => {
+    const data = node.data;
+    const activationCondition = remoteDesignerCondition(data?.activationCondition);
+    return {
+      id: node.id,
+      position: {
+        x: node.position?.x ?? 0,
+        y: node.position?.y ?? 0,
+      },
+      data: {
+        kind: data?.kind,
+        label: data?.label,
+        ...(data?.description !== undefined ? { description: data.description } : {}),
+        ...(data?.permissionGroup !== undefined ? { permissionGroupId: data.permissionGroup } : {}),
+        ...(data?.permissionGroups !== undefined ? { permissionGroupIds: [...data.permissionGroups] } : {}),
+        ...(data?.specifyAssignee !== undefined ? { specifyAssignee: data.specifyAssignee } : {}),
+        ...(data?.editableFields !== undefined ? { editableFieldIds: [...data.editableFields] } : {}),
+        ...(data?.handlingMode !== undefined ? { handlingMode: data.handlingMode } : {}),
+        ...(data?.allowRepeatedEditing !== undefined ? { allowRepeatedEditing: data.allowRepeatedEditing } : {}),
+        ...(activationCondition ? { activationCondition } : {}),
+        ...(data?.emailNotification ? {
+          emailNotification: {
+            enabled: data.emailNotification.enabled,
+            notifyReviewers: data.emailNotification.notifyReviewers ?? false,
+            notifyInitiator: data.emailNotification.notifyInitiator ?? false,
+            extraUserIds: [...data.emailNotification.extraUserIds],
+          },
+        } : {}),
+      },
+    };
+  }),
+  edges: flow.edges.map((edge, index) => ({
+    id: edge.id ?? `edge-${index + 1}-${edge.source}-${edge.target}`,
+    source: edge.source,
+    target: edge.target,
+  })),
+  meta: {
+    rejectionHandling: flow.meta?.rejectionHandling ?? "resubmit-or-close",
+  },
+});
+
+const remoteFlowDesignerInput = (input: {
+  basicPatch: Pick<ProcessBasicConfig, "name" | "starterGroups">;
+  flow: CompleteDesignerSnapshot["flow"];
+}) => ({
+  basicPatch: {
+    name: input.basicPatch.name,
+    starterGroupIds: [...input.basicPatch.starterGroups],
+  },
+  flow: remoteFlowDesignerSnapshot(input.flow),
+});
+
 const remoteDepartmentInput = (input: Partial<DepartmentRecord> & { name?: string }) => ({
   ...(input.name !== undefined ? { name: input.name } : {}),
   ...(input.parentId !== undefined ? { parentId: input.parentId } : {}),
@@ -344,11 +532,12 @@ export const flowPilotApi = {
     stopImpersonation: async () => applySession(
       normalizeAuthSession(await apiRequest<unknown>("/auth/impersonation", { method: "DELETE", ...mutation() })),
     ),
-    logout: async () => {
+    logout: async (options: { clearCache?: boolean } = {}) => {
       try {
         await apiRequest<void>("/auth/logout", { method: "POST", ...mutation() });
       } finally {
         writeApiAccessToken();
+        if (remoteMode && options.clearCache !== false) clearRemoteApplicationCache();
         usePrototypeStore.getState().logout();
       }
     },
@@ -499,13 +688,13 @@ export const flowPilotApi = {
     saveDesigner: (definitionId: string, versionId: string, snapshot: Partial<CompleteDesignerSnapshot>, ifMatch?: string) =>
       apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/designer`, { method: "PUT", body: snapshot, ifMatch }).then(normalizeSavedVersion),
     saveFormDesigner: (definitionId: string, versionId: string, input: Pick<CompleteDesignerSnapshot, "form" | "systemFields">, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: input, ifMatch }).then(normalizeSavedVersionResult),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: remoteMode ? remoteFormDesignerInput(input) : input, ifMatch }).then(normalizeSavedVersionResult),
     saveFormDesignerResource: (definitionId: string, versionId: string, input: Pick<CompleteDesignerSnapshot, "form" | "systemFields">, ifMatch?: string) =>
-      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: input, ifMatch }), normalizeSavedVersionResult),
-    saveFlowDesigner: (definitionId: string, versionId: string, input: { basicPatch?: Pick<ProcessBasicConfig, "name" | "starterGroups">; flow: CompleteDesignerSnapshot["flow"] }, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteMode ? { ...input, basicPatch: input.basicPatch && { name: input.basicPatch.name, starterGroupIds: input.basicPatch.starterGroups } } : input, ifMatch }).then(normalizeSavedVersionResult),
-    saveFlowDesignerResource: (definitionId: string, versionId: string, input: { basicPatch?: Pick<ProcessBasicConfig, "name" | "starterGroups">; flow: CompleteDesignerSnapshot["flow"] }, ifMatch?: string) =>
-      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteMode ? { ...input, basicPatch: input.basicPatch && { name: input.basicPatch.name, starterGroupIds: input.basicPatch.starterGroups } } : input, ifMatch }), normalizeSavedVersionResult),
+      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: remoteMode ? remoteFormDesignerInput(input) : input, ifMatch }), normalizeSavedVersionResult),
+    saveFlowDesigner: (definitionId: string, versionId: string, input: { basicPatch: Pick<ProcessBasicConfig, "name" | "starterGroups">; flow: CompleteDesignerSnapshot["flow"] }, ifMatch?: string) =>
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteMode ? remoteFlowDesignerInput(input) : input, ifMatch }).then(normalizeSavedVersionResult),
+    saveFlowDesignerResource: (definitionId: string, versionId: string, input: { basicPatch: Pick<ProcessBasicConfig, "name" | "starterGroups">; flow: CompleteDesignerSnapshot["flow"] }, ifMatch?: string) =>
+      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteMode ? remoteFlowDesignerInput(input) : input, ifMatch }), normalizeSavedVersionResult),
     validate: async (definitionId: string, versionId: string, ifMatch?: string) => {
       const value = await apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/validate`, { method: "POST", ifMatch, ...mutation() });
       if (isRecord(value) && value.snapshot && value.basic) return normalizeProcessVersion(value);
@@ -563,10 +752,10 @@ export const flowPilotApi = {
   },
   tasks: {
     listMine: (query: WorkflowTaskQuery = {}) => taskPageRequest(query),
-    get: (taskId: string) => apiRequest<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}`).then(normalizeTaskListItem),
+    get: (taskId: string) => apiRequest<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}`).then(normalizeTaskDetailItem),
     getResource: async (taskId: string) => {
       const resource = await apiResource<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}`);
-      return { ...resource, data: await normalizeTaskListItem(resource.data) };
+      return { ...resource, data: await normalizeTaskDetailItem(resource.data) };
     },
     decide: async (taskId: string, input: { action: "pass" | "confirm" | "reject"; comment?: string; fieldValues?: Record<string, unknown>; attachmentIdsByField?: Record<string, string[]> }, ifMatch?: string) => {
       const task = usePrototypeStore.getState().tasks.find((item) => item.id === taskId);

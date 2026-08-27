@@ -1,5 +1,6 @@
 using FlowPilot.Application.Health;
 using FlowPilot.Database.Migrations;
+using FlowPilot.Database.Seeding;
 using FlowPilot.Infrastructure.Configuration;
 using FlowPilot.Infrastructure.Health;
 using FlowPilot.Infrastructure.Persistence;
@@ -70,6 +71,11 @@ static async Task<int> RunAsync(string[] arguments)
                     databaseOptions,
                     cancellation.Token)
                 .ConfigureAwait(false),
+            DatabaseToolCommand.Seed => await SeedAsync(
+                    configuration,
+                    databaseOptions,
+                    cancellation.Token)
+                .ConfigureAwait(false),
             DatabaseToolCommand.Verify => await VerifyAsync(
                     configuration,
                     databaseOptions,
@@ -115,11 +121,74 @@ static async Task<int> InitializeAsync(
     }
     catch (DatabaseMigrationException exception)
     {
+        var diagnostic = DescribeMigrationDiagnostic(exception);
         WriteError(
             $"DATABASE_MIGRATION_{ToUpperSnakeCase(exception.Failure.ToString())}",
-            DescribeMigrationFailure(exception.Failure));
+            diagnostic is null
+                ? DescribeMigrationFailure(exception.Failure)
+                : $"{DescribeMigrationFailure(exception.Failure)} {diagnostic}");
         return 3;
     }
+}
+
+static async Task<int> SeedAsync(
+    IConfiguration configuration,
+    FlowPilotDatabaseOptions databaseOptions,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        var result = await SqlServerBuiltinSeeder.SeedAsync(
+                configuration.GetConnectionString("FlowPilotMigration"),
+                configuration["FlowPilot:Bootstrap:SuperAdminPassword"],
+                databaseOptions.MigrationCommandTimeoutSeconds,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.Outcome == BuiltinSeedOutcome.Applied)
+        {
+            Console.WriteLine(
+                $"数据库内置数据已初始化：版本 {result.SeedVersion}，权限 {result.PermissionCount} 项。" +
+                (result.SuperAdminCreated ? " 已创建超级管理员账号。" : string.Empty));
+        }
+        else
+        {
+            Console.WriteLine($"数据库内置数据已经是当前版本：{result.SeedVersion}。");
+        }
+
+        return 0;
+    }
+    catch (BuiltinSeedException exception)
+    {
+        var diagnostic = exception.InnerException is SqlException sqlException
+            ? $" SQL 错误号 {sqlException.Number}，状态 {sqlException.State}，行 {sqlException.LineNumber}。"
+            : string.Empty;
+        WriteError(
+            $"DATABASE_SEED_{ToUpperSnakeCase(exception.Failure.ToString())}",
+            DescribeSeedFailure(exception.Failure) + diagnostic);
+        return 3;
+    }
+}
+
+static string? DescribeMigrationDiagnostic(DatabaseMigrationException exception)
+{
+    if (exception.Failure is not (
+        DatabaseMigrationFailure.MigrationExecutionFailed or
+        DatabaseMigrationFailure.SchemaStructureMismatch))
+    {
+        return null;
+    }
+
+    return exception.InnerException switch
+    {
+        SqlException sqlException =>
+            $"SQL 错误号 {sqlException.Number}，状态 {sqlException.State}，行 {sqlException.LineNumber}。",
+        InvalidOperationException invalidOperationException =>
+            exception.Failure == DatabaseMigrationFailure.SchemaStructureMismatch
+                ? $"结构差异：{invalidOperationException.Message}"
+                : $"内部阶段：{invalidOperationException.GetType().Name}；{invalidOperationException.Message}",
+        _ => null,
+    };
 }
 
 static async Task<int> VerifyAsync(
@@ -200,6 +269,22 @@ static string DescribeMigrationFailure(DatabaseMigrationFailure failure) => fail
     _ => "数据库初始化输入或状态无效。",
 };
 
+static string DescribeSeedFailure(BuiltinSeedFailure failure) => failure switch
+{
+    BuiltinSeedFailure.InvalidConnectionString => "迁移连接字符串缺失或格式无效。",
+    BuiltinSeedFailure.DatabaseNameMissing => "迁移连接字符串必须明确指定数据库名。",
+    BuiltinSeedFailure.SystemDatabaseNotAllowed => "禁止在 SQL Server 系统数据库中写入内置数据。",
+    BuiltinSeedFailure.DatabaseUnavailable => "无法连接数据库。",
+    BuiltinSeedFailure.SchemaNotReady => "数据库结构尚未初始化到当前版本，请先执行 pnpm db:init。",
+    BuiltinSeedFailure.SeedLockUnavailable => "另一个内置数据初始化正在执行，请稍后重试。",
+    BuiltinSeedFailure.InitialPasswordMissing =>
+        "首次创建超级管理员前，请在本地配置中填写 FlowPilot:Bootstrap:SuperAdminPassword。",
+    BuiltinSeedFailure.InitialPasswordInvalid => "超级管理员初始密码必须为 1 到 200 个字符，且不能保留示例占位值。",
+    BuiltinSeedFailure.DataConflict => "数据库中存在与固定内置账号、角色或目录冲突的记录，事务已回滚。",
+    BuiltinSeedFailure.SeedExecutionFailed => "内置数据初始化失败，事务已回滚。",
+    _ => "内置数据初始化失败。",
+};
+
 static string DescribeConfigurationFailure(DatabaseToolConfigurationFailure failure) => failure switch
 {
     DatabaseToolConfigurationFailure.RepositoryRootNotFound => "未找到 FlowPilot 后端工程根目录。",
@@ -234,6 +319,7 @@ static void WriteHelp()
     Console.WriteLine();
     Console.WriteLine("用法:");
     Console.WriteLine("  initialize [--Key=Value ...]  初始化或升级现有数据库结构");
+    Console.WriteLine("  seed       [--Key=Value ...]  初始化或同步内置数据");
     Console.WriteLine("  verify     [--Key=Value ...]  使用运行账号验证连接与结构");
     Console.WriteLine();
     Console.WriteLine("固定读取 API 默认配置与 apps/api/config/appsettings.Development.local.json。");
@@ -246,6 +332,7 @@ internal enum DatabaseToolCommand
 {
     None,
     Initialize,
+    Seed,
     Verify,
 }
 
@@ -266,6 +353,7 @@ internal sealed record ToolArguments(
         var command = arguments[0] switch
         {
             "initialize" => DatabaseToolCommand.Initialize,
+            "seed" => DatabaseToolCommand.Seed,
             "verify" => DatabaseToolCommand.Verify,
             _ => DatabaseToolCommand.None,
         };

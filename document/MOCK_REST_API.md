@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-当前仓库没有可按目标架构启动的真实 .NET 后端；已有 NestJS 文件是待替换旧骨架。开发和 debug 演示模式使用 MSW 2 的页面内 Fetch/XHR 拦截器处理请求，不注册 Service Worker，因此通过普通 HTTP 部署到 IIS 时也可以运行。页面仍通过标准 HTTP 语义访问 Mock API，而不是直接调用 Mock handler 或 Zustand action。
+当前仓库已有可启动的 .NET 后端，并已实现数据库基础、超级管理员会话、任务中心，以及流程定义/版本读取、定义创建与 V1 分区保存和重新校验切片，但尚不能支撑完整业务演示。开发和 debug 演示模式仍使用 MSW 2 的页面内 Fetch/XHR 拦截器处理请求，不注册 Service Worker，因此通过普通 HTTP 部署到 IIS 时也可以运行。页面仍通过标准 HTTP 语义访问 Mock API，而不是直接调用 Mock handler 或 Zustand action。
 
 - 正式接口契约：[`flowpilot-rest-api.openapi.yaml`](./flowpilot-rest-api.openapi.yaml)
 - 类型化客户端：`apps/web/src/api/flowPilotApi.ts`
@@ -90,7 +90,7 @@ try {
 | 流程定义与版本 | `/process-definitions`、`/process-definitions/imports` | 新建/复制/原子导入、版本、分区设计器保存、校验、发布、取消发布、删除；正式契约另含定义 JSON 导出 |
 | 发起配置 | `/me/launchable-process-definitions`、`/process-definitions/{id}/launch-config` | 数据范围裁剪、锁定发布版本、候选人员解析 |
 | 流程实例 | `/process-instances` | 分页查询、创建、首审前修改、重新提交、关闭、复制新建 |
-| 任务中心 | `/me/workflow-tasks`、`/workflow-tasks/{id}` | 当前 Mock 保留原型待办适配；正式契约已改为通过 `taskType` 区分审批、自由协作受理和待重新提交，尚待代码迁移。审批/确认/驳回、重复字段修改只属于审批任务 |
+| 任务中心 | `/me/workflow-tasks`、`/workflow-tasks/{id}` | 正式列表和当前 Mock 均按实例分页并使用 `{ tasks, instance }`，`taskType` 区分审批、自由协作受理和待重新提交；客户端仍兼容旧的单任务包装。审批/确认/驳回、重复字段修改只属于审批任务 |
 | 自由协作 | `/process-instances/{id}/free-collaboration/*` | 回复、转交、编辑、异常改派、关闭、重新打开 |
 | 附件 | `/attachments`、`/process-instances/{id}/fields/{fieldId}/attachment` | 当前 Mock 的 multipart、大小/类型校验、权限下载和旧单文件替换兼容路由仍可能使用 `temporary`；正式契约统一采用 `staged/active/cleanup-pending`、先暂存后引用并支持 Range/507，尚待代码迁移 |
 | 邮件 Outbox | `/email-outbox` | 收件人解析、去重、发送结果、失败重试演示 |
@@ -107,6 +107,7 @@ try {
 - 创建、发布、审批、重试等命令使用 `Idempotency-Key`。同键同请求重放首次结果，同键不同请求返回 `IDEMPOTENCY_KEY_REUSED`。
 - 审批任务采用首个成功提交生效；确认节点拒绝驳回；重复修改只更新节点授权字段，不改变原审核结果。
 - Handler 从当前会话解析操作人，不接受请求体伪造操作人，并重新检查页面权限、动作权限和流程数据范围。
+- 流程定义创建、基本信息和流程图保存要求 `config-definition:编辑`，表单保存要求 `config-form:编辑`，重新校验要求 `config-definition:发布`；Mock 与正式契约保持一致。
 - 流程权限组用途统一为“发起、审批/受理、关闭”。流程版本分别保存发起组、自由流程受理组和关闭组标识；关闭命令按实例锁定版本的关闭组当前有效成员重新鉴权，不从发起或受理资格推导。
 - 用户、角色、部门/职务和流程权限组删除分别要求 `org-user:删除`、`org-role:删除`、`org-department:删除`、`org-group:删除` 和最新 `If-Match`。Mock 在删除用户前检查角色、流程权限组、全部流程版本的可见人/通知收件人、实例、任务和附件，在删除角色前检查成员、流程权限组和全部流程版本引用；部门检查成员和下级部门，职务检查使用用户，流程权限组检查全部流程版本和节点引用。存在引用返回对应的 `409` 稳定错误，编辑权限不能替代删除权限。
 - Mock 与正式契约共同保证启用账号至少拥有一个启用角色：停用账号可清空角色以解除引用，但再次启用前必须先分配启用角色。表单设计器只保留实际使用的“编辑”权限，实例监控和审计只保留“查看”权限；读取旧权限存储时清理已删除的权限码。

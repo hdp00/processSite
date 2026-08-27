@@ -20,7 +20,7 @@ vi.mock("../api/flowPilotApi", () => ({
 }));
 
 vi.mock("../api/remoteHydration", () => ({
-  hydrateRemoteApplication: hydrateMock,
+  hydrateRemoteProcessDefinitions: hydrateMock,
 }));
 
 const renderLoginPage = () => render(

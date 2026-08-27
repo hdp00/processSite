@@ -8,5 +8,14 @@ public sealed class DatabaseMigrationException : InvalidOperationException
         Failure = failure;
     }
 
+    public DatabaseMigrationException(
+        DatabaseMigrationFailure failure,
+        Exception innerException)
+        : base($"Database migration failed ({failure}).", innerException)
+    {
+        ArgumentNullException.ThrowIfNull(innerException);
+        Failure = failure;
+    }
+
     public DatabaseMigrationFailure Failure { get; }
 }

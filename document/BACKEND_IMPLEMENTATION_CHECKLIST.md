@@ -1,12 +1,12 @@
 # FlowPilot .NET 后端实施决策与开工清单
 
-> 状态：技术决策已确认；旧 NestJS 骨架已删除，.NET 分层工程与首个健康检查/数据库预检切片已开始实现。未勾选项仍是后续完整后端的验收要求。
+> 状态：技术决策已确认；旧 NestJS 骨架已删除，数据库初始化/Seed、健康检查、超级管理员登录会话、组织目录读取、用户/角色创建、流程权限组管理、任务中心/流程实例列表，以及流程定义读取、创建、V1 分区保存和重新校验切片已实现。未勾选项仍是后续完整后端的验收要求。
 > 注意：真实账号、地址、密码和安装路径由部署人员在后端完成后填写，不进入仓库或发布包。
 
 ## 1. 固定技术与工程结构
 
-- [ ] `apps/api` 转换为 `net10.0` solution，按 Api/Application/Domain/Infrastructure/Contracts 与 tests 分层。
-- [ ] ASP.NET Core 10 使用 Controller Web API；正式路径固定 `/api/flowpilot/v1`。
+- [x] `apps/api` 转换为 `net10.0` solution，按 Api/Application/Domain/Infrastructure/Contracts 与 tests 分层。
+- [x] ASP.NET Core 10 使用 Controller Web API；正式路径固定 `/api/flowpilot/v1`。
 - [ ] 使用原生 .NET Windows Service + Kestrel loopback + IIS/ARR，不使用 WinSW。
 - [ ] EF Core 10 + `Microsoft.EntityFrameworkCore.SqlServer` + `Microsoft.Data.SqlClient`，设置 `UseCompatibilityLevel(130)`。
 - [ ] 支持 SQL Server 2016 SP2 及之后版本：13.x 接受 SP2/SP3，主版本 14 及以上；数据库兼容级别最低为 130并允许更高值。共享实现以 2016 SP2/兼容级别 130 为最低能力基线；不开发 SQLite 或数据库切换层。
@@ -21,7 +21,6 @@
 - [ ] SMTP：`MailKit`/`MimeKit`。
 - [ ] 日志：`Serilog.AspNetCore`、`Serilog.Sinks.File`。
 - [ ] OpenAPI：`Microsoft.AspNetCore.OpenApi`。
-- [ ] 对象映射：稳定版 `Riok.Mapperly`，以 `PrivateAssets="all"`、`ExcludeAssets="runtime"` 的私有编译期依赖引用，不使用 preview/next 版本。
 - [ ] 测试：xUnit、`Microsoft.AspNetCore.Mvc.Testing`、`Microsoft.NET.Test.Sdk`。
 - [ ] 优先使用内置 DI、Options、DataAnnotations、`System.Text.Json`、Health Checks、Rate Limiting、`BackgroundService`、`IHttpClientFactory`、Guid/加密/文件流。
 - [ ] 不默认引入 Identity schema、Dapper、AutoMapper、MediatR、FluentValidation、Hangfire、Quartz.NET、Redis、消息队列、额外 DI 容器、NSwag 或服务器桩生成器。
@@ -78,17 +77,16 @@
 ## 5. 数据库与迁移
 
 - [ ] `flowpilot` schema、应用生成 `uniqueidentifier` 主键、UTC `datetime2(3)`、整数 revision、显式 CHECK/外键/唯一索引与规范化账号列。
-- [ ] `DbContext` 持久化实体与领域模型/API DTO 分离。
-- [ ] Entity/Domain/DTO 的结构映射使用 Mapperly；领域项目不引用 Mapperly，mapper 位于 Application、Infrastructure 或 Contracts 的边界项目。
+- [ ] 默认采用 `Controller → Application Service → FlowPilotDbContext`；只有重复逻辑已经出现时才提取专用仓储或映射器。
+- [ ] 持久化实体与 API DTO 分离；简单映射手写完成，避免引入仅为搬运字段服务的框架。
 - [ ] 创建/更新/PATCH DTO 不直接覆盖 EF 跟踪实体；主键、revision、状态、审计字段、密码和操作者只能由应用服务/领域行为赋值。
-- [ ] Mapperly 严格未映射诊断提升为错误；有意忽略成员逐项声明，复杂转换使用显式手写 partial 方法。
 - [ ] 普通 CRUD 用 EF Core；锁提示和复杂投影用参数化 SqlClient，并复用同一 DbConnection/DbTransaction。
 - [ ] JSON 映射 `nvarchar(max)` + `ISJSON`；核心查询使用类型化投影表，不依赖 JSON 动态扫描。
 - [ ] 禁止 `EnsureCreated()`、启动 `Database.Migrate()` 和运行账号 DDL 权限。
 - [ ] 每次结构变更包含 EF migration、DBA 审查 SQL、空库/上一版测试、结构版本和校验和。
 - [ ] 数据库启动预检验证：SQL Server 13.x 只接受 SP2/SP3，主版本 14 及以上接受；兼容级别不低于 130，并检查排序规则、schema 和结构版本。
 - [ ] SQL 连接显式配置 `Encrypt=true;TrustServerCertificate=false` 并验证证书链和主机名；任何同机回环例外都已记录批准，日志和健康接口不输出连接字符串。
-- [ ] 在真实 SQL Server 2016 SP2/兼容级别 130 最低基线和实际部署的较新版本/兼容级别上执行迁移、仓储、事务、锁、JSON、投影和死锁测试；不以 SQLite、EF InMemory 或单独的较新 SQL 版本替代最低基线。
+- [ ] 在真实 SQL Server 2016 SP2/兼容级别 130 最低基线和实际部署的较新版本/兼容级别上执行迁移、数据访问、事务、锁、JSON、投影和死锁测试；不以 SQLite、EF InMemory 或单独的较新 SQL 版本替代最低基线。
 - [ ] 权限组用途关联至少一项且不可重复；流程版本不保存与发布指针、校验结果重复的通用 status。
 - [ ] 任务表和 API 区分审批、自由协作、重新提交；自由协作当前受理人、唯一 pending 任务、参与人投影、时间线和实例更新时间保持事务一致。
 - [ ] 回复编辑只保留最新正文及编辑审计元数据，不存在保存旧正文的回复修订表或 API 字段。
@@ -135,7 +133,6 @@
 ## 10. 测试与交付门禁
 
 - [ ] xUnit 单元测试覆盖领域不变量、权限、登录分流、密码、路径、Outbox 与投影。
-- [ ] Mapperly 关键映射测试覆盖新增成员、敏感字段忽略、枚举、nullability、集合以及 Entity/Domain/DTO 往返边界；Release build 不得存在 Mapperly warning。
 - [ ] `WebApplicationFactory` 覆盖 Controller、Middleware、Problem Details、Cookie、Origin、ETag、幂等和 OpenAPI 语义契约。
 - [ ] SQL Server 集成测试覆盖空库/上一版脚本、事务回滚、编号竞争、发布竞争、任务双提交、锁和投影重建。
 - [ ] LDAP 与 SMTP 使用可控替身覆盖超时、证书与失败；部署环境再完成一次真实域登录和测试邮件。

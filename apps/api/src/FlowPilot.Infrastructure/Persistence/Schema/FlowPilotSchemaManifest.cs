@@ -22,13 +22,7 @@ public sealed class FlowPilotSchemaManifest
         IEnumerable<string> columns,
         IEnumerable<string> constraints,
         IEnumerable<string> indexes,
-        IEnumerable<string> triggers,
-        IEnumerable<string> columnSignatures,
-        IEnumerable<string> checkConstraintSignatures,
-        IEnumerable<string> foreignKeySignatures,
-        IEnumerable<string> keyConstraintSignatures,
-        IEnumerable<string> indexSignatures,
-        IEnumerable<string> triggerSignatures)
+        IEnumerable<string> triggers)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(version);
         ArgumentException.ThrowIfNullOrWhiteSpace(schemaName);
@@ -40,18 +34,6 @@ public sealed class FlowPilotSchemaManifest
         Constraints = Freeze(constraints, nameof(constraints));
         Indexes = Freeze(indexes, nameof(indexes));
         Triggers = Freeze(triggers, nameof(triggers));
-        ColumnSignatures = FreezeSignatures(columnSignatures, nameof(columnSignatures));
-        CheckConstraintSignatures = FreezeSignatures(
-            checkConstraintSignatures,
-            nameof(checkConstraintSignatures));
-        ForeignKeySignatures = FreezeSignatures(
-            foreignKeySignatures,
-            nameof(foreignKeySignatures));
-        KeyConstraintSignatures = FreezeSignatures(
-            keyConstraintSignatures,
-            nameof(keyConstraintSignatures));
-        IndexSignatures = FreezeSignatures(indexSignatures, nameof(indexSignatures));
-        TriggerSignatures = FreezeSignatures(triggerSignatures, nameof(triggerSignatures));
     }
 
     public static FlowPilotSchemaManifest Current => CurrentManifest.Value;
@@ -69,18 +51,6 @@ public sealed class FlowPilotSchemaManifest
     public IReadOnlySet<string> Indexes { get; }
 
     public IReadOnlySet<string> Triggers { get; }
-
-    public IReadOnlySet<string> ColumnSignatures { get; }
-
-    public IReadOnlySet<string> CheckConstraintSignatures { get; }
-
-    public IReadOnlySet<string> ForeignKeySignatures { get; }
-
-    public IReadOnlySet<string> KeyConstraintSignatures { get; }
-
-    public IReadOnlySet<string> IndexSignatures { get; }
-
-    public IReadOnlySet<string> TriggerSignatures { get; }
 
     private static FrozenSet<string> Freeze(
         IEnumerable<string> values,
@@ -103,39 +73,19 @@ public sealed class FlowPilotSchemaManifest
         return frozen;
     }
 
-    private static FrozenSet<string> FreezeSignatures(
-        IEnumerable<string> values,
-        string parameterName)
-    {
-        var frozen = Freeze(values, parameterName);
-        var identityCount = frozen
-            .Select(value => value.Split('|', 2)[0])
-            .Distinct(StringComparer.Ordinal)
-            .Count();
-        if (identityCount != frozen.Count)
-        {
-            throw new ArgumentException(
-                "Schema signatures must have unique object identities.",
-                parameterName);
-        }
-
-        return frozen;
-    }
-
     private static FlowPilotSchemaManifest LoadCurrent()
     {
         var assembly = typeof(FlowPilotSchemaManifest).Assembly;
-        var matches = assembly
+        var resourceName = assembly
             .GetManifestResourceNames()
-            .Where(name => name.EndsWith(CurrentResourceSuffix, StringComparison.Ordinal))
-            .ToArray();
-
-        if (matches.Length != 1)
+            .SingleOrDefault(name =>
+                name.EndsWith(CurrentResourceSuffix, StringComparison.Ordinal));
+        if (resourceName is null)
         {
             throw new InvalidOperationException("The FlowPilot schema manifest is unavailable.");
         }
 
-        using var stream = assembly.GetManifestResourceStream(matches[0]);
+        using var stream = assembly.GetManifestResourceStream(resourceName);
         if (stream is null)
         {
             throw new InvalidOperationException("The FlowPilot schema manifest is unavailable.");
@@ -146,21 +96,10 @@ public sealed class FlowPilotSchemaManifest
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true),
             detectEncodingFromByteOrderMarks: true);
         var manifest = Parse(reader.ReadToEnd());
-
         if (!string.Equals(manifest.Version, CurrentVersion, StringComparison.Ordinal) ||
             !string.Equals(manifest.SchemaName, FlowPilotSchemaName, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("The FlowPilot schema manifest metadata is invalid.");
-        }
-
-        if (manifest.ColumnSignatures.Count != manifest.Columns.Count ||
-            manifest.CheckConstraintSignatures.Count +
-                manifest.ForeignKeySignatures.Count +
-                manifest.KeyConstraintSignatures.Count != manifest.Constraints.Count ||
-            manifest.IndexSignatures.Count != manifest.Indexes.Count ||
-            manifest.TriggerSignatures.Count != manifest.Triggers.Count)
-        {
-            throw new InvalidOperationException("The FlowPilot schema manifest shape is invalid.");
         }
 
         return manifest;
@@ -178,12 +117,6 @@ public sealed class FlowPilotSchemaManifest
             ["constraints"] = [],
             ["indexes"] = [],
             ["triggers"] = [],
-            ["columnSignatures"] = [],
-            ["checkConstraintSignatures"] = [],
-            ["foreignKeySignatures"] = [],
-            ["keyConstraintSignatures"] = [],
-            ["indexSignatures"] = [],
-            ["triggerSignatures"] = [],
         };
         var visitedSections = new HashSet<string>(StringComparer.Ordinal);
 
@@ -206,30 +139,27 @@ public sealed class FlowPilotSchemaManifest
                 continue;
             }
 
-            if (section is null)
+            if (section is not null)
             {
-                if (line.StartsWith("version=", StringComparison.Ordinal))
-                {
-                    version = ReadSingleMetadataValue(version, line["version=".Length..]);
-                }
-                else if (line.StartsWith("schema=", StringComparison.Ordinal))
-                {
-                    schemaName = ReadSingleMetadataValue(schemaName, line["schema=".Length..]);
-                }
-                else
-                {
-                    throw new InvalidOperationException("The FlowPilot schema manifest is invalid.");
-                }
-
+                sections[section].Add(line);
                 continue;
             }
 
-            sections[section].Add(line);
+            if (line.StartsWith("version=", StringComparison.Ordinal))
+            {
+                version = ReadMetadata(version, line["version=".Length..]);
+            }
+            else if (line.StartsWith("schema=", StringComparison.Ordinal))
+            {
+                schemaName = ReadMetadata(schemaName, line["schema=".Length..]);
+            }
+            else
+            {
+                throw new InvalidOperationException("The FlowPilot schema manifest is invalid.");
+            }
         }
 
-        if (version is null ||
-            schemaName is null ||
-            visitedSections.Count != sections.Count)
+        if (version is null || schemaName is null || visitedSections.Count != sections.Count)
         {
             throw new InvalidOperationException("The FlowPilot schema manifest is incomplete.");
         }
@@ -241,16 +171,10 @@ public sealed class FlowPilotSchemaManifest
             sections["columns"],
             sections["constraints"],
             sections["indexes"],
-            sections["triggers"],
-            sections["columnSignatures"],
-            sections["checkConstraintSignatures"],
-            sections["foreignKeySignatures"],
-            sections["keyConstraintSignatures"],
-            sections["indexSignatures"],
-            sections["triggerSignatures"]);
+            sections["triggers"]);
     }
 
-    private static string ReadSingleMetadataValue(string? existingValue, string value)
+    private static string ReadMetadata(string? existingValue, string value)
     {
         if (existingValue is not null || string.IsNullOrWhiteSpace(value))
         {

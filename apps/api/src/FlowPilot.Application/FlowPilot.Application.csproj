@@ -3,4 +3,7 @@
     <ProjectReference Include="..\FlowPilot.Contracts\FlowPilot.Contracts.csproj" />
     <ProjectReference Include="..\FlowPilot.Domain\FlowPilot.Domain.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Identity.Core" />
+  </ItemGroup>
 </Project>

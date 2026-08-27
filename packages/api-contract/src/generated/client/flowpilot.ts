@@ -763,9 +763,21 @@ export const DesignerFieldType = {
   radio: 'radio',
   checkbox: 'checkbox',
   select: 'select',
+  cascader: 'cascader',
   table: 'table',
   attachment: 'attachment',
 } as const;
+
+export interface DesignerChoiceOptionDto {
+  /**
+     * 同一版本的完整表单内唯一，重命名选项时保持不变
+     * @minLength 1
+     */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  children?: DesignerChoiceOptionDto[];
+}
 
 export type DesignerTableColumnDtoType = typeof DesignerTableColumnDtoType[keyof typeof DesignerTableColumnDtoType];
 
@@ -800,7 +812,7 @@ export interface DesignerTableColumnDto {
   width?: number;
   align?: DesignerTableColumnDtoAlign;
   reviewEditable?: boolean;
-  options?: string[];
+  options?: DesignerChoiceOptionDto[];
 }
 
 export interface AttachmentFieldConfigDto {
@@ -837,6 +849,43 @@ export const DesignerFieldDtoInputStage = {
   reviewer: 'reviewer',
 } as const;
 
+export type NodeConditionDtoMode = typeof NodeConditionDtoMode[keyof typeof NodeConditionDtoMode];
+
+
+export const NodeConditionDtoMode = {
+  all: 'all',
+  any: 'any',
+} as const;
+
+export type ConditionOperator = typeof ConditionOperator[keyof typeof ConditionOperator];
+
+
+export const ConditionOperator = {
+  eq: 'eq',
+  neq: 'neq',
+  gt: 'gt',
+  gte: 'gte',
+  lt: 'lt',
+  lte: 'lte',
+  contains: 'contains',
+  'not-contains': 'not-contains',
+  empty: 'empty',
+  'not-empty': 'not-empty',
+} as const;
+
+export interface NodeConditionRuleDto {
+  id: string;
+  fieldId: string;
+  operator: ConditionOperator;
+  value?: JsonValue;
+}
+
+export interface NodeConditionDto {
+  mode: NodeConditionDtoMode;
+  /** @minItems 1 */
+  rules: NodeConditionRuleDto[];
+}
+
 export interface DesignerFieldDto {
   /**
      * 版本家族内稳定字段标识；title 为系统固定标题字段
@@ -860,7 +909,10 @@ export interface DesignerFieldDto {
   exportVisible: boolean;
   /** 发起人输入、发起人和授权审核人均可输入，或仅由授权审核人输入 */
   inputStage: DesignerFieldDtoInputStage;
-  options?: string[];
+  /** 字段显示条件；fieldId 和选择值均使用版本内稳定标识 */
+  displayCondition?: NodeConditionDto;
+  /** 选择类字段的稳定选项；cascader 使用 children 表达任意层级 */
+  options?: DesignerChoiceOptionDto[];
   attachment?: AttachmentFieldConfigDto;
   columns?: DesignerTableColumnDto[];
 }
@@ -889,43 +941,6 @@ export interface SystemListFieldDto {
   order?: number;
   /** @minimum 60 */
   width?: number;
-}
-
-export type ConditionOperator = typeof ConditionOperator[keyof typeof ConditionOperator];
-
-
-export const ConditionOperator = {
-  eq: 'eq',
-  neq: 'neq',
-  gt: 'gt',
-  gte: 'gte',
-  lt: 'lt',
-  lte: 'lte',
-  contains: 'contains',
-  'not-contains': 'not-contains',
-  empty: 'empty',
-  'not-empty': 'not-empty',
-} as const;
-
-export interface NodeConditionRuleDto {
-  id: string;
-  fieldId: string;
-  operator: ConditionOperator;
-  value?: JsonValue;
-}
-
-export type NodeConditionDtoMode = typeof NodeConditionDtoMode[keyof typeof NodeConditionDtoMode];
-
-
-export const NodeConditionDtoMode = {
-  all: 'all',
-  any: 'any',
-} as const;
-
-export interface NodeConditionDto {
-  mode: NodeConditionDtoMode;
-  /** @minItems 1 */
-  rules: NodeConditionRuleDto[];
 }
 
 export interface NodeEmailNotificationDto {
@@ -1061,6 +1076,7 @@ export interface ProcessVersionSummaryDto {
   editable: boolean;
   status: ProcessVersionSummaryDtoStatus;
   validation: VersionValidationDto;
+  /** basic 与 snapshot 原始 JSON 以换行连接后计算的 SHA-256 小写十六进制值 */
   checksum: string;
   changeNote?: string;
   createdAt: string;
@@ -1068,6 +1084,7 @@ export interface ProcessVersionSummaryDto {
   updatedAt: string;
   updatedBy?: UserRef;
   firstPublishedAt?: string;
+  firstPublishedBy?: UserRef;
   publishedAt?: string;
   lastUnpublishedAt?: string;
   lastUnpublishedBy?: UserRef;
@@ -1111,7 +1128,36 @@ export interface ProcessDefinitionPage {
   meta: PageMeta;
 }
 
-export type VisibleProcessDefinitionDto = ProcessDefinitionDto;
+export type ProcessDefinitionWithVersionsDto = ProcessDefinitionDto & {
+  /** 定义下的全部完整版本；用于导入等管理响应 */
+  versions: ProcessVersionDto[];
+};
+
+export interface VisibleProcessVersionDto {
+  id: string;
+  definitionId: string;
+  /** @minimum 1 */
+  versionNumber: number;
+  versionLabel: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  checksum: string;
+  basic: ProcessBasicConfigDto;
+  snapshot: CompleteDesignerSnapshotDto;
+}
+
+export interface VisibleProcessDefinitionDto {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+  type: ProcessDefinitionType;
+  disabled: boolean;
+  status: ProcessDefinitionStatus;
+  publishedVersionId?: string;
+  publishedInstancePrefix?: string;
+  /** 当前发布版本，以及当前用户可见实例实际锁定的历史版本；均包含完整快照，不包含管理侧计数与编辑元数据 */
+  versions: VisibleProcessVersionDto[];
+}
 
 export interface VisibleProcessDefinitionPage {
   items: VisibleProcessDefinitionDto[];
@@ -1566,8 +1612,8 @@ export interface WorkflowTaskDto {
   allowedActions: TaskAllowedAction[];
   conditionSummary?: string;
   conditionEvaluatedAt?: string;
-  submittedFieldChanges: FieldChangeDto[];
-  fieldRevisions: FieldRevisionDto[];
+  submittedFieldChanges?: FieldChangeDto[];
+  fieldRevisions?: FieldRevisionDto[];
   createdAt: string;
   completedAt?: string;
 }
@@ -1674,7 +1720,18 @@ export interface ResubmissionTaskDto {
   completedAt?: string;
 }
 
-export type TaskCenterItemDto = WorkflowTaskDto | FreeCollaborationTaskDto | ResubmissionTaskDto;
+export type TaskDto = WorkflowTaskDto | FreeCollaborationTaskDto | ResubmissionTaskDto;
+
+export interface TaskCenterItemDto {
+  /** @minItems 1 */
+  tasks: TaskDto[];
+  instance: ProcessInstanceSummaryDto;
+}
+
+export interface WorkflowTaskDetailDto {
+  task: TaskDto;
+  instance: ProcessInstanceSummaryDto;
+}
 
 export interface TaskCenterItemPage {
   items: TaskCenterItemDto[];
@@ -2639,14 +2696,6 @@ page?: PageParameter;
  */
 pageSize?: PageSizeParameter;
 /**
- * 查询起始日期，前端默认今天之前 30 天
- */
-dateFrom: DateFromParameter;
-/**
- * 查询结束日期，前端默认今天；不得早于 dateFrom
- */
-dateTo: DateToParameter;
-/**
  * 去除首尾空格的关键词
  * @maxLength 100
  */
@@ -3488,7 +3537,7 @@ const listProcessDefinitions = (
   }
 
 /**
- * 定义头、V1 基本信息和默认完整快照在同一事务中创建。
+ * 需要 `config-definition:编辑`。定义头、V1 基本信息和默认完整快照在同一事务中创建；成功响应的 ETag 对应新建 V1 的 revision。
  * @summary 创建定义及正式 V1
  */
 const createProcessDefinition = (
@@ -3522,7 +3571,7 @@ const listMyLaunchableProcessDefinitions = (
 const importProcessDefinition = (
     importProcessDefinitionRequest: ImportProcessDefinitionRequest,
     headers: ImportProcessDefinitionHeaders, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<VisibleProcessDefinitionDto>> => {
+ ): Promise<AxiosResponse<ProcessDefinitionWithVersionsDto>> => {
     return axiosInstance.post(
       `/api/flowpilot/v1/process-definitions/imports`,
       importProcessDefinitionRequest,{
@@ -3532,7 +3581,7 @@ const importProcessDefinition = (
   }
 
 /**
- * 只返回当前发布版本，以及当前用户可见实例实际锁定的历史版本；不得返回未发布且未被可见实例引用的草稿版本。
+ * 供流程发起、任务中心、流程清单和实例监控使用。只返回当前发布版本，以及按当前账号实例数据范围可见的历史锁定版本；具有实例监控查看权限的账号可读取全部实例引用的版本。不得返回未发布且未被可见实例引用的草稿版本。
  * @summary 获取当前用户界面渲染所需的可见流程定义和版本快照
  */
 const listMyVisibleProcessDefinitions = (
@@ -3686,6 +3735,7 @@ const deleteProcessVersion = (
   }
 
 /**
+ * 需要 `config-definition:编辑`；If-Match 对应目标版本的 revision。
  * @summary 保存版本基本信息
  */
 const replaceProcessVersionBasic = (
@@ -3703,6 +3753,7 @@ const replaceProcessVersionBasic = (
   }
 
 /**
+ * 需要 `config-form:编辑`；表单与系统列表字段作为同一版本分区原子保存。
  * @summary 原子保存初始表单与系统列表字段配置
  */
 const replaceProcessVersionFormDesigner = (
@@ -3720,7 +3771,7 @@ const replaceProcessVersionFormDesigner = (
   }
 
 /**
- * 避免先保存基本信息、后保存拓扑造成部分成功。
+ * 需要 `config-definition:编辑`；名称、发起权限组和流程图原子保存，避免分步调用造成部分成功。
  * @summary 原子保存流程图及其耦合的名称和发起权限组
  */
 const replaceProcessVersionFlowDesigner = (
@@ -3738,6 +3789,7 @@ const replaceProcessVersionFlowDesigner = (
   }
 
 /**
+ * 需要 `config-definition:发布`；校验结果、版本 revision 和审计记录在同一事务中更新。
  * @summary 重新执行完整版本校验
  */
 const validateProcessVersion = (
@@ -3791,7 +3843,7 @@ const unpublishProcessVersion = (
   }
 
 /**
- * dateFrom/dateTo 必填；前端默认今天至前 30 天且不可清空。
+ * dateFrom/dateTo 必填；前端默认今天至前 30 天且不可清空。“我的发起”传入当前用户、activeOnly=true 时返回本人全部未结束实例，不按日期截断。
  * @summary 按当前用户数据范围分页查询流程实例
  */
 const listProcessInstances = (
@@ -3884,7 +3936,7 @@ const closeProcessInstance = (
   }
 
 /**
- * 返回审批、自由协作和待重新提交三种任务的判别联合；自由协作和重新提交任务没有审批节点。
+ * 按流程实例分页，每项返回该实例下当前视图可见的任务数组与实例摘要；tasks 中各任务通过 taskType 区分审批、自由协作和待重新提交，后两类没有审批节点。待办不按创建日期截断。
  * @summary 查询任务中心中的我的待办或可代办任务
  */
 const listMyWorkflowTasks = (
@@ -3902,7 +3954,7 @@ const listMyWorkflowTasks = (
  */
 const getWorkflowTask = (
     taskId: string, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<TaskCenterItemDto>> => {
+ ): Promise<AxiosResponse<WorkflowTaskDetailDto>> => {
     return axiosInstance.get(
       `/api/flowpilot/v1/workflow-tasks/${taskId}`,options
     );
@@ -4263,7 +4315,7 @@ export type PreviewWorkflowPermissionGroupChangeImpactResult = AxiosResponse<Wor
 export type ListProcessDefinitionsResult = AxiosResponse<ProcessDefinitionPage>
 export type CreateProcessDefinitionResult = AxiosResponse<CreateProcessDefinitionResponse>
 export type ListMyLaunchableProcessDefinitionsResult = AxiosResponse<LaunchableProcessDefinitionDto[]>
-export type ImportProcessDefinitionResult = AxiosResponse<VisibleProcessDefinitionDto>
+export type ImportProcessDefinitionResult = AxiosResponse<ProcessDefinitionWithVersionsDto>
 export type ListMyVisibleProcessDefinitionsResult = AxiosResponse<VisibleProcessDefinitionPage>
 export type GetProcessDefinitionResult = AxiosResponse<ProcessDefinitionDto>
 export type UpdateProcessDefinitionAvailabilityResult = AxiosResponse<ProcessDefinitionDto>
@@ -4288,7 +4340,7 @@ export type UpdateProcessInstanceBeforeFirstDecisionResult = AxiosResponse<Proce
 export type ResubmitRejectedProcessInstanceResult = AxiosResponse<ProcessInstanceDetailDto>
 export type CloseProcessInstanceResult = AxiosResponse<ProcessInstanceDetailDto>
 export type ListMyWorkflowTasksResult = AxiosResponse<TaskCenterItemPage>
-export type GetWorkflowTaskResult = AxiosResponse<TaskCenterItemDto>
+export type GetWorkflowTaskResult = AxiosResponse<WorkflowTaskDetailDto>
 export type DecideWorkflowTaskResult = AxiosResponse<TaskDecisionResponse>
 export type ReviseCompletedWorkflowTaskFieldsResult = AxiosResponse<ReviseTaskFieldsResponse>
 export type UpdateFreeCollaborationInitialFormResult = AxiosResponse<ProcessInstanceDetailDto>

@@ -4,9 +4,16 @@ using System.Text.Json.Serialization;
 using FlowPilot.Api;
 using FlowPilot.Api.Configuration;
 using FlowPilot.Api.Http;
+using FlowPilot.Infrastructure.Authentication;
 using FlowPilot.Infrastructure.Configuration;
 using FlowPilot.Infrastructure.Deployment;
+using FlowPilot.Infrastructure.Organization;
 using FlowPilot.Infrastructure.Persistence;
+using FlowPilot.Infrastructure.ProcessDefinitions;
+using FlowPilot.Infrastructure.TaskCenter;
+using FlowPilot.Application.ProcessDefinitions;
+using FlowPilot.Application.Organization;
+using FlowPilot.Application.TaskCenter;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
@@ -83,6 +90,11 @@ if (deploymentPaths is not null)
 }
 
 builder.Services.AddFlowPilotPersistence(builder.Configuration);
+builder.Services.AddFlowPilotAuthentication();
+builder.Services.AddScoped<IOrganizationService, SqlServerOrganizationService>();
+builder.Services.AddScoped<IProcessDefinitionQueryService, SqlServerProcessDefinitionQueryService>();
+builder.Services.AddScoped<IProcessDefinitionCommandService, SqlServerProcessDefinitionCommandService>();
+builder.Services.AddScoped<ITaskCenterQueryService, SqlServerTaskCenterQueryService>();
 
 var app = builder.Build();
 
@@ -102,6 +114,7 @@ app.UseStatusCodePages(async statusCodeContext =>
 app.UseMiddleware<AllowedHostMiddleware>();
 app.UsePathBase(ApiConstants.PathBase);
 app.UseMiddleware<ApiPathBaseMiddleware>();
+app.UseMiddleware<AuthenticationCsrfMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {

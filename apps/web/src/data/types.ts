@@ -117,6 +117,7 @@ export type LegacyProcessInstance = Omit<ProcessInstance, "definitionId" | "vers
 
 export interface WorkflowTask {
   id: string;
+  taskType?: "approval" | "free-collaboration" | "resubmission";
   instanceId: string;
   definitionId: string;
   versionId: string;
@@ -125,9 +126,12 @@ export interface WorkflowTask {
   permissionGroupId: string;
   handlingMode?: "approval" | "confirmation";
   editableFieldIds?: string[];
-  allowedActions?: Array<"pass" | "confirm" | "reject" | "revise-fields">;
+  allowedActions?: Array<"pass" | "confirm" | "reject" | "revise-fields" | "reply" | "change-assignee" | "resubmit">;
   status: WorkflowTaskStatus;
+  assigneeId?: string;
+  assigneeName?: string;
   defaultAssigneeId?: string;
+  defaultAssigneeName?: string;
   completedById?: string;
   completedByName?: string;
   action?: "通过" | "确认" | "驳回";

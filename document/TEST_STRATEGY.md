@@ -32,7 +32,7 @@
 
 - 正式后端开工后，契约检查必须先运行锁定版本的 `@redocly/cli` lint，再运行 `orval` 生成前端 TypeScript 类型和 Axios 客户端，并检查重新生成后没有工作树差异。ASP.NET Core 通过 `Microsoft.AspNetCore.OpenApi` 输出实现文档，与规范执行语义比较。快速正则检查不能替代该门禁。
 - .NET 门禁覆盖 restore locked mode、Release build、xUnit、维护 CLI、`dotnet publish -r win-x64`、原生 Windows Service 启动和重启；不把 C# DTO 或服务端校验交给前端 Zod 生成物。
-- Mapperly 的未映射成员、无法转换、枚举和 nullability 诊断必须在 Release build 中作为错误处理。关键 Entity/Domain/DTO 映射用 xUnit 验证，确保敏感字段、主键、revision、状态和审计字段不会被请求 DTO 意外覆盖。
+- 对有业务风险的 DTO 投影和写入字段白名单执行相关测试，确保敏感字段、主键、revision、状态和审计字段不会被请求 DTO 意外覆盖；简单字段搬运不为测试而引入映射框架。
 
 ```bash
 pnpm test                  # 单元、领域集成和组件测试

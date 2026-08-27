@@ -79,20 +79,28 @@ export function PersonaGate({ scope, definitionId, permission, children }: { sco
 
 function ProcessDefinitionLoader({ children }: { children: ReactNode }) {
   const { definitionId } = useParams<{ definitionId?: string }>();
-  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [loadedDefinitionId, setLoadedDefinitionId] = useState<string>();
   useEffect(() => {
-    if (import.meta.env.VITE_API_MODE !== "remote" || !definitionId || definitionId === "new" || definition?.versions.length) return;
+    if (import.meta.env.VITE_API_MODE !== "remote"
+      || !definitionId
+      || definitionId === "new"
+      || loadedDefinitionId === definitionId) return;
     let cancelled = false;
     setLoading(true);
     setFailed(false);
     void flowPilotApi.definitions.get(definitionId)
       .then((loaded) => { if (!cancelled) cacheProcessDefinition(loaded); })
       .catch(() => { if (!cancelled) setFailed(true); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => {
+        if (!cancelled) {
+          setLoadedDefinitionId(definitionId);
+          setLoading(false);
+        }
+      });
     return () => { cancelled = true; };
-  }, [definitionId]);
+  }, [definitionId, loadedDefinitionId]);
   if (loading) return <Spin fullscreen tip="正在加载流程版本…" />;
   if (failed) return <Result status="error" title="流程版本加载失败" subTitle="请刷新页面后重试。" />;
   return children;

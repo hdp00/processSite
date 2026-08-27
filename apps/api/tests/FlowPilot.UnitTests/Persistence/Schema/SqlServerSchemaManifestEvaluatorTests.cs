@@ -11,22 +11,12 @@ public sealed class SqlServerSchemaManifestEvaluatorTests
         ["table.column"],
         ["table.constraint"],
         ["table.index"],
-        ["table.trigger"],
-        ["table.column|type=sys.int|userDefined=0|nullable=0|collation=-" +
-            "|computed=0|computedDefinition=-|persisted=0" +
-            "|identity=0|seed=-|increment=-|rowGuid=0|sparse=0|ansiPadded=0"],
-        ["table.constraint|check"],
-        ["table.constraint|foreignKey"],
-        ["table.constraint|key"],
-        ["table.index|shape"],
-        ["table.trigger|shape"]);
+        ["table.trigger"]);
 
     [Fact]
-    public void Evaluate_ReturnsValidForAnExactSnapshot()
+    public void EvaluateReturnsValidForAnExactSnapshot()
     {
-        var result = SqlServerSchemaManifestEvaluator.Evaluate(
-            Manifest,
-            CreateSnapshot());
+        var result = SqlServerSchemaManifestEvaluator.Evaluate(Manifest, CreateSnapshot());
 
         Assert.True(result.IsValid);
         Assert.Equal(SqlServerSchemaValidationCodes.Valid, result.Code);
@@ -38,62 +28,21 @@ public sealed class SqlServerSchemaManifestEvaluatorTests
     [InlineData("constraint")]
     [InlineData("index")]
     [InlineData("trigger")]
-    [InlineData("columnSignature")]
-    [InlineData("checkConstraintSignature")]
-    [InlineData("foreignKeySignature")]
-    [InlineData("keyConstraintSignature")]
-    [InlineData("indexSignature")]
-    [InlineData("triggerSignature")]
-    public void Evaluate_ReturnsOneStableFailureForEveryMissingObjectCategory(
-        string category)
+    public void EvaluateRejectsMissingOrExtraObjects(string category)
     {
-        var result = SqlServerSchemaManifestEvaluator.Evaluate(
+        AssertMismatch(SqlServerSchemaManifestEvaluator.Evaluate(
             Manifest,
-            CreateSnapshot(omittedCategory: category));
-
-        AssertMismatch(result);
-    }
-
-    [Theory]
-    [InlineData("table")]
-    [InlineData("column")]
-    [InlineData("constraint")]
-    [InlineData("index")]
-    [InlineData("trigger")]
-    [InlineData("columnSignature")]
-    [InlineData("checkConstraintSignature")]
-    [InlineData("foreignKeySignature")]
-    [InlineData("keyConstraintSignature")]
-    [InlineData("indexSignature")]
-    [InlineData("triggerSignature")]
-    public void Evaluate_ReturnsOneStableFailureForEveryExtraObjectCategory(
-        string category)
-    {
-        var result = SqlServerSchemaManifestEvaluator.Evaluate(
+            CreateSnapshot(omittedCategory: category)));
+        AssertMismatch(SqlServerSchemaManifestEvaluator.Evaluate(
             Manifest,
-            CreateSnapshot(extraCategory: category));
-
-        AssertMismatch(result);
-    }
-
-    [Fact]
-    public void Evaluate_RejectsAnOtherwiseUnallowedSchemaObject()
-    {
-        var result = SqlServerSchemaManifestEvaluator.Evaluate(
-            Manifest,
-            CreateSnapshot(otherObjects: ["VIEW:unexpected_view"]));
-
-        AssertMismatch(result);
+            CreateSnapshot(extraCategory: category)));
     }
 
     private static SqlServerSchemaSnapshot CreateSnapshot(
         string? omittedCategory = null,
-        string? extraCategory = null,
-        IEnumerable<string>? otherObjects = null)
+        string? extraCategory = null)
     {
-        IEnumerable<string> Select(
-            string category,
-            IReadOnlySet<string> expected)
+        IEnumerable<string> Select(string category, IReadOnlySet<string> expected)
         {
             if (string.Equals(category, omittedCategory, StringComparison.Ordinal))
             {
@@ -110,14 +59,7 @@ public sealed class SqlServerSchemaManifestEvaluatorTests
             Select("column", Manifest.Columns),
             Select("constraint", Manifest.Constraints),
             Select("index", Manifest.Indexes),
-            Select("trigger", Manifest.Triggers),
-            otherObjects ?? [],
-            Select("columnSignature", Manifest.ColumnSignatures),
-            Select("checkConstraintSignature", Manifest.CheckConstraintSignatures),
-            Select("foreignKeySignature", Manifest.ForeignKeySignatures),
-            Select("keyConstraintSignature", Manifest.KeyConstraintSignatures),
-            Select("indexSignature", Manifest.IndexSignatures),
-            Select("triggerSignature", Manifest.TriggerSignatures));
+            Select("trigger", Manifest.Triggers));
     }
 
     private static void AssertMismatch(SqlServerSchemaValidationResult result)

@@ -4,9 +4,11 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\FlowPilot.Application\FlowPilot.Application.csproj" />
     <ProjectReference Include="..\FlowPilot.Infrastructure\FlowPilot.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Migrations\*.sql" />
+    <EmbeddedResource Include="Seeding\*.sql" />
   </ItemGroup>
 </Project>

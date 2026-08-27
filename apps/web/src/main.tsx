@@ -1,9 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import { writeApiAccessToken } from "./api/client";
-import { flowPilotApi } from "./api/flowPilotApi";
-import { hydrateRemoteApplication } from "./api/remoteHydration";
+import { ApiError, writeApiAccessToken } from "./api/client";
+import { clearRemoteApplicationCache, flowPilotApi } from "./api/flowPilotApi";
+import { hydrateRemoteProcessDefinitions } from "./api/remoteHydration";
 import "@xyflow/react/dist/style.css";
 import "./styles.css";
 
@@ -20,13 +20,22 @@ const bootstrap = async () => {
     const { startMockApi } = await import("./mocks/browser");
     await startMockApi();
   } else {
+    let sessionRecovered = false;
     try {
       await flowPilotApi.auth.me();
-      await hydrateRemoteApplication();
-    } catch {
-      writeApiAccessToken();
-      const { usePrototypeStore } = await import("./state/usePrototypeStore");
-      usePrototypeStore.getState().logout();
+      sessionRecovered = true;
+      await hydrateRemoteProcessDefinitions();
+    } catch (error) {
+      if (sessionRecovered) {
+        await flowPilotApi.auth.logout({ clearCache: false }).catch(() => undefined);
+      } else {
+        writeApiAccessToken();
+        if (error instanceof ApiError && error.status === 401) {
+          clearRemoteApplicationCache();
+        }
+        const { usePrototypeStore } = await import("./state/usePrototypeStore");
+        usePrototypeStore.getState().logout();
+      }
     }
   }
   renderApp();

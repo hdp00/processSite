@@ -1,14 +1,14 @@
 # FlowPilot 正式后端实现设计决策
 
 > 状态：已确认，作为后端实现基线
-> 最后更新：2026-08-26
+> 最后更新：2026-08-27
 > 适用范围：.NET 10 / ASP.NET Core 10、Microsoft SQL Server 2016 SP2 及之后版本、本地附件目录、Windows Server 2016 与 IIS 内网部署
 
 ## 1. 文档定位与迁移状态
 
 本文把 `REQUIREMENTS.md` 和 OpenAPI 契约转换为后端工程边界。业务语义与接口细节仍以 `REQUIREMENTS.md` 和 `flowpilot-rest-api.openapi.yaml` 为准。
 
-仓库现有 `apps/api` 是此前的 NestJS 骨架。目标架构已经切换到 .NET 10，本文件描述的是后续实现目标，不表示旧代码已完成迁移。迁移期间不得在同一正式部署中同时运行两套后端，也不得让两套实现共享写流量。
+旧 NestJS 骨架已删除。当前 `apps/api` 已完成 .NET 10 工程、健康检查、数据库初始化/Seed、超级管理员登录会话、组织目录读取、用户/角色创建、流程权限组管理、任务中心/流程实例列表，以及流程定义/版本读取、定义创建与 V1 基本信息/表单/流程图保存和重新校验切片；其他业务能力按本文件逐个实现，不提供占位成功接口。
 
 当前部署的 Windows Server 2016 和 SQL Server 2016 SP2 保持不变。本项目明确接受其生命周期风险，不制定服务器或数据库升级计划；后端同时保持对之后 SQL Server 版本的兼容。仍须执行内网隔离、最小权限、受信 TLS、适用补丁、备份恢复和审计等补偿性控制。
 
@@ -31,7 +31,7 @@ apps/api/
 ├─ FlowPilot.sln
 ├─ src/
 │  ├─ FlowPilot.Api/              Controller、Middleware、配置、宿主
-│  ├─ FlowPilot.Application/      用例、事务命令、仓储接口
+│  ├─ FlowPilot.Application/      纵向用例服务、权限与业务编排
 │  ├─ FlowPilot.Domain/           领域实体、不变量、值对象
 │  ├─ FlowPilot.Infrastructure/   EF Core、SqlClient、LDAP、SMTP、文件
 │  └─ FlowPilot.Contracts/        C# 请求/响应 DTO
@@ -55,13 +55,12 @@ apps/api/
 - `MailKit`（包含 MimeKit）
 - `Serilog.AspNetCore`
 - `Serilog.Sinks.File`
-- `Riok.Mapperly`（编译期源码生成器，私有构建依赖）
 
 设计/测试依赖至少包括 `Microsoft.EntityFrameworkCore.Design`、`Microsoft.AspNetCore.Mvc.Testing`、`Microsoft.NET.Test.Sdk` 和 xUnit。具体版本在创建 .NET 工程时锁定，并在目标 Windows Server 2016 上验证 restore、publish、服务启动、SQL/LDAP/SMTP 连接和重启恢复。
 
 不默认引入 Dapper、AutoMapper、MediatR、FluentValidation、Hangfire、Quartz.NET、Redis、消息队列、额外依赖注入容器或服务器端 OpenAPI 桩生成器。优先使用 .NET/ASP.NET Core 内置 DI、Options、DataAnnotations、`System.Text.Json`、Health Checks、Rate Limiting、`BackgroundService`、`IHttpClientFactory`、`Guid.NewGuid()`、加密和流式文件 API。新增库前必须说明必要性、升级风险、传递依赖和目标服务器验证结果。
 
-Mapperly 选择稳定发布通道，并以 `PrivateAssets="all"`、`ExcludeAssets="runtime"` 引用，使生成器及其抽象不进入服务器运行时依赖。首版不启用需要运行时抽象的 reference handling，也不保留 Mapperly attribute。Mapperly 升级必须重新执行 Release build、检查全部诊断并复核关键生成映射；不采用 `next` 预览版本。
+首版不强制引入 Mapperly、AutoMapper 或其他对象映射框架。简单 DTO 投影优先直接写在 LINQ `Select` 中，写模型转换使用短小的显式赋值或同一纵向切片内的普通静态方法；只有重复映射已经形成明确维护成本时，才评估新增映射工具。
 
 ## 4. 流程版本、JSON 与查询
 
@@ -73,21 +72,12 @@ SQL Server 2016 SP2 没有原生 JSON 类型，JSON 统一保存为 `nvarchar(ma
 
 ## 5. EF Core、原生 SQL 与事务
 
-持久化实体、领域模型和 API DTO 分离，通过 `Riok.Mapperly` partial mapper 生成结构映射。Mapperly mapper 放在拥有目标 DTO 或持久化类型的外层项目中，领域项目不得引用 Mapperly、EF Core、SqlClient 或 API DTO；应用服务只依赖仓储与 `PersistenceUnitOfWork`。
+首版按业务能力建立小而完整的纵向切片，默认调用链为 `Controller → Application Service → FlowPilotDbContext`。Controller 负责 HTTP 契约、身份上下文和响应映射；Application Service 负责权限、输入、状态、并发与事务边界，并可直接使用作用域 `DbContext`。不强制为每个实体建立 Repository、Data Mapper 或统一 Unit of Work；只有出现跨切片重复且边界稳定的查询或外部能力时才提取小型接口。
 
-Mapperly 的使用边界：
-
-- 适用于持久化实体 → 领域读取模型、领域模型 → 响应 DTO，以及经过应用服务确认后的简单值对象转换。
-- 不允许把创建、更新或 PATCH 请求 DTO 直接映射覆盖 EF Core 跟踪实体，避免 over-posting、revision 被覆盖或绕过领域不变量。
-- 权限判断、审计字段、状态迁移、密码散列、主键、revision、创建/更新时间和当前操作者必须由应用服务或领域行为显式赋值。
-- `RequiredMappingStrategy` 保持严格模式，未映射成员诊断在项目 `.editorconfig` 中提升为构建错误；有意忽略的成员必须逐项声明，禁止全局关闭诊断。
-- 枚举默认按名称或显式规则映射，不依赖可能不同的整数值；未知枚举和 nullability 必须有测试。
-- Mapperly 无法清晰表达的复杂转换使用同一 partial mapper 中的手写方法。不要为了“全自动”把业务规则塞入映射配置。
-- EF Core `IQueryable` 投影只有在生成表达式能被 SQL Server provider 完整翻译、SQL 形状和权限过滤均有集成测试时才允许；复杂动态字段投影继续使用明确 LINQ 或参数化 SQL。
-
-- 普通 CRUD、稳定关联和常规分页优先使用 EF Core/LINQ。
-- 编号分配、版本发布、任务抢占、复杂动态投影及 `UPDLOCK/HOLDLOCK` 场景允许在基础设施层使用参数化 `SqlCommand`。
-- 同一用例只使用一个作用域 `DbContext` 和一笔显式事务。原生命令必须复用 `DbContext.Database.GetDbConnection()` 与当前 `DbTransaction`，不得另开连接或混入另一个上下文。
+- 读取使用 EF Core/LINQ，并优先直接 `Select` 为响应 DTO，避免先加载完整实体图再机械映射。
+- 创建、更新或 PATCH 不得把请求 DTO 整体覆盖到 EF Core 跟踪实体；主键、revision、审计字段、权限相关字段和状态迁移必须在服务中校验后显式赋值。
+- 普通 CRUD、稳定关联和常规分页优先使用 EF Core/LINQ。只有编号分配、版本发布、任务抢占、复杂动态投影及 `UPDLOCK/HOLDLOCK` 等 EF Core 难以清晰表达的场景才使用少量参数化 `SqlCommand`。
+- 单次请求默认复用一个作用域 `DbContext`；只有跨多次保存或必须锁定的用例才开启显式事务。原生命令必须复用 `DbContext.Database.GetDbConnection()` 与当前 `DbTransaction`，不得另开连接或混入另一个上下文。
 - 需要时使用 `SERIALIZABLE`、`UPDLOCK/HOLDLOCK`；数据库事务保持短小，事务内不得发送 SMTP、移动正式附件或执行其他外部 I/O。
 - 乐观并发统一使用整数 `revision` 并映射 ETag/If-Match，不依赖 SQL Server `rowversion`。
 
@@ -95,7 +85,7 @@ Mapperly 的使用边界：
 
 ### 5.1 统一任务中心与自由协作
 
-任务中心不是“审批节点任务”的同义词。持久化任务必须通过 `task_type` 区分 `approval`、`free-collaboration` 和 `resubmission`，API 列表通过带 discriminator 的联合 DTO 返回三种条目；只有 `approval` 强制包含节点、处理方式和流程权限组。自由协作没有流程节点，只绑定当前受理人；驳回待重新提交任务只绑定实际创建人。审批决定接口收到非审批任务 ID 时返回领域冲突，不能通过伪造虚拟审批节点兼容。
+任务中心不是“审批节点任务”的同义词。持久化任务必须通过 `task_type` 区分 `approval`、`free-collaboration` 和 `resubmission`。列表按流程实例分页，每项同时返回实例摘要和该实例在当前视图下的任务数组，避免并行节点重复流程行或跨页丢失；数组中的任务 DTO 使用 `taskType` discriminator，只有 `approval` 强制包含节点、处理方式和流程权限组。自由协作没有流程节点，只绑定当前受理人；驳回待重新提交任务只绑定实际创建人。审批决定接口收到非审批任务 ID 时返回领域冲突，不能通过伪造虚拟审批节点兼容。
 
 自由协作实例在进行中保存唯一当前受理人，并与唯一待处理自由协作任务保持一致。回复和流转事件保存到专用时间线表；参与人是由发起人、历次受理人和回复作者事务内维护的可重建投影。回复编辑只覆盖原回复的最新正文，同时保存编辑人、编辑时间和一条通过 `related_entry_id` 指向原回复、但不含旧正文的编辑事件，不建立回复正文版本表。创建、回复、编辑、转交、改派、关闭、重开、任务变化、参与人投影、附件引用和实例 `updated_at` 必须在相应领域事务内原子提交。
 
@@ -110,7 +100,7 @@ Mapperly 的使用边界：
 
 生产首选 DBA 执行已审查 SQL。EF migration bundle 只能作为受控部署选项，不由常驻应用账号或 Windows 服务启动流程调用。迁移账号与运行账号分离；服务启动只验证数据库版本、兼容级别 130、排序规则、schema 和结构版本，落后时 `/health/ready` 返回 503。
 
-未部署的 Development 环境使用显式 `FlowPilot.DatabaseTool` 执行同一份版本化 SQL。工具只接受已经创建的专用数据库，不执行 `CREATE/DROP DATABASE`，拒绝系统数据库，并在服务器版本、兼容级别和排序规则预检后使用事务级 `sp_getapplock` 原子执行迁移与账本写入。提交前及返回 Current 前按版本化清单核对全部表、列、具名约束、显式索引、触发器和额外对象。API、Windows 服务和测试宿主都不得隐式调用该工具。相同 ID/校验和的成功迁移重复执行为 no-op；部分结构、未知迁移、非成功账本和校验和漂移均失败关闭。
+未部署的 Development 环境使用显式 `FlowPilot.DatabaseTool` 执行同一份版本化 SQL。工具只接受已经创建的专用数据库，不执行 `CREATE/DROP DATABASE`，拒绝系统数据库，并在服务器版本、兼容级别和排序规则预检后使用事务级 `sp_getapplock` 原子执行迁移与账本写入。迁移账本保留迁移 ID、版本、结果和 SQL 脚本 SHA-256 校验和；提交前及返回 Current 前只按版本化清单精确核对表、列、具名约束、显式索引和触发器名称，缺失或多出的名称都失败。结构验证不解析或比较 SQL 定义指纹、列/约束/索引完整签名，也不扫描视图、存储过程等其他对象类型。API、Windows 服务和测试宿主都不得隐式调用该工具。相同 ID/校验和的成功迁移重复执行为 no-op；部分清单结构、未知迁移、非成功账本和校验和漂移均失败关闭。
 
 SQL Server 连接字符串必须显式给出加密、证书信任、连接建立超时和连接池上下限，避免 Microsoft.Data.SqlClient 升级改变默认行为。远程连接默认使用 `Encrypt=true;TrustServerCertificate=false` 并验证证书链与主机名；只有部署记录批准的同机回环例外可以降低要求。常规 EF、就绪元数据/种子、结构探测、迁移预检和迁移 DDL 的命令超时统一从强类型 `FlowPilot:Database` 选项读取，使用有限的安全默认值并允许外置覆盖，禁止用 `0` 配置无限命令等待。连接字符串及证书诊断只能输出脱敏结果。
 
@@ -176,6 +166,8 @@ SQL Server 连接字符串必须显式给出加密、证书信任、连接建立
 
 错误返回 Problem Details + 稳定业务码 + traceId。写命令支持 Idempotency-Key；可并发更新资源支持 ETag/If-Match。正式浏览器只用同源 Cookie，Axios 只属于前端；后端外部 HTTP 调用使用 `IHttpClientFactory`。
 
+流程定义创建、基本信息和流程图保存需要 `config-definition:编辑`，表单保存需要 `config-form:编辑`，重新校验需要 `config-definition:发布`；创建和重新校验使用 Idempotency-Key，版本保存和重新校验使用 If-Match。
+
 Excel 继续由浏览器使用 ExcelJS 生成，后端只返回经权限和查询条件过滤的数据集，最多 10000 行。
 
 ## 11. Outbox 与后台服务
@@ -197,7 +189,7 @@ Outbox 与每次发送尝试都保存到 SQL Server，包括事件、实例/任�
 ## 13. 测试与验收
 
 - 后端单元测试使用 xUnit；HTTP/契约测试使用 `WebApplicationFactory`。
-- Mapperly 构建诊断必须为零；关键 Entity/Domain/DTO 双向映射、枚举、null、忽略敏感字段和新增成员漂移均有单元测试。
+- 关键读取投影和写入字段白名单必须有单元或 API 测试，覆盖枚举、null、敏感字段忽略、over-posting、权限与 revision 并发边界。
 - 数据库集成测试必须覆盖真实 SQL Server 2016 SP2、兼容级别 130 最低基线，并复验实际部署使用的较新 SQL Server 版本/兼容级别；不得用 EF InMemory 或 SQLite 替代，也不得只测较新版本而跳过最低基线。
 - 验证 EF Core CRUD 与共享事务原生 SQL、迁移脚本、锁、并发、JSON 约束和投影重建。
 - 验证 LDAP/SMTP 超时和证书、Cookie、Origin/Referer、限流、转发头、Outbox 恢复、附件中断/Range/507 和服务重启。
@@ -222,9 +214,15 @@ Outbox 与每次发送尝试都保存到 SQL Server，包括事件、实例/任�
 - [ASP.NET Core Windows Service 托管](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/windows-service?view=aspnetcore-10.0)
 - [EF Core SQL Server provider](https://learn.microsoft.com/en-us/ef/core/providers/sql-server/)
 - [EF Core migration 的生产应用方式](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying)
-- [Mapperly 官方安装说明](https://mapperly.riok.app/docs/getting-started/installation/)
-- [Mapperly mapper 配置与严格映射](https://mapperly.riok.app/docs/configuration/mapper/)
 - [Windows Server 2016 生命周期](https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2016)
 - [SQL Server 2016 生命周期](https://learn.microsoft.com/en-us/lifecycle/products/sql-server-2016)
 
 以上链接用于说明框架能力和已接受的生命周期事实，不改变“本项目不制定 Windows Server/SQL Server 升级计划”的决定。
+
+## 16. 变更记录
+
+| 日期 | 变更内容 |
+| --- | --- |
+| 2026-08-27 | 完成部门、职务、用户和角色目录读取，用户/角色创建，以及流程权限组增删改查和有效成员查询；相关接口使用既有分页、权限、ETag、幂等和审计约定。 |
+| 2026-08-27 | 补充流程定义创建、V1 分区保存与重新校验切片状态，并明确对应权限、幂等和并发契约。 |
+| 2026-08-27 | 按小型内部系统“简洁优先”调整实现基线：纵向切片默认采用 Controller → Application Service → EF Core，取消强制 Data Mapper、Mapperly、逐实体 Repository 和统一 Unit of Work；保留显式字段白名单、权限/状态/并发校验与必要事务。数据库继续校验迁移账本、版本、结果和脚本 SHA-256 校验和，结构清单仅精确比较表、列、具名约束、显式索引和触发器名称，不再校验 SQL 定义指纹、完整结构签名或扫描其他对象类型。 |

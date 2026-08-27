@@ -1,8 +1,8 @@
 # FlowPilot SQL Server 数据库结构设计
 
-> 状态：已确认，作为后端持久化实体、Migration、仓储和数据库验收的结构基线
+> 状态：已确认，作为后端持久化、Migration 和数据库验收的结构基线
 > 适用版本：Microsoft SQL Server 2016 SP2 及之后版本，数据库兼容级别不低于 130
-> ORM：EF Core 10 Data Mapper 风格；生产环境禁止启动自动迁移
+> ORM：EF Core 10；生产环境禁止启动自动迁移
 
 ## 1. 建模原则
 
@@ -76,7 +76,7 @@
 主要列：`id`、`code`、`normalized_code`、`name`、`description`、`type`、`is_disabled bit`、`published_version_id null`、`next_version_number`、`instance_count`、`revision` 和审计时间。
 
 - `code` 全局唯一且创建后不可修改。
-- `published_version_id` 必须属于当前定义；该一致性由同一发布事务和仓储契约保证。
+- `published_version_id` 必须属于当前定义；该一致性由同一发布事务和应用服务保证。
 - API 的 `unpublished | published | disabled` 定义状态由 `is_disabled` 与 `published_version_id` 推导，不在数据库重复保存可相互冲突的状态字符串。
 - `instance_count` 是可重建缓存，实例创建事务内递增；验收工具必须能与实例事实表核对。
 
@@ -103,7 +103,7 @@
 为避免通过 JSON 扫描执行治理影响分析，保存以下可重建引用：
 
 - `flowpilot.workflow_version_group_refs`：`version_id`、`group_id`、`purpose`、`node_id null`。
-- `flowpilot.workflow_version_role_refs`：`version_id`、`role_id`、`purpose`。
+- `flowpilot.workflow_version_role_refs`：`version_id`、`role_id`、`purpose`；额外可见角色固定使用 `purpose = visible`。
 - `flowpilot.workflow_version_field_catalog`：`version_id`、稳定字段 ID、表格列 ID、名称、类型、查询/列表/导出标记和输入阶段。
 
 引用展开表与版本 JSON 在同一事务中写入，可由版本 JSON 幂等重建。它们不是版本快照的替代品。
@@ -241,9 +241,9 @@ Outbox 的业务事件唯一键必须包含事件稳定标识、激活序号和�
 
 - 首次迁移依次创建 schema、基础表、外键、CHECK、唯一约束和查询索引；EF Core migration 作为结构演进依据，生产由 DBA 执行已审查 SQL，业务结构版本和校验和记录在 `flowpilot.schema_migrations`。
 - 结构迁移完成后由独立事务型种子 CLI 幂等创建系统内置部门/职务、初始职务“经理”“员工”、唯一超级管理员角色及账号、内置权限和关联。首次创建超级管理员时只从仓库外 Secrets JSON 读取初始密码并通过 `PasswordHasher<TUser>` 保存散列；重复执行不得覆盖已有密码。
-- 完整就绪检查除结构版本外，还必须验证 `builtin-seed` 版本与当前构建一致、内置权限的 code/resource/action/name/sort/is_builtin 与版本化目录精确一致、超级管理员角色拥有全部当前内置权限，且数据库恰好存在一条内置超级管理员记录；仅迁移未执行种子或目录发生漂移的数据库不得报告就绪。
+- 就绪检查验证结构版本和 `builtin-seed` 版本与当前构建一致；权限目录、超级管理员及其关联由幂等种子事务一次性维护，数据库约束负责唯一性和引用完整性。
 - 每次迁移具有固定 ID 和校验和；校验和由不含 ledger/state 自引用写入语句的规范化 schema DDL 集合在模块加载时计算 SHA-256，避免手工常量与实际 DDL 漂移。已经在任何环境执行过的迁移文件不得改写，只能新增后续迁移。
-- 迁移账号拥有 DDL 权限；应用运行账号只拥有 `flowpilot` schema 内所需的 DML、执行权限、对迁移/种子版本状态的只读权限，以及就绪检查核对版本化结构签名所需的 `VIEW DEFINITION ON SCHEMA::[flowpilot]`，不拥有 DDL 权限。
+- 迁移账号拥有 DDL 权限；应用运行账号只拥有 `flowpilot` schema 内所需的 DML、执行权限、迁移/种子版本读取权限，以及核对表、列、具名约束、显式索引和触发器名称所需的元数据可见性，不拥有 DDL 权限。
 - 空数据库迁移、从上一结构版本演进、失败回滚或前向修复都必须在 SQL Server 2016 SP2、兼容级别 130 最低基线上验证，并在实际部署的较新 SQL Server 版本/兼容级别上复验；不使用 SQLite、EF InMemory 或单独的较新版本替代最低基线验收。
 - 验收至少核对外键、唯一约束、JSON 合法性、投影一致性、任务状态、编号连续性、附件引用、Outbox、会话撤销和结构校验和。
 - 具体列长、索引 INCLUDE 列和查询执行计划在实现阶段根据真实查询补充，但不得改变本文件规定的聚合边界和事实来源。

@@ -19,9 +19,11 @@ public static class ProblemDetailsConfiguration
                 problem.Type ??= $"/problems/{GetProblemSlug(status)}";
                 problem.Title ??= GetTitle(status);
                 problem.Instance ??= context.HttpContext.Request.Path;
-                problem.Extensions["code"] = GetProblemCode(status);
-                problem.Extensions["traceId"] = Activity.Current?.TraceId.ToString()
-                    ?? context.HttpContext.TraceIdentifier;
+                problem.Extensions.TryAdd("code", GetProblemCode(status));
+                problem.Extensions.TryAdd(
+                    "traceId",
+                    Activity.Current?.TraceId.ToString()
+                        ?? context.HttpContext.TraceIdentifier);
             };
         });
 

@@ -141,10 +141,13 @@ export interface ProcessInstanceDetail {
 }
 
 export interface WorkflowTaskListItem {
+  tasks: WorkflowTask[];
+  instance: ProcessInstance;
+}
+
+export interface WorkflowTaskDetailItem {
   task: WorkflowTask;
   instance: ProcessInstance;
-  handlingMode: "approval" | "confirmation";
-  allowedActions: Array<"pass" | "confirm" | "reject" | "revise-fields">;
 }
 
 export interface WorkflowDecisionResult {

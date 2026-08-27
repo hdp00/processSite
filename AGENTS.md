@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-- 这是公司内部流程审核平台。前端交互原型已定义 REST API 边界，默认通过 MSW 在浏览器端模拟服务；`apps/api/FlowPilot.sln` 已落地 .NET 工程基础和健康检查切片，认证会话及其他业务 API 尚未完成。
+- 这是公司内部流程审核平台。前端交互原型已定义 REST API 边界，默认通过 MSW 在浏览器端模拟服务；`apps/api/FlowPilot.sln` 已具备 .NET 工程基础、健康检查、数据库初始化/Seed、超级管理员登录会话、组织目录读取、用户/角色创建、流程权限组管理、任务中心/流程实例列表，以及流程定义读取、创建、V1 分区保存和重新校验，其他业务 API 尚未完成。
 - `REQUIREMENTS.md` 是需求的统一来源。实现业务变更前先查找对应章节；需求发生新增、调整或删除时，同步维护该文档及其变更记录。
 - `document/flowpilot-rest-api.openapi.yaml` 是前后端 REST 契约来源；`document/MOCK_REST_API.md`、`document/BACKEND_IMPLEMENTATION_DESIGN.md` 和 `document/IIS_DEPLOYMENT.md` 分别说明 mock 行为、后端落地设计和 IIS 部署。修改 API 行为、契约、部署方式或 mock 规则时，检查并同步对应文档。
 - 当前完整业务演示仍以前端 Mock 为基线。后续按已确认需求逐个完成可验证的纵向切片；不要把尚未确认的讨论项当作需求，也不要为未实现接口返回占位成功响应。

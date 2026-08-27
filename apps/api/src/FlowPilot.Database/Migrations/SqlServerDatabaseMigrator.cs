@@ -316,7 +316,9 @@ public sealed class SqlServerDatabaseMigrator : IDatabaseMigrator
             catch (Exception exception) when (exception is SqlException or InvalidOperationException)
             {
                 await RollbackWithoutMaskingAsync(transaction).ConfigureAwait(false);
-                throw new DatabaseMigrationException(DatabaseMigrationFailure.MigrationExecutionFailed);
+                throw new DatabaseMigrationException(
+                    DatabaseMigrationFailure.MigrationExecutionFailed,
+                    exception);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -350,6 +352,13 @@ public sealed class SqlServerDatabaseMigrator : IDatabaseMigrator
             .ConfigureAwait(false);
         if (!result.IsValid)
         {
+            if (result.Differences.Count > 0)
+            {
+                throw new DatabaseMigrationException(
+                    DatabaseMigrationFailure.SchemaStructureMismatch,
+                    new InvalidOperationException(string.Join(" | ", result.Differences)));
+            }
+
             throw new DatabaseMigrationException(DatabaseMigrationFailure.SchemaStructureMismatch);
         }
     }

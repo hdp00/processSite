@@ -10,6 +10,7 @@
     "dev:api": "pnpm build:api:debug && dotnet run --project apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug --no-build --no-restore",
     "build:dbtool": "pnpm restore:api && dotnet build apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-restore -m:1",
     "db:init": "pnpm build:dbtool && dotnet run --project apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-build --no-restore --no-launch-profile -- initialize",
+    "db:seed": "pnpm build:dbtool && dotnet run --project apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-build --no-restore --no-launch-profile -- seed",
     "db:verify": "pnpm build:dbtool && dotnet run --project apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-build --no-restore --no-launch-profile -- verify",
     "dev:remote": "pnpm --filter @process-site/web dev:remote",
     "preview": "pnpm --filter @process-site/web preview",

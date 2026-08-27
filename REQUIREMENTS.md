@@ -981,7 +981,7 @@
 - 正式 REST API 的统一基础路径为 `/api/flowpilot/v1`，其中 `flowpilot` 是系统命名空间，`v1` 是接口主版本；不得使用拼写错误的 `/api/flowpiolt/v1` 或缺少系统命名空间的 `/api/v1`。在正式后端完成前，前端开发与演示环境使用 MSW 提供相同的领域端点和 HTTP 语义；可部署 Debug 包继续使用只在页面内拦截的 `/flowpilot/mock-api/v1` 专用地址，该地址不属于正式 API，也不发送到 IIS。页面统一通过 `flowPilotApi` 访问服务；目标传输层由 Orval 根据正式 OpenAPI 生成 TypeScript 类型和 Axios 客户端，过渡期兼容层可以保留现有 `fetch` 实现，但页面不得直接调用 `fetch`、Axios 或 Mock handler。Mock API 需要覆盖会话、组织权限、流程定义与版本、发起配置、实例、审批任务、自由协作、附件、邮件 Outbox、审计和 Excel 导出，并提供分页、Problem Details、ETag/If-Match、幂等键以及可控延迟和错误场景。
 - Mock API 是浏览器内兼容适配层，允许暂时复用带迁移的原型仓库；正式后端契约以仓库中的 OpenAPI 3.1 文档为准。Mock Bearer 身份、浏览器持久化和模拟邮件状态只用于原型，不能作为生产认证、数据库、文件存储或 SMTP 的替代方案。浏览器生成 Excel 则是正式架构要求，正式后端同样只提供已鉴权导出数据集。
 - Debug Mock 可以继续使用统一成功响应包；正式 OpenAPI 接口直接返回 DTO。前端传输适配层必须同时正确解析两者，并把正式接口中的分页元数据、嵌套用户/组织引用、状态枚举和流程完整版本快照转换为共享领域模型，页面不得依赖仅由 Mock 提供的私有聚合接口。
-- 正式模式启动只加载当前会话、权限、当前用户必要的角色/流程权限组和少量组织字典；任一关键请求失败时保留原缓存并使登录失败，不得用空数组覆盖持久化数据。用户、实例、任务、审计、邮件 Outbox 等持续增长的数据必须由页面服务端分页、筛选和排序，不得在登录时全量下载到 Zustand。流程定义列表只返回摘要，进入设计器、发布页、详情或历史实例时按需读取完整版本。
+- 正式模式启动只加载当前会话、权限、当前用户必要的角色/流程权限组和少量组织字典；任一实际发出的关键请求失败时保留原缓存并使登录失败，不得用空数组覆盖持久化数据。没有流程定义相关权限的合法账号不发起定义请求，并以空定义集合正常进入获授权页面。用户、实例、任务、审计、邮件 Outbox 等持续增长的数据必须由页面服务端分页、筛选和排序，不得在登录时全量下载到 Zustand。流程管理列表只返回定义摘要；当前用户可见定义接口为流程发起、任务中心、流程清单、实例详情和实例监控返回当前发布版本，以及按实例数据范围可见的历史锁定版本完整快照；实例监控查看权限覆盖全部实例引用的版本，不得返回未发布且未被实例引用的版本，也不得附带隐藏草稿数量、全局实例数和下一个版本号等管理元数据。
 - 需要乐观并发的编辑页面在打开实体时保存该次 GET 返回的 ETag，并在用户提交时原样写入 If-Match；不得在提交前重新 GET 最新 ETag 来绕过过期编辑冲突。服务端返回 412 后由用户重新加载数据再编辑。
 - 页面权限与动作权限使用同一份权限目录；新增、编辑、启停、发布、授权、重置密码和删除等独立控件同时受动作权限控制。流程清单导出属于已授权列表查询的输出形式，继续由流程清单查看权限和服务端数据范围共同约束，不额外设置空置的运维导出权限。角色权限修改后必须刷新当前服务端会话权限，避免菜单、路由与按钮继续使用旧授权。
 
@@ -989,7 +989,7 @@
 
 正式后端使用 .NET 10、ASP.NET Core 10 Controller Web API 和 REST API；前端继续作为 pnpm workspace 管理，后端位于同仓库 `apps/api`，但使用独立的 .NET solution/project 与 NuGet 依赖。OpenAPI 3.1 文档仍是接口契约的唯一事实来源。
 
-- 生产目标框架固定为 `net10.0`。ASP.NET Core 使用共享框架；直接 NuGet 依赖保持最小集合并锁定版本，至少包括 `Microsoft.EntityFrameworkCore.SqlServer`、`Microsoft.EntityFrameworkCore.Design`（仅设计/开发）、`Microsoft.Data.SqlClient`、`Microsoft.Extensions.Hosting.WindowsServices`、`Microsoft.AspNetCore.OpenApi`、`System.DirectoryServices.Protocols`、`MailKit`、`Serilog.AspNetCore`、`Serilog.Sinks.File` 和编译期映射生成器 `Riok.Mapperly`。
+- 生产目标框架固定为 `net10.0`。ASP.NET Core 使用共享框架；直接 NuGet 依赖保持最小集合并锁定版本，至少包括 `Microsoft.EntityFrameworkCore.SqlServer`、`Microsoft.EntityFrameworkCore.Design`（仅设计/开发）、`Microsoft.Data.SqlClient`、`Microsoft.Extensions.Hosting.WindowsServices`、`Microsoft.AspNetCore.OpenApi`、`System.DirectoryServices.Protocols`、`MailKit`、`Serilog.AspNetCore` 和 `Serilog.Sinks.File`。首版不强制引入对象映射生成器或运行时映射框架。
 - 不引入完整 ASP.NET Core Identity 数据库模型、Dapper、AutoMapper、MediatR、FluentValidation、Hangfire、Quartz.NET、Redis、消息队列或额外依赖注入容器。优先使用 ASP.NET Core/.NET 内置的依赖注入、Options、DataAnnotations、`System.Text.Json`、Health Checks、Rate Limiting、`BackgroundService`、`IHttpClientFactory`、`Guid.NewGuid()`、加密和文件流能力。
 - 后端外部 HTTP 调用统一通过命名或类型化 `IHttpClientFactory` 客户端，设置连接/响应超时、最大响应体、受控重试和目标地址白名单；不得将用户输入直接拼接成请求目标，不得把入站 Cookie、Authorization 或其他敏感请求头透传给外部地址。`axios` 仅用于前端 Orval 生成客户端。
 - 生产依赖和测试/生成依赖必须分离并锁定版本；OpenAPI 生成、契约检查和测试工具不进入服务器发布包。依赖升级不得自动改变数据库结构、认证算法、文件格式或业务行为，升级 .NET Runtime、EF Core、SqlClient 或新增原生依赖前必须在 Windows Server 2016、SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的较新 SQL Server 版本上复验。
@@ -1007,10 +1007,10 @@
 - 支持范围从 Microsoft SQL Server 2016 13.x SP2 起：13.x 接受 SP2/SP3，主版本 14 及以上视为受支持；数据库兼容级别最低为 130，允许更高值。所有环境均使用 SQL 账号认证；共享 SQL、EF Core 查询、原生 SQL 和迁移脚本必须以 SQL Server 2016 SP2、兼容级别 130 为最低能力基线，不得因部署在较新版本而使用会破坏最低基线的能力。
 - SQL Server TCP 连接模板默认启用 TDS 加密并校验受信服务器证书。远程 SQL Server 不得以关闭加密或无条件信任自签名证书作为默认配置；只有 API 与 SQL Server 确认在同机 `127.0.0.1` 回环链路且部署方记录例外时，才可显式使用未加密/信任服务器证书配置。
 - 当实际部署使用 Windows Server 2016 与 SQL Server 2016 SP2 时，其生命周期风险由部署方明确接受；本项目不制定服务器或 SQL Server 升级计划。支持较新的 SQL Server 版本只是软件兼容范围，不代表要求升级。所有部署仍必须实施内网隔离、最小权限、受信 TLS、适用补丁和备份恢复等控制。
-- EF Core 采用 Data Mapper 风格，持久化实体与领域模型、API DTO 分离；对象间的结构映射统一使用 `Riok.Mapperly` 在编译期生成。Mapperly 只负责无副作用的数据复制和显式字段转换，不负责权限、领域不变量、状态迁移、默认值决策或数据库查询。新增/修改命令不得把请求 DTO 直接覆盖到 EF Core 跟踪实体，必须先通过应用服务校验并调用领域行为；复杂映射允许在 Mapperly partial mapper 中手工实现。业务服务只依赖领域仓储和统一 `PersistenceUnitOfWork`，不得直接依赖 `DbContext`、`DbSet`、`DbConnection` 或驱动类型。普通 CRUD 和稳定关系查询优先由 EF Core/LINQ 实现；编号分配、版本发布、任务抢占、复杂动态投影和 SQL Server 锁提示等能力允许在基础设施层执行参数化 `SqlCommand`。
-- `PersistenceUnitOfWork` 持有同一个作用域 `DbContext` 和显式事务；原生 SQL 必须复用该上下文的 `DbConnection` 与当前 `DbTransaction`，不得另开连接或在同一事务中混用无关上下文。在必要场景显式使用 `SERIALIZABLE` 或 `UPDLOCK/HOLDLOCK`，数据库事务内不得执行 SMTP、附件写入或其他外部 I/O。
+- 首版按小型内部系统的纵向切片组织业务代码，默认调用链为 `Controller → Application Service → EF Core`；简单用例允许应用服务直接依赖作用域 `FlowPilotDbContext`，不强制为每个实体建立 Repository、Data Mapper 或统一 `PersistenceUnitOfWork`。读取接口优先使用 EF Core/LINQ 直接投影响应 DTO；写入接口必须先完成权限、输入、状态和并发校验，再显式赋值允许修改的字段，禁止把请求 DTO 整体覆盖到跟踪实体。只有编号分配、版本发布、任务抢占、复杂动态投影和 SQL Server 锁提示等 EF Core 难以清晰表达的场景，才使用少量、集中且有测试的参数化 SQL。
+- 单次请求默认复用同一个作用域 `DbContext`；只有跨多次保存或必须锁定的用例才开启显式事务。事务内原生 SQL 必须复用该上下文的 `DbConnection` 与当前 `DbTransaction`，不得另开连接或混用无关上下文。在必要场景显式使用 `SERIALIZABLE` 或 `UPDLOCK/HOLDLOCK`，数据库事务内不得执行 SMTP、附件写入或其他外部 I/O。
 - 应用启动不得自动迁移数据库。每次逻辑结构变更提交人工复核的幂等 SQL 部署脚本，并保留对应 EF Core migration 作为结构演进和脚本生成依据；由 DBA 使用高权限迁移账号执行经审查脚本，常驻应用只校验结构版本，结构落后时拒绝就绪。EF migration bundle 仅可作为受控部署选项，不能由 Windows 服务启动时调用。
-- 未部署的开发环境允许由开发者显式运行仓库内数据库工具，对一个已经创建且尚无 FlowPilot 结构的专用数据库执行同一份版本化迁移；该工具必须先验证服务器版本、兼容级别和排序规则，在事务级独占锁内原子执行并记录迁移 ID 与校验和。提交新迁移或把现有数据库判定为当前版本前，必须按版本化清单精确核对全部表、列、具名约束、显式索引、触发器和不允许的额外对象。它不得由 API 启动流程调用，不得创建或删除数据库，也不得接受系统数据库作为目标。相同版本和校验和的重复执行必须是无副作用成功，部分结构、未知版本或校验和漂移必须失败关闭。
+- 未部署的开发环境允许由开发者显式运行仓库内数据库工具，对一个已经创建且尚无 FlowPilot 结构的专用数据库执行同一份版本化迁移；该工具必须先验证服务器版本、兼容级别和排序规则，在事务级独占锁内原子执行并记录迁移 ID、版本、结果与 SQL 脚本 SHA-256 校验和。提交新迁移或把现有数据库判定为当前版本前，只按版本化清单精确核对表、列、具名约束、显式索引和触发器名称，清单内缺失或多出的名称都失败；不比较 SQL 定义指纹、列/约束/索引完整签名，也不扫描视图、存储过程等其他对象类型。它不得由 API 启动流程调用，不得创建或删除数据库，也不得接受系统数据库作为目标。相同版本和校验和的重复执行必须是无副作用成功，部分清单结构、未知版本、非成功账本或校验和漂移必须失败关闭。
 - UUID、布尔值、UTC 时间、JSON、枚举和整数 revision 在领域层使用统一类型，并映射到约定的 SQL Server 类型；乐观锁统一使用整数 revision，不使用 SQL Server `rowversion`。
 - 流程版本和实例表单使用 JSON 保存完整结构或最新值，统一映射到 `nvarchar(max)` 并增加 `ISJSON` 约束。SQL Server 2016 SP2 提供 `JSON_VALUE`、`JSON_QUERY` 和 `OPENJSON`，但没有原生 JSON 类型和通用 JSON 索引，且 `JSON_VALUE` 的标量文本返回存在 4000 字符限制；EF Core 不使用高版本 JSON 列映射，JSON 函数只用于校验、诊断或受控迁移，业务查询不得依赖动态扫描 JSON。
 - 允许查询、列表展示或导出的动态标量字段需要同步写入类型化投影表，并按照流程定义、稳定字段标识和值类型建立普通关系索引。JSON 最新值与投影值必须在同一数据库事务中更新，任一写入失败时整体回滚；系统需提供可重复执行的投影校验和重建命令。数字范围、日期范围、排序和跨版本查询均读取投影表，不直接扫描 JSON。
@@ -1073,11 +1073,13 @@
 
 | 版本 | 日期 | 变更内容 |
 | --- | --- | --- |
+| 2.26 | 2026-08-27 | 明确正式流程定义读取边界：流程管理列表仅返回摘要；当前用户可见定义接口按数据范围内联当前发布版本和可见实例锁定的历史完整快照，供流程发起、任务中心、流程清单、实例详情和实例监控渲染；实例监控查看权限覆盖全部实例引用版本，且不得泄露无引用的未发布版本或管理侧全局计数。启动水合按会话权限选择端点，无相关权限时不请求并正常使用空集合；版本快照校验和统一按 basic 与 snapshot 原始 JSON 连接后计算 SHA-256。 |
+| 2.25 | 2026-08-27 | 按小型内部系统“简洁优先”收敛正式后端：业务切片默认采用 Controller → Application Service → EF Core，取消强制 Data Mapper、Mapperly、逐实体 Repository 和统一 Unit of Work；保留显式字段赋值、权限/状态/并发校验及必要事务，复杂锁与投影才使用少量参数化 SQL。数据库仍以迁移账本、版本、结果和脚本 SHA-256 校验和失败关闭，但结构清单仅精确核对表、列、具名约束、显式索引和触发器名称，不再比较 SQL 定义指纹、完整结构签名或扫描其他对象类型。 |
 | 2.24 | 2026-08-26 | 增加未部署后端的本地调试与数据库初始化边界：Development 使用路径固定、被 Git 忽略的单一本地 JSON，供 API、显式数据库工具和 SQL 集成测试复用，并保留环境变量及命令行配置值覆盖；数据库工具只连接已创建的专用空库，在版本/兼容级别/排序规则预检后以事务锁应用版本化 SQL 和校验和账本，提交前及重复执行时按版本化清单核对全部具名结构对象，不由 API 自动迁移、不创建数据库且拒绝系统库、部分结构与迁移漂移。运行账号需要只读版本信息与结构元数据可见性但不得拥有 DDL 权限；完整就绪在内置种子缺失时继续失败关闭。生产仍使用分离的迁移账号、运行账号和固定外置 Config/Secrets。 |
 | 2.23 | 2026-08-26 | 完成后端文档一致性收口：附件统一采用年份目录下 `.incoming`/`objects` 两阶段布局和 `uploading/staged/active/cleanup-pending/failed/deleted` 内部状态；权限组增加用途关系；流程版本状态由发布指针与校验结果派生；任务中心区分审批、自由协作和待重新提交；补齐自由协作受理人、任务、参与人和时间线持久化，回复只保留最新正文及编辑审计元数据。正式领域主键统一由后端生成，前端目标客户端统一为 Orval/Axios；同时补充登录/注销 Cookie 与 CSRF 契约、SQL TLS、Outbox 收件人幂等键和发布数据库结构版本元数据。 |
 | 2.22 | 2026-08-26 | 采用统一不可变发布包：`App\releases\{releaseId}` 同时包含 `api`、`web` 和 `release.json`，本机 NTFS 目录联接 `current`/`previous` 对整包统一切换与回滚，避免前后端契约错配。Windows Service 与 IIS 使用稳定的 `current\api`/`current\web` 路径；部署根改为从 `AppContext.BaseDirectory` 向上有限查找唯一 `flowpilot.root`，兼容联接路径和真实目标路径。Config、Secrets、Data、Logs、Temp、Backup 继续位于发布目录之外；程序回滚明确不等于数据库回滚。 |
 | 2.21 | 2026-08-26 | 取消 `FLOWPILOT_HOME`、`FLOWPILOT_CONFIG_FILE` 和 `FLOWPILOT_SECRETS_FILE` 路径参数。API 发布文件直接位于实际程序目录，前端位于其 `web` 子目录；生产路径以 `AppContext.BaseDirectory` 确定程序目录并取父目录作为部署根目录，禁止依赖 Windows Service 当前工作目录。Config、Secrets、Data、Logs、Temp 和 Backup 均按固定同级目录推导。 |
-| 2.20 | 2026-08-26 | 确认对象映射库使用 `Riok.Mapperly`。Mapperly 作为编译期源码生成器和私有构建依赖，不进入服务器运行时依赖；用于持久化实体、领域模型与 API DTO 的无副作用结构映射。请求 DTO 不得直接覆盖 EF 跟踪实体，权限、领域不变量和状态迁移仍由应用服务/领域行为显式执行。 |
+| 2.20 | 2026-08-26 | （已由 2.25 取代）曾确认对象映射库使用 `Riok.Mapperly`；现不再强制映射库，但请求 DTO 不得直接覆盖 EF 跟踪实体，权限、领域不变量和状态迁移仍须由应用服务显式处理。 |
 | 2.19 | 2026-08-26 | 修正数据库兼容范围：SQL Server 2016 SP2 是最低版本，不是唯一版本；13.x 接受 SP2/SP3，主版本 14 及以上受支持，数据库兼容级别最低为 130并允许更高值。共享 SQL、EF Core 查询和迁移仍以 2016 SP2/兼容级别 130 为最低能力基线；支持较新版本不代表制定或要求服务器升级计划。 |
 | 2.18 | 2026-08-26 | 正式后端目标架构从 NestJS/Node.js 切换为 .NET 10、ASP.NET Core 10 Controller Web API、EF Core 10 和 Microsoft.Data.SqlClient；Windows 服务改为原生 .NET Windows Service，SMTP 改用 MailKit，日志改用 Serilog，后端配置改为外置 JSON；前端保留 Orval/Axios。数据库范围表述已由 2.19 修正；Windows Server 2016 与 SQL Server 2016 SP2 生命周期风险明确接受，不制定升级计划。仓库现有 NestJS 代码标记为待替换旧骨架，本次只同步文档。 |
 | 2.17 | 2026-08-26 | 修正认证提供方分流：所有已配置为密码登录的用户只校验本地 scrypt 散列，成功、失败或停用场景均不调用或探测 LDAP；LDAP 可用性只影响域登录和未知账号处理。 |

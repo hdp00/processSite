@@ -1,7 +1,15 @@
 import type { AttachmentRecord, AuditEvent, AuthSession, PageResult, PermissionCatalogItem, DepartmentRecord, DirectoryUser, PositionRecord, LaunchableProcessDefinition } from "./contracts";
 import type { DomainRole, WorkflowGroupPurpose, WorkflowPermissionGroup } from "../state/useIdentityStore";
 import type { ProcessBasicConfig, ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
-import type { CompleteDesignerSnapshot } from "../utils/designerStorage";
+import type {
+  CompleteDesignerSnapshot,
+  StoredDesignerField,
+  StoredDesignerTableColumn,
+  StoredFlowNodeSnapshot,
+  StoredNodeCondition,
+} from "../utils/designerStorage";
+import type { SystemListFieldConfig, SystemListFieldKey } from "../data/listFieldConfig";
+import { normalizeDesignerChoiceOptions } from "../utils/designerOptions";
 import type { ProcessInstance, WorkflowFieldChange, WorkflowTask } from "../data/types";
 
 type JsonRecord = Record<string, unknown>;
@@ -257,10 +265,188 @@ export const normalizeProcessBasic = (value: unknown): ProcessBasicConfig => {
   };
 };
 
+const systemListFieldKeyMap: Record<string, SystemListFieldKey> = {
+  instanceCode: "code",
+  processName: "template",
+  processVersion: "templateVersion",
+  currentRound: "round",
+  code: "code",
+  template: "template",
+  templateVersion: "templateVersion",
+  status: "status",
+  currentNode: "currentNode",
+  round: "round",
+  initiator: "initiator",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+};
+
+const conditionOperators = new Set([
+  "eq", "neq", "gt", "gte", "lt", "lte", "contains", "not-contains", "empty", "not-empty",
+]);
+
+const normalizeCondition = (value: unknown): StoredNodeCondition | undefined => {
+  if (!isRecord(value) || !Array.isArray(value.rules)) return undefined;
+  const rules = value.rules.filter(isRecord).flatMap((rule, index) => {
+    const fieldId = text(rule.fieldId);
+    const operator = text(rule.operator);
+    if (!fieldId || !conditionOperators.has(operator)) return [];
+    return [{
+      id: text(rule.id, `condition-${index + 1}`),
+      fieldId,
+      operator: operator as StoredNodeCondition["rules"][number]["operator"],
+      value: Array.isArray(rule.value) ? strings(rule.value) : text(rule.value),
+    }];
+  });
+  return rules.length ? { mode: value.mode === "any" ? "any" : "all", rules } : undefined;
+};
+
+const normalizeTableColumn = (value: unknown, scope: string): StoredDesignerTableColumn | undefined => {
+  if (!isRecord(value) || !text(value.id) || !text(value.label)) return undefined;
+  const type = ["radio", "checkbox", "select"].includes(text(value.type))
+    ? text(value.type) as NonNullable<StoredDesignerTableColumn["type"]>
+    : "text";
+  return {
+    id: text(value.id),
+    label: text(value.label),
+    type,
+    required: value.required === true,
+    defaultValue: Array.isArray(value.defaultValue) ? strings(value.defaultValue) : text(value.defaultValue),
+    width: typeof value.width === "number" ? value.width : undefined,
+    align: ["left", "center", "right"].includes(text(value.align))
+      ? text(value.align) as NonNullable<StoredDesignerTableColumn["align"]>
+      : undefined,
+    reviewEditable: value.reviewEditable === true,
+    options: normalizeDesignerChoiceOptions(value.options, scope),
+  };
+};
+
+const normalizeDesignerField = (value: unknown): StoredDesignerField | undefined => {
+  if (!isRecord(value) || !text(value.id) || !text(value.type) || !text(value.label)) return undefined;
+  const fieldId = text(value.id);
+  const type = value.type === "rich-text"
+    ? "richtext"
+    : value.type === "textarea" ? "text" : text(value.type);
+  return {
+    id: fieldId,
+    type,
+    label: text(value.label),
+    description: text(value.description) || undefined,
+    placeholder: text(value.placeholder) || undefined,
+    multiline: value.type === "textarea" || value.multiline === true,
+    required: value.required === true,
+    defaultValue: Array.isArray(value.defaultValue) ? strings(value.defaultValue) : text(value.defaultValue),
+    listVisible: value.listVisible === true,
+    taskVisible: value.taskVisible === true,
+    queryable: value.queryable === true,
+    exportVisible: value.exportVisible === true,
+    reviewEditable: value.reviewEditable === true,
+    inputStage: value.inputStage === "both" || value.inputStage === "reviewer" ? value.inputStage : "initiator",
+    displayCondition: normalizeCondition(value.displayCondition),
+    options: normalizeDesignerChoiceOptions(value.options, fieldId, type === "cascader"),
+    attachment: isRecord(value.attachment) ? {
+      maxSizeMb: number(value.attachment.maxSizeMb, 100),
+      maxCount: number(value.attachment.maxCount, 1),
+      inlinePdf: value.attachment.inlinePdf !== false,
+      allowedExtensions: strings(value.attachment.allowedExtensions),
+      excelToPdf: value.attachment.excelToPdf === true,
+      maxPreviewPages: number(value.attachment.maxPreviewPages, 1),
+    } : undefined,
+    columns: Array.isArray(value.columns)
+      ? value.columns.flatMap((column) => {
+          const normalized = normalizeTableColumn(column, `${fieldId}.${isRecord(column) ? text(column.id) : "column"}`);
+          return normalized ? [normalized] : [];
+        })
+      : undefined,
+  };
+};
+
+const normalizeFlowNode = (value: unknown): StoredFlowNodeSnapshot | undefined => {
+  if (!isRecord(value) || !text(value.id) || !isRecord(value.data)) return undefined;
+  const position = isRecord(value.position) ? value.position : {};
+  const data = value.data;
+  const kind = ["start", "approval", "end"].includes(text(data.kind))
+    ? text(data.kind) as NonNullable<StoredFlowNodeSnapshot["data"]>["kind"]
+    : undefined;
+  const email = isRecord(data.emailNotification) ? data.emailNotification : undefined;
+  return {
+    id: text(value.id),
+    position: { x: number(position.x), y: number(position.y) },
+    data: {
+      kind,
+      label: text(data.label),
+      description: text(data.description) || undefined,
+      permissionGroup: text(data.permissionGroup, text(data.permissionGroupId)) || undefined,
+      permissionGroups: strings(data.permissionGroups).length
+        ? strings(data.permissionGroups)
+        : strings(data.permissionGroupIds),
+      specifyAssignee: data.specifyAssignee === true,
+      editableFields: strings(data.editableFields).length
+        ? strings(data.editableFields)
+        : strings(data.editableFieldIds),
+      handlingMode: data.handlingMode === "confirmation" ? "confirmation" : "approval",
+      allowRepeatedEditing: data.allowRepeatedEditing === true,
+      activationCondition: normalizeCondition(data.activationCondition),
+      emailNotification: email ? {
+        enabled: email.enabled === true,
+        notifyReviewers: email.notifyReviewers === true,
+        notifyInitiator: email.notifyInitiator === true,
+        extraUserIds: strings(email.extraUserIds),
+      } : undefined,
+    },
+  };
+};
+
+const normalizeCompleteDesignerSnapshot = (value: unknown): CompleteDesignerSnapshot => {
+  if (!isRecord(value) || !isRecord(value.form) || !isRecord(value.flow)
+    || !Array.isArray(value.form.fields) || !Array.isArray(value.systemFields)
+    || !Array.isArray(value.flow.nodes) || !Array.isArray(value.flow.edges)) {
+    throw new Error("服务端流程版本快照结构不正确");
+  }
+  const flowMeta = isRecord(value.flow.meta) ? value.flow.meta : {};
+  return {
+    form: {
+      fields: value.form.fields.flatMap((field) => {
+        const normalized = normalizeDesignerField(field);
+        return normalized ? [normalized] : [];
+      }),
+      savedAt: text(value.form.savedAt) || undefined,
+    },
+    systemFields: value.systemFields.filter(isRecord).flatMap((field): SystemListFieldConfig[] => {
+      const key = systemListFieldKeyMap[text(field.key)];
+      if (!key) return [];
+      return [{
+        key,
+        label: text(field.label),
+        description: text(field.description),
+        taskVisible: field.taskVisible === true,
+        processListVisible: field.processListVisible === true,
+        exportVisible: field.exportVisible === true,
+      }];
+    }),
+    flow: {
+      nodes: value.flow.nodes.flatMap((node) => {
+        const normalized = normalizeFlowNode(node);
+        return normalized ? [normalized] : [];
+      }),
+      edges: value.flow.edges.filter(isRecord).flatMap((edge) => {
+        const source = text(edge.source);
+        const target = text(edge.target);
+        return source && target ? [{ id: text(edge.id) || undefined, source, target }] : [];
+      }),
+      meta: {
+        rejectionHandling: flowMeta.rejectionHandling === "resubmit-only" || flowMeta.rejectionHandling === "auto-close"
+          ? flowMeta.rejectionHandling
+          : "resubmit-or-close",
+      },
+    },
+  };
+};
+
 export const normalizeProcessVersion = (value: unknown): ProcessVersion => {
   if (!isRecord(value)) throw new Error("流程版本响应格式不正确");
-  const snapshot = isRecord(value.snapshot) ? value.snapshot as unknown as CompleteDesignerSnapshot : undefined;
-  if (!snapshot || !value.basic) throw new Error("服务端未返回完整的流程版本快照");
+  if (!isRecord(value.snapshot) || !value.basic) throw new Error("服务端未返回完整的流程版本快照");
+  const snapshot = normalizeCompleteDesignerSnapshot(value.snapshot);
   const validation = isRecord(value.validation) ? value.validation : {};
   const issueItems = Array.isArray(validation.issues) ? validation.issues : [];
   const basedOn = isRecord(value.basedOn) ? text(value.basedOn.versionLabel) : text(value.basedOn);
@@ -381,8 +567,11 @@ export const normalizeWorkflowTask = (value: unknown): WorkflowTask => {
   if (!isRecord(value)) throw new Error("流程任务响应格式不正确");
   if (taskStatusMap[text(value.status)] === undefined) return value as unknown as WorkflowTask;
   const completedBy = isRecord(value.completedBy) ? value.completedBy : undefined;
+  const assignee = isRecord(value.assignee) ? value.assignee : undefined;
+  const defaultAssignee = isRecord(value.defaultAssignee) ? value.defaultAssignee : undefined;
   return {
     id: text(value.id),
+    taskType: value.taskType === "free-collaboration" || value.taskType === "resubmission" ? value.taskType : "approval",
     instanceId: text(value.instanceId),
     definitionId: text(value.definitionId),
     versionId: text(value.versionId),
@@ -393,7 +582,10 @@ export const normalizeWorkflowTask = (value: unknown): WorkflowTask => {
     editableFieldIds: strings(value.editableFieldIds),
     allowedActions: strings(value.allowedActions) as NonNullable<WorkflowTask["allowedActions"]>,
     status: taskStatusMap[text(value.status)],
-    defaultAssigneeId: isRecord(value.defaultAssignee) ? text(value.defaultAssignee.id) || undefined : text(value.defaultAssigneeId) || undefined,
+    assigneeId: assignee ? text(assignee.id) || undefined : text(value.assigneeId) || undefined,
+    assigneeName: assignee ? text(assignee.name) || undefined : text(value.assigneeName) || undefined,
+    defaultAssigneeId: defaultAssignee ? text(defaultAssignee.id) || undefined : text(value.defaultAssigneeId) || undefined,
+    defaultAssigneeName: defaultAssignee ? text(defaultAssignee.name) || undefined : text(value.defaultAssigneeName) || undefined,
     completedById: completedBy ? text(completedBy.id) || undefined : undefined,
     completedByName: completedBy ? text(completedBy.name) || undefined : undefined,
     action: taskActionMap[text(value.action)],

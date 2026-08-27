@@ -1202,7 +1202,7 @@ paths:
       tags: [ProcessDefinitions]
       operationId: createProcessDefinition
       summary: 创建定义及正式 V1
-      description: 定义头、V1 基本信息和默认完整快照在同一事务中创建。
+      description: 需要 `config-definition:编辑`。定义头、V1 基本信息和默认完整快照在同一事务中创建；成功响应的 ETag 对应新建 V1 的 revision。
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -1217,10 +1217,16 @@ paths:
           headers:
             ETag:
               $ref: "#/components/headers/ETag"
+            Location:
+              description: 新建流程定义的详情路径
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateProcessDefinitionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1273,7 +1279,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VisibleProcessDefinitionDto"
+                $ref: "#/components/schemas/ProcessDefinitionWithVersionsDto"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1290,7 +1296,7 @@ paths:
       tags: [ProcessDefinitions]
       operationId: listMyVisibleProcessDefinitions
       summary: 获取当前用户界面渲染所需的可见流程定义和版本快照
-      description: 只返回当前发布版本，以及当前用户可见实例实际锁定的历史版本；不得返回未发布且未被可见实例引用的草稿版本。
+      description: 供流程发起、任务中心、流程清单和实例监控使用。只返回当前发布版本，以及按当前账号实例数据范围可见的历史锁定版本；具有实例监控查看权限的账号可读取全部实例引用的版本。不得返回未发布且未被可见实例引用的草稿版本。
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
@@ -1590,6 +1596,7 @@ paths:
       tags: [ProcessVersions]
       operationId: replaceProcessVersionBasic
       summary: 保存版本基本信息
+      description: 需要 `config-definition:编辑`；If-Match 对应目标版本的 revision。
       parameters:
         - $ref: "#/components/parameters/DefinitionId"
         - $ref: "#/components/parameters/VersionId"
@@ -1603,6 +1610,8 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/SavedProcessVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1623,6 +1632,7 @@ paths:
       tags: [ProcessVersions]
       operationId: replaceProcessVersionFormDesigner
       summary: 原子保存初始表单与系统列表字段配置
+      description: 需要 `config-form:编辑`；表单与系统列表字段作为同一版本分区原子保存。
       parameters:
         - $ref: "#/components/parameters/DefinitionId"
         - $ref: "#/components/parameters/VersionId"
@@ -1636,6 +1646,8 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/SavedProcessVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1656,7 +1668,7 @@ paths:
       tags: [ProcessVersions]
       operationId: replaceProcessVersionFlowDesigner
       summary: 原子保存流程图及其耦合的名称和发起权限组
-      description: 避免先保存基本信息、后保存拓扑造成部分成功。
+      description: 需要 `config-definition:编辑`；名称、发起权限组和流程图原子保存，避免分步调用造成部分成功。
       parameters:
         - $ref: "#/components/parameters/DefinitionId"
         - $ref: "#/components/parameters/VersionId"
@@ -1670,6 +1682,8 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/SavedProcessVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1690,6 +1704,7 @@ paths:
       tags: [ProcessVersions]
       operationId: validateProcessVersion
       summary: 重新执行完整版本校验
+      description: 需要 `config-definition:发布`；校验结果、版本 revision 和审计记录在同一事务中更新。
       parameters:
         - $ref: "#/components/parameters/DefinitionId"
         - $ref: "#/components/parameters/VersionId"
@@ -1705,6 +1720,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionValidationDto"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1807,7 +1824,7 @@ paths:
       tags: [ProcessInstances]
       operationId: listProcessInstances
       summary: 按当前用户数据范围分页查询流程实例
-      description: dateFrom/dateTo 必填；前端默认今天至前 30 天且不可清空。
+      description: dateFrom/dateTo 必填；前端默认今天至前 30 天且不可清空。“我的发起”传入当前用户、activeOnly=true 时返回本人全部未结束实例，不按日期截断。
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
@@ -2045,12 +2062,10 @@ paths:
       tags: [WorkflowTasks]
       operationId: listMyWorkflowTasks
       summary: 查询任务中心中的我的待办或可代办任务
-      description: 返回审批、自由协作和待重新提交三种任务的判别联合；自由协作和重新提交任务没有审批节点。
+      description: 按流程实例分页，每项返回该实例下当前视图可见的任务数组与实例摘要；tasks 中各任务通过 taskType 区分审批、自由协作和待重新提交，后两类没有审批节点。待办不按创建日期截断。
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
-        - $ref: "#/components/parameters/DateFrom"
-        - $ref: "#/components/parameters/DateTo"
         - $ref: "#/components/parameters/Search"
         - name: view
           in: query
@@ -2093,7 +2108,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaskCenterItemDto"
+                $ref: "#/components/schemas/WorkflowTaskDetailDto"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -4204,7 +4219,23 @@ components:
               description: 定义级稳定业务编号，由后端生成
     DesignerFieldType:
       type: string
-      enum: [text, textarea, rich-text, radio, checkbox, select, table, attachment]
+      enum: [text, textarea, rich-text, radio, checkbox, select, cascader, table, attachment]
+    DesignerChoiceOptionDto:
+      type: object
+      additionalProperties: false
+      required: [id, label]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: 同一版本的完整表单内唯一，重命名选项时保持不变
+        label:
+          type: string
+          minLength: 1
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/DesignerChoiceOptionDto"
     DesignerTableColumnDto:
       type: object
       additionalProperties: false
@@ -4237,7 +4268,7 @@ components:
         options:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/DesignerChoiceOptionDto"
     AttachmentFieldConfigDto:
       type: object
       additionalProperties: false
@@ -4309,10 +4340,15 @@ components:
           type: string
           enum: [initiator, both, reviewer]
           description: 发起人输入、发起人和授权审核人均可输入，或仅由授权审核人输入
+        displayCondition:
+          allOf:
+            - $ref: "#/components/schemas/NodeConditionDto"
+          description: 字段显示条件；fieldId 和选择值均使用版本内稳定标识
         options:
           type: array
+          description: 选择类字段的稳定选项；cascader 使用 children 表达任意层级
           items:
-            type: string
+            $ref: "#/components/schemas/DesignerChoiceOptionDto"
         attachment:
           $ref: "#/components/schemas/AttachmentFieldConfigDto"
         columns:
@@ -4565,6 +4601,7 @@ components:
           $ref: "#/components/schemas/VersionValidationDto"
         checksum:
           type: string
+          description: basic 与 snapshot 原始 JSON 以换行连接后计算的 SHA-256 小写十六进制值
         changeNote:
           type: string
         createdAt:
@@ -4580,6 +4617,8 @@ components:
         firstPublishedAt:
           type: string
           format: date-time
+        firstPublishedBy:
+          $ref: "#/components/schemas/UserRef"
         publishedAt:
           type: string
           format: date-time
@@ -4655,9 +4694,68 @@ components:
             $ref: "#/components/schemas/ProcessDefinitionDto"
         meta:
           $ref: "#/components/schemas/PageMeta"
-    VisibleProcessDefinitionDto:
+    ProcessDefinitionWithVersionsDto:
       allOf:
         - $ref: "#/components/schemas/ProcessDefinitionDto"
+        - type: object
+          required: [versions]
+          properties:
+            versions:
+              description: 定义下的全部完整版本；用于导入等管理响应
+              type: array
+              items:
+                $ref: "#/components/schemas/ProcessVersionDto"
+    VisibleProcessVersionDto:
+      type: object
+      required: [id, definitionId, versionNumber, versionLabel, checksum, basic, snapshot]
+      properties:
+        id:
+          type: string
+          format: uuid
+        definitionId:
+          type: string
+          format: uuid
+        versionNumber:
+          type: integer
+          minimum: 1
+        versionLabel:
+          type: string
+        checksum:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        basic:
+          $ref: "#/components/schemas/ProcessBasicConfigDto"
+        snapshot:
+          $ref: "#/components/schemas/CompleteDesignerSnapshotDto"
+    VisibleProcessDefinitionDto:
+      type: object
+      required: [id, code, name, description, type, disabled, status, versions]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          $ref: "#/components/schemas/ProcessDefinitionType"
+        disabled:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/ProcessDefinitionStatus"
+        publishedVersionId:
+          type: string
+          format: uuid
+        publishedInstancePrefix:
+          type: string
+        versions:
+          description: 当前发布版本，以及当前用户可见实例实际锁定的历史版本；均包含完整快照，不包含管理侧计数与编辑元数据
+          type: array
+          items:
+            $ref: "#/components/schemas/VisibleProcessVersionDto"
     VisibleProcessDefinitionPage:
       type: object
       required: [items, meta]
@@ -5225,7 +5323,8 @@ components:
             $ref: "#/components/schemas/FieldChangeDto"
     WorkflowTaskDto:
       type: object
-      required: [id, revision, instanceId, definitionId, versionId, taskType, nodeId, nodeName, handlingMode, permissionGroupId, status, round, editableFieldIds, allowRepeatedEditing, allowedActions, submittedFieldChanges, fieldRevisions, createdAt]
+      additionalProperties: false
+      required: [id, revision, instanceId, definitionId, versionId, taskType, nodeId, nodeName, handlingMode, permissionGroupId, status, round, editableFieldIds, allowRepeatedEditing, allowedActions, createdAt]
       properties:
         id:
           type: string
@@ -5380,7 +5479,7 @@ components:
         completedAt:
           type: string
           format: date-time
-    TaskCenterItemDto:
+    TaskDto:
       oneOf:
         - $ref: "#/components/schemas/WorkflowTaskDto"
         - $ref: "#/components/schemas/FreeCollaborationTaskDto"
@@ -5391,6 +5490,27 @@ components:
           approval: "#/components/schemas/WorkflowTaskDto"
           free-collaboration: "#/components/schemas/FreeCollaborationTaskDto"
           resubmission: "#/components/schemas/ResubmissionTaskDto"
+    TaskCenterItemDto:
+      type: object
+      additionalProperties: false
+      required: [tasks, instance]
+      properties:
+        tasks:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TaskDto"
+        instance:
+          $ref: "#/components/schemas/ProcessInstanceSummaryDto"
+    WorkflowTaskDetailDto:
+      type: object
+      additionalProperties: false
+      required: [task, instance]
+      properties:
+        task:
+          $ref: "#/components/schemas/TaskDto"
+        instance:
+          $ref: "#/components/schemas/ProcessInstanceSummaryDto"
     TaskCenterItemPage:
       type: object
       required: [items, meta]

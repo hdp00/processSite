@@ -4,6 +4,7 @@ import type { DomainUser } from "../../state/useIdentityStore";
 import {
   effectiveGroupMemberIds,
   findIdentityUser,
+  isUserInWorkflowGroup,
   useIdentityStore,
 } from "../../state/useIdentityStore";
 import type {
@@ -134,12 +135,28 @@ export const definitionHandlers = [
     if (simulated) return simulated;
     const auth = requireActor(request);
     if (auth.response) return auth.response;
-    if (!hasUserPermission(auth.actor.id, "work-list:查看") && !hasUserPermission(auth.actor.id, "work-launch:查看")) {
-      return apiProblem(request, 403, "PERMISSION_DENIED", "没有操作权限", "当前账号没有流程清单或流程发起查看权限。 ");
+    const canViewTasks = hasUserPermission(auth.actor.id, "work-task:查看");
+    const canMonitorInstances = hasUserPermission(auth.actor.id, "system-monitor:查看");
+    if (!hasUserPermission(auth.actor.id, "work-list:查看")
+      && !hasUserPermission(auth.actor.id, "work-launch:查看")
+      && !canViewTasks
+      && !canMonitorInstances) {
+      return apiProblem(request, 403, "PERMISSION_DENIED", "没有操作权限", "当前账号没有流程清单、流程发起、任务中心或实例监控查看权限。 ");
     }
     const pagination = pageQuery(request);
     if ("response" in pagination) return pagination.response;
-    const visibleInstances = usePrototypeStore.getState().instances.filter((instance) => canUserViewInstance(auth.actor.id, instance));
+    const runtime = usePrototypeStore.getState();
+    const visibleInstances = canMonitorInstances
+      ? runtime.instances
+      : runtime.instances.filter((instance) =>
+          canUserViewInstance(auth.actor.id, instance)
+          || (canViewTasks && runtime.tasks.some((task) => task.instanceId === instance.id && (
+            task.assigneeId === auth.actor.id
+            || task.defaultAssigneeId === auth.actor.id
+            || task.completedById === auth.actor.id
+            || isUserInWorkflowGroup(auth.actor.id, task.permissionGroupId)
+          ))),
+        );
     const visibleVersionIds = new Set(visibleInstances.map((instance) => instance.versionId).filter(Boolean));
     const items = useProcessDefinitionStore.getState().definitions
       .filter((definition) => canUserViewDefinition(auth.actor.id, definition.id) || visibleInstances.some((instance) => instance.definitionId === definition.id))
@@ -479,7 +496,7 @@ export const definitionHandlers = [
   http.put(`${API}/process-definitions/:definitionId/versions/:versionId/flow-designer`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
-    const auth = requirePermission(request, "config-form:编辑");
+    const auth = requirePermission(request, "config-definition:编辑");
     if (auth.response) return auth.response;
     const { definitionId, versionId } = routeIds(params);
     const found = requireVersion(request, definitionId, versionId);
@@ -509,7 +526,7 @@ export const definitionHandlers = [
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
     return withIdempotency(request, async () => {
-      const auth = requirePermission(request, "config-definition:查看");
+      const auth = requirePermission(request, "config-definition:发布");
       if (auth.response) return auth.response;
       const { definitionId, versionId } = routeIds(params);
       const found = requireVersion(request, definitionId, versionId);

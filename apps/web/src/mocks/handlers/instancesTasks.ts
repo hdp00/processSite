@@ -142,12 +142,12 @@ const taskHandlingMode = (task: WorkflowTask, instance: ProcessInstance) =>
 const actorCanHandleTask = (actorId: string, task: WorkflowTask) =>
   isSuperAdminPersona(actorId) || isUserInWorkflowGroup(actorId, task.permissionGroupId);
 
-const taskListItem = (task: WorkflowTask, instance: ProcessInstance, actorId: string): WorkflowTaskListItem => {
+const taskWithActions = (task: WorkflowTask, instance: ProcessInstance, actorId: string): WorkflowTask => {
   const version = resolveVersion(instance);
   const node = version?.snapshot.flow.nodes.find((item) => item.id === task.nodeId);
   const handlingMode = node?.data?.handlingMode ?? "approval";
   const canHandle = task.status === "待处理" && instance.status === "审核中" && actorCanHandleTask(actorId, task);
-  const allowedActions: WorkflowTaskListItem["allowedActions"] = [];
+  const allowedActions: NonNullable<WorkflowTask["allowedActions"]> = [];
   if (canHandle && hasUserPermission(actorId, "work-task:审核")) {
     allowedActions.push(handlingMode === "confirmation" ? "confirm" : "pass");
     if (handlingMode === "approval") allowedActions.push("reject");
@@ -158,8 +158,13 @@ const taskListItem = (task: WorkflowTask, instance: ProcessInstance, actorId: st
     instance.status !== "驳回待处理" && instance.status !== "已关闭" &&
     (isSuperAdminPersona(actorId) || task.completedById === actorId) && hasUserPermission(actorId, "work-task:审核")
   ) allowedActions.push("revise-fields");
-  return { task: structuredClone(task), instance: structuredClone(instance), handlingMode, allowedActions };
+  return { ...structuredClone(task), handlingMode, allowedActions };
 };
+
+const taskDetailItem = (task: WorkflowTask, instance: ProcessInstance, actorId: string) => ({
+  task: taskWithActions(task, instance, actorId),
+  instance: structuredClone(instance),
+});
 
 const findVisibleInstance = (request: Request, id: string, actorId: string) => {
   const instance = instanceById(id);
@@ -368,15 +373,23 @@ export const instanceTaskHandlers = [
     const definitionId = url.searchParams.get("definitionId");
     const view = url.searchParams.get("view") ?? "pending";
     const instances = new Map(usePrototypeStore.getState().instances.map((item) => [item.id, item]));
-    const items = usePrototypeStore.getState().tasks
+    const visibleTasks = usePrototypeStore.getState().tasks
       .map((task) => ({ task, instance: instances.get(task.instanceId) }))
       .filter((entry): entry is { task: WorkflowTask; instance: ProcessInstance } => Boolean(entry.instance))
       .filter(({ task, instance }) => canUserViewInstance(auth.actor.id, instance) && (actorCanHandleTask(auth.actor.id, task) || task.completedById === auth.actor.id))
       .filter(({ task }) => view === "all" || (view === "completed" ? task.status === "已完成" : task.status === "待处理"))
       .filter(({ task }) => !definitionId || task.definitionId === definitionId)
       .filter(({ task, instance }) => !q || `${instance.code}${instance.title}${instance.initiator}${task.nodeName}`.toLowerCase().includes(q))
-      .map(({ task, instance }) => taskListItem(task, instance, auth.actor.id))
       .sort((left, right) => compareDomainTimestamps(right.task.createdAt, left.task.createdAt));
+    const items = Array.from(visibleTasks.reduce((byInstance, { task, instance }) => {
+      const current = byInstance.get(instance.id);
+      if (current) current.tasks.push(taskWithActions(task, instance, auth.actor.id));
+      else byInstance.set(instance.id, {
+        tasks: [taskWithActions(task, instance, auth.actor.id)],
+        instance: structuredClone(instance),
+      });
+      return byInstance;
+    }, new Map<string, WorkflowTaskListItem>()).values());
     return apiOk(request, paginate(items, pagination.number, pagination.size));
   }),
 
@@ -390,7 +403,7 @@ export const instanceTaskHandlers = [
     if (!task || !instance || !canUserViewInstance(auth.actor.id, instance) || (!actorCanHandleTask(auth.actor.id, task) && task.completedById !== auth.actor.id)) {
       return apiProblem(request, 404, "TASK_NOT_FOUND", "审核任务不存在", "未找到指定任务，或当前用户无权查看。 ");
     }
-    const item = taskListItem(task, instance, auth.actor.id);
+    const item = taskDetailItem(task, instance, auth.actor.id);
     return apiOk(request, item, { headers: { ETag: entityEtag(task) } });
   }),
 

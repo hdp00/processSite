@@ -11,7 +11,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
-import { hydrateRemoteApplication } from "../api/remoteHydration";
+import { hydrateRemoteProcessDefinitions } from "../api/remoteHydration";
 import {
   readLastSuccessfulLoginUsername,
   saveLastSuccessfulLoginUsername,
@@ -34,18 +34,20 @@ export function LoginPage() {
 
   const submit = async (values: LoginValues) => {
     setSubmitting(true);
-    let sessionEstablished = false;
     try {
       await flowPilotApi.auth.login(values.username, values.password);
-      sessionEstablished = true;
-      if (import.meta.env.VITE_API_MODE === "remote") await hydrateRemoteApplication();
+      if (import.meta.env.VITE_API_MODE === "remote") {
+        try {
+          await hydrateRemoteProcessDefinitions();
+        } catch (error) {
+          await flowPilotApi.auth.logout({ clearCache: false }).catch(() => undefined);
+          throw error;
+        }
+      }
       saveLastSuccessfulLoginUsername(values.username);
       message.success("登录成功");
       navigate("/tasks", { replace: true });
     } catch (error) {
-      if (sessionEstablished && import.meta.env.VITE_API_MODE === "remote") {
-        await flowPilotApi.auth.logout().catch(() => undefined);
-      }
       message.error(error instanceof ApiError ? error.message : "登录失败，请稍后重试");
     } finally {
       setSubmitting(false);

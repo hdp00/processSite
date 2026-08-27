@@ -2,7 +2,7 @@
 
 当前完整可演示部分是 React 前端交互原型，开发环境默认启用浏览器内 Mock REST API，无需启动后端即可演示登录、流程定义、实例、任务、附件、邮件 Outbox、审计和 Excel 导出。
 
-正式后端使用 .NET 10 / ASP.NET Core 10 Controller Web API、EF Core 10 和 SQL Server 2016 SP2 及之后版本。旧 NestJS 骨架已删除，`apps/api/FlowPilot.sln` 已落地分层工程基础、健康检查、首版数据库结构和显式初始化工具；内置种子、认证会话及其他业务 API 仍未完成，当前不能代替浏览器 Mock 运行完整流程。
+正式后端使用 .NET 10 / ASP.NET Core 10 Controller Web API、EF Core 10 和 SQL Server 2016 SP2 及之后版本。旧 NestJS 骨架已删除，`apps/api/FlowPilot.sln` 已具备健康检查、数据库初始化、内置数据 Seed、超级管理员登录/会话、组织目录读取、用户/角色创建、流程权限组管理、任务中心与流程实例列表，以及流程定义读取、创建、V1 分区保存和重新校验切片；其余业务 API 仍需逐个实现，当前不能代替浏览器 Mock 运行完整流程。
 
 - [统一需求](REQUIREMENTS.md)
 - [Mock REST API 使用说明](document/MOCK_REST_API.md)
@@ -35,7 +35,7 @@ pnpm build:debug
 ## 正式后端
 
 - 后端位置继续为 `apps/api`，但使用独立 .NET solution 和 NuGet；前端继续使用 pnpm。
-- 持久化实体、领域模型和 API DTO 之间使用 Mapperly 编译期生成映射；业务命令和领域规则不交给映射器执行。
+- 默认采用 `Controller → Application Service → EF Core` 的简单纵向切片；少量锁或复杂查询才使用参数化 SQL。
 - Kestrel 仅监听 loopback，以原生 .NET Windows Service 运行，IIS 托管 `/flowpilot` 并反代 `/api/flowpilot/*`；不使用 WinSW。
 - 数据库支持 SQL Server 2016 SP2 及之后版本，数据库兼容级别不低于 130；共享 SQL 和迁移以 2016 SP2/兼容级别 130 为最低能力基线。不支持 SQLite，也不制定服务器或 SQL Server 升级计划。
 - 生产发布采用不可变的 `{部署根目录}\App\releases\{releaseId}` 发布包，每个发布包同时包含 `api` 与 `web`；`App\current` 和 `App\previous` 使用本机 NTFS 目录联接，API 与 Web 作为同一兼容版本统一切换和回滚。
@@ -49,6 +49,7 @@ pnpm build:debug
 ```bash
 pnpm restore:api
 pnpm db:init
+pnpm db:seed
 pnpm db:verify
 pnpm dev:api
 pnpm build:api
@@ -57,9 +58,9 @@ pnpm publish:api
 pnpm backend:check
 ```
 
-未部署调试时，将 `apps/api/config/appsettings.Development.local.example.json` 复制为同目录的 `appsettings.Development.local.json`，填写迁移连接和运行连接后执行 `pnpm db:init`。该文件被 Git 忽略，并由 API、数据库工具及 SQL Server 集成测试共同读取；API 不会在启动时自动修改数据库。完整步骤见 [后端 README](apps/api/README.md)。
+未部署调试时，将 `apps/api/config/appsettings.Development.local.example.json` 复制为同目录的 `appsettings.Development.local.json`，填写两个连接字符串、排序规则和首次超级管理员密码，再依次执行 `pnpm db:init`、`pnpm db:seed`、`pnpm db:verify`。该文件被 Git 忽略并由 API 与数据库工具共同读取；API 不会在启动时自动修改数据库。完整步骤见 [后端 README](apps/api/README.md)。
 
-当前健康检查切片可验证进程、数据库连接和结构边界；由于内置种子尚未实现，数据库初始化后 `/health/ready` 会明确保持 503，不能将其视为已完成的认证或业务后端。
+完成初始化和 Seed 后，`/health/ready` 可验证数据库结构与种子版本；当前支持 `superadmin` 登录、会话恢复和注销，可读取部门、职务、用户、角色和流程权限组，可创建用户/角色并完整维护流程权限组，也可读取任务中心、“我的发起”和流程定义，创建定义、保存 V1 的基本信息/表单/流程图并重新校验。域登录、用户/角色完整维护、部门/职务写操作、流程发布及实例业务写入尚未实现。
 
 ## 测试
 

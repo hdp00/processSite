@@ -50,7 +50,7 @@ type TaskCenterTab = "mine" | "substitute" | "initiated";
 
 export function TaskCenterPage() {
   const navigate = useNavigate();
-  const { instances, tasks, personaId } = usePrototypeStore();
+  const { instances, tasks, personaId, sessionSuperAdmin } = usePrototypeStore();
   const definitions = useProcessDefinitionStore((state) => state.definitions);
   const identityUser = useIdentityStore((state) => state.users.find((user) => user.id === personaId));
   const [tab, setTab] = useState<TaskCenterTab>("mine");
@@ -59,7 +59,7 @@ export function TaskCenterPage() {
   const [selectedTemplate, setSelectedTemplate] = useState(() =>
     window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
   );
-  const isSuperAdmin = isSuperAdminPersona(personaId);
+  const isSuperAdmin = sessionSuperAdmin || isSuperAdminPersona(personaId);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [remoteInstances, setRemoteInstances] = useState<ProcessInstance[]>([]);
@@ -102,7 +102,7 @@ export function TaskCenterPage() {
       ? flowPilotApi.instances.list({ page, pageSize, q: keyword.trim() || undefined, definitionId, initiatorId: personaId, activeOnly: true })
         .then((result) => ({ instances: result.items, tasks: [] as WorkflowTask[], total: result.page.totalElements }))
       : flowPilotApi.tasks.listMine({ page, pageSize, q: keyword.trim() || undefined, definitionId, view: tab === "mine" ? "pending" : "substitutable" })
-        .then((result) => ({ instances: result.items.map((item) => item.instance), tasks: result.items.map((item) => item.task), total: result.page.totalElements }));
+        .then((result) => ({ instances: result.items.map((item) => item.instance), tasks: result.items.flatMap((item) => item.tasks), total: result.page.totalElements }));
     void request.then((result) => {
       if (cancelled) return;
       setRemoteInstances(result.instances);
@@ -247,7 +247,7 @@ export function TaskCenterPage() {
     const definition = definitions.find((item) => item.id === record.definitionId);
     const version = definition?.versions.find((item) => item.id === record.versionId);
     const node = version?.snapshot.flow.nodes.find((item) => item.id === task?.nodeId);
-    return node?.data?.handlingMode === "confirmation" ? "进入确认" : "进入审核";
+    return task?.handlingMode === "confirmation" || node?.data?.handlingMode === "confirmation" ? "进入确认" : "进入审核";
   };
 
   const columns: TableProps<ProcessInstance>["columns"] = [
@@ -316,7 +316,7 @@ export function TaskCenterPage() {
         const recordTasks = record ? tasksForRecord(record) : [];
         const task = recordTasks[0];
         const defaultAssignees = recordTasks
-          .map((item) => useIdentityStore.getState().users.find((user) => user.id === item.defaultAssigneeId)?.name)
+          .map((item) => item.defaultAssigneeName ?? useIdentityStore.getState().users.find((user) => user.id === item.defaultAssigneeId)?.name)
           .filter(Boolean);
         const defaultAssignee = [...new Set(defaultAssignees)].join("、") || "未指定";
         return isResubmissionTask(record!) ? (

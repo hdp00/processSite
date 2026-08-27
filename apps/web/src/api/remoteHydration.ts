@@ -14,24 +14,56 @@ const collectPages = async <T>(loader: (page: number) => Promise<PageResult<T>>)
   }
 };
 
+const loadRemoteDefinitions = async () => {
+  const { sessionPermissions, sessionSuperAdmin } = usePrototypeStore.getState();
+  const canManageDefinitions = sessionSuperAdmin
+    || sessionPermissions.includes("config-definition:查看");
+  const canLoadVisibleDefinitions = sessionSuperAdmin || [
+    "work-launch:查看",
+    "work-list:查看",
+    "work-task:查看",
+    "system-monitor:查看",
+  ].some((permission) => sessionPermissions.includes(permission));
+
+  if (canLoadVisibleDefinitions) {
+    return collectPages<ProcessDefinitionListItem>((page) =>
+      flowPilotApi.definitions.visible({ page, pageSize: 100 }));
+  }
+  if (canManageDefinitions) {
+    return collectPages<ProcessDefinitionListItem>((page) =>
+      flowPilotApi.definitions.list({ page, pageSize: 100 }));
+  }
+  return [];
+};
+
 /**
- * 远程模式的唯一启动水合入口。页面读取的 Zustand 数据在该模式下只是
+ * 登录和会话恢复时只加载当前阶段已经由正式后端提供的流程定义切片。
+ * 数据全部成功取得后再替换缓存，避免临时失败把原缓存清成空数据。
+ */
+export const hydrateRemoteProcessDefinitions = async () => {
+  const definitions = await loadRemoteDefinitions();
+  const session = usePrototypeStore.getState();
+  const sessionUsers = useIdentityStore.getState().users.filter((user) =>
+    user.id === session.personaId || user.id === session.operatorUserId,
+  );
+
+  useIdentityStore.setState({ users: sessionUsers, roles: [], workflowGroups: [] });
+  useProcessDefinitionStore.setState({
+    definitions: definitions.map(({ status: _status, ...definition }) => definition),
+  });
+  usePrototypeStore.setState({ instances: [], tasks: [] });
+  useOrganizationStore.setState({ departments: [], jobTitles: [] });
+};
+
+/**
+ * 完整刷新远程业务缓存。页面读取的 Zustand 数据在远程模式下只是
  * 服务端查询结果缓存，不再使用内置演示种子冒充远程数据。
  */
 export const hydrateRemoteApplication = async () => {
-  const loadDefinitions = async () => {
-    try {
-      return collectPages<ProcessDefinitionListItem>((page) =>
-        flowPilotApi.definitions.list({ page, pageSize: 100 }));
-    } catch {
-      return collectPages<ProcessDefinitionListItem>((page) =>
-        flowPilotApi.definitions.visible({ page, pageSize: 100 }));
-    }
-  };
   const [roles, workflowGroups, definitions, departments, positions] = await Promise.all([
     collectPages((page) => flowPilotApi.directory.roles({ page, pageSize: 100 })),
     collectPages((page) => flowPilotApi.directory.groups({ page, pageSize: 100 })),
-    loadDefinitions(),
+    loadRemoteDefinitions(),
     flowPilotApi.organization.departments(),
     flowPilotApi.organization.positions(),
   ]);
