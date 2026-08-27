@@ -55,6 +55,11 @@ public static class DatabaseReadinessSnapshotEvaluator
             return DatabaseReadinessResult.NotReady(DatabaseReadinessCodes.SchemaVersionStoreInvalid);
         }
 
+        if (!snapshot.SchemaStructureIsValid)
+        {
+            return DatabaseReadinessResult.NotReady(DatabaseReadinessCodes.SchemaStructureMismatch);
+        }
+
         var appliedSchemaVersion = Normalize(snapshot.AppliedSchemaVersion);
         return appliedSchemaVersion is null
             ? DatabaseReadinessResult.NotReady(DatabaseReadinessCodes.SchemaVersionMissing)

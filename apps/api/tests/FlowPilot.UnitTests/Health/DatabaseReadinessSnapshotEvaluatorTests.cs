@@ -134,6 +134,17 @@ public sealed class DatabaseReadinessSnapshotEvaluatorTests
             DatabaseReadinessCodes.SchemaVersionStoreInvalid);
     }
 
+    [Fact]
+    public void Evaluate_RejectsSchemaStructureMismatch()
+    {
+        var snapshot = CreateReadySnapshot() with { SchemaStructureIsValid = false };
+
+        AssertNotReady(
+            snapshot,
+            CreateRequirements(),
+            DatabaseReadinessCodes.SchemaStructureMismatch);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

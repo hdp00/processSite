@@ -1,5 +1,7 @@
 using FlowPilot.Application.Health;
+using FlowPilot.Infrastructure.Configuration;
 using FlowPilot.Infrastructure.Health;
+using FlowPilot.Infrastructure.Persistence.Schema;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,37 +18,48 @@ public static class PersistenceServiceCollectionExtensions
 
         return services.AddFlowPilotPersistence(
             configuration.GetConnectionString("FlowPilot"),
-            new DatabaseReadinessRequirements(
-                configuration["FlowPilot:Database:RequiredSchemaVersion"],
-                configuration["FlowPilot:Database:ExpectedCollation"]));
+            FlowPilotDatabaseOptions.FromConfiguration(configuration));
     }
 
     public static IServiceCollection AddFlowPilotPersistence(
         this IServiceCollection services,
         string? connectionString,
-        DatabaseReadinessRequirements readinessRequirements)
+        FlowPilotDatabaseOptions databaseOptions)
     {
         ArgumentNullException.ThrowIfNull(services);
-        ArgumentNullException.ThrowIfNull(readinessRequirements);
+        ArgumentNullException.ThrowIfNull(databaseOptions);
 
-        services.AddSingleton(readinessRequirements);
+        services.AddSingleton(databaseOptions);
+        services.AddSingleton(
+            new DatabaseReadinessRequirements(
+                databaseOptions.RequiredSchemaVersion,
+                databaseOptions.ExpectedCollation));
+        services.AddSingleton(
+            new BuiltinSeedReadinessRequirements(databaseOptions.RequiredBuiltinSeedVersion));
         services.AddDbContext<FlowPilotDbContext>(options =>
         {
             if (string.IsNullOrWhiteSpace(connectionString))
             {
                 options.UseSqlServer(sqlServerOptions =>
-                    sqlServerOptions.UseCompatibilityLevel(FlowPilotDbContext.SqlServerCompatibilityLevel));
+                    sqlServerOptions
+                        .UseCompatibilityLevel(FlowPilotDbContext.SqlServerCompatibilityLevel)
+                        .CommandTimeout(databaseOptions.ApplicationCommandTimeoutSeconds));
                 return;
             }
 
             options.UseSqlServer(
                 connectionString,
                 sqlServerOptions =>
-                    sqlServerOptions.UseCompatibilityLevel(FlowPilotDbContext.SqlServerCompatibilityLevel));
+                    sqlServerOptions
+                        .UseCompatibilityLevel(FlowPilotDbContext.SqlServerCompatibilityLevel)
+                        .CommandTimeout(databaseOptions.ApplicationCommandTimeoutSeconds));
         });
 
+        services.AddSingleton<ISqlServerSchemaStructureProbe, SqlServerSchemaStructureProbe>();
         services.AddScoped<ISqlServerReadinessSnapshotReader, SqlServerReadinessSnapshotReader>();
-        services.AddScoped<IDatabaseReadinessCheck, SqlServerDatabaseReadinessCheck>();
+        services.AddScoped<SqlServerDatabaseReadinessCheck>();
+        services.AddScoped<IBuiltinSeedVersionReader, SqlServerBuiltinSeedVersionReader>();
+        services.AddScoped<IDatabaseReadinessCheck, ApplicationDatabaseReadinessCheck>();
 
         return services;
     }

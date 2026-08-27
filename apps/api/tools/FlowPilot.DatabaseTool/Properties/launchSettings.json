@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "Initialize": {
+      "commandName": "Project",
+      "commandLineArgs": "initialize"
+    },
+    "Verify": {
+      "commandName": "Project",
+      "commandLineArgs": "verify"
+    }
+  }
+}

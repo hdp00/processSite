@@ -1010,12 +1010,14 @@
 - EF Core 采用 Data Mapper 风格，持久化实体与领域模型、API DTO 分离；对象间的结构映射统一使用 `Riok.Mapperly` 在编译期生成。Mapperly 只负责无副作用的数据复制和显式字段转换，不负责权限、领域不变量、状态迁移、默认值决策或数据库查询。新增/修改命令不得把请求 DTO 直接覆盖到 EF Core 跟踪实体，必须先通过应用服务校验并调用领域行为；复杂映射允许在 Mapperly partial mapper 中手工实现。业务服务只依赖领域仓储和统一 `PersistenceUnitOfWork`，不得直接依赖 `DbContext`、`DbSet`、`DbConnection` 或驱动类型。普通 CRUD 和稳定关系查询优先由 EF Core/LINQ 实现；编号分配、版本发布、任务抢占、复杂动态投影和 SQL Server 锁提示等能力允许在基础设施层执行参数化 `SqlCommand`。
 - `PersistenceUnitOfWork` 持有同一个作用域 `DbContext` 和显式事务；原生 SQL 必须复用该上下文的 `DbConnection` 与当前 `DbTransaction`，不得另开连接或在同一事务中混用无关上下文。在必要场景显式使用 `SERIALIZABLE` 或 `UPDLOCK/HOLDLOCK`，数据库事务内不得执行 SMTP、附件写入或其他外部 I/O。
 - 应用启动不得自动迁移数据库。每次逻辑结构变更提交人工复核的幂等 SQL 部署脚本，并保留对应 EF Core migration 作为结构演进和脚本生成依据；由 DBA 使用高权限迁移账号执行经审查脚本，常驻应用只校验结构版本，结构落后时拒绝就绪。EF migration bundle 仅可作为受控部署选项，不能由 Windows 服务启动时调用。
+- 未部署的开发环境允许由开发者显式运行仓库内数据库工具，对一个已经创建且尚无 FlowPilot 结构的专用数据库执行同一份版本化迁移；该工具必须先验证服务器版本、兼容级别和排序规则，在事务级独占锁内原子执行并记录迁移 ID 与校验和。提交新迁移或把现有数据库判定为当前版本前，必须按版本化清单精确核对全部表、列、具名约束、显式索引、触发器和不允许的额外对象。它不得由 API 启动流程调用，不得创建或删除数据库，也不得接受系统数据库作为目标。相同版本和校验和的重复执行必须是无副作用成功，部分结构、未知版本或校验和漂移必须失败关闭。
 - UUID、布尔值、UTC 时间、JSON、枚举和整数 revision 在领域层使用统一类型，并映射到约定的 SQL Server 类型；乐观锁统一使用整数 revision，不使用 SQL Server `rowversion`。
 - 流程版本和实例表单使用 JSON 保存完整结构或最新值，统一映射到 `nvarchar(max)` 并增加 `ISJSON` 约束。SQL Server 2016 SP2 提供 `JSON_VALUE`、`JSON_QUERY` 和 `OPENJSON`，但没有原生 JSON 类型和通用 JSON 索引，且 `JSON_VALUE` 的标量文本返回存在 4000 字符限制；EF Core 不使用高版本 JSON 列映射，JSON 函数只用于校验、诊断或受控迁移，业务查询不得依赖动态扫描 JSON。
 - 允许查询、列表展示或导出的动态标量字段需要同步写入类型化投影表，并按照流程定义、稳定字段标识和值类型建立普通关系索引。JSON 最新值与投影值必须在同一数据库事务中更新，任一写入失败时整体回滚；系统需提供可重复执行的投影校验和重建命令。数字范围、日期范围、排序和跨版本查询均读取投影表，不直接扫描 JSON。
 - 业务表统一放在独立 `flowpilot` schema。实体主键使用应用生成的 `uniqueidentifier`，时间保存为 UTC `datetime2(3)`，业务显示和附件年份使用 `Asia/Shanghai`。账号和各类业务编码使用规范化列建立唯一约束，不能只依赖数据库排序规则。
 - 用户、角色、部门、职务和流程权限组等仅具有启用/停用语义的主数据，数据库物理列统一使用 `is_enabled bit`，API 继续映射为 `status: enabled | disabled`；流程实例、任务、版本、附件、Outbox 等具有三个及以上生命周期阶段的对象继续使用受 CHECK 约束的状态枚举列。流程定义单独保存 `is_disabled bit`，接口展示状态由该标志与当前发布版本指针推导。
-- SQL Server 地址、数据库、应用账号、连接安全选项、预期排序规则、连接池和超时全部由外置配置提供。迁移账号与应用运行账号分离；迁移账号不作为常驻应用秘密保存。
+- SQL Server 地址、数据库、应用账号、连接安全选项、预期排序规则、连接池和超时全部由外置配置提供。迁移账号与应用运行账号分离；迁移账号不作为常驻应用秘密保存。运行账号除业务所需 DML/执行权限和对结构/种子版本表的只读权限外，还必须具备完成 `flowpilot` schema 结构清单核对所需的元数据可见性，但不得因此获得 DDL 权限。
+- 未部署的 `Development` 调试统一读取被 Git 忽略的 `apps/api/config/appsettings.Development.local.json`，API、数据库初始化工具和 SQL Server 集成测试复用该文件；仓库只提交无真实秘密的示例。数据库工具只从自身程序集所在的预期仓库工程布局定位固定配置文件，不依赖当前工作目录且不接受其他路径覆盖；覆盖顺序为仓库默认值 < 本地 JSON < 环境变量 < 命令行配置值，修改本地文件后重启调试进程。生产环境继续只读取固定部署目录中的 Config/Secrets，不读取仓库开发配置。
 
 所有客户端均通过 ASP.NET Core REST API 访问业务数据，不允许绕过后端直接连接 SQL Server。首版继续按单个后端服务实例设计，预计每年新增流程实例不超过2万、附件总量不超过500 GB。
 
@@ -1071,6 +1073,7 @@
 
 | 版本 | 日期 | 变更内容 |
 | --- | --- | --- |
+| 2.24 | 2026-08-26 | 增加未部署后端的本地调试与数据库初始化边界：Development 使用路径固定、被 Git 忽略的单一本地 JSON，供 API、显式数据库工具和 SQL 集成测试复用，并保留环境变量及命令行配置值覆盖；数据库工具只连接已创建的专用空库，在版本/兼容级别/排序规则预检后以事务锁应用版本化 SQL 和校验和账本，提交前及重复执行时按版本化清单核对全部具名结构对象，不由 API 自动迁移、不创建数据库且拒绝系统库、部分结构与迁移漂移。运行账号需要只读版本信息与结构元数据可见性但不得拥有 DDL 权限；完整就绪在内置种子缺失时继续失败关闭。生产仍使用分离的迁移账号、运行账号和固定外置 Config/Secrets。 |
 | 2.23 | 2026-08-26 | 完成后端文档一致性收口：附件统一采用年份目录下 `.incoming`/`objects` 两阶段布局和 `uploading/staged/active/cleanup-pending/failed/deleted` 内部状态；权限组增加用途关系；流程版本状态由发布指针与校验结果派生；任务中心区分审批、自由协作和待重新提交；补齐自由协作受理人、任务、参与人和时间线持久化，回复只保留最新正文及编辑审计元数据。正式领域主键统一由后端生成，前端目标客户端统一为 Orval/Axios；同时补充登录/注销 Cookie 与 CSRF 契约、SQL TLS、Outbox 收件人幂等键和发布数据库结构版本元数据。 |
 | 2.22 | 2026-08-26 | 采用统一不可变发布包：`App\releases\{releaseId}` 同时包含 `api`、`web` 和 `release.json`，本机 NTFS 目录联接 `current`/`previous` 对整包统一切换与回滚，避免前后端契约错配。Windows Service 与 IIS 使用稳定的 `current\api`/`current\web` 路径；部署根改为从 `AppContext.BaseDirectory` 向上有限查找唯一 `flowpilot.root`，兼容联接路径和真实目标路径。Config、Secrets、Data、Logs、Temp、Backup 继续位于发布目录之外；程序回滚明确不等于数据库回滚。 |
 | 2.21 | 2026-08-26 | 取消 `FLOWPILOT_HOME`、`FLOWPILOT_CONFIG_FILE` 和 `FLOWPILOT_SECRETS_FILE` 路径参数。API 发布文件直接位于实际程序目录，前端位于其 `web` 子目录；生产路径以 `AppContext.BaseDirectory` 确定程序目录并取父目录作为部署根目录，禁止依赖 Windows Service 当前工作目录。Config、Secrets、Data、Logs、Temp 和 Backup 均按固定同级目录推导。 |

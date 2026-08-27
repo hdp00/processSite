@@ -110,7 +110,9 @@ Mapperly 的使用边界：
 
 生产首选 DBA 执行已审查 SQL。EF migration bundle 只能作为受控部署选项，不由常驻应用账号或 Windows 服务启动流程调用。迁移账号与运行账号分离；服务启动只验证数据库版本、兼容级别 130、排序规则、schema 和结构版本，落后时 `/health/ready` 返回 503。
 
-SQL Server 连接字符串必须显式给出加密和证书信任选项，避免 Microsoft.Data.SqlClient 升级改变默认行为。远程连接默认使用 `Encrypt=true;TrustServerCertificate=false` 并验证证书链与主机名；只有部署记录批准的同机回环例外可以降低要求。连接字符串及证书诊断只能输出脱敏结果。
+未部署的 Development 环境使用显式 `FlowPilot.DatabaseTool` 执行同一份版本化 SQL。工具只接受已经创建的专用数据库，不执行 `CREATE/DROP DATABASE`，拒绝系统数据库，并在服务器版本、兼容级别和排序规则预检后使用事务级 `sp_getapplock` 原子执行迁移与账本写入。提交前及返回 Current 前按版本化清单核对全部表、列、具名约束、显式索引、触发器和额外对象。API、Windows 服务和测试宿主都不得隐式调用该工具。相同 ID/校验和的成功迁移重复执行为 no-op；部分结构、未知迁移、非成功账本和校验和漂移均失败关闭。
+
+SQL Server 连接字符串必须显式给出加密、证书信任、连接建立超时和连接池上下限，避免 Microsoft.Data.SqlClient 升级改变默认行为。远程连接默认使用 `Encrypt=true;TrustServerCertificate=false` 并验证证书链与主机名；只有部署记录批准的同机回环例外可以降低要求。常规 EF、就绪元数据/种子、结构探测、迁移预检和迁移 DDL 的命令超时统一从强类型 `FlowPilot:Database` 选项读取，使用有限的安全默认值并允许外置覆盖，禁止用 `0` 配置无限命令等待。连接字符串及证书诊断只能输出脱敏结果。
 
 ## 7. 外置配置与目录
 
@@ -141,6 +143,8 @@ SQL Server 连接字符串必须显式给出加密和证书信任选项，避免
 ```
 
 外置文件位置固定为 `{部署根目录}\Config\appsettings.Production.json` 与 `{部署根目录}\Secrets\secrets.Production.json`。配置值优先级为标准 .NET 进程环境变量 > Secrets JSON > Config JSON > 当前发布包 `api\appsettings.json`，但环境变量不得改变目录或文件位置。`FLOWPILOT_HOME`、`FLOWPILOT_CONFIG_FILE` 和 `FLOWPILOT_SECRETS_FILE` 不再支持；Windows 服务工作目录不得参与路径推导。
+
+本地 Development 不要求模拟生产发布目录。API、数据库工具和 SQL Server 集成测试共同读取仓库内被忽略的 `apps/api/config/appsettings.Development.local.json`；仓库只提供 `.example.json`。数据库工具只从 `AppContext.BaseDirectory` 所在的预期 `tools/FlowPilot.DatabaseTool` 工程布局向上定位该固定路径，不读取当前工作目录且不接受任意配置文件路径覆盖；优先级为默认配置 < 本地 JSON < 环境变量 < 命令行配置值，文件只在进程启动时加载。该本地文件绝不进入生产发布包，生产环境也不读取它。
 
 路径解析封装为可注入接口。生产实现从 `AppContext.BaseDirectory` 开始，包含当前目录在内最多检查 6 层祖先目录，必须且只能找到一个名为 `flowpilot.root` 的部署根标记；这样无论运行时保留 `current` 路径还是解析为实际 `releases\{releaseId}` 路径，都能得到同一部署根。禁止退回固定取父目录、Windows Service 当前工作目录或环境变量。测试实现使用独立临时目录。启动时还必须验证部署根不是磁盘根、当前 API 位于该根的 `App` 边界内、联接目标位于本机 `App\releases` 内、Config/Secrets 文件存在，并规范化和验证所有最终绝对路径。
 

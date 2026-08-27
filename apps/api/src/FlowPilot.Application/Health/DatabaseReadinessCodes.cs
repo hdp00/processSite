@@ -13,4 +13,7 @@ public static class DatabaseReadinessCodes
     public const string SchemaVersionStoreInvalid = "DATABASE_SCHEMA_VERSION_STORE_INVALID";
     public const string SchemaVersionMissing = "DATABASE_SCHEMA_VERSION_MISSING";
     public const string SchemaVersionMismatch = "DATABASE_SCHEMA_VERSION_MISMATCH";
+    public const string SchemaStructureMismatch = "DATABASE_SCHEMA_STRUCTURE_MISMATCH";
+    public const string BuiltinSeedVersionMissing = "DATABASE_BUILTIN_SEED_VERSION_MISSING";
+    public const string BuiltinSeedVersionMismatch = "DATABASE_BUILTIN_SEED_VERSION_MISMATCH";
 }

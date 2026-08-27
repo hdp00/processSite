@@ -10,6 +10,8 @@ public static class ProductionStartupConfigurationValidator
     private const string AllowedHostsKey = "FlowPilot:Http:AllowedHosts";
     private const string ExpectedCollationKey = "FlowPilot:Database:ExpectedCollation";
     private const string RequiredSchemaVersionKey = "FlowPilot:Database:RequiredSchemaVersion";
+    private const string RequiredBuiltinSeedVersionKey =
+        "FlowPilot:Database:RequiredBuiltinSeedVersion";
     private const string UrlsKey = "urls";
     private const string LoopbackHttpPrefix = "http://127.0.0.1:";
 
@@ -21,7 +23,26 @@ public static class ProductionStartupConfigurationValidator
         ValidateAllowedHosts(configuration);
         ValidateConnectionString(configuration);
         RequireValue(configuration, RequiredSchemaVersionKey, ProductionConfigurationFailure.MissingRequiredSchemaVersion);
+        RequireValue(
+            configuration,
+            RequiredBuiltinSeedVersionKey,
+            ProductionConfigurationFailure.MissingRequiredBuiltinSeedVersion);
         RequireValue(configuration, ExpectedCollationKey, ProductionConfigurationFailure.MissingExpectedCollation);
+        ValidateDatabaseOptions(configuration);
+    }
+
+    private static void ValidateDatabaseOptions(IConfiguration configuration)
+    {
+        try
+        {
+            _ = FlowPilotDatabaseOptions.FromConfiguration(configuration);
+        }
+        catch (FlowPilotDatabaseOptionsConfigurationException exception)
+        {
+            throw new ProductionConfigurationException(
+                ProductionConfigurationFailure.InvalidDatabaseCommandTimeout,
+                exception.ConfigurationKey);
+        }
     }
 
     private static void ValidateAllowedHosts(IConfiguration configuration)

@@ -1,16 +1,15 @@
 using System.Data;
 using System.Data.Common;
 using FlowPilot.Application.Health;
+using FlowPilot.Infrastructure.Configuration;
 using FlowPilot.Infrastructure.Persistence;
+using FlowPilot.Infrastructure.Persistence.Schema;
 using Microsoft.EntityFrameworkCore;
 
 namespace FlowPilot.Infrastructure.Health;
 
-public sealed class SqlServerReadinessSnapshotReader(FlowPilotDbContext dbContext)
-    : ISqlServerReadinessSnapshotReader
+public sealed class SqlServerReadinessSnapshotReader : ISqlServerReadinessSnapshotReader
 {
-    private const int CommandTimeoutSeconds = 5;
-
     private const string MetadataQuery = """
         SELECT
             CONVERT(nvarchar(128), SERVERPROPERTY(N'ProductVersion')),
@@ -37,7 +36,37 @@ public sealed class SqlServerReadinessSnapshotReader(FlowPilotDbContext dbContex
         ORDER BY [completed_at] DESC, [migration_id] DESC;
         """;
 
-    private readonly FlowPilotDbContext _dbContext = dbContext;
+    private readonly FlowPilotDbContext _dbContext;
+    private readonly ISqlServerSchemaStructureProbe _schemaStructureProbe;
+    private readonly FlowPilotDatabaseOptions _databaseOptions;
+
+    public SqlServerReadinessSnapshotReader(FlowPilotDbContext dbContext)
+        : this(
+            dbContext,
+            new SqlServerSchemaStructureProbe(FlowPilotDatabaseOptions.Default),
+            FlowPilotDatabaseOptions.Default)
+    {
+    }
+
+    public SqlServerReadinessSnapshotReader(
+        FlowPilotDbContext dbContext,
+        ISqlServerSchemaStructureProbe schemaStructureProbe)
+        : this(dbContext, schemaStructureProbe, FlowPilotDatabaseOptions.Default)
+    {
+    }
+
+    public SqlServerReadinessSnapshotReader(
+        FlowPilotDbContext dbContext,
+        ISqlServerSchemaStructureProbe schemaStructureProbe,
+        FlowPilotDatabaseOptions databaseOptions)
+    {
+        ArgumentNullException.ThrowIfNull(dbContext);
+        ArgumentNullException.ThrowIfNull(schemaStructureProbe);
+        ArgumentNullException.ThrowIfNull(databaseOptions);
+        _dbContext = dbContext;
+        _schemaStructureProbe = schemaStructureProbe;
+        _databaseOptions = databaseOptions;
+    }
 
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(_dbContext.Database.GetConnectionString());
@@ -64,6 +93,10 @@ public sealed class SqlServerReadinessSnapshotReader(FlowPilotDbContext dbContex
                     .ConfigureAwait(false);
             }
 
+            var structureResult = await _schemaStructureProbe
+                .ValidateAsync(connection, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
             return new DatabaseReadinessSnapshot(
                 metadata.ProductVersion,
                 metadata.ProductLevel,
@@ -72,7 +105,8 @@ public sealed class SqlServerReadinessSnapshotReader(FlowPilotDbContext dbContex
                 metadata.FlowPilotSchemaExists,
                 metadata.SchemaVersionStoreExists,
                 metadata.SchemaVersionStoreIsValid,
-                appliedSchemaVersion);
+                appliedSchemaVersion,
+                structureResult.IsValid);
         }
         finally
         {
@@ -83,13 +117,13 @@ public sealed class SqlServerReadinessSnapshotReader(FlowPilotDbContext dbContex
         }
     }
 
-    private static async Task<SqlServerMetadata> ReadMetadataAsync(
+    private async Task<SqlServerMetadata> ReadMetadataAsync(
         DbConnection connection,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = MetadataQuery;
-        command.CommandTimeout = CommandTimeoutSeconds;
+        command.CommandTimeout = _databaseOptions.ReadinessCommandTimeoutSeconds;
 
         await using var reader = await command
             .ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken)
@@ -110,13 +144,13 @@ public sealed class SqlServerReadinessSnapshotReader(FlowPilotDbContext dbContex
             reader.GetBoolean(6));
     }
 
-    private static async Task<string?> ReadAppliedSchemaVersionAsync(
+    private async Task<string?> ReadAppliedSchemaVersionAsync(
         DbConnection connection,
         CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = SchemaVersionQuery;
-        command.CommandTimeout = CommandTimeoutSeconds;
+        command.CommandTimeout = _databaseOptions.ReadinessCommandTimeoutSeconds;
 
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return value is null or DBNull ? null : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);

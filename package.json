@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "pnpm --filter @process-site/web dev",
     "restore:api": "dotnet restore apps/api/FlowPilot.sln --locked-mode -m:1",
-    "dev:api": "dotnet run --project apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj",
+    "build:api:debug": "pnpm restore:api && dotnet build apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug --no-restore -m:1",
+    "dev:api": "pnpm build:api:debug && dotnet run --project apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug --no-build --no-restore",
+    "build:dbtool": "pnpm restore:api && dotnet build apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-restore -m:1",
+    "db:init": "pnpm build:dbtool && dotnet run --project apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-build --no-restore --no-launch-profile -- initialize",
+    "db:verify": "pnpm build:dbtool && dotnet run --project apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-build --no-restore --no-launch-profile -- verify",
     "dev:remote": "pnpm --filter @process-site/web dev:remote",
     "preview": "pnpm --filter @process-site/web preview",
     "build": "pnpm --filter @process-site/api-contract build && pnpm restore:api && dotnet build apps/api/FlowPilot.sln -c Release --no-restore -m:1 && pnpm --filter @process-site/web build",
@@ -18,10 +22,11 @@
     "typecheck:api": "pnpm build:api",
     "typecheck:web": "pnpm --filter @process-site/web typecheck",
     "test": "pnpm --filter @process-site/api-contract build && pnpm test:api && pnpm --filter @process-site/web test",
-    "test:api": "pnpm restore:api && pnpm test:api:unit && pnpm test:api:http && pnpm test:api:sql",
-    "test:api:unit": "dotnet run --project apps/api/tests/FlowPilot.UnitTests/FlowPilot.UnitTests.csproj -c Release --no-restore -- --minimum-expected-tests 1",
-    "test:api:http": "dotnet run --project apps/api/tests/FlowPilot.ApiTests/FlowPilot.ApiTests.csproj -c Release --no-restore -- --minimum-expected-tests 1",
-    "test:api:sql": "dotnet run --project apps/api/tests/FlowPilot.SqlServerTests/FlowPilot.SqlServerTests.csproj -c Release --no-restore",
+    "test:api": "pnpm build:api && pnpm test:api:unit && pnpm test:api:http && pnpm test:api:sql",
+    "test:api:unit": "dotnet run --project apps/api/tests/FlowPilot.UnitTests/FlowPilot.UnitTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1",
+    "test:api:http": "dotnet run --project apps/api/tests/FlowPilot.ApiTests/FlowPilot.ApiTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1",
+    "test:api:sql": "dotnet run --project apps/api/tests/FlowPilot.SqlServerTests/FlowPilot.SqlServerTests.csproj -c Release --no-build --no-restore --no-launch-profile",
+    "test:api:sql:required": "dotnet run --project apps/api/tests/FlowPilot.SqlServerTests/FlowPilot.SqlServerTests.csproj -c Release --no-build --no-restore --launch-profile SqlServerRequired",
     "test:coverage": "pnpm --filter @process-site/web test:coverage",
     "test:coverage:all": "pnpm --filter @process-site/web test:coverage:all",
     "test:e2e": "pnpm --filter @process-site/web test:e2e",
@@ -32,6 +37,6 @@
     "contract:lint": "pnpm --filter @process-site/api-contract lint:openapi",
     "contract:generate": "pnpm --filter @process-site/api-contract generate",
     "contract:check": "pnpm --filter @process-site/api-contract check",
-    "backend:check": "pnpm contract:check && pnpm restore:api && dotnet build apps/api/FlowPilot.sln -c Release --no-restore -m:1 && dotnet run --project apps/api/tests/FlowPilot.UnitTests/FlowPilot.UnitTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1 && dotnet run --project apps/api/tests/FlowPilot.ApiTests/FlowPilot.ApiTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1 && dotnet run --project apps/api/tests/FlowPilot.SqlServerTests/FlowPilot.SqlServerTests.csproj -c Release --no-build --no-restore"
+    "backend:check": "pnpm contract:check && pnpm restore:api && dotnet build apps/api/FlowPilot.sln -c Release --no-restore -m:1 && dotnet run --project apps/api/tests/FlowPilot.UnitTests/FlowPilot.UnitTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1 && dotnet run --project apps/api/tests/FlowPilot.ApiTests/FlowPilot.ApiTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1 && pnpm test:api:sql:required"
   }
 }

@@ -2,7 +2,7 @@
 
 当前完整可演示部分是 React 前端交互原型，开发环境默认启用浏览器内 Mock REST API，无需启动后端即可演示登录、流程定义、实例、任务、附件、邮件 Outbox、审计和 Excel 导出。
 
-正式后端使用 .NET 10 / ASP.NET Core 10 Controller Web API、EF Core 10 和 SQL Server 2016 SP2 及之后版本。旧 NestJS 骨架已删除，`apps/api/FlowPilot.sln` 已落地分层工程基础和健康检查切片；认证会话及其他业务 API 仍未完成，当前不能代替浏览器 Mock 运行完整流程。
+正式后端使用 .NET 10 / ASP.NET Core 10 Controller Web API、EF Core 10 和 SQL Server 2016 SP2 及之后版本。旧 NestJS 骨架已删除，`apps/api/FlowPilot.sln` 已落地分层工程基础、健康检查、首版数据库结构和显式初始化工具；内置种子、认证会话及其他业务 API 仍未完成，当前不能代替浏览器 Mock 运行完整流程。
 
 - [统一需求](REQUIREMENTS.md)
 - [Mock REST API 使用说明](document/MOCK_REST_API.md)
@@ -48,6 +48,8 @@ pnpm build:debug
 
 ```bash
 pnpm restore:api
+pnpm db:init
+pnpm db:verify
 pnpm dev:api
 pnpm build:api
 pnpm test:api
@@ -55,7 +57,9 @@ pnpm publish:api
 pnpm backend:check
 ```
 
-当前健康检查切片仅用于验证工程、配置和基础运行边界；不要将其视为已完成的认证或业务后端。
+未部署调试时，将 `apps/api/config/appsettings.Development.local.example.json` 复制为同目录的 `appsettings.Development.local.json`，填写迁移连接和运行连接后执行 `pnpm db:init`。该文件被 Git 忽略，并由 API、数据库工具及 SQL Server 集成测试共同读取；API 不会在启动时自动修改数据库。完整步骤见 [后端 README](apps/api/README.md)。
+
+当前健康检查切片可验证进程、数据库连接和结构边界；由于内置种子尚未实现，数据库初始化后 `/health/ready` 会明确保持 503，不能将其视为已完成的认证或业务后端。
 
 ## 测试
 

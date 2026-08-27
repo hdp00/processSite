@@ -2,37 +2,26 @@ using FlowPilot.Application.Health;
 using FlowPilot.Infrastructure.Health;
 using FlowPilot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace FlowPilot.SqlServerTests;
 
 public sealed class SqlServerReadinessIntegrationTests
 {
-    private const string ConnectionStringVariable =
-        "FLOWPILOT_SQLSERVER_TEST_CONNECTION_STRING";
-
-    private const string SchemaVersionVariable =
-        "FLOWPILOT_SQLSERVER_TEST_REQUIRED_SCHEMA_VERSION";
-
-    private const string ExpectedCollationVariable =
-        "FLOWPILOT_SQLSERVER_TEST_EXPECTED_COLLATION";
-
     [Fact]
     public async Task ConfiguredDatabaseSatisfiesTheSupportedServerAndSchemaBaseline()
     {
-        var connectionString = Environment.GetEnvironmentVariable(ConnectionStringVariable);
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            Assert.Skip($"Set {ConnectionStringVariable} to run SQL Server integration tests.");
-        }
+        var configuration = SqlServerTestConfiguration.Load();
+        var connectionString = SqlServerTestConfiguration.RequireOrSkip(
+            configuration.GetConnectionString("FlowPilot"),
+            $"ConnectionStrings:FlowPilot or {SqlServerTestConfiguration.ConnectionStringOverrideVariable}");
 
-        var requiredSchemaVersion = Environment.GetEnvironmentVariable(SchemaVersionVariable);
-        Assert.False(
-            string.IsNullOrWhiteSpace(requiredSchemaVersion),
-            $"Set {SchemaVersionVariable} when enabling SQL Server integration tests.");
-        var expectedCollation = Environment.GetEnvironmentVariable(ExpectedCollationVariable);
-        Assert.False(
-            string.IsNullOrWhiteSpace(expectedCollation),
-            $"Set {ExpectedCollationVariable} when enabling SQL Server integration tests.");
+        var requiredSchemaVersion = SqlServerTestConfiguration.RequireOrSkip(
+            configuration["FlowPilot:Database:RequiredSchemaVersion"],
+            $"FlowPilot:Database:RequiredSchemaVersion or {SqlServerTestConfiguration.RequiredSchemaVersionOverrideVariable}");
+        var expectedCollation = SqlServerTestConfiguration.RequireOrSkip(
+            configuration["FlowPilot:Database:ExpectedCollation"],
+            $"FlowPilot:Database:ExpectedCollation or {SqlServerTestConfiguration.ExpectedCollationOverrideVariable}");
 
         var options = new DbContextOptionsBuilder<FlowPilotDbContext>()
             .UseSqlServer(

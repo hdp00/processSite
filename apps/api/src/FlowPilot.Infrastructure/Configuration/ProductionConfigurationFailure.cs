@@ -14,5 +14,7 @@ public enum ProductionConfigurationFailure
     MissingTrustServerCertificateSetting,
     TrustServerCertificateEnabled,
     MissingRequiredSchemaVersion,
+    MissingRequiredBuiltinSeedVersion,
     MissingExpectedCollation,
+    InvalidDatabaseCommandTimeout,
 }

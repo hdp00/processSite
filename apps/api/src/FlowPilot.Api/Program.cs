@@ -14,6 +14,13 @@ using Serilog.Formatting.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (builder.Environment.IsDevelopment())
+{
+    builder.Configuration.AddFlowPilotDevelopmentConfiguration(
+        builder.Environment.ContentRootPath,
+        args);
+}
+
 DeploymentPaths? deploymentPaths = null;
 if (builder.Environment.IsProduction())
 {

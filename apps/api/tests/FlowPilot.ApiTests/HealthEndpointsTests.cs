@@ -30,13 +30,16 @@ public sealed class HealthEndpointsTests
         Assert.NotEqual(default, body.CheckedAt);
     }
 
-    [Fact]
-    public async Task ReadinessReturnsServiceUnavailableWithStableReasonCode()
+    [Theory]
+    [InlineData(DatabaseReadinessCodes.SchemaVersionMismatch)]
+    [InlineData(DatabaseReadinessCodes.BuiltinSeedVersionMissing)]
+    [InlineData(DatabaseReadinessCodes.BuiltinSeedVersionMismatch)]
+    public async Task ReadinessReturnsServiceUnavailableWithStableReasonCode(string reasonCode)
     {
         await using var factory = new FlowPilotApiFactory
         {
             ReadinessResult = DatabaseReadinessResult.NotReady(
-                DatabaseReadinessCodes.SchemaVersionMismatch),
+                reasonCode),
         };
         using var client = factory.CreateClient();
 
@@ -49,7 +52,7 @@ public sealed class HealthEndpointsTests
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.NotNull(body);
         Assert.Equal(HealthStatuses.Unavailable, body.Status);
-        Assert.Equal(DatabaseReadinessCodes.SchemaVersionMismatch, body.Code);
+        Assert.Equal(reasonCode, body.Code);
         Assert.False(string.IsNullOrWhiteSpace(body.Version));
     }
 

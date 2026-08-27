@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\FlowPilot.Application\FlowPilot.Application.csproj" />
+    <ProjectReference Include="..\..\src\FlowPilot.Database\FlowPilot.Database.csproj" />
     <ProjectReference Include="..\..\src\FlowPilot.Domain\FlowPilot.Domain.csproj" />
     <ProjectReference Include="..\..\src\FlowPilot.Infrastructure\FlowPilot.Infrastructure.csproj" />
   </ItemGroup>

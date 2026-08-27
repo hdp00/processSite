@@ -56,9 +56,16 @@
 
 ```json
 {
-  "ConnectionStrings": { "FlowPilot": "<SQL Server 2016 SP2 或之后版本连接字符串>" },
+  "ConnectionStrings": { "FlowPilot": "Server=<主机>;Database=<数据库>;User ID=<运行账号>;Password=<运行密码>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100" },
   "FlowPilot": {
-    "Database": { "ExpectedCollation": "<DBA 确认值>" },
+    "Database": {
+      "ExpectedCollation": "<DBA 确认值>",
+      "ApplicationCommandTimeoutSeconds": 30,
+      "ReadinessCommandTimeoutSeconds": 5,
+      "SchemaProbeCommandTimeoutSeconds": 15,
+      "MigrationPreflightCommandTimeoutSeconds": 15,
+      "MigrationCommandTimeoutSeconds": 300
+    },
     "Ldap": { "Url": "<ldaps://...>", "BaseDn": "<...>", "UpnSuffix": "<...>" },
     "Smtp": { "Host": "<...>", "Port": 587, "UserName": "<...>", "Password": "<...>", "From": "<...>" },
     "Bootstrap": { "SuperAdminPassword": "<首次初始化临时值>" }

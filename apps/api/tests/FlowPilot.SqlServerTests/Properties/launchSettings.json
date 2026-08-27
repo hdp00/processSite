@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "SqlServerRequired": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "FLOWPILOT_SQLSERVER_TEST_REQUIRED": "true"
+      }
+    }
+  }
+}

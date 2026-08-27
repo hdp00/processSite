@@ -426,6 +426,14 @@
       "flowpilot.contracts": {
         "type": "Project"
       },
+      "flowpilot.database": {
+        "type": "Project",
+        "dependencies": {
+          "FlowPilot.Infrastructure": "[1.0.0, )",
+          "Microsoft.Data.SqlClient": "[6.1.6, )",
+          "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.11, )"
+        }
+      },
       "flowpilot.domain": {
         "type": "Project"
       },

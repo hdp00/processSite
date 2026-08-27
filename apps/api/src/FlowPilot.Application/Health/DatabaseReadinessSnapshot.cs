@@ -8,4 +8,5 @@ public sealed record DatabaseReadinessSnapshot(
     bool FlowPilotSchemaExists,
     bool SchemaVersionStoreExists,
     bool SchemaVersionStoreIsValid,
-    string? AppliedSchemaVersion);
+    string? AppliedSchemaVersion,
+    bool SchemaStructureIsValid = true);

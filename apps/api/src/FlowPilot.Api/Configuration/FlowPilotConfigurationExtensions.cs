@@ -4,6 +4,39 @@ namespace FlowPilot.Api.Configuration;
 
 public static class FlowPilotConfigurationExtensions
 {
+    public const string DevelopmentLocalFileName = "appsettings.Development.local.json";
+
+    public static IConfigurationBuilder AddFlowPilotDevelopmentConfiguration(
+        this IConfigurationBuilder configuration,
+        string contentRootPath,
+        string[] commandLineArguments)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentRootPath);
+        ArgumentNullException.ThrowIfNull(commandLineArguments);
+
+        var localConfigurationFile = Path.GetFullPath(
+            Path.Combine(
+                contentRootPath,
+                "..",
+                "..",
+                "config",
+                DevelopmentLocalFileName));
+
+        configuration
+            .AddJsonFile(
+                localConfigurationFile,
+                optional: true,
+                reloadOnChange: false)
+            // WebApplication's default environment and command-line providers were
+            // registered before the local file. Register them again so private
+            // developer settings cannot override process or launch arguments.
+            .AddEnvironmentVariables()
+            .AddCommandLine(commandLineArguments);
+
+        return configuration;
+    }
+
     public static IConfigurationBuilder AddFlowPilotProductionConfiguration(
         this IConfigurationBuilder configuration,
         DeploymentPaths deploymentPaths)

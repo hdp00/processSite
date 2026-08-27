@@ -196,6 +196,7 @@ public sealed class ProductionStartupConfigurationValidatorTests
 
     [Theory]
     [InlineData("FlowPilot:Database:RequiredSchemaVersion", ProductionConfigurationFailure.MissingRequiredSchemaVersion)]
+    [InlineData("FlowPilot:Database:RequiredBuiltinSeedVersion", ProductionConfigurationFailure.MissingRequiredBuiltinSeedVersion)]
     [InlineData("FlowPilot:Database:ExpectedCollation", ProductionConfigurationFailure.MissingExpectedCollation)]
     public void Validate_RejectsMissingDatabaseRequirement(
         string configurationKey,
@@ -205,6 +206,27 @@ public sealed class ProductionStartupConfigurationValidatorTests
         configuration[configurationKey] = " ";
 
         AssertFailure(configuration, failure, configurationKey);
+    }
+
+    [Theory]
+    [InlineData("FlowPilot:Database:ApplicationCommandTimeoutSeconds", "0")]
+    [InlineData("FlowPilot:Database:ReadinessCommandTimeoutSeconds", "not-a-number")]
+    [InlineData("FlowPilot:Database:SchemaProbeCommandTimeoutSeconds", "3601")]
+    [InlineData("FlowPilot:Database:MigrationPreflightCommandTimeoutSeconds", "-1")]
+    [InlineData("FlowPilot:Database:MigrationCommandTimeoutSeconds", "2147483648")]
+    public void Validate_RejectsInvalidDatabaseCommandTimeout(
+        string configurationKey,
+        string configuredValue)
+    {
+        var configuration = CreateValidConfiguration();
+        configuration[configurationKey] = configuredValue;
+
+        var exception = AssertFailure(
+            configuration,
+            ProductionConfigurationFailure.InvalidDatabaseCommandTimeout,
+            configurationKey);
+
+        Assert.DoesNotContain(configuredValue, exception.Message, StringComparison.Ordinal);
     }
 
     private static ProductionConfigurationException AssertFailure(
@@ -229,6 +251,7 @@ public sealed class ProductionStartupConfigurationValidatorTests
         configuration["FlowPilot:Http:AllowedHosts"] = "flowpilot.internal.example";
         configuration["ConnectionStrings:FlowPilot"] = SensitiveConnectionString;
         configuration["FlowPilot:Database:RequiredSchemaVersion"] = "202608260001";
+        configuration["FlowPilot:Database:RequiredBuiltinSeedVersion"] = "202608260001";
         configuration["FlowPilot:Database:ExpectedCollation"] = "Chinese_PRC_100_CI_AS_SC";
 
         return configuration;

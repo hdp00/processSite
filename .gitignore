@@ -25,3 +25,4 @@ apps/api/Secrets/
 apps/api/Config/*.env
 apps/api/Config/*.json
 !apps/api/config/*.example.json
+apps/api/config/appsettings.Development.local.json

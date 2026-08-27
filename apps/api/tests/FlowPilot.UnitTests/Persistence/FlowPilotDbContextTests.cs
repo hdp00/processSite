@@ -1,4 +1,5 @@
 using FlowPilot.Application.Health;
+using FlowPilot.Infrastructure.Configuration;
 using FlowPilot.Infrastructure.Health;
 using FlowPilot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -27,9 +28,13 @@ public sealed class FlowPilotDbContextTests
     public void AddFlowPilotPersistence_ConfiguresSqlServerCompatibilityLevel130()
     {
         var services = new ServiceCollection();
+        var databaseOptions = new FlowPilotDatabaseOptions(
+            requiredSchemaVersion: "202608260001",
+            requiredBuiltinSeedVersion: "202608260001",
+            applicationCommandTimeoutSeconds: 42);
         services.AddFlowPilotPersistence(
             ConnectionString,
-            new DatabaseReadinessRequirements("202608260001", null));
+            databaseOptions);
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
 
@@ -47,24 +52,42 @@ public sealed class FlowPilotDbContextTests
             FlowPilotDbContext.SqlServerCompatibilityLevel,
             compatibilityLevelProperty.GetValue(sqlServerOptions));
         Assert.Equal(130, FlowPilotDbContext.SqlServerCompatibilityLevel);
+        var context = scope.ServiceProvider.GetRequiredService<FlowPilotDbContext>();
+        Assert.Equal(42, context.Database.GetCommandTimeout());
     }
 
     [Fact]
     public void AddFlowPilotPersistence_RegistersReadinessServices()
     {
         var services = new ServiceCollection();
-        var requirements = new DatabaseReadinessRequirements("202608260001", null);
-        services.AddFlowPilotPersistence(ConnectionString, requirements);
+        var databaseOptions = new FlowPilotDatabaseOptions(
+            requiredSchemaVersion: "202608260001",
+            requiredBuiltinSeedVersion: "202608260001");
+        services.AddFlowPilotPersistence(ConnectionString, databaseOptions);
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
 
         Assert.Same(
-            requirements,
-            scope.ServiceProvider.GetRequiredService<DatabaseReadinessRequirements>());
-        Assert.IsType<SqlServerDatabaseReadinessCheck>(
+            databaseOptions,
+            scope.ServiceProvider.GetRequiredService<FlowPilotDatabaseOptions>());
+        Assert.Equal(
+            databaseOptions.RequiredSchemaVersion,
+            scope.ServiceProvider
+                .GetRequiredService<DatabaseReadinessRequirements>()
+                .RequiredSchemaVersion);
+        Assert.Equal(
+            databaseOptions.RequiredBuiltinSeedVersion,
+            scope.ServiceProvider
+                .GetRequiredService<BuiltinSeedReadinessRequirements>()
+                .RequiredBuiltinSeedVersion);
+        Assert.IsType<ApplicationDatabaseReadinessCheck>(
             scope.ServiceProvider.GetRequiredService<IDatabaseReadinessCheck>());
+        Assert.IsType<SqlServerDatabaseReadinessCheck>(
+            scope.ServiceProvider.GetRequiredService<SqlServerDatabaseReadinessCheck>());
         Assert.IsType<SqlServerReadinessSnapshotReader>(
             scope.ServiceProvider.GetRequiredService<ISqlServerReadinessSnapshotReader>());
+        Assert.IsType<SqlServerBuiltinSeedVersionReader>(
+            scope.ServiceProvider.GetRequiredService<IBuiltinSeedVersionReader>());
     }
 
     [Fact]
@@ -73,7 +96,9 @@ public sealed class FlowPilotDbContextTests
         var services = new ServiceCollection();
         services.AddFlowPilotPersistence(
             connectionString: null,
-            new DatabaseReadinessRequirements("202608260001", null));
+            new FlowPilotDatabaseOptions(
+                requiredSchemaVersion: "202608260001",
+                requiredBuiltinSeedVersion: "202608260001"));
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
         var check = scope.ServiceProvider.GetRequiredService<IDatabaseReadinessCheck>();

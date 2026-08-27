@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>FlowPilot.DatabaseTool</AssemblyName>
+    <RootNamespace>FlowPilot.DatabaseTool</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FlowPilot.Application\FlowPilot.Application.csproj" />
+    <ProjectReference Include="..\..\src\FlowPilot.Database\FlowPilot.Database.csproj" />
+    <ProjectReference Include="..\..\src\FlowPilot.Infrastructure\FlowPilot.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
+  </ItemGroup>
+</Project>

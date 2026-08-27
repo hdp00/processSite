@@ -101,7 +101,9 @@ dotnet publish src/FlowPilot.Api/FlowPilot.Api.csproj -c Release -r win-x64 --no
 
 Secrets 是明文 JSON，不使用 DPAPI、Data Protection 密钥文件或外部秘密平台。只允许服务账号读取、指定部署管理员修改；禁止提交 Git、复制到 IIS 目录或写入日志。首次初始化成功后从 Secrets 删除超级管理员初始密码。
 
-SQL Server 连接字符串必须显式设置连接安全参数，远程数据库默认使用 `Encrypt=true;TrustServerCertificate=false`，并由服务账号信任与服务器名称匹配的证书链；不得依赖 Microsoft.Data.SqlClient 的版本默认值。只有 API 与 SQL Server 确认使用同机 `127.0.0.1` 且部署记录批准时，才允许配置例外。连接测试、健康检查和日志不得输出服务器地址、完整连接字符串或证书明细。
+SQL Server 连接字符串必须显式设置连接安全参数、`Connection Timeout`、`Min Pool Size` 和 `Max Pool Size`。远程数据库默认使用 `Encrypt=true;TrustServerCertificate=false`，并由服务账号信任与服务器名称匹配的证书链；不得依赖 Microsoft.Data.SqlClient 的版本默认值。只有 API 与 SQL Server 确认使用同机 `127.0.0.1` 且部署记录批准时，才允许配置例外。连接测试、健康检查和日志不得输出服务器地址、完整连接字符串或证书明细。
+
+数据库命令超时属于非敏感配置，统一放在 `FlowPilot:Database`：`ApplicationCommandTimeoutSeconds` 默认 30、`ReadinessCommandTimeoutSeconds` 默认 5、`SchemaProbeCommandTimeoutSeconds` 默认 15、`MigrationPreflightCommandTimeoutSeconds` 默认 15、`MigrationCommandTimeoutSeconds` 默认 300。每项只能配置为 1–3600 秒；`0` 会形成无限等待，因此启动或数据库工具必须拒绝。运行账号连接池上限需按单实例容量和 SQL Server 会话预算确认，生产 Secrets 示例默认 `Min Pool Size=0;Max Pool Size=100`。
 
 外部 JSON 示例结构见 `BACKEND_IMPLEMENTATION_CHECKLIST.md`。站点根地址不配置：后端从通过同源校验的 Origin/Referer 与 IIS 覆盖后的协议/Host 得到 `${origin}/flowpilot`，并随邮件事件冻结。
 
