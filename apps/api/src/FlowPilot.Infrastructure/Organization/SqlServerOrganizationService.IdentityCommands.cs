@@ -378,7 +378,7 @@ public sealed partial class SqlServerOrganizationService
 
     private async Task<RoleDto?> LoadRoleAsync(
         SqlConnection connection,
-        SqlTransaction transaction,
+        SqlTransaction? transaction,
         Guid roleId,
         CancellationToken cancellationToken)
     {

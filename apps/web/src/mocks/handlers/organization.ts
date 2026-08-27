@@ -312,11 +312,45 @@ export const organizationHandlers = [
   http.post(`${API}/roles/:roleId/change-impact`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request);
     if (simulated) return simulated;
-    const auth = requirePermission(request, "org-role:授权");
+    const auth = requirePermission(request, "org-role:编辑");
     if (auth.response) return auth.response;
-    const role = useIdentityStore.getState().roles.find((item) => item.id === idParam(params.roleId));
+    const state = useIdentityStore.getState();
+    const role = state.roles.find((item) => item.id === idParam(params.roleId));
     if (!role) return apiProblem(request, 404, "ROLE_NOT_FOUND", "角色不存在", "未找到指定角色。 ");
-    const impact: ImpactPreview = { affectedUsers: role.users, affectedOpenTasks: useIdentityStore.getState().workflowGroups.filter((group) => group.linkedRoles.includes(role.name)).reduce((sum, group) => sum + group.openTasks, 0), references: useIdentityStore.getState().workflowGroups.filter((group) => group.linkedRoles.includes(role.name)).map((group) => group.name) };
+    const body = await parseJsonBody<{ nextMemberIds?: string[]; nextStatus?: "启用" | "停用" }>(request);
+    if (body instanceof Response) return body;
+    if (!Array.isArray(body.nextMemberIds) || !["启用", "停用"].includes(body.nextStatus ?? "")) {
+      return apiProblem(request, 422, "VALIDATION_FAILED", "角色变更影响校验失败", "请提供目标成员和目标状态。 ");
+    }
+    const currentMemberIds = role.memberUserIds ?? state.users.filter((user) => role.members.includes(user.name)).map((user) => user.id);
+    const removedMemberIds = role.status === "启用"
+      ? currentMemberIds.filter((userId) => body.nextStatus === "停用" || !body.nextMemberIds!.includes(userId))
+      : [];
+    const linkedGroups = state.workflowGroups.filter((group) => group.status === "启用" && (
+      group.linkedRoleIds?.includes(role.id) || group.linkedRoles.includes(role.name)
+    ));
+    const losingUserIds = new Set<string>();
+    const affectedGroups = new Set<string>();
+    linkedGroups.forEach((group) => {
+      removedMemberIds.forEach((userId) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user || user.status !== "启用") return;
+        const remainsDirect = group.directMemberUserIds?.includes(userId) || group.directMembers.includes(user.name);
+        const remainsByAnotherRole = state.roles.some((candidate) => candidate.id !== role.id
+          && candidate.status === "启用"
+          && (group.linkedRoleIds?.includes(candidate.id) || group.linkedRoles.includes(candidate.name))
+          && (candidate.memberUserIds?.includes(userId) || candidate.members.includes(user.name)));
+        if (!remainsDirect && !remainsByAnotherRole) {
+          losingUserIds.add(userId);
+          affectedGroups.add(group.id);
+        }
+      });
+    });
+    const impact: ImpactPreview = {
+      affectedUsers: losingUserIds.size,
+      affectedOpenTasks: linkedGroups.filter((group) => affectedGroups.has(group.id)).reduce((sum, group) => sum + group.openTasks, 0),
+      references: state.users.filter((user) => losingUserIds.has(user.id)).map((user) => user.name),
+    };
     return apiOk(request, impact);
   }),
   http.get(`${API}/workflow-permission-groups/:groupId/effective-members`, async ({ request, params }) => {

@@ -263,6 +263,23 @@ const normalizeEffectiveWorkflowMember = (value: unknown): EffectiveWorkflowMemb
   };
 };
 
+const normalizeImpactPreview = (value: unknown): ImpactPreview => {
+  if (!isRecord(value)) throw new Error("变更影响响应格式不正确");
+  if (typeof value.affectedUsers === "number" && typeof value.affectedOpenTasks === "number") {
+    return {
+      affectedUsers: value.affectedUsers,
+      affectedOpenTasks: value.affectedOpenTasks,
+      references: Array.isArray(value.references) ? value.references.filter((item): item is string => typeof item === "string") : [],
+    };
+  }
+  const losingUsers = Array.isArray(value.losingUsers) ? value.losingUsers.filter(isRecord) : [];
+  return {
+    affectedUsers: typeof value.losingEffectiveMemberCount === "number" ? value.losingEffectiveMemberCount : losingUsers.length,
+    affectedOpenTasks: typeof value.affectedPendingTaskCount === "number" ? value.affectedPendingTaskCount : 0,
+    references: losingUsers.map((user) => String(user.name ?? "")).filter(Boolean),
+  };
+};
+
 const remoteUserInput = (input: Partial<DomainUser> & { password?: string; newPassword?: string }) => ({
   ...(input.account !== undefined ? { loginName: input.account } : {}),
   ...(input.name !== undefined ? { name: input.name } : {}),
@@ -621,7 +638,11 @@ export const flowPilotApi = {
     permissionCatalog: async () => normalizePermissionCatalog(await apiRequest<unknown>("/permissions")),
     rolePermissions: (roleId: string) => mappedResource(apiResource<unknown>(`/roles/${encodeURIComponent(roleId)}/permissions`), normalizeRolePermissions),
     updateRolePermissions: async (roleId: string, permissions: string[], ifMatch: string) => normalizeRolePermissions(await apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}/permissions`, { method: "PUT", body: remoteMode ? { permissionCodes: permissions } : { permissions }, ifMatch })),
-    roleImpact: (roleId: string) => apiRequest<ImpactPreview>(`/roles/${encodeURIComponent(roleId)}/change-impact`, { method: "POST", ...mutation() }),
+    roleImpact: async (roleId: string, nextMemberIds: string[], nextStatus: "启用" | "停用") => normalizeImpactPreview(await apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}/change-impact`, {
+      method: "POST",
+      body: remoteMode ? { nextMemberIds, nextStatus: remoteStatus(nextStatus) } : { nextMemberIds, nextStatus },
+      ...mutation(),
+    })),
     groupEffectiveMembers: (groupId: string, query: PageQuery = {}) =>
       pageRequest(`/workflow-permission-groups/${encodeURIComponent(groupId)}/effective-members`, query, normalizeEffectiveWorkflowMember),
     groupImpact: (groupId: string) => apiRequest<ImpactPreview>(`/workflow-permission-groups/${encodeURIComponent(groupId)}/change-impact`, { method: "POST", ...mutation() }),

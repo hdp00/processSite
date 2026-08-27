@@ -120,6 +120,41 @@ public sealed record CreateRoleRequest
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record UpdateRoleRequest
+{
+    [StringLength(100, MinimumLength = 1)]
+    public string? Name { get; init; }
+
+    [StringLength(500)]
+    public string? Description { get; init; }
+
+    public string? Status { get; init; }
+
+    public IReadOnlyList<Guid>? MemberIds { get; init; }
+
+    [JsonIgnore]
+    public bool HasChanges => Name is not null
+        || Description is not null
+        || Status is not null
+        || MemberIds is not null;
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record RoleChangeImpactRequest
+{
+    [Required]
+    public required IReadOnlyList<Guid> NextMemberIds { get; init; }
+
+    [Required]
+    public required string NextStatus { get; init; }
+}
+
+public sealed record WorkflowGroupChangeImpactDto(
+    int LosingEffectiveMemberCount,
+    int AffectedPendingTaskCount,
+    IReadOnlyList<WorkflowMemberUserRefDto> LosingUsers);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record CreateUserRequest
 {
     [Required, StringLength(100, MinimumLength = 1)]
@@ -323,6 +358,30 @@ public interface IOrganizationService
 
     Task<OrganizationPageDto<RoleDto>> ListRolesAsync(
         OrganizationPageQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<RoleDto?> GetRoleAsync(
+        Guid roleId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<RoleDto>> UpdateRoleAsync(
+        Guid roleId,
+        UpdateRoleRequest request,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<bool>> DeleteRoleAsync(
+        Guid roleId,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<WorkflowGroupChangeImpactDto>> PreviewRoleChangeImpactAsync(
+        Guid roleId,
+        RoleChangeImpactRequest request,
         CancellationToken cancellationToken = default);
 
     Task<UserDto?> GetUserAsync(

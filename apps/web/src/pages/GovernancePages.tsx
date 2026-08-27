@@ -788,12 +788,29 @@ export function RoleManagementPage() {
     rows.some((item) => item.id === record.id)
       ? rows.map((item) => item.id === record.id ? record : item)
       : [...rows, record]);
+  const confirmRoleChange = async (roleId: string, nextMemberIds: string[], nextStatus: EnableStatus) => {
+    const impact = await flowPilotApi.organization.roleImpact(roleId, nextMemberIds, nextStatus);
+    if (impact.affectedUsers === 0 && impact.affectedOpenTasks === 0) return true;
+    const userNames = impact.references.length > 0 ? `涉及成员：${impact.references.slice(0, 5).join("、")}${impact.references.length > 5 ? "等" : ""}。` : "";
+    return new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: "确认保存角色变更？",
+        content: `变更后将有 ${impact.affectedUsers} 人失去流程权限组资格，影响 ${impact.affectedOpenTasks} 个未完成待办。${userNames}`,
+        okText: "确认变更",
+        cancelText: "取消",
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+  };
   const changeRoleStatus = async (record: RoleRecord) => {
     try {
+      const nextStatus = record.status === "启用" ? "停用" : "启用";
+      if (!await confirmRoleChange(record.id, record.memberUserIds ?? [], nextStatus)) return;
       const resource = await flowPilotApi.directory.roleResource(record.id);
       cacheRole(await flowPilotApi.directory.updateRole(
         record.id,
-        { status: record.status === "启用" ? "停用" : "启用" },
+        { status: nextStatus },
         resource.etag,
       ));
       message.success(`角色已${record.status === "启用" ? "停用" : "启用"}`);
@@ -879,6 +896,7 @@ export function RoleManagementPage() {
             if (editor === "new") cacheRole(await flowPilotApi.directory.createRole(patch));
             else if (editor) {
               if (!editorEtag) throw new Error("角色最新版本尚未加载完成");
+              if (!await confirmRoleChange(editor.id, editingMemberIds, values.status ? "启用" : "停用")) return;
               cacheRole(await flowPilotApi.directory.updateRole(editor.id, patch, editorEtag));
             }
             message.success("角色已保存");

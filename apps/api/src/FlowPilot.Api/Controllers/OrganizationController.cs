@@ -307,6 +307,136 @@ public sealed class OrganizationController(
             cancellationToken).ConfigureAwait(false));
     }
 
+    [HttpGet("roles/{roleId:guid}")]
+    [ProducesResponseType<RoleDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<RoleDto>> GetRole(
+        Guid roleId,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasAnyPermission(session, ReferenceDataReadPermissions))
+        {
+            return Forbidden("当前账号没有读取角色详情的权限。");
+        }
+
+        var role = await organizationService.GetRoleAsync(roleId, cancellationToken).ConfigureAwait(false);
+        if (role is null)
+        {
+            return ProblemResponse(
+                StatusCodes.Status404NotFound,
+                "ROLE_NOT_FOUND",
+                "角色不存在",
+                "未找到指定的角色。");
+        }
+
+        Response.Headers.ETag = new Revision(role.Revision).ToStrongEntityTag();
+        return Ok(role);
+    }
+
+    [HttpPatch("roles/{roleId:guid}")]
+    [ProducesResponseType<RoleDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<RoleDto>> UpdateRole(
+        Guid roleId,
+        [FromBody] UpdateRoleRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-role:编辑"))
+        {
+            return Forbidden("当前账号没有编辑角色的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        var result = await organizationService.UpdateRoleAsync(
+            roleId,
+            request,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+        var value = result.Value!.Data;
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        return Ok(value);
+    }
+
+    [HttpDelete("roles/{roleId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<IActionResult> DeleteRole(
+        Guid roleId,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-role:删除"))
+        {
+            return Forbidden("当前账号没有删除角色的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        var result = await organizationService.DeleteRoleAsync(
+            roleId,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        return result.Succeeded ? NoContent() : CommandFailure(result.Failure!);
+    }
+
+    [HttpPost("roles/{roleId:guid}/change-impact")]
+    [ProducesResponseType<WorkflowGroupChangeImpactDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<WorkflowGroupChangeImpactDto>> PreviewRoleChangeImpact(
+        Guid roleId,
+        [FromBody] RoleChangeImpactRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-role:编辑"))
+        {
+            return Forbidden("当前账号没有编辑角色的权限。");
+        }
+
+        var result = await organizationService.PreviewRoleChangeImpactAsync(
+            roleId,
+            request,
+            cancellationToken).ConfigureAwait(false);
+        return result.Succeeded ? Ok(result.Value!.Data) : CommandFailure(result.Failure!);
+    }
+
     [HttpGet("permissions")]
     [ProducesResponseType<IReadOnlyList<PermissionDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
