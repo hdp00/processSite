@@ -113,6 +113,170 @@ public sealed class OrganizationController(
         return Created($"/users/{value.Id:D}", value);
     }
 
+    [HttpGet("users/{userId:guid}")]
+    [ProducesResponseType<UserDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<UserDto>> GetUser(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasAnyPermission(session, DirectoryReadPermissions))
+        {
+            return Forbidden("当前账号没有读取用户详情的权限。");
+        }
+
+        var user = await organizationService.GetUserAsync(userId, cancellationToken)
+            .ConfigureAwait(false);
+        if (user is null) return UserNotFoundProblem();
+        Response.Headers.ETag = new Revision(user.Revision).ToStrongEntityTag();
+        return Ok(user);
+    }
+
+    [HttpPatch("users/{userId:guid}")]
+    [ProducesResponseType<UserDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<UserDto>> UpdateUser(
+        Guid userId,
+        [FromBody] UpdateUserRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-user:编辑"))
+        {
+            return Forbidden("当前账号没有修改用户的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+            return revisionProblem!;
+        var result = await organizationService.UpdateUserAsync(
+            userId,
+            request,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+        var value = result.Value!.Data;
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        return Ok(value);
+    }
+
+    [HttpPut("users/{userId:guid}/status")]
+    [ProducesResponseType<UserDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<UserDto>> SetUserStatus(
+        Guid userId,
+        [FromBody] SetStatusRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-user:编辑"))
+        {
+            return Forbidden("当前账号没有启用或停用用户的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+            return revisionProblem!;
+        var result = await organizationService.SetUserStatusAsync(
+            userId,
+            request,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+        var value = result.Value!.Data;
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        return Ok(value);
+    }
+
+    [HttpPost("users/{userId:guid}/reset-password")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<IActionResult> ResetUserPassword(
+        Guid userId,
+        [FromBody] ResetPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-user:重置密码"))
+        {
+            return Forbidden("当前账号没有重置用户密码的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+            return revisionProblem!;
+        if (!TryGetIdempotencyKey(out _, out var idempotencyProblem))
+            return idempotencyProblem!;
+        var result = await organizationService.ResetUserPasswordAsync(
+            userId,
+            request,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        return result.Succeeded ? NoContent() : CommandFailure(result.Failure!);
+    }
+
+    [HttpDelete("users/{userId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<IActionResult> DeleteUser(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-user:删除"))
+        {
+            return Forbidden("当前账号没有删除用户的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+            return revisionProblem!;
+        var result = await organizationService.DeleteUserAsync(
+            userId,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        return result.Succeeded ? NoContent() : CommandFailure(result.Failure!);
+    }
+
     [HttpGet("roles")]
     [ProducesResponseType<OrganizationPageDto<RoleDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -688,6 +852,12 @@ public sealed class OrganizationController(
         "WORKFLOW_GROUP_NOT_FOUND",
         "流程权限组不存在",
         "未找到指定的流程权限组。");
+
+    private ObjectResult UserNotFoundProblem() => ProblemResponse(
+        StatusCodes.Status404NotFound,
+        "USER_NOT_FOUND",
+        "用户不存在",
+        "未找到指定的用户。");
 
     private ObjectResult ProblemResponse(
         int status,

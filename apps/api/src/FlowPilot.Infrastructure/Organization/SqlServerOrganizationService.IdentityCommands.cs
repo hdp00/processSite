@@ -426,7 +426,7 @@ public sealed partial class SqlServerOrganizationService
 
     private async Task<UserDto?> LoadUserAsync(
         SqlConnection connection,
-        SqlTransaction transaction,
+        SqlTransaction? transaction,
         Guid userId,
         CancellationToken cancellationToken)
     {

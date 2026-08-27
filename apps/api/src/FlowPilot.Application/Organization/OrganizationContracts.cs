@@ -149,6 +149,75 @@ public sealed record CreateUserRequest
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record UpdateUserRequest
+{
+    private Guid? _departmentId;
+    private Guid? _positionId;
+
+    [StringLength(100, MinimumLength = 1)]
+    public string? Name { get; init; }
+
+    [EmailAddress, StringLength(320)]
+    public string? Email { get; init; }
+
+    public Guid? DepartmentId
+    {
+        get => _departmentId;
+        init
+        {
+            _departmentId = value;
+            DepartmentIdSpecified = true;
+        }
+    }
+
+    [JsonIgnore]
+    public bool DepartmentIdSpecified { get; private set; }
+
+    public Guid? PositionId
+    {
+        get => _positionId;
+        init
+        {
+            _positionId = value;
+            PositionIdSpecified = true;
+        }
+    }
+
+    [JsonIgnore]
+    public bool PositionIdSpecified { get; private set; }
+
+    public IReadOnlyList<Guid>? RoleIds { get; init; }
+
+    public string? AuthenticationMode { get; init; }
+
+    [StringLength(200, MinimumLength = 1)]
+    public string? NewPassword { get; init; }
+
+    [JsonIgnore]
+    public bool HasChanges => Name is not null
+        || Email is not null
+        || DepartmentIdSpecified
+        || PositionIdSpecified
+        || RoleIds is not null
+        || AuthenticationMode is not null
+        || NewPassword is not null;
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record SetStatusRequest
+{
+    [Required]
+    public required string Status { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ResetPasswordRequest
+{
+    [Required, StringLength(200, MinimumLength = 1)]
+    public required string NewPassword { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record CreateWorkflowPermissionGroupRequest
 {
     [Required, StringLength(100, MinimumLength = 1)]
@@ -254,6 +323,41 @@ public interface IOrganizationService
 
     Task<OrganizationPageDto<RoleDto>> ListRolesAsync(
         OrganizationPageQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<UserDto?> GetUserAsync(
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<UserDto>> UpdateUserAsync(
+        Guid userId,
+        UpdateUserRequest request,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<UserDto>> SetUserStatusAsync(
+        Guid userId,
+        SetStatusRequest request,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<bool>> ResetUserPasswordAsync(
+        Guid userId,
+        ResetPasswordRequest request,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<bool>> DeleteUserAsync(
+        Guid userId,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<PermissionDto>> ListPermissionsAsync(
