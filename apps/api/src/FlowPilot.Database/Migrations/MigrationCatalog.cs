@@ -6,13 +6,14 @@ namespace FlowPilot.Database.Migrations;
 
 public static class MigrationCatalog
 {
-    public const string CurrentSchemaVersion = "202608280002";
+    public const string CurrentSchemaVersion = "202608280003";
     private static readonly (string Id, string Name, string ResourceSuffix)[] MigrationDefinitions =
     [
         ("202608260001", "initial_schema", ".Migrations.202608260001_initial_schema.sql"),
         ("202608270001", "optional_user_organization", ".Migrations.202608270001_optional_user_organization.sql"),
         ("202608280001", "process_version_change_note", ".Migrations.202608280001_process_version_change_note.sql"),
         ("202608280002", "number_counter_prefix_length", ".Migrations.202608280002_number_counter_prefix_length.sql"),
+        ("202608280003", "session_impersonation_link", ".Migrations.202608280003_session_impersonation_link.sql"),
     ];
 
     private static readonly Lazy<ReadOnlyCollection<SchemaMigration>> DefaultMigrations =

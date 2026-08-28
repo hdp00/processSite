@@ -25,7 +25,7 @@ export interface FreeFlowRevision {
 
 export interface FreeFlowEntry {
   id: string;
-  type: "created" | "reply" | "assigned" | "closed" | "reopened" | "form-edited" | "reassigned";
+  type: "created" | "reply" | "reply-edited" | "assigned" | "closed" | "reopened" | "form-edited" | "reassigned";
   actor: string;
   time: string;
   content?: string;
@@ -33,7 +33,7 @@ export interface FreeFlowEntry {
   previousAssignee?: string;
   editedAt?: string;
   revisions?: FreeFlowRevision[];
-  fieldChanges?: Array<{ field: string; before: string; after: string }>;
+  fieldChanges?: Array<{ field: string; before?: string; after?: string }>;
 }
 
 export interface ReviewerProgress {

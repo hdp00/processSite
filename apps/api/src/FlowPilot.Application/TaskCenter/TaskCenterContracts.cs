@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using FlowPilot.Application.ProcessInstances;
 
 namespace FlowPilot.Application.TaskCenter;
 
@@ -113,6 +114,12 @@ public sealed record TaskCenterTaskDto
     public bool? AllowRepeatedEditing { get; init; }
 
     public required IReadOnlyList<string> AllowedActions { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<WorkflowFieldChangeDto>? SubmittedFieldChanges { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<WorkflowFieldRevisionDto>? FieldRevisions { get; init; }
 
     public required DateTimeOffset CreatedAt { get; init; }
 

@@ -1,7 +1,9 @@
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
 using FlowPilot.Application.Authentication;
+using FlowPilot.Application.ProcessInstances;
 using FlowPilot.Application.TaskCenter;
+using FlowPilot.Domain.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FlowPilot.Api.Controllers;
@@ -9,10 +11,13 @@ namespace FlowPilot.Api.Controllers;
 [ApiController]
 public sealed class TaskCenterController(
     IAuthService authService,
-    ITaskCenterQueryService queryService) : ControllerBase
+    ITaskCenterQueryService queryService,
+    IProcessInstanceCommandService commandService,
+    IProcessInstanceQueryService instanceQueryService) : ControllerBase
 {
     private const string TaskViewPermission = "work-task:查看";
     private const string TaskReviewPermission = "work-task:审核";
+    private const string TaskClosePermission = "work-task:关闭";
     private const string ProcessLaunchPermission = "work-launch:发起";
     private const string ProcessListPermission = "work-list:查看";
     private const string ProcessMonitorPermission = "system-monitor:查看";
@@ -63,6 +68,172 @@ public sealed class TaskCenterController(
                 parameters.DefinitionId),
             cancellationToken).ConfigureAwait(false);
         return Ok(page);
+    }
+
+    [HttpGet("workflow-tasks/{taskId:guid}")]
+    [ProducesResponseType<WorkflowTaskDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<WorkflowTaskDetailDto>> GetWorkflowTask(
+        Guid taskId,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return AuthenticationRequired();
+        }
+
+        if (!HasPermission(session, TaskViewPermission))
+        {
+            return Forbidden("当前账号没有查看任务的权限。");
+        }
+
+        var result = await instanceQueryService.GetTaskAsync(
+            taskId,
+            CreateQueryActor(session),
+            cancellationToken).ConfigureAwait(false);
+        if (result.Error == ProcessInstanceQueryError.NotFound)
+        {
+            return ProblemResponse(404, "TASK_NOT_FOUND", "任务不存在", "指定的任务不存在。");
+        }
+
+        if (result.Error == ProcessInstanceQueryError.Forbidden)
+        {
+            return Forbidden("当前账号不在该任务所属流程的数据可见范围内。");
+        }
+
+        Response.Headers.ETag = new Revision(result.Detail!.Task.Revision).ToStrongEntityTag();
+        return Ok(result.Detail);
+    }
+
+    [HttpPost("workflow-tasks/{taskId:guid}/decision")]
+    [ProducesResponseType<TaskDecisionResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<TaskDecisionResponseDto>> DecideWorkflowTask(
+        Guid taskId,
+        [FromBody] TaskDecisionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return AuthenticationRequired();
+        }
+
+        if (!HasPermission(session, TaskReviewPermission))
+        {
+            return Forbidden("当前账号没有处理审核任务的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var idempotencyProblem))
+        {
+            return idempotencyProblem!;
+        }
+
+        var result = await commandService.DecideTaskAsync(
+            taskId,
+            request,
+            CreateProcessActor(session),
+            expectedRevision,
+            idempotencyKey,
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            return CommandFailure(result.Failure!);
+        }
+
+        var value = result.Value!;
+        var instanceResult = await instanceQueryService.GetAsync(
+            value.InstanceId,
+            CreateQueryActor(session),
+            cancellationToken).ConfigureAwait(false);
+        var instance = instanceResult.Instance
+            ?? throw new InvalidOperationException("Processed workflow task could not be read.");
+        var task = instance.Tasks.Single(item => item.Id == value.TaskId);
+        Response.Headers.ETag = new Revision(task.Revision).ToStrongEntityTag();
+        return Ok(new TaskDecisionResponseDto(
+            instance,
+            task,
+            value.ActivatedTaskIds,
+            value.CancelledTaskIds));
+    }
+
+    [HttpPost("workflow-tasks/{taskId:guid}/field-revisions")]
+    [ProducesResponseType<ReviseTaskFieldsResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<ReviseTaskFieldsResponseDto>> ReviseWorkflowTaskFields(
+        Guid taskId,
+        [FromBody] ReviseTaskFieldsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return AuthenticationRequired();
+        }
+
+        if (!HasPermission(session, TaskReviewPermission))
+        {
+            return Forbidden("当前账号没有处理审核任务的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var idempotencyProblem))
+        {
+            return idempotencyProblem!;
+        }
+
+        var result = await commandService.ReviseTaskFieldsAsync(
+            taskId,
+            request,
+            CreateProcessActor(session),
+            expectedRevision,
+            idempotencyKey,
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            return CommandFailure(result.Failure!);
+        }
+
+        var value = result.Value!;
+        var instanceResult = await instanceQueryService.GetAsync(
+            value.InstanceId,
+            CreateQueryActor(session),
+            cancellationToken).ConfigureAwait(false);
+        var instance = instanceResult.Instance
+            ?? throw new InvalidOperationException("Revised workflow task could not be read.");
+        var task = instance.Tasks.Single(item => item.Id == value.TaskId);
+        Response.Headers.ETag = new Revision(task.Revision).ToStrongEntityTag();
+        return StatusCode(
+            StatusCodes.Status201Created,
+            new ReviseTaskFieldsResponseDto(instance, task, value.Revision));
     }
 
     [HttpGet("process-instances")]
@@ -156,6 +327,23 @@ public sealed class TaskCenterController(
         HasPermission(session, ProcessLaunchPermission),
         session.SuperAdmin || HasPermission(session, ProcessMonitorPermission));
 
+    private static ProcessInstanceActor CreateProcessActor(SessionDto session) => new(
+        session.User.Id,
+        session.OperatorUser.Id,
+        session.SuperAdmin,
+        false,
+        HasPermission(session, TaskReviewPermission),
+        HasPermission(session, TaskClosePermission),
+        session.User.Name,
+        session.User.Department?.Path ?? string.Empty);
+
+    private static ProcessInstanceQueryActor CreateQueryActor(SessionDto session) => new(
+        session.User.Id,
+        session.SuperAdmin,
+        HasPermission(session, TaskReviewPermission),
+        HasPermission(session, ProcessLaunchPermission),
+        HasPermission(session, ProcessMonitorPermission));
+
     private static bool HasPermission(SessionDto session, string permission) =>
         session.SuperAdmin || session.Permissions.Contains(permission, StringComparer.Ordinal);
 
@@ -189,11 +377,72 @@ public sealed class TaskCenterController(
         "查询条件无效",
         detail);
 
+    private ObjectResult CommandFailure(ProcessInstanceCommandFailure failure)
+    {
+        var status = failure.Error switch
+        {
+            ProcessInstanceCommandError.NotFound => 404,
+            ProcessInstanceCommandError.Forbidden => 403,
+            ProcessInstanceCommandError.ValidationFailed => 422,
+            ProcessInstanceCommandError.PreconditionFailed => 412,
+            ProcessInstanceCommandError.Conflict
+                or ProcessInstanceCommandError.IdempotencyKeyReused => 409,
+            _ => throw new InvalidOperationException("Unsupported task decision failure."),
+        };
+        return ProblemResponse(status, failure.Code, failure.Title, failure.Detail, failure.Issues);
+    }
+
+    private bool TryGetExpectedRevision(out int revision, out ObjectResult? problem)
+    {
+        revision = default;
+        problem = null;
+        var values = Request.Headers.IfMatch;
+        if (values.Count == 0)
+        {
+            problem = ProblemResponse(428, "IF_MATCH_REQUIRED", "缺少并发版本", "请求必须携带 If-Match。");
+            return false;
+        }
+
+        if (values.Count != 1 || !Revision.TryParseStrongEntityTag(values[0], out var parsed))
+        {
+            problem = ProblemResponse(400, "BAD_REQUEST", "If-Match 格式无效", "If-Match 必须是单个强 ETag。");
+            return false;
+        }
+
+        revision = parsed.Value;
+        return true;
+    }
+
+    private bool TryGetIdempotencyKey(out string key, out ObjectResult? problem)
+    {
+        key = string.Empty;
+        problem = null;
+        var values = Request.Headers["Idempotency-Key"];
+        if (values.Count != 1)
+        {
+            problem = ProblemResponse(400, "BAD_REQUEST", "缺少幂等键", "请求必须携带一个 Idempotency-Key。");
+            return false;
+        }
+
+        key = values[0]?.Trim() ?? string.Empty;
+        if (key.Length is < 16 or > 100)
+        {
+            problem = ProblemResponse(400, "BAD_REQUEST", "幂等键格式无效", "Idempotency-Key 的长度必须为 16 到 100 个字符。");
+            return false;
+        }
+
+        return true;
+    }
+
+    private string GetTraceId() => Activity.Current?.TraceId.ToString()
+        ?? HttpContext.TraceIdentifier;
+
     private ObjectResult ProblemResponse(
         int status,
         string code,
         string title,
-        string detail)
+        string detail,
+        IReadOnlyList<ProcessInstanceInputIssueDto>? errors = null)
     {
         var problem = new ProblemDetails
         {
@@ -206,6 +455,10 @@ public sealed class TaskCenterController(
         problem.Extensions["code"] = code;
         problem.Extensions["traceId"] = Activity.Current?.TraceId.ToString()
             ?? HttpContext.TraceIdentifier;
+        if (errors is not null)
+        {
+            problem.Extensions["errors"] = errors;
+        }
         return StatusCode(status, problem);
     }
 }

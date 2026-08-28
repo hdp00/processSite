@@ -131,30 +131,6 @@ export const freeFlowHandlers = [
     return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
   }),
 
-  http.post(`${API}/process-instances/:instanceId/free-collaboration/reassignments`, async ({ request, params }) => {
-    const simulated = await applyMockScenario(request, true);
-    if (simulated) return simulated;
-    return withIdempotency(request, async () => {
-      const auth = requirePermission(request, "work-launch:发起");
-      if (auth.response) return auth.response;
-      const mismatch = ensureSessionActor(request, auth.actor.id);
-      if (mismatch) return mismatch;
-      const found = ensureFreeFlow(request, String(params.instanceId ?? ""));
-      if ("response" in found) return found.response;
-      const conflict = checkIfMatch(request, found.instance, true);
-      if (conflict) return conflict;
-      const body = await parseJsonBody<{ reason?: string; assigneeId?: string }>(request);
-      if (body instanceof Response) return body;
-      const assignee = body.assigneeId ? findIdentityUser(body.assigneeId) : undefined;
-      if (!body.reason?.trim() || !assignee) return apiProblem(request, 422, "VALIDATION_FAILED", "改派内容不完整", "请填写改派原因并选择有效受理人。 ");
-      usePrototypeStore.getState().forceReassignFreeFlow(found.instance.id, body.reason, assignee.name);
-      const updated = instanceById(found.instance.id);
-      if (!changed(found.instance, updated)) return apiProblem(request, 403, "REASSIGN_FORBIDDEN", "不能改派该事项", "只有发起流程权限组成员可以异常改派。 ");
-      audit(auth.actor.id, auth.actor.name, "reassign", updated!, `将 ${updated!.code} 异常改派给 ${assignee.name}`, { reason: body.reason });
-      return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
-    });
-  }),
-
   http.post(`${API}/process-instances/:instanceId/free-collaboration/close`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;

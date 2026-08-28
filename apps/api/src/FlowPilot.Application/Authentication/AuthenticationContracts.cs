@@ -15,7 +15,31 @@ public sealed record SessionDto(
     IReadOnlyList<string> Permissions,
     bool SuperAdmin,
     bool OperatorSuperAdmin,
+    ImpersonationContextDto? Impersonation,
     DateTimeOffset ExpiresAt);
+
+public sealed record ImpersonationContextDto(
+    Guid Id,
+    Guid OperatorUserId,
+    Guid TargetUserId,
+    string Reason,
+    DateTimeOffset StartedAt,
+    DateTimeOffset ExpiresAt);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record StartImpersonationRequest(
+    Guid TargetUserId,
+    [Required, StringLength(500, MinimumLength = 1)] string Reason);
+
+public sealed record AuthenticationPageMetaDto(
+    int Page,
+    int PageSize,
+    int Total,
+    int TotalPages);
+
+public sealed record ImpersonationCandidatePageDto(
+    IReadOnlyList<UserDto> Items,
+    AuthenticationPageMetaDto Meta);
 
 public sealed record UserDto(
     Guid Id,
@@ -47,6 +71,18 @@ public enum AuthenticationFailure
     RateLimited,
 }
 
+public enum ImpersonationFailure
+{
+    AuthenticationRequired,
+    NotAllowed,
+    TargetNotFound,
+    TargetInvalid,
+    AlreadyActive,
+    InvalidSessionState,
+    IdempotencyKeyReused,
+    IdempotencyRequestInProgress,
+}
+
 public sealed record LoginResult(
     SessionDto? Session,
     string? SessionToken,
@@ -72,6 +108,28 @@ public sealed record CurrentSessionResult(
         new(null, AuthenticationFailure.AuthenticationRequired);
 }
 
+public sealed record ImpersonationCandidateResult(
+    ImpersonationCandidatePageDto? Page,
+    ImpersonationFailure? Failure)
+{
+    public static ImpersonationCandidateResult Success(ImpersonationCandidatePageDto page) =>
+        new(page, null);
+
+    public static ImpersonationCandidateResult Failed(ImpersonationFailure failure) =>
+        new(null, failure);
+}
+
+public sealed record ImpersonationCommandResult(
+    SessionDto? Session,
+    ImpersonationFailure? Failure)
+{
+    public static ImpersonationCommandResult Success(SessionDto session) =>
+        new(session, null);
+
+    public static ImpersonationCommandResult Failed(ImpersonationFailure failure) =>
+        new(null, failure);
+}
+
 public interface IAuthService
 {
     Task<LoginResult> LoginAsync(
@@ -84,7 +142,29 @@ public interface IAuthService
         string? sessionToken,
         CancellationToken cancellationToken = default);
 
+    Task<ImpersonationCandidateResult> ListImpersonationCandidatesAsync(
+        string? sessionToken,
+        int page,
+        int pageSize,
+        string? query,
+        CancellationToken cancellationToken = default);
+
+    Task<ImpersonationCommandResult> StartImpersonationAsync(
+        string? sessionToken,
+        Guid targetUserId,
+        string reason,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ImpersonationCommandResult> StopImpersonationAsync(
+        string? sessionToken,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
     Task LogoutAsync(
         string? sessionToken,
+        string traceId,
         CancellationToken cancellationToken = default);
 }

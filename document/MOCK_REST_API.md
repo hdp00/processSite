@@ -91,7 +91,7 @@ try {
 | 发起配置 | `/me/launchable-process-definitions`、`/process-definitions/{id}/launch-config` | 数据范围裁剪、锁定发布版本、候选人员解析 |
 | 流程实例 | `/process-instances` | 分页查询、创建、首审前修改、重新提交、关闭、复制新建 |
 | 任务中心 | `/me/workflow-tasks`、`/workflow-tasks/{id}` | 正式列表和当前 Mock 均按实例分页并使用 `{ tasks, instance }`，`taskType` 区分审批、自由协作受理和待重新提交；客户端仍兼容旧的单任务包装。审批/确认/驳回、重复字段修改只属于审批任务 |
-| 自由协作 | `/process-instances/{id}/free-collaboration/*` | 回复、转交、编辑、异常改派、关闭、重新打开 |
+| 自由协作 | `/process-instances/{id}/free-collaboration/*` | 回复及回复附件、变更受理人、编辑、关闭、重新打开 |
 | 附件 | `/attachments`、`/process-instances/{id}/fields/{fieldId}/attachment` | 当前 Mock 的 multipart、大小/类型校验、权限下载和旧单文件替换兼容路由仍可能使用 `temporary`；正式契约统一采用 `staged/active/cleanup-pending`、先暂存后引用并支持 Range/507，尚待代码迁移 |
 | 邮件 Outbox | `/email-outbox` | 收件人解析、去重、发送结果、失败重试演示 |
 | Excel 导出 | `/exports/process-instances/data` | 重新校验权限和查询条件，返回当前查询全部导出数据，由浏览器生成 `.xlsx` |
@@ -144,7 +144,7 @@ await flowPilotApi.system.updateMockSettings({
 
 - 当前流程、身份和运行实例暂时复用带 schema 迁移的原型仓库；已迁移页面不应再直接调用同一领域 action。
 - 附件 Blob 与元数据写入 IndexedDB；PDF 替换在同一仓储事务中更新引用并清理旧文件。
-- 自由协作初始表单更新与正式契约统一使用 `PATCH`；回复、转交、编辑、异常改派、关闭和重新打开均要求最新 ETag。当前原型数据仍可能含历史 `revisions`，但正式契约只保留最新正文及编辑人/编辑时间；后续代码迁移必须停止新增旧正文，并在适配时忽略旧修订数组。删除暂存附件时客户端先读取附件资源 ETag，再携带 `If-Match` 调用删除接口。
+- 自由协作初始表单更新与正式契约统一使用 `PATCH`；回复、变更受理人、编辑、关闭和重新打开均要求最新 ETag。新增回复可以携带一个或多个已暂存的 `attachmentIds`，Mock 与正式后端都必须把正文、附件引用和时间线作为一次原子操作；回复附件沿用实例数据范围和统一下载权限。当前原型数据仍可能含历史 `revisions`，但正式契约只保留最新正文及编辑人/编辑时间；后续代码迁移必须停止新增旧正文，并在适配时忽略旧修订数组。删除暂存附件时客户端先读取附件资源 ETag，再携带 `If-Match` 调用删除接口。
 - Mock 审计、幂等记录、邮件 Outbox 与场景设置在浏览器持久化；重置接口只清理 FlowPilot 自己的 key。
 - 邮件只模拟 Outbox 状态，不连接 SMTP，也不会在浏览器关闭后后台发送。
 - Excel 在浏览器中使用 ExcelJS 生成真正的 `.xlsx`；Mock 和正式后端都只返回已鉴权、已筛选的列定义与数据行，不生成或保存 Excel 文件。单次最多返回 10000 行，超过上限要求用户缩小查询范围。

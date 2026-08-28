@@ -7,7 +7,7 @@
     "dev": "pnpm --filter @process-site/web dev",
     "restore:api": "dotnet restore apps/api/FlowPilot.slnx --locked-mode -m:1",
     "build:api:debug": "pnpm restore:api && dotnet build apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug --no-restore -m:1",
-    "dev:api": "pnpm build:api:debug && dotnet run --project apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug --no-build --no-restore",
+    "dev:api": "pnpm restore:api && dotnet watch --project apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug --no-restore",
     "build:dbtool": "pnpm restore:api && dotnet build apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-restore -m:1",
     "db:init": "pnpm build:dbtool && dotnet run --project apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-build --no-restore --no-launch-profile -- initialize",
     "db:seed": "pnpm build:dbtool && dotnet run --project apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-build --no-restore --no-launch-profile -- seed",

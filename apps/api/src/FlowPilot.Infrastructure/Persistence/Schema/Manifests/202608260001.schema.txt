@@ -329,6 +329,7 @@ sessions.id
 sessions.token_hash
 sessions.operator_user_id
 sessions.effective_user_id
+sessions.impersonation_record_id
 sessions.permission_snapshot_version
 sessions.created_at
 sessions.last_accessed_at
@@ -633,6 +634,7 @@ sessions.ck_sessions_expiry
 sessions.ck_sessions_revocation
 sessions.fk_sessions_operator
 sessions.fk_sessions_effective_user
+sessions.fk_sessions_impersonation_record
 impersonation_records.pk_impersonation_records
 impersonation_records.ck_impersonation_records_users
 impersonation_records.ck_impersonation_records_reason
@@ -758,6 +760,7 @@ attachment_references.ix_attachment_references_table_row
 attachment_references.ix_attachment_references_free_timeline
 attachment_references.ux_attachment_references_attachment
 sessions.ux_sessions_token_hash
+sessions.ux_sessions_impersonation_record
 sessions.ix_sessions_operator_active
 sessions.ix_sessions_effective_active
 sessions.ix_sessions_expiry

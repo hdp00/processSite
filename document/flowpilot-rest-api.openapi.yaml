@@ -55,7 +55,7 @@ tags:
   - name: WorkflowTasks
     description: 审批、确认与重复字段修改
   - name: FreeCollaboration
-    description: 自由协作回复、转交、改派和重开
+    description: 自由协作回复、变更受理人和重开
   - name: Attachments
     description: 暂存文件、元数据与受控下载
   - name: EmailOutbox
@@ -249,6 +249,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
     delete:
       tags: [Authentication]
       operationId: stopImpersonation
@@ -2296,6 +2298,7 @@ paths:
       tags: [FreeCollaboration]
       operationId: addFreeCollaborationReply
       summary: 向进行中的自由协作事项回复
+      description: 回复可以携带一个或多个当前用户已上传的暂存附件；服务端必须在同一事务内保存回复正文、附件引用和时间线，并继续按实例数据范围控制附件读取与下载。
       parameters:
         - $ref: "#/components/parameters/InstanceId"
         - $ref: "#/components/parameters/IfMatch"
@@ -2375,7 +2378,7 @@ paths:
     post:
       tags: [FreeCollaboration]
       operationId: transferFreeCollaboration
-      summary: 发起或受理权限组成员处理并转交
+      summary: 发起或受理权限组成员变更受理人
       description: 操作人必须是实例锁定版本中当前有效的发起流程权限组或审批/受理流程权限组成员；超级管理员可越权执行。目标用户必须是有效受理人且不能与当前受理人相同。成功后必须更新实例更新时间，并在时间线保存操作人、原受理人、新受理人和发生时间。
       parameters:
         - $ref: "#/components/parameters/InstanceId"
@@ -2389,47 +2392,7 @@ paths:
               $ref: "#/components/schemas/TransferFreeCollaborationRequest"
       responses:
         "200":
-          description: 已转交给下一位受理人
-          headers:
-            ETag:
-              $ref: "#/components/headers/ETag"
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProcessInstanceDetailDto"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "412":
-          $ref: "#/components/responses/PreconditionFailed"
-        "422":
-          $ref: "#/components/responses/UnprocessableEntity"
-        "428":
-          $ref: "#/components/responses/PreconditionRequired"
-
-  /process-instances/{instanceId}/free-collaboration/reassignments:
-    post:
-      tags: [FreeCollaboration]
-      operationId: forceReassignFreeCollaboration
-      summary: 发起权限组异常改派当前受理人
-      parameters:
-        - $ref: "#/components/parameters/InstanceId"
-        - $ref: "#/components/parameters/IfMatch"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ReassignFreeCollaborationRequest"
-      responses:
-        "200":
-          description: 改派完成，原待办取消且新待办已生成
+          description: 受理人已变更，原待办完成且新待办已生成
           headers:
             ETag:
               $ref: "#/components/headers/ETag"
@@ -2488,6 +2451,8 @@ paths:
           $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
         "428":
           $ref: "#/components/responses/PreconditionRequired"
 
@@ -2496,6 +2461,7 @@ paths:
       tags: [FreeCollaboration]
       operationId: reopenFreeCollaboration
       summary: 重新打开已关闭的自由协作事项
+      description: 操作人必须是实例锁定版本发起权限组的当前有效成员、任一历史参与人或超级管理员；目标用户必须是审批/受理权限组的当前有效成员。成功后恢复进行中状态、创建唯一当前待办并记录原因时间线。
       parameters:
         - $ref: "#/components/parameters/InstanceId"
         - $ref: "#/components/parameters/IfMatch"
@@ -5114,6 +5080,7 @@ components:
           description: 自由协作流程的首位受理人
         attachmentIds:
           type: array
+          description: 与本次新增回复一起提交的暂存附件标识。
           uniqueItems: true
           items:
             type: string
@@ -5328,25 +5295,12 @@ components:
       enum: [pass, confirm, reject, revise-fields, reply, change-assignee, resubmit]
     FieldChangeDto:
       type: object
-      required: [fieldId, labelSnapshot, beforeValue, afterValue]
+      description: 字段修改留痕只记录稳定标识和当时名称，不保存修改前后的业务值。
+      required: [fieldId, labelSnapshot]
       properties:
         fieldId:
           type: string
         labelSnapshot:
-          type: string
-        fieldTypeSnapshot:
-          type: string
-        optionLabelsSnapshot:
-          type: object
-          additionalProperties:
-            type: string
-        beforeValue:
-          $ref: "#/components/schemas/JsonValue"
-        afterValue:
-          $ref: "#/components/schemas/JsonValue"
-        beforeDisplay:
-          type: string
-        afterDisplay:
           type: string
     FieldRevisionDto:
       type: object
@@ -5689,18 +5643,6 @@ components:
           minLength: 1
           maxLength: 20000
         nextAssigneeId:
-          type: string
-          format: uuid
-    ReassignFreeCollaborationRequest:
-      type: object
-      additionalProperties: false
-      required: [reason, assigneeId]
-      properties:
-        reason:
-          type: string
-          minLength: 1
-          maxLength: 2000
-        assigneeId:
           type: string
           format: uuid
     ReopenFreeCollaborationRequest:

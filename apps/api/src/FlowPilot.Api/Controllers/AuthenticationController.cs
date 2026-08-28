@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel.DataAnnotations;
 using FlowPilot.Application.Authentication;
 using Microsoft.AspNetCore.Mvc;
 
@@ -78,6 +79,81 @@ public sealed class AuthenticationController(
                 "当前会话不存在或已失效，请重新登录。");
     }
 
+    [HttpGet("impersonation/candidates")]
+    [ProducesResponseType<ImpersonationCandidatePageDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ImpersonationCandidatePageDto>> ListImpersonationCandidates(
+        [FromQuery] ImpersonationCandidateParameters parameters,
+        CancellationToken cancellationToken)
+    {
+        Request.Cookies.TryGetValue(ApiConstants.SessionCookieName, out var sessionToken);
+        var result = await authService.ListImpersonationCandidatesAsync(
+            sessionToken,
+            parameters.Page,
+            parameters.PageSize,
+            parameters.Q,
+            cancellationToken);
+        return result.Page is not null
+            ? Ok(result.Page)
+            : ImpersonationProblem(result.Failure);
+    }
+
+    [HttpPost("impersonation")]
+    [ProducesResponseType<SessionDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<SessionDto>> StartImpersonation(
+        [FromBody] StartImpersonationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var headerProblem))
+        {
+            return headerProblem!;
+        }
+
+        Request.Cookies.TryGetValue(ApiConstants.SessionCookieName, out var sessionToken);
+        var result = await authService.StartImpersonationAsync(
+            sessionToken,
+            request.TargetUserId,
+            request.Reason,
+            idempotencyKey,
+            CurrentTraceId(),
+            cancellationToken);
+        return result.Session is not null
+            ? Ok(result.Session)
+            : ImpersonationProblem(result.Failure);
+    }
+
+    [HttpDelete("impersonation")]
+    [ProducesResponseType<SessionDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<SessionDto>> StopImpersonation(
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var headerProblem))
+        {
+            return headerProblem!;
+        }
+
+        Request.Cookies.TryGetValue(ApiConstants.SessionCookieName, out var sessionToken);
+        var result = await authService.StopImpersonationAsync(
+            sessionToken,
+            idempotencyKey,
+            CurrentTraceId(),
+            cancellationToken);
+        return result.Session is not null
+            ? Ok(result.Session)
+            : ImpersonationProblem(result.Failure);
+    }
+
     [HttpPost("logout")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
@@ -86,7 +162,7 @@ public sealed class AuthenticationController(
         Request.Cookies.TryGetValue(ApiConstants.SessionCookieName, out var sessionToken);
         try
         {
-            await authService.LogoutAsync(sessionToken, cancellationToken);
+            await authService.LogoutAsync(sessionToken, CurrentTraceId(), cancellationToken);
         }
         finally
         {
@@ -130,6 +206,83 @@ public sealed class AuthenticationController(
         return StatusCode(status, problem);
     }
 
+    private ObjectResult ImpersonationProblem(ImpersonationFailure? failure) => failure switch
+    {
+        ImpersonationFailure.AuthenticationRequired => AuthenticationProblem(
+            StatusCodes.Status401Unauthorized,
+            "AUTHENTICATION_REQUIRED",
+            "尚未登录",
+            "当前会话不存在或已失效，请重新登录。"),
+        ImpersonationFailure.NotAllowed => AuthenticationProblem(
+            StatusCodes.Status403Forbidden,
+            "IMPERSONATION_NOT_ALLOWED",
+            "不允许模拟身份",
+            "只有真实登录的系统内置超级管理员可以模拟身份。"),
+        ImpersonationFailure.TargetNotFound => AuthenticationProblem(
+            StatusCodes.Status404NotFound,
+            "IMPERSONATION_TARGET_NOT_FOUND",
+            "模拟用户不存在",
+            "目标用户不存在或已经被删除。"),
+        ImpersonationFailure.TargetInvalid => AuthenticationProblem(
+            StatusCodes.Status422UnprocessableEntity,
+            "IMPERSONATION_TARGET_INVALID",
+            "模拟用户无效",
+            "请选择一个启用的非内置用户。"),
+        ImpersonationFailure.AlreadyActive => AuthenticationProblem(
+            StatusCodes.Status409Conflict,
+            "IMPERSONATION_ALREADY_ACTIVE",
+            "模拟身份已经生效",
+            "请先退出当前模拟身份。"),
+        ImpersonationFailure.InvalidSessionState => AuthenticationProblem(
+            StatusCodes.Status409Conflict,
+            "IMPERSONATION_SESSION_INVALID",
+            "模拟会话状态异常",
+            "当前模拟身份状态已发生变化，请刷新页面后重试。"),
+        ImpersonationFailure.IdempotencyKeyReused => AuthenticationProblem(
+            StatusCodes.Status409Conflict,
+            "IDEMPOTENCY_KEY_REUSED",
+            "幂等键已被使用",
+            "同一个 Idempotency-Key 不能用于不同的模拟身份请求。"),
+        ImpersonationFailure.IdempotencyRequestInProgress => AuthenticationProblem(
+            StatusCodes.Status409Conflict,
+            "IDEMPOTENCY_REQUEST_IN_PROGRESS",
+            "请求正在处理中",
+            "相同的模拟身份请求正在处理中，请稍后重试。"),
+        _ => throw new InvalidOperationException("Authentication service returned no impersonation result."),
+    };
+
+    private bool TryGetIdempotencyKey(out string key, out ObjectResult? problem)
+    {
+        var values = Request.Headers["Idempotency-Key"];
+        if (values.Count != 1 || string.IsNullOrWhiteSpace(values[0]))
+        {
+            key = string.Empty;
+            problem = AuthenticationProblem(
+                StatusCodes.Status400BadRequest,
+                "BAD_REQUEST",
+                "缺少幂等键",
+                "请求必须携带一个 Idempotency-Key。");
+            return false;
+        }
+
+        key = values[0]!.Trim();
+        if (key.Length is < 16 or > 100)
+        {
+            problem = AuthenticationProblem(
+                StatusCodes.Status400BadRequest,
+                "BAD_REQUEST",
+                "幂等键格式无效",
+                "Idempotency-Key 的长度必须为 16 到 100 个字符。");
+            return false;
+        }
+
+        problem = null;
+        return true;
+    }
+
+    private string CurrentTraceId() =>
+        Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+
     private CookieOptions CreateCookieOptions() => new()
     {
         HttpOnly = true,
@@ -141,4 +294,16 @@ public sealed class AuthenticationController(
 
     private static string ToProblemSlug(string code) =>
         code.ToLowerInvariant().Replace('_', '-');
+}
+
+public sealed class ImpersonationCandidateParameters
+{
+    [Range(1, int.MaxValue)]
+    public int Page { get; init; } = 1;
+
+    [Range(1, 100)]
+    public int PageSize { get; init; } = 20;
+
+    [StringLength(100)]
+    public string? Q { get; init; }
 }

@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using FlowPilot.Application.Attachments;
 using FlowPilot.Application.ProcessDefinitions;
+using FlowPilot.Application.ProcessInstances;
 using FlowPilot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -135,11 +136,8 @@ public sealed partial class SqlServerAttachmentService
 
         if (scope.InstanceId is not null)
         {
-            return Failure(
-                409,
-                "INSTANCE_ATTACHMENT_EDIT_NOT_AVAILABLE",
-                "实例附件修改尚不可用",
-                "请等待实例表单修改切片完成后再修改已创建实例的附件。");
+            return await ValidateInstanceUploadScopeAsync(scope, actor, attachment, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         if (scope.DefinitionId is null || scope.VersionId is null || string.IsNullOrWhiteSpace(scope.FieldId))
@@ -193,6 +191,75 @@ public sealed partial class SqlServerAttachmentService
         return ValidateFieldPolicy(field, attachment);
     }
 
+    private async Task<AttachmentFailure?> ValidateInstanceUploadScopeAsync(
+        AttachmentUploadScope scope,
+        AttachmentActor actor,
+        RuntimeAttachment attachment,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(scope.FieldId))
+        {
+            return Failure(422, "ATTACHMENT_SCOPE_INCOMPLETE", "附件范围不完整", "修改实例附件时必须提供 fieldId。");
+        }
+
+        var instance = await _dbContext.WorkflowInstances
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == scope.InstanceId, cancellationToken)
+            .ConfigureAwait(false);
+        if (instance is null)
+        {
+            return Failure(404, "INSTANCE_NOT_FOUND", "流程实例不存在", "指定的流程实例不存在。");
+        }
+
+        var detailResult = await _processInstanceQueryService.GetAsync(
+            instance.Id,
+            new ProcessInstanceQueryActor(
+                actor.UserId,
+                actor.IsSuperAdmin,
+                actor.CanReview,
+                actor.CanLaunch,
+                actor.CanViewAllInstances),
+            cancellationToken).ConfigureAwait(false);
+        if (detailResult.Error is not null || detailResult.Instance is null)
+        {
+            return Failure(403, "ATTACHMENT_UPLOAD_FORBIDDEN", "不能上传附件", "当前账号不能查看或修改该流程实例。");
+        }
+
+        var version = await _dbContext.RuntimeWorkflowVersions
+            .AsNoTracking()
+            .SingleAsync(item => item.Id == instance.VersionId, cancellationToken)
+            .ConfigureAwait(false);
+        var snapshot = JsonNode.Parse(version.SnapshotJson) as JsonObject;
+        var field = snapshot is null ? null : ReadAttachmentField(snapshot, scope.FieldId);
+        if (field is null)
+        {
+            return Failure(422, "ATTACHMENT_FIELD_INVALID", "附件字段无效", "指定字段不是实例锁定版本中的附件字段。");
+        }
+
+        var canReview = actor.CanReview && detailResult.Instance.Tasks.Any(task =>
+            task.TaskType == "approval"
+            && task.AllowedActions.Any(action => action is "pass" or "confirm" or "reject" or "revise-fields")
+            && task.EditableFieldIds?.Contains(scope.FieldId, StringComparer.Ordinal) == true);
+        var hasDecision = await _dbContext.WorkflowTasks.AsNoTracking().AnyAsync(
+            task => task.InstanceId == instance.Id
+                && task.Round == instance.CurrentRound
+                && task.TaskType == "approval"
+                && task.Action != null,
+            cancellationToken).ConfigureAwait(false);
+        var inputStage = ReadString(field, "inputStage") ?? "initiator";
+        var canEditAsInitiator = actor.CanLaunch
+            && (actor.IsSuperAdmin || instance.InitiatorUserId == actor.UserId)
+            && inputStage != "reviewer"
+            && (instance.Status == "rejected-pending"
+                || instance.Status == "reviewing" && !hasDecision);
+        if (!canReview && !canEditAsInitiator)
+        {
+            return Failure(403, "ATTACHMENT_UPLOAD_FORBIDDEN", "不能上传附件", "当前账号不能修改该实例的附件字段。");
+        }
+
+        return ValidateFieldPolicy(field, attachment);
+    }
+
     private static AttachmentFailure? ValidateFieldPolicy(JsonObject field, RuntimeAttachment attachment)
     {
         var config = field["attachment"] as JsonObject;
@@ -240,6 +307,7 @@ public sealed partial class SqlServerAttachmentService
             attachment.Sha256 ?? string.Empty,
             scope.DefinitionId?.ToString("D") ?? string.Empty,
             scope.VersionId?.ToString("D") ?? string.Empty,
+            scope.InstanceId?.ToString("D") ?? string.Empty,
             scope.FieldId ?? string.Empty,
             scope.Purpose);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

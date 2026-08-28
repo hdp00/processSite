@@ -38,12 +38,79 @@ public sealed record UpdateProcessInstanceSubmissionRequest
         new Dictionary<string, Guid>();
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record TaskDecisionRequest
+{
+    public string Action { get; init; } = string.Empty;
+
+    public string? Comment { get; init; }
+
+    public JsonObject FieldValues { get; init; } = [];
+
+    public IReadOnlyDictionary<string, int> BaseFieldRevisions { get; init; } =
+        new Dictionary<string, int>();
+
+    public IReadOnlyDictionary<string, IReadOnlyList<Guid>> AttachmentIdsByField { get; init; } =
+        new Dictionary<string, IReadOnlyList<Guid>>();
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ReviseTaskFieldsRequest
+{
+    public JsonObject FieldValues { get; init; } = [];
+
+    public IReadOnlyDictionary<string, int> BaseFieldRevisions { get; init; } =
+        new Dictionary<string, int>();
+
+    public string? Comment { get; init; }
+
+    public IReadOnlyDictionary<string, IReadOnlyList<Guid>> AttachmentIdsByField { get; init; } =
+        new Dictionary<string, IReadOnlyList<Guid>>();
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record CloseInstanceRequest
+{
+    public string Reason { get; init; } = string.Empty;
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record CreateFreeReplyRequest
+{
+    public string Content { get; init; } = string.Empty;
+
+    public IReadOnlyList<Guid> AttachmentIds { get; init; } = [];
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record EditFreeReplyRequest
+{
+    public string Content { get; init; } = string.Empty;
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record TransferFreeCollaborationRequest
+{
+    public string? Content { get; init; }
+
+    public Guid NextAssigneeId { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ReopenFreeCollaborationRequest
+{
+    public string Reason { get; init; } = string.Empty;
+
+    public Guid AssigneeId { get; init; }
+}
+
 public sealed record ProcessInstanceActor(
     Guid EffectiveUserId,
     Guid OperatorUserId,
     bool IsSuperAdmin,
     bool CanCopyCompletedInstance,
     bool CanReview,
+    bool CanClose,
     string EffectiveUserName,
     string EffectiveUserDepartmentPath);
 
@@ -95,7 +162,8 @@ public sealed record FreeTimelineEntryDto(
     TaskCenterUserRefDto? PreviousAssignee = null,
     Guid? RelatedEntryId = null,
     TaskCenterUserRefDto? EditedBy = null,
-    DateTimeOffset? EditedAt = null);
+    DateTimeOffset? EditedAt = null,
+    IReadOnlyList<WorkflowFieldChangeDto>? FieldChanges = null);
 
 public sealed record ProcessInstanceDetailDto
 {
@@ -156,6 +224,78 @@ public sealed record UpdateProcessInstanceSubmissionCommandValue(
     Guid InstanceId,
     int Revision);
 
+public sealed record ResubmitProcessInstanceCommandValue(
+    Guid InstanceId,
+    int Revision,
+    bool Replayed);
+
+public sealed record TaskDecisionCommandValue(
+    Guid InstanceId,
+    Guid TaskId,
+    IReadOnlyList<Guid> ActivatedTaskIds,
+    IReadOnlyList<Guid> CancelledTaskIds,
+    bool Replayed);
+
+public sealed record TaskDecisionResponseDto(
+    ProcessInstanceDetailDto Instance,
+    TaskCenterTaskDto Task,
+    IReadOnlyList<Guid> ActivatedTaskIds,
+    IReadOnlyList<Guid> CancelledTaskIds);
+
+public sealed record WorkflowFieldChangeDto(
+    string FieldId,
+    string LabelSnapshot);
+
+public sealed record WorkflowFieldRevisionDto(
+    Guid Id,
+    int Sequence,
+    TaskCenterUserRefDto EditedBy,
+    DateTimeOffset EditedAt,
+    string? Comment,
+    IReadOnlyList<WorkflowFieldChangeDto> Changes);
+
+public sealed record ReviseTaskFieldsCommandValue(
+    Guid InstanceId,
+    Guid TaskId,
+    WorkflowFieldRevisionDto Revision,
+    bool Replayed);
+
+public sealed record CloseProcessInstanceCommandValue(
+    Guid InstanceId,
+    int Revision,
+    IReadOnlyList<Guid> CancelledTaskIds,
+    bool Replayed);
+
+public sealed record AddFreeReplyCommandValue(
+    Guid InstanceId,
+    int Revision,
+    Guid EntryId,
+    bool Replayed);
+
+public sealed record EditFreeReplyCommandValue(
+    Guid InstanceId,
+    int Revision,
+    Guid EntryId);
+
+public sealed record TransferFreeCollaborationCommandValue(
+    Guid InstanceId,
+    int Revision,
+    Guid TaskId,
+    Guid EntryId,
+    bool Replayed);
+
+public sealed record ReopenFreeCollaborationCommandValue(
+    Guid InstanceId,
+    int Revision,
+    Guid TaskId,
+    Guid EntryId,
+    bool Replayed);
+
+public sealed record ReviseTaskFieldsResponseDto(
+    ProcessInstanceDetailDto Instance,
+    TaskCenterTaskDto Task,
+    WorkflowFieldRevisionDto Revision);
+
 public sealed record ProcessInstanceInputIssueDto(
     string Path,
     string Code,
@@ -203,6 +343,95 @@ public interface IProcessInstanceCommandService
         int expectedRevision,
         string traceId,
         CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<ResubmitProcessInstanceCommandValue>> ResubmitAsync(
+        Guid instanceId,
+        UpdateProcessInstanceSubmissionRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<TaskDecisionCommandValue>> DecideTaskAsync(
+        Guid taskId,
+        TaskDecisionRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<ReviseTaskFieldsCommandValue>> ReviseTaskFieldsAsync(
+        Guid taskId,
+        ReviseTaskFieldsRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<CloseProcessInstanceCommandValue>> CloseAsync(
+        Guid instanceId,
+        CloseInstanceRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<AddFreeReplyCommandValue>> AddFreeReplyAsync(
+        Guid instanceId,
+        CreateFreeReplyRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<UpdateProcessInstanceSubmissionCommandValue>> UpdateFreeInitialFormAsync(
+        Guid instanceId,
+        UpdateProcessInstanceSubmissionRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<EditFreeReplyCommandValue>> EditFreeReplyAsync(
+        Guid instanceId,
+        Guid entryId,
+        EditFreeReplyRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<TransferFreeCollaborationCommandValue>> TransferFreeAsync(
+        Guid instanceId,
+        TransferFreeCollaborationRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<CloseProcessInstanceCommandValue>> CloseFreeAsync(
+        Guid instanceId,
+        CloseInstanceRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessInstanceCommandResult<ReopenFreeCollaborationCommandValue>> ReopenFreeAsync(
+        Guid instanceId,
+        ReopenFreeCollaborationRequest request,
+        ProcessInstanceActor actor,
+        int expectedRevision,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ProcessInstanceQueryActor(
@@ -222,10 +451,23 @@ public sealed record ProcessInstanceQueryResult(
     ProcessInstanceDetailDto? Instance,
     ProcessInstanceQueryError? Error);
 
+public sealed record WorkflowTaskDetailDto(
+    TaskCenterTaskDto Task,
+    ProcessInstanceSummaryDto Instance);
+
+public sealed record WorkflowTaskQueryResult(
+    WorkflowTaskDetailDto? Detail,
+    ProcessInstanceQueryError? Error);
+
 public interface IProcessInstanceQueryService
 {
     Task<ProcessInstanceQueryResult> GetAsync(
         Guid instanceId,
+        ProcessInstanceQueryActor actor,
+        CancellationToken cancellationToken = default);
+
+    Task<WorkflowTaskQueryResult> GetTaskAsync(
+        Guid taskId,
         ProcessInstanceQueryActor actor,
         CancellationToken cancellationToken = default);
 }

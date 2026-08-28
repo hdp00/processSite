@@ -455,7 +455,7 @@ describe("自由协作异常操作", () => {
     expect(instanceById("free-18")).toEqual(beforeSameAssignee);
   });
 
-  it("无权转交、无效受理人、越权改派、越权关闭和无效重开均保持原状态", () => {
+  it("无权变更受理人、无效受理人、越权关闭和无效重开均保持原状态", () => {
     const activeBefore = structuredClone(instanceById("free-18")!);
     setActor("hejing");
     prototypeModule.usePrototypeStore.getState().transferFreeFlow("free-18", "赵磊");
@@ -463,8 +463,6 @@ describe("自由协作异常操作", () => {
 
     setActor("lina");
     prototypeModule.usePrototypeStore.getState().transferFreeFlow("free-18", "何静");
-    expect(instanceById("free-18")).toEqual(activeBefore);
-    prototypeModule.usePrototypeStore.getState().forceReassignFreeFlow("free-18", "越权改派", "赵磊");
     expect(instanceById("free-18")).toEqual(activeBefore);
     prototypeModule.usePrototypeStore.getState().closeFreeFlow("free-18", "越权关闭");
     expect(instanceById("free-18")).toEqual(activeBefore);

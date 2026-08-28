@@ -615,11 +615,25 @@ export const normalizeProcessInstance = (value: unknown): ProcessInstance => {
   const formValues = isRecord(value.formValues) ? value.formValues : isRecord(value.listValues) ? value.listValues : {};
   const reviewProgress = Array.isArray(value.reviewProgress) ? value.reviewProgress.filter(isRecord) : [];
   const attachmentItems = Array.isArray(value.attachments) ? value.attachments.filter(isRecord) : [];
-  const attachmentIdsByField = attachmentItems.reduce<Record<string, string[]>>((result, item) => {
-    const fieldId = text(item.fieldId);
-    if (fieldId) result[fieldId] = [...(result[fieldId] ?? []), text(item.id)].filter(Boolean);
+  const attachments = attachmentItems.map(normalizeAttachmentRecord);
+  const attachmentIdsByField = attachments.reduce<Record<string, string[]>>((result, item) => {
+    if (item.fieldId) result[item.fieldId] = [...(result[item.fieldId] ?? []), item.id].filter(Boolean);
     return result;
   }, {});
+  const timeline = Array.isArray(value.timeline) ? value.timeline.filter(isRecord) : [];
+  const resubmissions = timeline.filter((item) => item.type === "instance-resubmitted").map((item) => {
+    const details = isRecord(item.details) ? item.details : {};
+    const fieldIds = strings(details.fieldIds);
+    const fieldNames = strings(details.fieldNames);
+    const actor = isRecord(item.actor) ? item.actor : undefined;
+    return {
+      round: number(details.round, 2),
+      submittedAt: text(item.occurredAt),
+      submittedById: text(actor?.id),
+      submittedByName: actorName(actor),
+      modifiedFields: fieldIds.map((fieldId, index) => ({ fieldId, label: fieldNames[index] ?? fieldId })),
+    };
+  });
   return {
     workflowType: value.workflowType === "free" ? "free" : "approval",
     id: text(value.id),
@@ -643,9 +657,10 @@ export const normalizeProcessInstance = (value: unknown): ProcessInstance => {
     description: text(formValues.description),
     category: text(formValues.category) || undefined,
     formValues,
-    attachmentNames: attachmentItems.map((item) => text(item.name, text(item.originalName))).filter(Boolean),
-    attachmentIds: attachmentItems.map((item) => text(item.id)).filter(Boolean),
+    attachmentNames: attachments.map((item) => item.name).filter(Boolean),
+    attachmentIds: attachments.map((item) => item.id).filter(Boolean),
     attachmentIdsByField,
+    resubmissions,
     reviewers: reviewProgress.map((item) => ({
       key: text(item.nodeId),
       name: text(item.nodeName),
@@ -657,14 +672,28 @@ export const normalizeProcessInstance = (value: unknown): ProcessInstance => {
       substitute: item.substitute === true,
       conditionSummary: text(item.conditionSummary) || undefined,
     })),
-    freeTimeline: Array.isArray(value.freeTimeline) ? value.freeTimeline.filter(isRecord).map((item) => ({
-      id: text(item.id),
-      type: text(item.type) as NonNullable<ProcessInstance["freeTimeline"]>[number]["type"],
-      actor: actorName(item.actor),
-      time: text(item.occurredAt, text(item.time)),
-      content: text(item.content, text(item.summary)) || undefined,
-      assignee: isRecord(item.assignee) ? text(item.assignee.name) : text(item.assignee) || undefined,
-    })) : [],
+    freeTimeline: Array.isArray(value.freeTimeline) ? value.freeTimeline
+      .filter(isRecord)
+      .map((item) => {
+        const remoteType = text(item.type);
+        return {
+          id: text(item.id),
+          type: (remoteType === "transferred" ? "assigned" : remoteType) as NonNullable<ProcessInstance["freeTimeline"]>[number]["type"],
+          actor: actorName(item.actor),
+          time: text(item.occurredAt, text(item.time)),
+          content: text(item.content, text(item.summary)) || undefined,
+          assignee: isRecord(item.assignee) ? text(item.assignee.name) : text(item.assignee) || undefined,
+          previousAssignee: isRecord(item.previousAssignee)
+            ? text(item.previousAssignee.name)
+            : text(item.previousAssignee) || undefined,
+          editedAt: text(item.editedAt) || undefined,
+          fieldChanges: Array.isArray(item.fieldChanges)
+            ? item.fieldChanges.filter(isRecord).map((change) => ({
+                field: text(change.labelSnapshot, text(change.fieldId)),
+              }))
+            : undefined,
+        };
+      }) : [],
     fieldRevisions: isRecord(value.fieldRevisions) ? Object.fromEntries(Object.entries(value.fieldRevisions).flatMap(([fieldId, revision]) => typeof revision === "number" ? [[fieldId, revision] as const] : [])) : {},
   };
 };

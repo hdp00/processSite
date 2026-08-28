@@ -539,7 +539,7 @@ describe("固定审批流程完整生命周期", () => {
 });
 
 describe("自由协作流程完整生命周期", () => {
-  it("支持创建、回复、直接变更受理人、异常改派、关闭和填写理由后重新打开", () => {
+  it("支持创建、回复、变更受理人、关闭和填写理由后重新打开", () => {
     setActor("wangmin");
     const instanceId = prototypeModule.usePrototypeStore.getState().createProcessInstance({
       definitionId: "free-collaboration",
@@ -560,7 +560,7 @@ describe("自由协作流程完整生命周期", () => {
     expect(instanceById(instanceId)).toMatchObject({ currentAssignee: "林晓", currentAssigneeId: "lina" });
 
     setActor("wangmin");
-    prototypeModule.usePrototypeStore.getState().forceReassignFreeFlow(instanceId, "质量人员临时不在", "赵磊");
+    prototypeModule.usePrototypeStore.getState().transferFreeFlow(instanceId, "赵磊");
     expect(instanceById(instanceId)).toMatchObject({ currentAssignee: "赵磊", currentAssigneeId: "zhaolei" });
     prototypeModule.usePrototypeStore.getState().closeFreeFlow(instanceId, "问题已解决");
     expect(instanceById(instanceId)).toMatchObject({ status: "已关闭", currentAssigneeId: undefined });
@@ -568,6 +568,6 @@ describe("自由协作流程完整生命周期", () => {
     setActor("zhangwei");
     prototypeModule.usePrototypeStore.getState().reopenFreeFlow(instanceId, "问题再次出现", "林晓");
     expect(instanceById(instanceId)).toMatchObject({ status: "进行中", currentAssigneeId: "lina" });
-    expect(instanceById(instanceId)?.freeTimeline?.map((entry) => entry.type)).toEqual(expect.arrayContaining(["created", "reply", "assigned", "reassigned", "closed", "reopened"]));
+    expect(instanceById(instanceId)?.freeTimeline?.map((entry) => entry.type)).toEqual(expect.arrayContaining(["created", "reply", "assigned", "closed", "reopened"]));
   });
 });

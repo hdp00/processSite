@@ -154,7 +154,7 @@
 - `status` 限定为 `inactive | pending | completed | cancelled | skipped`。`inactive` 和 `skipped` 只适用于审批任务；自由协作和重新提交任务只能使用 `pending | completed | cancelled`。
 
 - 审批任务按 `(instance_id, node_id, round)` 建立筛选唯一索引。
-- 自由协作和重新提交任务分别使用筛选唯一索引保证同一实例同一类型最多存在一个 `pending` 任务；转交、改派、关闭和重新打开必须在同一事务中完成旧任务状态变化、新任务创建及实例当前受理人更新。
+- 自由协作和重新提交任务分别使用筛选唯一索引保证同一实例同一类型最多存在一个 `pending` 任务；变更受理人、关闭和重新打开必须在同一事务中完成旧任务状态变化、新任务创建及实例当前受理人更新。
 - 待办领取和处理必须使用 `status='pending'`、revision 与锁定条件实现 first-writer-wins。
 - 用户、流程组被停用不得改变历史快照；运行任务的重新分配必须通过显式领域命令产生审计。
 
@@ -203,7 +203,7 @@
 
 ### 6.1 会话与模拟身份
 
-- `flowpilot.sessions`：`id`、`token_hash` 唯一、`operator_user_id`、`effective_user_id`、权限快照版本、创建/最近访问/闲置过期/绝对过期时间、撤销时间和撤销原因。只保存令牌散列。
+- `flowpilot.sessions`：`id`、`token_hash` 唯一、`operator_user_id`、`effective_user_id`、可空且唯一的 `impersonation_record_id`、权限快照版本、创建/最近访问/闲置过期/绝对过期时间、撤销时间和撤销原因。只保存令牌散列；每个会话通过该关联精确定位自己的当前模拟记录，避免同一超级管理员的多个浏览器会话相互串用。
 - `flowpilot.impersonation_records`：超级管理员、目标用户、原因、开始/结束时间、开始/结束 traceId，只追加状态变化。
 
 ### 6.2 幂等记录

@@ -60,10 +60,20 @@ public sealed partial class SqlServerProcessInstanceQueryService
             && source.Actor.CanReview
             && (source.Actor.IsSuperAdmin
                 || task.GroupId.HasValue && source.EffectiveGroupIds.Contains(task.GroupId.Value));
+        var canReviseFields = isApproval
+            && task.Status == "completed"
+            && task.Action is "pass" or "confirm"
+            && task.Round == source.Instance.CurrentRound
+            && source.Instance.Status is not ("rejected-pending" or "closed")
+            && node.AllowRepeatedEditing
+            && node.EditableFieldIds.Count > 0
+            && source.Actor.CanReview
+            && (source.Actor.IsSuperAdmin || task.ActualAssigneeId == source.Actor.UserId);
         IReadOnlyList<string> allowedActions = task.TaskType switch
         {
             "approval" when canUseApproval =>
                 node.HandlingMode == "confirmation" ? ["confirm"] : ["pass", "reject"],
+            "approval" when canReviseFields => ["revise-fields"],
             "free-collaboration" when task.Status == "pending"
                 && source.Actor.CanReview
                 && (source.Actor.IsSuperAdmin || task.AssigneeId == source.Actor.UserId) =>
@@ -104,9 +114,51 @@ public sealed partial class SqlServerProcessInstanceQueryService
             EditableFieldIds = isApproval ? node.EditableFieldIds : null,
             AllowRepeatedEditing = isApproval ? node.AllowRepeatedEditing : null,
             AllowedActions = allowedActions,
+            SubmittedFieldChanges = isApproval
+                ? ReadTaskChanges(source.Events.LastOrDefault(item =>
+                    item.TaskId == task.Id && item.EventType == "task-completed"))
+                : null,
+            FieldRevisions = isApproval
+                ? BuildFieldRevisions(task.Id, source)
+                : null,
             CreatedAt = AsUtc(task.ActivatedAt),
             CompletedAt = task.CompletedAt.HasValue ? AsUtc(task.CompletedAt.Value) : null,
         };
+    }
+
+    private static WorkflowFieldRevisionDto[] BuildFieldRevisions(
+        Guid taskId,
+        DetailSource source) => source.Events
+        .Where(item => item.TaskId == taskId && item.EventType == "task-fields-revised")
+        .Select((item, index) =>
+        {
+            var metadata = ParseOptionalObject(item.MetadataJson);
+            var sequence = metadata["sequence"] is JsonValue value
+                && value.TryGetValue<int>(out var storedSequence)
+                    ? storedSequence
+                    : index + 1;
+            return new WorkflowFieldRevisionDto(
+                item.Id,
+                sequence,
+                source.Users[item.EffectiveUserId],
+                AsUtc(item.OccurredAt),
+                StringValue(metadata["comment"]),
+                ReadTaskChanges(item));
+        })
+        .ToArray();
+
+    private static WorkflowFieldChangeDto[] ReadTaskChanges(WorkflowEventEntity? item)
+    {
+        var metadata = ParseOptionalObject(item?.MetadataJson);
+        var fieldIds = metadata["fieldIds"] is JsonArray ids
+            ? ids.Select(StringValue).Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id!).ToArray()
+            : [];
+        var fieldNames = metadata["fieldNames"] is JsonArray names
+            ? names.Select(StringValue).ToArray()
+            : [];
+        return fieldIds.Select((fieldId, index) => new WorkflowFieldChangeDto(
+            fieldId,
+            fieldNames.ElementAtOrDefault(index) ?? fieldId)).ToArray();
     }
 
     private static ProcessInstanceReviewProgressDto[] BuildReviewProgress(
@@ -155,7 +207,9 @@ public sealed partial class SqlServerProcessInstanceQueryService
         {
             "instance-created" => $"{source.Users[item.EffectiveUserId].Name} 发起流程 {source.Instance.InstanceNumber}",
             "submission-updated" => SubmissionUpdatedSummary(item, source),
+            "instance-resubmitted" => ResubmittedSummary(item, source),
             "task-completed" => $"{source.Users[item.EffectiveUserId].Name} 完成处理",
+            "task-fields-revised" => TaskFieldsRevisedSummary(item, source),
             "instance-completed" => $"流程 {source.Instance.InstanceNumber} 已完成",
             "instance-closed" => $"流程 {source.Instance.InstanceNumber} 已关闭",
             _ => item.EventType,
@@ -169,6 +223,24 @@ public sealed partial class SqlServerProcessInstanceQueryService
         return names.Length == 0
             ? $"{source.Users[item.EffectiveUserId].Name} 保存发起内容"
             : $"{source.Users[item.EffectiveUserId].Name} 修改发起内容：{string.Join("、", names)}";
+    }
+
+    private static string ResubmittedSummary(WorkflowEventEntity item, DetailSource source)
+    {
+        var names = ParseOptionalObject(item.MetadataJson)["fieldNames"] is JsonArray values
+            ? values.Select(StringValue).Where(value => !string.IsNullOrWhiteSpace(value)).ToArray()
+            : [];
+        var prefix = $"{source.Users[item.EffectiveUserId].Name} 重新提交第 {item.Round} 轮审核";
+        return names.Length == 0 ? prefix : $"{prefix}，修改：{string.Join("、", names)}";
+    }
+
+    private static string TaskFieldsRevisedSummary(WorkflowEventEntity item, DetailSource source)
+    {
+        var names = ParseOptionalObject(item.MetadataJson)["fieldNames"] is JsonArray values
+            ? values.Select(StringValue).Where(value => !string.IsNullOrWhiteSpace(value)).ToArray()
+            : [];
+        var prefix = $"{source.Users[item.EffectiveUserId].Name} 继续修改审核字段";
+        return names.Length == 0 ? prefix : $"{prefix}：{string.Join("、", names)}";
     }
 
     private static FreeTimelineEntryDto[] BuildFreeTimeline(DetailSource source) =>
@@ -185,8 +257,29 @@ public sealed partial class SqlServerProcessInstanceQueryService
             User(source.Users, item.PreviousAssigneeId),
             item.RelatedEntryId,
             User(source.Users, item.EditedBy),
-            item.EditedAt.HasValue ? AsUtc(item.EditedAt.Value) : null))
+            item.EditedAt.HasValue ? AsUtc(item.EditedAt.Value) : null,
+            BuildFreeFieldChanges(item.FieldChangesJson)))
         .ToArray();
+
+    private static WorkflowFieldChangeDto[] BuildFreeFieldChanges(string? json)
+    {
+        var metadata = ParseOptionalObject(json);
+        var fieldIds = metadata["fieldIds"] is JsonArray ids
+            ? ids.Select(StringValue).ToArray()
+            : [];
+        var fieldNames = metadata["fieldNames"] is JsonArray names
+            ? names.Select(StringValue).ToArray()
+            : [];
+        return fieldIds
+            .Select((fieldId, index) => (FieldId: fieldId, Index: index))
+            .Where(field => !string.IsNullOrWhiteSpace(field.FieldId))
+            .Select(field => new WorkflowFieldChangeDto(
+                field.FieldId!,
+                field.Index < fieldNames.Length && !string.IsNullOrWhiteSpace(fieldNames[field.Index])
+                    ? fieldNames[field.Index]!
+                    : field.FieldId!))
+            .ToArray();
+    }
 
     private static ProcessInstanceAttachmentDto[] BuildAttachments(DetailSource source)
     {

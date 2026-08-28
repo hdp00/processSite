@@ -10,7 +10,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace FlowPilot.Infrastructure.Authentication;
 
-public sealed class SqlServerAuthService : IAuthService
+public sealed partial class SqlServerAuthService : IAuthService
 {
     private const string PasswordAuthenticationMode = "password";
     private const string DomainAuthenticationMode = "domain";
@@ -178,7 +178,7 @@ public sealed class SqlServerAuthService : IAuthService
             cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Authenticated user disappeared before session commit.");
 
-        var session = CreateSessionDto(view, view, idleExpiresAt);
+        var session = CreateSessionDto(view, view, impersonation: null, idleExpiresAt);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         _loginAttemptLimiter.RegisterSuccess(normalizedLoginName, sourceIp);
         return LoginResult.Success(session, sessionToken);
@@ -233,13 +233,33 @@ public sealed class SqlServerAuthService : IAuthService
             return CurrentSessionResult.AuthenticationRequired();
         }
 
-        var session = CreateSessionDto(effectiveUser, operatorUser, state.IdleExpiresAt);
+        var impersonation = state.ImpersonationRecordId is { } impersonationRecordId
+            ? await LoadImpersonationContextAsync(
+                connection,
+                transaction,
+                impersonationRecordId,
+                state.OperatorUserId,
+                state.EffectiveUserId,
+                state.AbsoluteExpiresAt,
+                cancellationToken).ConfigureAwait(false)
+            : null;
+        if (state.OperatorUserId != state.EffectiveUserId && impersonation is null)
+        {
+            return CurrentSessionResult.AuthenticationRequired();
+        }
+
+        var session = CreateSessionDto(
+            effectiveUser,
+            operatorUser,
+            impersonation,
+            state.IdleExpiresAt);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return CurrentSessionResult.Success(session);
     }
 
     public async Task LogoutAsync(
         string? sessionToken,
+        string traceId,
         CancellationToken cancellationToken = default)
     {
         if (!IsValidSessionTokenShape(sessionToken))
@@ -250,19 +270,62 @@ public sealed class SqlServerAuthService : IAuthService
         var now = TruncateToMilliseconds(_timeProvider.GetUtcNow());
         var tokenHash = HashSessionToken(sessionToken!);
         await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = (SqlTransaction)await connection
+            .BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken)
+            .ConfigureAwait(false);
         await using var command = CreateCommand(
             connection,
-            transaction: null,
+            transaction,
             """
             UPDATE [flowpilot].[sessions]
             SET [revoked_at] = @now,
                 [revocation_reason] = N'logout'
+            OUTPUT
+                INSERTED.[operator_user_id],
+                INSERTED.[effective_user_id],
+                INSERTED.[impersonation_record_id]
             WHERE [token_hash] = @token_hash
               AND [revoked_at] IS NULL;
             """);
         AddBinaryParameter(command, "@token_hash", tokenHash);
         AddUtcParameter(command, "@now", now);
-        _ = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        RevokedSessionState? revokedSession = null;
+        await using (var reader = await command.ExecuteReaderAsync(
+            CommandBehavior.SingleRow,
+            cancellationToken).ConfigureAwait(false))
+        {
+            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                revokedSession = new RevokedSessionState(
+                    reader.GetGuid(0),
+                    reader.GetGuid(1),
+                    reader.IsDBNull(2) ? null : reader.GetGuid(2));
+            }
+        }
+
+        if (revokedSession?.ImpersonationRecordId is { } impersonationId)
+        {
+            await CloseImpersonationRecordAsync(
+                connection,
+                transaction,
+                impersonationId,
+                revokedSession.OperatorUserId,
+                traceId,
+                now,
+                cancellationToken).ConfigureAwait(false);
+            await InsertImpersonationAuditAsync(
+                connection,
+                transaction,
+                impersonationId,
+                "auth.impersonation-stopped",
+                revokedSession.OperatorUserId,
+                revokedSession.EffectiveUserId,
+                traceId,
+                now,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private LoginResult FailedCredentialResult(string normalizedLoginName, string sourceIp)
@@ -488,9 +551,12 @@ public sealed class SqlServerAuthService : IAuthService
                         ELSE [s].[absolute_expires_at]
                     END
             OUTPUT
+                INSERTED.[id],
                 INSERTED.[operator_user_id],
                 INSERTED.[effective_user_id],
-                INSERTED.[idle_expires_at]
+                INSERTED.[idle_expires_at],
+                INSERTED.[absolute_expires_at],
+                INSERTED.[impersonation_record_id]
             FROM [flowpilot].[sessions] AS [s]
             WHERE [s].[token_hash] = @token_hash
               AND [s].[revoked_at] IS NULL
@@ -526,7 +592,10 @@ public sealed class SqlServerAuthService : IAuthService
         return new SessionState(
             reader.GetGuid(0),
             reader.GetGuid(1),
-            AsUtc(reader.GetDateTime(2)));
+            reader.GetGuid(2),
+            AsUtc(reader.GetDateTime(3)),
+            AsUtc(reader.GetDateTime(4)),
+            reader.IsDBNull(5) ? null : reader.GetGuid(5));
     }
 
     private async Task<UserSessionView?> LoadUserSessionViewAsync(
@@ -652,6 +721,7 @@ public sealed class SqlServerAuthService : IAuthService
     private static SessionDto CreateSessionDto(
         UserSessionView effectiveUser,
         UserSessionView operatorUser,
+        ImpersonationContextDto? impersonation,
         DateTimeOffset expiresAt) =>
         new(
             effectiveUser.User,
@@ -660,6 +730,7 @@ public sealed class SqlServerAuthService : IAuthService
             effectiveUser.Permissions,
             effectiveUser.UserRecord.IsBuiltinSuperAdmin,
             operatorUser.UserRecord.IsBuiltinSuperAdmin,
+            impersonation,
             expiresAt);
 
     private SqlCommand CreateCommand(
@@ -762,7 +833,15 @@ public sealed class SqlServerAuthService : IAuthService
         IReadOnlyList<string> Permissions);
 
     private sealed record SessionState(
+        Guid SessionId,
         Guid OperatorUserId,
         Guid EffectiveUserId,
-        DateTimeOffset IdleExpiresAt);
+        DateTimeOffset IdleExpiresAt,
+        DateTimeOffset AbsoluteExpiresAt,
+        Guid? ImpersonationRecordId);
+
+    private sealed record RevokedSessionState(
+        Guid OperatorUserId,
+        Guid EffectiveUserId,
+        Guid? ImpersonationRecordId);
 }

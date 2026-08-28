@@ -1370,6 +1370,7 @@ export interface CreateProcessInstanceRequest {
   assigneeByNode?: CreateProcessInstanceRequestAssigneeByNode;
   /** 自由协作流程的首位受理人 */
   firstAssigneeId?: string;
+  /** 与本次新增回复一起提交的暂存附件标识。 */
   attachmentIds?: string[];
   /** 按稳定表单字段标识关联已上传的临时附件；服务端在实例创建事务内转为正式引用。 */
   attachmentIdsByField?: CreateProcessInstanceRequestAttachmentIdsByField;
@@ -1569,17 +1570,12 @@ export const TaskAllowedAction = {
   'revise-fields': 'revise-fields',
 } as const;
 
-export type FieldChangeDtoOptionLabelsSnapshot = {[key: string]: string};
-
+/**
+ * 字段修改留痕只记录稳定标识和当时名称，不保存修改前后的业务值。
+ */
 export interface FieldChangeDto {
   fieldId: string;
   labelSnapshot: string;
-  fieldTypeSnapshot?: string;
-  optionLabelsSnapshot?: FieldChangeDtoOptionLabelsSnapshot;
-  beforeValue: JsonValue;
-  afterValue: JsonValue;
-  beforeDisplay?: string;
-  afterDisplay?: string;
 }
 
 export interface FieldRevisionDto {
@@ -1826,15 +1822,6 @@ export interface TransferFreeCollaborationRequest {
      */
   content?: string;
   nextAssigneeId: string;
-}
-
-export interface ReassignFreeCollaborationRequest {
-  /**
-     * @minLength 1
-     * @maxLength 2000
-     */
-  reason: string;
-  assigneeId: string;
 }
 
 export interface ReopenFreeCollaborationRequest {
@@ -2777,20 +2764,6 @@ export type EditFreeCollaborationReplyHeaders = {
 };
 
 export type TransferFreeCollaborationHeaders = {
-/**
- * GET 返回的强 ETag，例如 `"12"`
- * @pattern ^"[0-9]+"$
- */
-'If-Match': IfMatchParameter;
-/**
- * 客户端生成的 UUID；同作用域至少保留 24 小时
- * @minLength 16
- * @maxLength 100
- */
-'Idempotency-Key': IdempotencyKeyParameter;
-};
-
-export type ForceReassignFreeCollaborationHeaders = {
 /**
  * GET 返回的强 ETag，例如 `"12"`
  * @pattern ^"[0-9]+"$
@@ -4045,6 +4018,7 @@ const updateFreeCollaborationInitialForm = (
   }
 
 /**
+ * 回复可以携带一个或多个当前用户已上传的暂存附件；服务端必须在同一事务内保存回复正文、附件引用和时间线，并继续按实例数据范围控制附件读取与下载。
  * @summary 向进行中的自由协作事项回复
  */
 const addFreeCollaborationReply = (
@@ -4079,7 +4053,7 @@ const editFreeCollaborationReply = (
 
 /**
  * 操作人必须是实例锁定版本中当前有效的发起流程权限组或审批/受理流程权限组成员；超级管理员可越权执行。目标用户必须是有效受理人且不能与当前受理人相同。成功后必须更新实例更新时间，并在时间线保存操作人、原受理人、新受理人和发生时间。
- * @summary 发起或受理权限组成员处理并转交
+ * @summary 发起或受理权限组成员变更受理人
  */
 const transferFreeCollaboration = (
     instanceId: string,
@@ -4089,22 +4063,6 @@ const transferFreeCollaboration = (
     return axiosInstance.post(
       `/api/flowpilot/v1/process-instances/${instanceId}/free-collaboration/transfers`,
       transferFreeCollaborationRequest,{
-    ...options,
-        headers: {...headers, ...options?.headers},}
-    );
-  }
-
-/**
- * @summary 发起权限组异常改派当前受理人
- */
-const forceReassignFreeCollaboration = (
-    instanceId: string,
-    reassignFreeCollaborationRequest: ReassignFreeCollaborationRequest,
-    headers: ForceReassignFreeCollaborationHeaders, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<ProcessInstanceDetailDto>> => {
-    return axiosInstance.post(
-      `/api/flowpilot/v1/process-instances/${instanceId}/free-collaboration/reassignments`,
-      reassignFreeCollaborationRequest,{
     ...options,
         headers: {...headers, ...options?.headers},}
     );
@@ -4128,6 +4086,7 @@ const closeFreeCollaboration = (
   }
 
 /**
+ * 操作人必须是实例锁定版本发起权限组的当前有效成员、任一历史参与人或超级管理员；目标用户必须是审批/受理权限组的当前有效成员。成功后恢复进行中状态、创建唯一当前待办并记录原因时间线。
  * @summary 重新打开已关闭的自由协作事项
  */
 const reopenFreeCollaboration = (
@@ -4299,7 +4258,7 @@ const getProcessInstanceExportData = (
     );
   }
 
-return {getLiveness,getReadiness,getOperationalHealthDetails,login,logout,getCurrentSession,listImpersonationCandidates,startImpersonation,stopImpersonation,listUsers,createUser,getUser,updateUser,deleteUser,setUserStatus,resetUserPassword,listDepartments,createDepartment,getDepartment,updateDepartment,deleteDepartment,listPositions,createPosition,getPosition,updatePosition,deletePosition,listRoles,createRole,getRole,updateRole,deleteRole,listPermissions,getRolePermissions,replaceRolePermissions,previewRoleChangeImpact,listWorkflowPermissionGroups,createWorkflowPermissionGroup,getWorkflowPermissionGroup,updateWorkflowPermissionGroup,deleteWorkflowPermissionGroup,listWorkflowPermissionGroupEffectiveMembers,previewWorkflowPermissionGroupChangeImpact,listProcessDefinitions,createProcessDefinition,listMyLaunchableProcessDefinitions,importProcessDefinition,listMyVisibleProcessDefinitions,getProcessDefinition,updateProcessDefinitionAvailability,deleteProcessDefinition,exportProcessDefinition,copyProcessDefinition,getProcessLaunchConfig,listProcessVersions,createProcessVersion,getProcessVersion,deleteProcessVersion,replaceProcessVersionBasic,replaceProcessVersionFormDesigner,replaceProcessVersionFlowDesigner,validateProcessVersion,publishProcessVersion,unpublishProcessVersion,listProcessInstances,createProcessInstance,getProcessInstance,updateProcessInstanceBeforeFirstDecision,resubmitRejectedProcessInstance,closeProcessInstance,listMyWorkflowTasks,getWorkflowTask,decideWorkflowTask,reviseCompletedWorkflowTaskFields,updateFreeCollaborationInitialForm,addFreeCollaborationReply,editFreeCollaborationReply,transferFreeCollaboration,forceReassignFreeCollaboration,closeFreeCollaboration,reopenFreeCollaboration,uploadAttachment,getAttachment,deleteStagedAttachment,downloadAttachment,listEmailOutboxMessages,getEmailOutboxMessage,retryEmailOutboxMessage,listAuditEvents,getAuditEvent,getProcessInstanceExportData}};
+return {getLiveness,getReadiness,getOperationalHealthDetails,login,logout,getCurrentSession,listImpersonationCandidates,startImpersonation,stopImpersonation,listUsers,createUser,getUser,updateUser,deleteUser,setUserStatus,resetUserPassword,listDepartments,createDepartment,getDepartment,updateDepartment,deleteDepartment,listPositions,createPosition,getPosition,updatePosition,deletePosition,listRoles,createRole,getRole,updateRole,deleteRole,listPermissions,getRolePermissions,replaceRolePermissions,previewRoleChangeImpact,listWorkflowPermissionGroups,createWorkflowPermissionGroup,getWorkflowPermissionGroup,updateWorkflowPermissionGroup,deleteWorkflowPermissionGroup,listWorkflowPermissionGroupEffectiveMembers,previewWorkflowPermissionGroupChangeImpact,listProcessDefinitions,createProcessDefinition,listMyLaunchableProcessDefinitions,importProcessDefinition,listMyVisibleProcessDefinitions,getProcessDefinition,updateProcessDefinitionAvailability,deleteProcessDefinition,exportProcessDefinition,copyProcessDefinition,getProcessLaunchConfig,listProcessVersions,createProcessVersion,getProcessVersion,deleteProcessVersion,replaceProcessVersionBasic,replaceProcessVersionFormDesigner,replaceProcessVersionFlowDesigner,validateProcessVersion,publishProcessVersion,unpublishProcessVersion,listProcessInstances,createProcessInstance,getProcessInstance,updateProcessInstanceBeforeFirstDecision,resubmitRejectedProcessInstance,closeProcessInstance,listMyWorkflowTasks,getWorkflowTask,decideWorkflowTask,reviseCompletedWorkflowTaskFields,updateFreeCollaborationInitialForm,addFreeCollaborationReply,editFreeCollaborationReply,transferFreeCollaboration,closeFreeCollaboration,reopenFreeCollaboration,uploadAttachment,getAttachment,deleteStagedAttachment,downloadAttachment,listEmailOutboxMessages,getEmailOutboxMessage,retryEmailOutboxMessage,listAuditEvents,getAuditEvent,getProcessInstanceExportData}};
 export type GetLivenessResult = AxiosResponse<LivenessDto>
 export type GetReadinessResult = AxiosResponse<ReadinessDto>
 export type GetOperationalHealthDetailsResult = AxiosResponse<OperationalHealthDto>
@@ -4377,7 +4336,6 @@ export type UpdateFreeCollaborationInitialFormResult = AxiosResponse<ProcessInst
 export type AddFreeCollaborationReplyResult = AxiosResponse<FreeTimelineEntryDto>
 export type EditFreeCollaborationReplyResult = AxiosResponse<FreeTimelineEntryDto>
 export type TransferFreeCollaborationResult = AxiosResponse<ProcessInstanceDetailDto>
-export type ForceReassignFreeCollaborationResult = AxiosResponse<ProcessInstanceDetailDto>
 export type CloseFreeCollaborationResult = AxiosResponse<ProcessInstanceDetailDto>
 export type ReopenFreeCollaborationResult = AxiosResponse<ProcessInstanceDetailDto>
 export type UploadAttachmentResult = AxiosResponse<AttachmentDto>

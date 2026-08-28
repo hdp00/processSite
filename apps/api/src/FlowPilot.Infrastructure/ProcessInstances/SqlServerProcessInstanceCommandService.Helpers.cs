@@ -12,6 +12,28 @@ namespace FlowPilot.Infrastructure.ProcessInstances;
 
 public sealed partial class SqlServerProcessInstanceCommandService
 {
+    private async Task<WorkflowInstanceEntity> LoadInstanceForUpdateAsync(
+        Guid instanceId,
+        CancellationToken cancellationToken)
+    {
+        var affected = await _dbContext.WorkflowInstances
+            .Where(instance => instance.Id == instanceId)
+            .ExecuteUpdateAsync(
+                update => update.SetProperty(
+                    instance => instance.Revision,
+                    instance => instance.Revision + 1),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (affected != 1)
+        {
+            throw new InvalidDataException("Process instance does not exist.");
+        }
+
+        return await _dbContext.WorkflowInstances
+            .SingleAsync(instance => instance.Id == instanceId, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     private static bool TryParseVersion(
         RuntimeWorkflowVersion version,
         out JsonObject? basic,
@@ -203,7 +225,10 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 "当前账号已失去来源实例的查看权限。");
     }
 
-    private static FormPreparation NormalizeAndValidateForm(JsonObject input, JsonObject snapshot)
+    private static FormPreparation NormalizeAndValidateForm(
+        JsonObject input,
+        JsonObject snapshot,
+        JsonObject? preservedReviewerValues = null)
     {
         var fields = ReadFormFields(snapshot);
         var allowedIds = fields
@@ -222,7 +247,7 @@ public sealed partial class SqlServerProcessInstanceCommandService
             var fieldId = ReadRequiredString(field, "id");
             var inputStage = ReadString(field, "inputStage") ?? "initiator";
             JsonNode? value = inputStage == "reviewer"
-                ? field["defaultValue"]?.DeepClone()
+                ? preservedReviewerValues?[fieldId]?.DeepClone() ?? field["defaultValue"]?.DeepClone()
                 : input[fieldId]?.DeepClone() ?? field["defaultValue"]?.DeepClone();
             values[fieldId] = value;
         }
@@ -236,7 +261,9 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 continue;
             }
 
-            if (ReadBool(field, "required") && IsEmpty(values[fieldId]))
+            if ((ReadString(field, "inputStage") ?? "initiator") != "reviewer"
+                && ReadBool(field, "required")
+                && IsEmpty(values[fieldId]))
             {
                 issues.Add(Issue(
                     $"formValues.{fieldId}",
@@ -511,6 +538,16 @@ public sealed partial class SqlServerProcessInstanceCommandService
         public bool IsStarter(Guid userId) => References
             .Where(item => item.Purpose == "start")
             .Any(item => IsGroupMember(item.GroupId, userId));
+
+        public bool IsCloser(Guid userId) => References
+            .Where(item => item.Purpose == "close")
+            .Any(item => IsGroupMember(item.GroupId, userId));
+
+        public bool IsReviewMember(Guid userId) => References
+            .Where(item => item.Purpose == "review")
+            .Any(item => IsGroupMember(item.GroupId, userId));
+
+        public bool CanTransferFree(Guid userId) => IsStarter(userId) || IsReviewMember(userId);
 
         public bool ContainsMember(Guid userId) => MembersByGroup.Values
             .Any(members => members.Any(user => user.Id == userId));

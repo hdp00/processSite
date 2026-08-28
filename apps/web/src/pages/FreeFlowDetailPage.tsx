@@ -1,6 +1,5 @@
 import {
   EditOutlined,
-  ExclamationCircleOutlined,
   HistoryOutlined,
   LockOutlined,
   MessageOutlined,
@@ -49,11 +48,12 @@ const hasRichContent = (html: string) =>
 
 const entryMeta: Record<Exclude<FreeFlowEntry["type"], "reply">, { label: string; color: string }> = {
   created: { label: "创建事项", color: "blue" },
+  "reply-edited": { label: "编辑回复", color: "gold" },
   assigned: { label: "变更受理人", color: "purple" },
   closed: { label: "关闭事项", color: "gray" },
   reopened: { label: "重新打开", color: "green" },
   "form-edited": { label: "修改初始表单", color: "gold" },
-  reassigned: { label: "异常改派", color: "orange" },
+  reassigned: { label: "变更受理人", color: "purple" },
 };
 
 interface FreeFlowDetailPageProps {
@@ -89,9 +89,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const [reopenOpen, setReopenOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
   const [reopenAssignee, setReopenAssignee] = useState<string>();
-  const [reassignOpen, setReassignOpen] = useState(false);
-  const [reassignReason, setReassignReason] = useState("");
-  const [reassignAssignee, setReassignAssignee] = useState<string>();
   const [initialEditOpen, setInitialEditOpen] = useState(false);
   const [resourceEtag, setResourceEtag] = useState<string>();
   const [draftInitial, setDraftInitial] = useState({
@@ -118,7 +115,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     isOpen && instance && persona && canEditProcessInstanceSubmission(instance, persona, isSuperAdmin),
   );
   const canTransfer = Boolean(instance && canUserTransferFreeFlow(instance, personaId));
-  const canForceReassign = Boolean(isOpen && isStarter);
   const initialEntry = instance?.freeTimeline?.find((entry) => entry.type === "created");
   const initialFormDirty = Boolean(initialEditOpen && instance && (
     draftInitial.title !== instance.title
@@ -142,8 +138,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
       || closeReason.trim()
       || reopenReason.trim()
       || reopenAssignee
-      || reassignReason.trim()
-      || reassignAssignee
       || initialFormDirty
     ),
     title: "协作内容尚未提交",
@@ -223,19 +217,26 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
   const renderSystemEvent = (entry: FreeFlowEntry) => {
     const meta = entryMeta[entry.type as Exclude<FreeFlowEntry["type"], "reply">];
+    const changedFieldNames = entry.fieldChanges?.map((change) => change.field).join("、");
     const detail = entry.type === "created"
       ? <>创建事项，首位受理人 <strong>{entry.assignee}</strong></>
-      : entry.type === "assigned"
-        ? <>受理人变更为 <strong>{entry.assignee}</strong></>
-        : entry.type === "closed"
-          ? <>关闭事项：{entry.content}</>
-          : entry.type === "reopened"
-            ? <>重新打开并指定 <strong>{entry.assignee}</strong>：{entry.content}</>
-            : entry.type === "reassigned"
-              ? <>将受理人从 <strong>{entry.previousAssignee}</strong> 改派为 <strong>{entry.assignee}</strong>：{entry.content}</>
-              : <>{entry.content}</>;
+      : entry.type === "reply-edited"
+        ? <>更新了一条回复内容</>
+        : entry.type === "assigned"
+          ? <>受理人变更为 <strong>{entry.assignee}</strong></>
+          : entry.type === "form-edited"
+            ? <>修改了{changedFieldNames || "初始表单"}</>
+          : entry.type === "closed"
+            ? <>关闭事项：{entry.content}</>
+            : entry.type === "reopened"
+              ? <>重新打开并指定 <strong>{entry.assignee}</strong>：{entry.content}</>
+              : entry.type === "reassigned"
+                ? <>将受理人从 <strong>{entry.previousAssignee}</strong> 改派为 <strong>{entry.assignee}</strong>：{entry.content}</>
+                : <>{entry.content}</>;
     const fullDetail = entry.type === "form-edited" && entry.fieldChanges?.length
-      ? entry.fieldChanges.map((change) => `${change.field}：${change.before} → ${change.after}`).join("；")
+      ? entry.fieldChanges.map((change) => change.before !== undefined && change.after !== undefined
+        ? `${change.field}：${change.before} → ${change.after}`
+        : change.field).join("；")
       : undefined;
     return (
       <div className="free-system-event">
@@ -275,7 +276,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
             });
             setInitialEditOpen(true);
           }}>编辑初始表单</Button>}
-          {canForceReassign && <Button icon={<SwapOutlined />} onClick={() => setReassignOpen(true)}>异常改派</Button>}
           {canClose && <Button danger icon={<LockOutlined />} onClick={() => setCloseOpen(true)}>关闭事项</Button>}
           {canReopen && <Button type="primary" icon={<ReloadOutlined />} onClick={() => setReopenOpen(true)}>重新打开</Button>}
         </Space>
@@ -364,15 +364,21 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
       <Modal title="编辑我的回复" width={760} open={Boolean(editEntry)} okText="保存修改" onCancel={() => setEditEntry(undefined)} onOk={async () => {
         if (!editEntry || !hasRichContent(editContent)) return message.warning("回复内容不能为空");
+        if (editContent.trim() === (editEntry.content ?? "").trim()) return message.warning("回复内容没有变化");
         const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.editReply(instance.id, editEntry.id, editContent, etag));
         if (!updated) return;
         setEditEntry(undefined);
-        message.success("回复已更新并保留历史版本");
+        message.success("回复已更新，仅保留最新内容");
       }}><RichTextEditor value={editContent} onChange={setEditContent} minHeight={260} /></Modal>
 
       <Modal title="编辑初始表单" width={800} open={initialEditOpen} okText="保存修改" onCancel={() => setInitialEditOpen(false)} onOk={async () => {
         if (!draftInitial.title.trim() || !hasRichContent(draftInitial.initialContent)) return message.warning("请填写标题和初始说明");
-        const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.updateSubmission(instance.id, draftInitial, etag));
+        if (!initialFormDirty) return message.warning("初始表单没有变化");
+        const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.updateSubmission(instance.id, {
+          ...draftInitial,
+          formValues: instance.formValues,
+          attachmentIdsByField: instance.attachmentIdsByField,
+        }, etag));
         if (!updated) return;
         setInitialEditOpen(false);
         message.success("初始表单已更新，修改记录已写入时间线");
@@ -402,13 +408,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
         if (!updated) return;
         setReopenOpen(false); setReopenReason(""); setReopenAssignee(undefined); message.success("事项已重新打开并生成待办");
       }}><div className="free-modal-form"><Alert type="info" showIcon message="重新打开后恢复回复和编辑能力" /><label><span>打开理由</span><Input.TextArea rows={4} value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} /></label><label><span>受理人</span><Select showSearch optionFilterProp="label" value={reopenAssignee} onChange={setReopenAssignee} options={userOptions} /></label></div></Modal>
-
-      <Modal title="异常改派" open={reassignOpen} okText="确认改派" onCancel={() => setReassignOpen(false)} onOk={async () => {
-        if (!reassignReason.trim() || !reassignAssignee) return message.warning("请填写改派理由并选择新受理人");
-        const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.reassign(instance.id, reassignReason, reassignAssignee, etag));
-        if (!updated) return;
-        setReassignOpen(false); setReassignReason(""); setReassignAssignee(undefined); message.success("已改派，原待办取消并生成新待办");
-      }}><div className="free-modal-form"><Alert type="warning" showIcon icon={<ExclamationCircleOutlined />} message="仅发起流程权限组可执行" description={`当前受理人：${instance.currentAssignee}。异常改派会写入时间线。`} /><label><span>新受理人</span><Select showSearch optionFilterProp="label" value={reassignAssignee} onChange={setReassignAssignee} options={userOptions.filter((option) => option.value !== instance.currentAssigneeId)} /></label><label><span>改派理由</span><Input.TextArea rows={4} value={reassignReason} onChange={(event) => setReassignReason(event.target.value)} /></label></div></Modal>
     </div>
   );
 }

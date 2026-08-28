@@ -101,7 +101,6 @@ interface PrototypeState {
   transferFreeFlow: (id: string, nextAssignee: string, content?: string) => void;
   editFreeFlowReply: (id: string, entryId: string, content: string) => void;
   updateFreeFlowInitial: (id: string, changes: FreeFlowInitialChanges) => void;
-  forceReassignFreeFlow: (id: string, reason: string, assignee: string) => void;
   closeFreeFlow: (id: string, reason: string) => void;
   reopenFreeFlow: (id: string, reason: string, assignee: string) => void;
   resetDemo: () => void;
@@ -1218,41 +1217,6 @@ export const usePrototypeStore = create<PrototypeState>()(
             }),
           };
         }),
-      forceReassignFreeFlow: (id, reason, assignee) =>
-        set((state) => {
-          const persona = currentPersona(state.personaId);
-          const actionAt = nowText();
-          const assigneeId = userIdByIdOrName(assignee);
-          return {
-            instances: state.instances.map((instance) => {
-              const canReassign =
-                instance.id === id &&
-                instance.workflowType === "free" &&
-                instance.status === "进行中" &&
-                isStarterActor(instance, state.personaId) &&
-                isAllowedFreeAssignee(instance, assignee);
-              if (!canReassign) return instance;
-              return {
-                ...instance,
-                currentAssignee: assignee,
-                currentAssigneeId: assigneeId,
-                designatedReviewer: assignee,
-                currentNode: assignee,
-                updatedAt: actionAt,
-                participants: [...new Set([...(instance.participants ?? []), assignee])],
-                participantIds: [...new Set([...(instance.participantIds ?? []), ...(assigneeId ? [assigneeId] : [])])],
-                freeTimeline: [
-                  ...(instance.freeTimeline ?? []),
-                  freeEntry("reassigned", persona.name, {
-                    content: reason,
-                    assignee,
-                    previousAssignee: instance.currentAssignee,
-                  }),
-                ],
-              };
-            }),
-          };
-        }),
       closeFreeFlow: (id, reason) =>
         set((state) => {
           const persona = currentPersona(state.personaId);
@@ -1298,8 +1262,8 @@ export const usePrototypeStore = create<PrototypeState>()(
                 designatedReviewer: assignee,
                 currentNode: assignee,
                 updatedAt: actionAt,
-                participants: [...new Set([...(instance.participants ?? []), persona.name, assignee])],
-                participantIds: [...new Set([...(instance.participantIds ?? []), persona.id, ...(assigneeId ? [assigneeId] : [])])],
+                participants: [...new Set([...(instance.participants ?? []), assignee])],
+                participantIds: [...new Set([...(instance.participantIds ?? []), ...(assigneeId ? [assigneeId] : [])])],
                 freeTimeline: [
                   ...(instance.freeTimeline ?? []),
                   freeEntry("reopened", persona.name, { content: reason, assignee }),

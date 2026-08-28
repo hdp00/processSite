@@ -214,7 +214,7 @@ const exportVersion = (
     },
     "流程设计": version.basic.type === "free" ? {
       "类型": "自由协作",
-      "说明": "处理人完成后选择下一位受理人，直到手动关闭。",
+      "说明": "发起或受理权限组成员可指定下一位受理人，直到手动关闭。",
     } : {
       "类型": "固定审批",
       "驳回处理": rejectionLabels[version.snapshot.flow.meta?.rejectionHandling ?? "resubmit-or-close"],

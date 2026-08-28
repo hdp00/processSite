@@ -357,7 +357,7 @@ export function ProcessDetailPage() {
     ...Array.from({ length: instance.round }, (_, index) => index + 1).flatMap((round) => {
       const resubmission = instance.resubmissions?.find((record) => record.round === round);
       const roundEvents = tasks
-        .filter((task) => task.instanceId === instance.id && task.round === round)
+        .filter((task) => task.instanceId === instance.id && task.round === round && task.taskType !== "resubmission")
         .flatMap((task) => {
           if (task.status === "已跳过") return [];
           const decision = task.status === "已完成"
@@ -438,7 +438,7 @@ export function ProcessDetailPage() {
     if (!pendingAction || !currentTask) return;
     try {
       const resource = await flowPilotApi.tasks.getResource(currentTask.id);
-      await flowPilotApi.tasks.decide(currentTask.id, {
+      const decision = await flowPilotApi.tasks.decide(currentTask.id, {
         action: pendingAction,
         comment: comment.trim(),
         fieldValues: dynamicValues,
@@ -446,7 +446,13 @@ export function ProcessDetailPage() {
       }, resource.etag);
       const refreshed = await flowPilotApi.instances.get(instance.id);
       cacheProcessRuntime(refreshed.instance, refreshed.tasks);
-      message.success(pendingAction === "pass" ? "审核已通过" : pendingAction === "confirm" ? "本节点已确认" : "已驳回，等待发起方处理");
+      message.success(pendingAction === "pass"
+        ? "审核已通过"
+        : pendingAction === "confirm"
+          ? "本节点已确认"
+          : decision.instance.status === "已关闭"
+            ? "已驳回，流程已自动关闭"
+            : "已驳回，等待发起方处理");
       setPendingAction(null);
       setComment("");
       allowNextNavigation();
@@ -624,8 +630,7 @@ export function ProcessDetailPage() {
         return false;
       }
       const record = await flowPilotApi.attachments.upload(file, {
-        definitionId: instance.definitionId,
-        versionId: instance.versionId,
+        instanceId: instance.id,
         fieldId: field.id,
       });
       const reference = { id: record.id, name: record.name, size: record.size, contentType: record.contentType };

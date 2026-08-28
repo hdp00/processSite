@@ -782,11 +782,14 @@ export const flowPilotApi = {
       const task = usePrototypeStore.getState().tasks.find((item) => item.id === taskId);
       const instance = usePrototypeStore.getState().instances.find((item) => item.id === task?.instanceId);
       const fieldIds = task?.editableFieldIds?.length ? task.editableFieldIds : Object.keys(input.fieldValues ?? {});
-      const fieldValues = Object.fromEntries(Object.entries(input.fieldValues ?? {}).filter(([fieldId]) => fieldIds.includes(fieldId)));
-      const baseFieldRevisions = Object.fromEntries(Object.keys(fieldValues).map((fieldId) => [fieldId, instance?.fieldRevisions?.[fieldId] ?? 0]));
+      const canEditField = (fieldId: string) => fieldIds.includes(fieldId) || fieldIds.some((id) => id.startsWith(`${fieldId}.`));
+      const fieldValues = Object.fromEntries(Object.entries(input.fieldValues ?? {}).filter(([fieldId]) => canEditField(fieldId)));
+      const attachmentIdsByField = Object.fromEntries(Object.entries(input.attachmentIdsByField ?? {}).filter(([fieldId]) => fieldIds.includes(fieldId)));
+      const revisedFieldIds = [...new Set([...Object.keys(fieldValues), ...Object.keys(attachmentIdsByField)])];
+      const baseFieldRevisions = Object.fromEntries(revisedFieldIds.map((fieldId) => [fieldId, instance?.fieldRevisions?.[fieldId] ?? 0]));
       const value = await apiRequest<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}/decision`, {
         method: "POST",
-        body: remoteMode ? { ...input, fieldValues, baseFieldRevisions } : input,
+        body: remoteMode ? { ...input, fieldValues, baseFieldRevisions, attachmentIdsByField } : input,
         ifMatch,
         ...mutation(),
       });
@@ -802,11 +805,14 @@ export const flowPilotApi = {
       const task = usePrototypeStore.getState().tasks.find((item) => item.id === taskId);
       const instance = usePrototypeStore.getState().instances.find((item) => item.id === task?.instanceId);
       const allowedIds = task?.editableFieldIds?.length ? task.editableFieldIds : Object.keys(fieldValues);
-      const allowedValues = Object.fromEntries(Object.entries(fieldValues).filter(([fieldId]) => allowedIds.includes(fieldId)));
-      const baseFieldRevisions = Object.fromEntries(Object.keys(allowedValues).map((fieldId) => [fieldId, instance?.fieldRevisions?.[fieldId] ?? 0]));
+      const canEditField = (fieldId: string) => allowedIds.includes(fieldId) || allowedIds.some((id) => id.startsWith(`${fieldId}.`));
+      const allowedValues = Object.fromEntries(Object.entries(fieldValues).filter(([fieldId]) => canEditField(fieldId)));
+      const allowedAttachmentIds = Object.fromEntries(Object.entries(attachmentIdsByField ?? {}).filter(([fieldId]) => allowedIds.includes(fieldId)));
+      const revisedFieldIds = [...new Set([...Object.keys(allowedValues), ...Object.keys(allowedAttachmentIds)])];
+      const baseFieldRevisions = Object.fromEntries(revisedFieldIds.map((fieldId) => [fieldId, instance?.fieldRevisions?.[fieldId] ?? 0]));
       const value = await apiRequest<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}/field-revisions`, {
         method: "POST",
-        body: remoteMode ? { fieldValues: allowedValues, baseFieldRevisions, comment, attachmentIdsByField } : { fieldValues, comment, attachmentIdsByField },
+        body: remoteMode ? { fieldValues: allowedValues, baseFieldRevisions, comment, attachmentIdsByField: allowedAttachmentIds } : { fieldValues, comment, attachmentIdsByField },
         ifMatch,
         ...mutation(),
       });
@@ -852,11 +858,38 @@ export const flowPilotApi = {
         ? normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`)).instance
         : normalizeProcessInstance(result);
     },
-    updateSubmission: (instanceId: string, input: { title: string; category: string; priority: "普通" | "紧急"; description: string; initialContent: string }, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/initial-form`, { method: "PATCH", body: input, ifMatch })
-        .then((value) => normalizeInstanceDetail(value).instance),
-    reassign: (instanceId: string, reason: string, assigneeId: string, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/reassignments`, { method: "POST", body: { reason, assigneeId }, ifMatch, ...mutation() })
+    updateSubmission: (instanceId: string, input: {
+      title: string;
+      category: string;
+      priority: "普通" | "紧急";
+      description: string;
+      initialContent: string;
+      formValues?: Record<string, unknown>;
+      attachmentIdsByField?: Record<string, string[]>;
+    }, ifMatch?: string) =>
+      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/initial-form`, {
+        method: "PATCH",
+        body: remoteMode
+          ? {
+              formValues: {
+                ...(input.formValues ?? {}),
+                title: input.title,
+                category: input.category,
+                priority: input.priority,
+                description: input.description,
+                initialContent: input.initialContent,
+              },
+              attachmentIdsByField: input.attachmentIdsByField ?? {},
+            }
+          : {
+              title: input.title,
+              category: input.category,
+              priority: input.priority,
+              description: input.description,
+              initialContent: input.initialContent,
+            },
+        ifMatch,
+      })
         .then((value) => normalizeInstanceDetail(value).instance),
     close: (instanceId: string, reason: string, ifMatch?: string) =>
       apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/close`, { method: "POST", body: { reason }, ifMatch, ...mutation() })
