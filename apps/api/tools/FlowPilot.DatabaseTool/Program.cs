@@ -431,7 +431,7 @@ internal static class DevelopmentConfigurationLocator
         string normalizedApplicationBaseDirectory)
     {
         var toolProjectRoot = Path.Combine(apiRoot, "tools", "FlowPilot.DatabaseTool");
-        return File.Exists(Path.Combine(apiRoot, "FlowPilot.sln")) &&
+        return File.Exists(Path.Combine(apiRoot, "FlowPilot.slnx")) &&
             File.Exists(Path.Combine(apiRoot, "src", "FlowPilot.Api", "appsettings.json")) &&
             Directory.Exists(Path.Combine(apiRoot, "config")) &&
             Directory.Exists(toolProjectRoot) &&

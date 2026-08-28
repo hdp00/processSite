@@ -1,0 +1,12 @@
+<Solution>
+  <Project Path="src/FlowPilot.Api/FlowPilot.Api.csproj" />
+  <Project Path="src/FlowPilot.Application/FlowPilot.Application.csproj" />
+  <Project Path="src/FlowPilot.Contracts/FlowPilot.Contracts.csproj" />
+  <Project Path="src/FlowPilot.Database/FlowPilot.Database.csproj" />
+  <Project Path="src/FlowPilot.Domain/FlowPilot.Domain.csproj" />
+  <Project Path="src/FlowPilot.Infrastructure/FlowPilot.Infrastructure.csproj" />
+  <Project Path="tests/FlowPilot.ApiTests/FlowPilot.ApiTests.csproj" />
+  <Project Path="tests/FlowPilot.SqlServerTests/FlowPilot.SqlServerTests.csproj" />
+  <Project Path="tests/FlowPilot.UnitTests/FlowPilot.UnitTests.csproj" />
+  <Project Path="tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj" />
+</Solution>

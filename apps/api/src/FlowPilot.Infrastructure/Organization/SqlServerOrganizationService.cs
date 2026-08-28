@@ -3,7 +3,9 @@ using System.Text.Json;
 using FlowPilot.Application.Authentication;
 using FlowPilot.Application.Organization;
 using FlowPilot.Infrastructure.Configuration;
+using FlowPilot.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 
 namespace FlowPilot.Infrastructure.Organization;
@@ -14,19 +16,23 @@ public sealed partial class SqlServerOrganizationService : IOrganizationService
 
     private readonly string? _connectionString;
     private readonly int _commandTimeoutSeconds;
+    private readonly FlowPilotDbContext _dbContext;
     private readonly TimeProvider _timeProvider;
 
     public SqlServerOrganizationService(
         IConfiguration configuration,
         FlowPilotDatabaseOptions databaseOptions,
+        FlowPilotDbContext dbContext,
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(databaseOptions);
+        ArgumentNullException.ThrowIfNull(dbContext);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _connectionString = configuration.GetConnectionString("FlowPilot");
         _commandTimeoutSeconds = databaseOptions.ApplicationCommandTimeoutSeconds;
+        _dbContext = dbContext;
         _timeProvider = timeProvider;
     }
 
@@ -189,38 +195,29 @@ public sealed partial class SqlServerOrganizationService : IOrganizationService
         bool includeDisabled,
         CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var command = CreateCommand(connection);
-        command.CommandText =
-            """
-            SELECT
-                [d].[id], [d].[revision], [d].[code], [d].[name], [d].[parent_id],
-                [d].[path_cache], [d].[sort_order], [d].[is_enabled],
-                COALESCE([d].[description], N''),
-                CONVERT(int, (SELECT COUNT_BIG(1) FROM [flowpilot].[users] AS [u]
-                    WHERE [u].[department_id] = [d].[id]))
-            FROM [flowpilot].[departments] AS [d]
-            WHERE @include_disabled = 1 OR [d].[is_enabled] = 1
-            ORDER BY [d].[sort_order], [d].[name], [d].[id];
-            """;
-        Add(command, "@include_disabled", SqlDbType.Bit, includeDisabled);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        var rows = new List<DepartmentRow>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        var departments = _dbContext.Departments.AsNoTracking();
+        if (!includeDisabled)
         {
-            rows.Add(new DepartmentRow(
-                reader.GetGuid(0),
-                reader.GetInt32(1),
-                reader.GetString(2),
-                reader.GetString(3),
-                reader.IsDBNull(4) ? null : reader.GetGuid(4),
-                reader.GetString(5),
-                reader.GetInt32(6),
-                reader.GetBoolean(7),
-                reader.GetString(8),
-                reader.GetInt32(9)));
+            departments = departments.Where(department => department.IsEnabled);
         }
+
+        var rows = await departments
+            .OrderBy(department => department.SortOrder)
+            .ThenBy(department => department.Name)
+            .ThenBy(department => department.Id)
+            .Select(department => new DepartmentRow(
+                department.Id,
+                department.Revision,
+                department.Code,
+                department.Name,
+                department.ParentId,
+                department.Path,
+                department.SortOrder,
+                department.IsEnabled,
+                department.Description ?? string.Empty,
+                _dbContext.OrganizationUserReferences.Count(user => user.DepartmentId == department.Id)))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
 
         var byParent = rows.ToLookup(row => row.ParentId);
         IReadOnlyList<DepartmentDto> CreateChildren(Guid? parentId, int level) =>
@@ -249,47 +246,38 @@ public sealed partial class SqlServerOrganizationService : IOrganizationService
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var command = CreateCommand(connection);
-        command.CommandText =
-            """
-            SELECT COUNT_BIG(1)
-            FROM [flowpilot].[positions] AS [p]
-            WHERE (@search IS NULL OR [p].[name] LIKE @search ESCAPE N'\'
-                OR [p].[code] LIKE @search ESCAPE N'\')
-              AND (@is_enabled IS NULL OR [p].[is_enabled] = @is_enabled);
-
-            SELECT
-                [p].[id], [p].[revision], [p].[name], [p].[sort_order], [p].[is_enabled],
-                COALESCE([p].[description], N''),
-                CONVERT(int, (SELECT COUNT_BIG(1) FROM [flowpilot].[users] AS [u]
-                    WHERE [u].[position_id] = [p].[id]))
-            FROM [flowpilot].[positions] AS [p]
-            WHERE (@search IS NULL OR [p].[name] LIKE @search ESCAPE N'\'
-                OR [p].[code] LIKE @search ESCAPE N'\')
-              AND (@is_enabled IS NULL OR [p].[is_enabled] = @is_enabled)
-            ORDER BY [p].[sort_order], [p].[name], [p].[id]
-            OFFSET @offset ROWS FETCH NEXT @page_size ROWS ONLY;
-            """;
-        AddSearchAndStatus(command, query);
-        AddPagingParameters(command, query);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        var total = await ReadTotalAsync(reader, cancellationToken).ConfigureAwait(false);
-        await reader.NextResultAsync(cancellationToken).ConfigureAwait(false);
-
-        var items = new List<PositionDto>();
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        var positions = _dbContext.Positions.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(query.Search))
         {
-            items.Add(new PositionDto(
-                reader.GetGuid(0),
-                reader.GetInt32(1),
-                reader.GetString(2),
-                reader.GetInt32(3),
-                reader.GetBoolean(4) ? "enabled" : "disabled",
-                reader.GetString(5),
-                reader.GetInt32(6)));
+            var search = query.Search.Trim();
+            positions = positions.Where(position =>
+                position.Name.Contains(search) || position.Code.Contains(search));
         }
+
+        positions = query.Status switch
+        {
+            "enabled" => positions.Where(position => position.IsEnabled),
+            "disabled" => positions.Where(position => !position.IsEnabled),
+            _ => positions,
+        };
+
+        var total = await positions.LongCountAsync(cancellationToken).ConfigureAwait(false);
+        var items = await positions
+            .OrderBy(position => position.SortOrder)
+            .ThenBy(position => position.Name)
+            .ThenBy(position => position.Id)
+            .Skip(checked((query.Page - 1) * query.PageSize))
+            .Take(query.PageSize)
+            .Select(position => new PositionDto(
+                position.Id,
+                position.Revision,
+                position.Name,
+                position.SortOrder,
+                position.IsEnabled ? "enabled" : "disabled",
+                position.Description ?? string.Empty,
+                _dbContext.OrganizationUserReferences.Count(user => user.PositionId == position.Id)))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
 
         return CreatePage(items, query, total);
     }

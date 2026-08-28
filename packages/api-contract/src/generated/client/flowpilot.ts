@@ -3220,6 +3220,17 @@ const createDepartment = (
   }
 
 /**
+ * @summary 获取部门详情
+ */
+const getDepartment = (
+    departmentId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<DepartmentDto>> => {
+    return axiosInstance.get(
+      `/api/flowpilot/v1/departments/${departmentId}`,options
+    );
+  }
+
+/**
  * @summary 修改部门
  */
 const updateDepartment = (
@@ -3275,6 +3286,17 @@ const createPosition = (
       upsertPositionRequest,{
     ...options,
         headers: {...headers, ...options?.headers},}
+    );
+  }
+
+/**
+ * @summary 获取职务详情
+ */
+const getPosition = (
+    positionId: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PositionDto>> => {
+    return axiosInstance.get(
+      `/api/flowpilot/v1/positions/${positionId}`,options
     );
   }
 
@@ -4277,7 +4299,7 @@ const getProcessInstanceExportData = (
     );
   }
 
-return {getLiveness,getReadiness,getOperationalHealthDetails,login,logout,getCurrentSession,listImpersonationCandidates,startImpersonation,stopImpersonation,listUsers,createUser,getUser,updateUser,deleteUser,setUserStatus,resetUserPassword,listDepartments,createDepartment,updateDepartment,deleteDepartment,listPositions,createPosition,updatePosition,deletePosition,listRoles,createRole,getRole,updateRole,deleteRole,listPermissions,getRolePermissions,replaceRolePermissions,previewRoleChangeImpact,listWorkflowPermissionGroups,createWorkflowPermissionGroup,getWorkflowPermissionGroup,updateWorkflowPermissionGroup,deleteWorkflowPermissionGroup,listWorkflowPermissionGroupEffectiveMembers,previewWorkflowPermissionGroupChangeImpact,listProcessDefinitions,createProcessDefinition,listMyLaunchableProcessDefinitions,importProcessDefinition,listMyVisibleProcessDefinitions,getProcessDefinition,updateProcessDefinitionAvailability,deleteProcessDefinition,exportProcessDefinition,copyProcessDefinition,getProcessLaunchConfig,listProcessVersions,createProcessVersion,getProcessVersion,deleteProcessVersion,replaceProcessVersionBasic,replaceProcessVersionFormDesigner,replaceProcessVersionFlowDesigner,validateProcessVersion,publishProcessVersion,unpublishProcessVersion,listProcessInstances,createProcessInstance,getProcessInstance,updateProcessInstanceBeforeFirstDecision,resubmitRejectedProcessInstance,closeProcessInstance,listMyWorkflowTasks,getWorkflowTask,decideWorkflowTask,reviseCompletedWorkflowTaskFields,updateFreeCollaborationInitialForm,addFreeCollaborationReply,editFreeCollaborationReply,transferFreeCollaboration,forceReassignFreeCollaboration,closeFreeCollaboration,reopenFreeCollaboration,uploadAttachment,getAttachment,deleteStagedAttachment,downloadAttachment,listEmailOutboxMessages,getEmailOutboxMessage,retryEmailOutboxMessage,listAuditEvents,getAuditEvent,getProcessInstanceExportData}};
+return {getLiveness,getReadiness,getOperationalHealthDetails,login,logout,getCurrentSession,listImpersonationCandidates,startImpersonation,stopImpersonation,listUsers,createUser,getUser,updateUser,deleteUser,setUserStatus,resetUserPassword,listDepartments,createDepartment,getDepartment,updateDepartment,deleteDepartment,listPositions,createPosition,getPosition,updatePosition,deletePosition,listRoles,createRole,getRole,updateRole,deleteRole,listPermissions,getRolePermissions,replaceRolePermissions,previewRoleChangeImpact,listWorkflowPermissionGroups,createWorkflowPermissionGroup,getWorkflowPermissionGroup,updateWorkflowPermissionGroup,deleteWorkflowPermissionGroup,listWorkflowPermissionGroupEffectiveMembers,previewWorkflowPermissionGroupChangeImpact,listProcessDefinitions,createProcessDefinition,listMyLaunchableProcessDefinitions,importProcessDefinition,listMyVisibleProcessDefinitions,getProcessDefinition,updateProcessDefinitionAvailability,deleteProcessDefinition,exportProcessDefinition,copyProcessDefinition,getProcessLaunchConfig,listProcessVersions,createProcessVersion,getProcessVersion,deleteProcessVersion,replaceProcessVersionBasic,replaceProcessVersionFormDesigner,replaceProcessVersionFlowDesigner,validateProcessVersion,publishProcessVersion,unpublishProcessVersion,listProcessInstances,createProcessInstance,getProcessInstance,updateProcessInstanceBeforeFirstDecision,resubmitRejectedProcessInstance,closeProcessInstance,listMyWorkflowTasks,getWorkflowTask,decideWorkflowTask,reviseCompletedWorkflowTaskFields,updateFreeCollaborationInitialForm,addFreeCollaborationReply,editFreeCollaborationReply,transferFreeCollaboration,forceReassignFreeCollaboration,closeFreeCollaboration,reopenFreeCollaboration,uploadAttachment,getAttachment,deleteStagedAttachment,downloadAttachment,listEmailOutboxMessages,getEmailOutboxMessage,retryEmailOutboxMessage,listAuditEvents,getAuditEvent,getProcessInstanceExportData}};
 export type GetLivenessResult = AxiosResponse<LivenessDto>
 export type GetReadinessResult = AxiosResponse<ReadinessDto>
 export type GetOperationalHealthDetailsResult = AxiosResponse<OperationalHealthDto>
@@ -4296,10 +4318,12 @@ export type SetUserStatusResult = AxiosResponse<UserDto>
 export type ResetUserPasswordResult = AxiosResponse<void>
 export type ListDepartmentsResult = AxiosResponse<DepartmentDto[]>
 export type CreateDepartmentResult = AxiosResponse<DepartmentDto>
+export type GetDepartmentResult = AxiosResponse<DepartmentDto>
 export type UpdateDepartmentResult = AxiosResponse<DepartmentDto>
 export type DeleteDepartmentResult = AxiosResponse<void>
 export type ListPositionsResult = AxiosResponse<PositionPage>
 export type CreatePositionResult = AxiosResponse<PositionDto>
+export type GetPositionResult = AxiosResponse<PositionDto>
 export type UpdatePositionResult = AxiosResponse<PositionDto>
 export type DeletePositionResult = AxiosResponse<void>
 export type ListRolesResult = AxiosResponse<RolePage>

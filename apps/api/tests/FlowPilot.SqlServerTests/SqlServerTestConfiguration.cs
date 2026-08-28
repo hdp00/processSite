@@ -91,14 +91,14 @@ internal static class SqlServerTestConfiguration
             var directory = new DirectoryInfo(Path.GetFullPath(startDirectory));
             for (var depth = 0; directory is not null && depth <= 8; depth++, directory = directory.Parent)
             {
-                if (File.Exists(Path.Combine(directory.FullName, "FlowPilot.sln")) &&
+                if (File.Exists(Path.Combine(directory.FullName, "FlowPilot.slnx")) &&
                     Directory.Exists(Path.Combine(directory.FullName, "src", "FlowPilot.Api")))
                 {
                     return directory.FullName;
                 }
 
                 var apiRoot = Path.Combine(directory.FullName, "apps", "api");
-                if (File.Exists(Path.Combine(apiRoot, "FlowPilot.sln")))
+                if (File.Exists(Path.Combine(apiRoot, "FlowPilot.slnx")))
                 {
                     return apiRoot;
                 }

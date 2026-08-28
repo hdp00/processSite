@@ -2,7 +2,7 @@
 
 当前完整可演示部分是 React 前端交互原型，开发环境默认启用浏览器内 Mock REST API，无需启动后端即可演示登录、流程定义、实例、任务、附件、邮件 Outbox、审计和 Excel 导出。
 
-正式后端使用 .NET 10 / ASP.NET Core 10 Controller Web API、EF Core 10 和 SQL Server 2016 SP2 及之后版本。旧 NestJS 骨架已删除，`apps/api/FlowPilot.sln` 已具备健康检查、数据库初始化、内置数据 Seed、超级管理员登录/会话、组织目录读取、用户与角色完整维护、流程权限组管理、任务中心与流程实例列表，以及流程定义读取、创建、V1 分区保存和重新校验切片；其余业务 API 仍需逐个实现，当前不能代替浏览器 Mock 运行完整流程。
+正式后端使用 .NET 10 / ASP.NET Core 10 Controller Web API、EF Core 10 和 SQL Server 2016 SP2 及之后版本。旧 NestJS 骨架已删除，`apps/api/FlowPilot.slnx` 已具备健康检查、数据库初始化、内置数据 Seed、超级管理员登录/会话、用户、角色、部门、职务与流程权限组维护、任务中心与流程实例列表，以及流程定义读取、创建、V1 分区保存和重新校验切片；其余业务 API 仍需逐个实现，当前不能代替浏览器 Mock 运行完整流程。
 
 - [统一需求](REQUIREMENTS.md)
 - [Mock REST API 使用说明](document/MOCK_REST_API.md)
@@ -60,7 +60,7 @@ pnpm backend:check
 
 未部署调试时，将 `apps/api/config/appsettings.Development.local.example.json` 复制为同目录的 `appsettings.Development.local.json`，填写两个连接字符串、排序规则和首次超级管理员密码，再依次执行 `pnpm db:init`、`pnpm db:seed`、`pnpm db:verify`。该文件被 Git 忽略并由 API 与数据库工具共同读取；API 不会在启动时自动修改数据库。完整步骤见 [后端 README](apps/api/README.md)。
 
-完成初始化和 Seed 后，`/health/ready` 可验证数据库结构与种子版本；当前支持 `superadmin` 登录、会话恢复和注销，用户与角色的列表、详情、创建、编辑、启停和受引用保护的删除，用户密码重置、角色权限矩阵和角色变更影响预览，以及流程权限组完整维护。也可读取任务中心、“我的发起”和流程定义，创建定义、保存 V1 的基本信息/表单/流程图并重新校验。域登录、部门/职务写操作、流程发布及实例业务写入尚未实现。
+完成初始化和 Seed 后，`/health/ready` 可验证数据库结构与种子版本；当前支持 `superadmin` 登录、会话恢复和注销，用户、角色、部门、职务与流程权限组的完整维护，包含 ETag、幂等创建、审计与引用保护，也支持用户密码重置、角色权限矩阵和角色变更影响预览。还可读取任务中心、“我的发起”和流程定义，创建定义、保存 V1 的基本信息/表单/流程图并重新校验。域登录、流程发布及实例业务写入尚未实现。
 
 ## 测试
 

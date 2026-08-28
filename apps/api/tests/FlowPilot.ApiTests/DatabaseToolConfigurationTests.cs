@@ -52,7 +52,7 @@ public sealed class DatabaseToolConfigurationTests
         var apiRoot = CreateTemporaryApiRoot();
         try
         {
-            File.WriteAllText(Path.Combine(apiRoot, "FlowPilot.sln"), string.Empty);
+            File.WriteAllText(Path.Combine(apiRoot, "FlowPilot.slnx"), string.Empty);
             File.WriteAllText(
                 Path.Combine(apiRoot, "src", "FlowPilot.Api", "appsettings.json"),
                 "{}");
@@ -79,7 +79,7 @@ public sealed class DatabaseToolConfigurationTests
         var apiRoot = CreateTemporaryApiRoot();
         try
         {
-            File.WriteAllText(Path.Combine(apiRoot, "FlowPilot.sln"), string.Empty);
+            File.WriteAllText(Path.Combine(apiRoot, "FlowPilot.slnx"), string.Empty);
             File.WriteAllText(
                 Path.Combine(apiRoot, "src", "FlowPilot.Api", "appsettings.json"),
                 "{}");

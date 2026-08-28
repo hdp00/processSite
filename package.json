@@ -5,7 +5,7 @@
   "packageManager": "pnpm@11.1.3",
   "scripts": {
     "dev": "pnpm --filter @process-site/web dev",
-    "restore:api": "dotnet restore apps/api/FlowPilot.sln --locked-mode -m:1",
+    "restore:api": "dotnet restore apps/api/FlowPilot.slnx --locked-mode -m:1",
     "build:api:debug": "pnpm restore:api && dotnet build apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug --no-restore -m:1",
     "dev:api": "pnpm build:api:debug && dotnet run --project apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug --no-build --no-restore",
     "build:dbtool": "pnpm restore:api && dotnet build apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-restore -m:1",
@@ -14,12 +14,12 @@
     "db:verify": "pnpm build:dbtool && dotnet run --project apps/api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Release --no-build --no-restore --no-launch-profile -- verify",
     "dev:remote": "pnpm --filter @process-site/web dev:remote",
     "preview": "pnpm --filter @process-site/web preview",
-    "build": "pnpm --filter @process-site/api-contract build && pnpm restore:api && dotnet build apps/api/FlowPilot.sln -c Release --no-restore -m:1 && pnpm --filter @process-site/web build",
-    "build:api": "pnpm restore:api && dotnet build apps/api/FlowPilot.sln -c Release --no-restore -m:1",
+    "build": "pnpm --filter @process-site/api-contract build && pnpm restore:api && dotnet build apps/api/FlowPilot.slnx -c Release --no-restore -m:1 && pnpm --filter @process-site/web build",
+    "build:api": "pnpm restore:api && dotnet build apps/api/FlowPilot.slnx -c Release --no-restore -m:1",
     "publish:api": "dotnet publish apps/api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Release -r win-x64 --self-contained false -m:1 -p:RestoreLockedMode=true --output apps/api/artifacts/publish",
     "build:web": "pnpm --filter @process-site/web build",
     "build:web_mock": "pnpm --filter @process-site/web build:debug",
-    "typecheck": "pnpm --filter @process-site/api-contract build && pnpm restore:api && dotnet build apps/api/FlowPilot.sln -c Release --no-restore -m:1 && pnpm --filter @process-site/web typecheck",
+    "typecheck": "pnpm --filter @process-site/api-contract build && pnpm restore:api && dotnet build apps/api/FlowPilot.slnx -c Release --no-restore -m:1 && pnpm --filter @process-site/web typecheck",
     "typecheck:api": "pnpm build:api",
     "typecheck:web": "pnpm --filter @process-site/web typecheck",
     "test": "pnpm --filter @process-site/api-contract build && pnpm test:api && pnpm --filter @process-site/web test",
@@ -38,6 +38,6 @@
     "contract:lint": "pnpm --filter @process-site/api-contract lint:openapi",
     "contract:generate": "pnpm --filter @process-site/api-contract generate",
     "contract:check": "pnpm --filter @process-site/api-contract check",
-    "backend:check": "pnpm contract:check && pnpm restore:api && dotnet build apps/api/FlowPilot.sln -c Release --no-restore -m:1 && dotnet run --project apps/api/tests/FlowPilot.UnitTests/FlowPilot.UnitTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1 && dotnet run --project apps/api/tests/FlowPilot.ApiTests/FlowPilot.ApiTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1 && pnpm test:api:sql:required"
+    "backend:check": "pnpm contract:check && pnpm restore:api && dotnet build apps/api/FlowPilot.slnx -c Release --no-restore -m:1 && dotnet run --project apps/api/tests/FlowPilot.UnitTests/FlowPilot.UnitTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1 && dotnet run --project apps/api/tests/FlowPilot.ApiTests/FlowPilot.ApiTests.csproj -c Release --no-build --no-restore -- --minimum-expected-tests 1 && pnpm test:api:sql:required"
   }
 }

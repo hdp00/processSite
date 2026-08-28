@@ -592,6 +592,146 @@ public sealed class OrganizationController(
             cancellationToken).ConfigureAwait(false));
     }
 
+    [HttpGet("departments/{departmentId:guid}")]
+    [ProducesResponseType<DepartmentDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<DepartmentDto>> GetDepartment(
+        Guid departmentId,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasAnyPermission(session, ReferenceDataReadPermissions.Append("org-department:查看").ToArray()))
+        {
+            return Forbidden("当前账号没有读取部门详情的权限。");
+        }
+
+        var department = await organizationService.GetDepartmentAsync(departmentId, cancellationToken)
+            .ConfigureAwait(false);
+        if (department is null)
+        {
+            return ProblemResponse(
+                StatusCodes.Status404NotFound,
+                "DEPARTMENT_NOT_FOUND",
+                "部门不存在",
+                "未找到指定的部门。");
+        }
+
+        Response.Headers.ETag = new Revision(department.Revision).ToStrongEntityTag();
+        return Ok(department);
+    }
+
+    [HttpPost("departments")]
+    [ProducesResponseType<DepartmentDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<DepartmentDto>> CreateDepartment(
+        [FromBody] UpsertDepartmentRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-department:编辑"))
+        {
+            return Forbidden("当前账号没有创建部门的权限。");
+        }
+
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var idempotencyProblem))
+        {
+            return idempotencyProblem!;
+        }
+
+        var result = await organizationService.CreateDepartmentAsync(
+            request,
+            CreateActor(session),
+            idempotencyKey,
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+        var value = result.Value!.Data;
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        return Created($"/departments/{value.Id:D}", value);
+    }
+
+    [HttpPatch("departments/{departmentId:guid}")]
+    [ProducesResponseType<DepartmentDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<DepartmentDto>> UpdateDepartment(
+        Guid departmentId,
+        [FromBody] UpdateDepartmentRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-department:编辑"))
+        {
+            return Forbidden("当前账号没有编辑部门的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        var result = await organizationService.UpdateDepartmentAsync(
+            departmentId,
+            request,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+        var value = result.Value!.Data;
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        return Ok(value);
+    }
+
+    [HttpDelete("departments/{departmentId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<IActionResult> DeleteDepartment(
+        Guid departmentId,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-department:删除"))
+        {
+            return Forbidden("当前账号没有删除部门的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        var result = await organizationService.DeleteDepartmentAsync(
+            departmentId,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        return result.Succeeded ? NoContent() : CommandFailure(result.Failure!);
+    }
+
     [HttpGet("positions")]
     [ProducesResponseType<OrganizationPageDto<PositionDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -620,6 +760,146 @@ public sealed class OrganizationController(
         return Ok(await organizationService.ListPositionsAsync(
             CreatePageQuery(parameters),
             cancellationToken).ConfigureAwait(false));
+    }
+
+    [HttpGet("positions/{positionId:guid}")]
+    [ProducesResponseType<PositionDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PositionDto>> GetPosition(
+        Guid positionId,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasAnyPermission(session, ReferenceDataReadPermissions.Append("org-department:查看").ToArray()))
+        {
+            return Forbidden("当前账号没有读取职务详情的权限。");
+        }
+
+        var position = await organizationService.GetPositionAsync(positionId, cancellationToken)
+            .ConfigureAwait(false);
+        if (position is null)
+        {
+            return ProblemResponse(
+                StatusCodes.Status404NotFound,
+                "POSITION_NOT_FOUND",
+                "职务不存在",
+                "未找到指定的职务。");
+        }
+
+        Response.Headers.ETag = new Revision(position.Revision).ToStrongEntityTag();
+        return Ok(position);
+    }
+
+    [HttpPost("positions")]
+    [ProducesResponseType<PositionDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<PositionDto>> CreatePosition(
+        [FromBody] UpsertPositionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-department:编辑"))
+        {
+            return Forbidden("当前账号没有创建职务的权限。");
+        }
+
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var idempotencyProblem))
+        {
+            return idempotencyProblem!;
+        }
+
+        var result = await organizationService.CreatePositionAsync(
+            request,
+            CreateActor(session),
+            idempotencyKey,
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+        var value = result.Value!.Data;
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        return Created($"/positions/{value.Id:D}", value);
+    }
+
+    [HttpPatch("positions/{positionId:guid}")]
+    [ProducesResponseType<PositionDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<PositionDto>> UpdatePosition(
+        Guid positionId,
+        [FromBody] UpdatePositionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-department:编辑"))
+        {
+            return Forbidden("当前账号没有编辑职务的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        var result = await organizationService.UpdatePositionAsync(
+            positionId,
+            request,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+        var value = result.Value!.Data;
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        return Ok(value);
+    }
+
+    [HttpDelete("positions/{positionId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<IActionResult> DeletePosition(
+        Guid positionId,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, "org-department:删除"))
+        {
+            return Forbidden("当前账号没有删除职务的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        var result = await organizationService.DeletePositionAsync(
+            positionId,
+            expectedRevision,
+            CreateActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        return result.Succeeded ? NoContent() : CommandFailure(result.Failure!);
     }
 
     [HttpGet("workflow-permission-groups")]

@@ -37,6 +37,94 @@ public sealed record PositionDto(
     string Description,
     int UserCount);
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record UpsertDepartmentRequest
+{
+    [Required, StringLength(100, MinimumLength = 1)]
+    public required string Name { get; init; }
+
+    public Guid? ParentId { get; init; }
+
+    public int SortOrder { get; init; }
+
+    [Required]
+    public required string Status { get; init; }
+
+    [StringLength(500)]
+    public string? Description { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record UpdateDepartmentRequest
+{
+    private Guid? _parentId;
+
+    [StringLength(100, MinimumLength = 1)]
+    public string? Name { get; init; }
+
+    public Guid? ParentId
+    {
+        get => _parentId;
+        init
+        {
+            _parentId = value;
+            ParentIdSpecified = true;
+        }
+    }
+
+    [JsonIgnore]
+    public bool ParentIdSpecified { get; private set; }
+
+    public int? SortOrder { get; init; }
+
+    public string? Status { get; init; }
+
+    [StringLength(500)]
+    public string? Description { get; init; }
+
+    [JsonIgnore]
+    public bool HasChanges => Name is not null
+        || ParentIdSpecified
+        || SortOrder is not null
+        || Status is not null
+        || Description is not null;
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record UpsertPositionRequest
+{
+    [Required, StringLength(100, MinimumLength = 1)]
+    public required string Name { get; init; }
+
+    public int SortOrder { get; init; }
+
+    [Required]
+    public required string Status { get; init; }
+
+    [StringLength(500)]
+    public string? Description { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record UpdatePositionRequest
+{
+    [StringLength(100, MinimumLength = 1)]
+    public string? Name { get; init; }
+
+    public int? SortOrder { get; init; }
+
+    public string? Status { get; init; }
+
+    [StringLength(500)]
+    public string? Description { get; init; }
+
+    [JsonIgnore]
+    public bool HasChanges => Name is not null
+        || SortOrder is not null
+        || Status is not null
+        || Description is not null;
+}
+
 public sealed record RoleDto(
     Guid Id,
     int Revision,
@@ -438,8 +526,60 @@ public interface IOrganizationService
         bool includeDisabled,
         CancellationToken cancellationToken = default);
 
+    Task<DepartmentDto?> GetDepartmentAsync(
+        Guid departmentId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<DepartmentDto>> CreateDepartmentAsync(
+        UpsertDepartmentRequest request,
+        WorkflowGroupMutationActor actor,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<DepartmentDto>> UpdateDepartmentAsync(
+        Guid departmentId,
+        UpdateDepartmentRequest request,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<bool>> DeleteDepartmentAsync(
+        Guid departmentId,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
     Task<OrganizationPageDto<PositionDto>> ListPositionsAsync(
         OrganizationPageQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<PositionDto?> GetPositionAsync(
+        Guid positionId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<PositionDto>> CreatePositionAsync(
+        UpsertPositionRequest request,
+        WorkflowGroupMutationActor actor,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<PositionDto>> UpdatePositionAsync(
+        Guid positionId,
+        UpdatePositionRequest request,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<bool>> DeletePositionAsync(
+        Guid positionId,
+        int expectedRevision,
+        WorkflowGroupMutationActor actor,
+        string traceId,
         CancellationToken cancellationToken = default);
 
     Task<OrganizationPageDto<WorkflowPermissionGroupDto>> ListWorkflowGroupsAsync(

@@ -605,7 +605,7 @@ export const flowPilotApi = {
       apiRequest<void>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`, { method: "DELETE", ifMatch }),
   },
   organization: {
-    departments: async (q?: string) => normalizeDepartments(await apiRequest<unknown>("/departments", { query: { q } })),
+    departments: async (q?: string) => normalizeDepartments(await apiRequest<unknown>("/departments", { query: { q, includeDisabled: remoteMode ? true : undefined } })),
     department: async (departmentId: string) => mappedResource(apiResource<unknown>(`/departments/${encodeURIComponent(departmentId)}`), (value) => normalizeDepartments([value])[0]),
     createDepartment: async (input: { name: string; parentId?: string; sortOrder?: number; description?: string }) =>
       normalizeDepartments([await apiRequest<unknown>("/departments", {
@@ -620,7 +620,7 @@ export const flowPilotApi = {
         ifMatch,
       })])[0],
     removeDepartment: (departmentId: string, ifMatch: string) => apiRequest<void>(`/departments/${encodeURIComponent(departmentId)}`, { method: "DELETE", ifMatch }),
-    positions: async () => normalizePositions(await apiRequest<unknown>("/positions")),
+    positions: async () => normalizePositions(await apiRequest<unknown>("/positions", { query: { pageSize: 100 } })),
     position: (positionId: string) => mappedResource(apiResource<unknown>(`/positions/${encodeURIComponent(positionId)}`), (value) => normalizePositions([value])[0]),
     createPosition: async (input: { name: string; description?: string; sortOrder?: number }) =>
       normalizePositions([await apiRequest<unknown>("/positions", {
