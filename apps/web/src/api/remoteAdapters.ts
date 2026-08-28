@@ -643,7 +643,7 @@ export const normalizeProcessInstance = (value: unknown): ProcessInstance => {
     description: text(formValues.description),
     category: text(formValues.category) || undefined,
     formValues,
-    attachmentNames: attachmentItems.map((item) => text(item.name)).filter(Boolean),
+    attachmentNames: attachmentItems.map((item) => text(item.name, text(item.originalName))).filter(Boolean),
     attachmentIds: attachmentItems.map((item) => text(item.id)).filter(Boolean),
     attachmentIdsByField,
     reviewers: reviewProgress.map((item) => ({

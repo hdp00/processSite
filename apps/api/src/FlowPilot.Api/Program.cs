@@ -4,14 +4,18 @@ using System.Text.Json.Serialization;
 using FlowPilot.Api;
 using FlowPilot.Api.Configuration;
 using FlowPilot.Api.Http;
+using FlowPilot.Infrastructure.Attachments;
 using FlowPilot.Infrastructure.Authentication;
 using FlowPilot.Infrastructure.Configuration;
 using FlowPilot.Infrastructure.Deployment;
 using FlowPilot.Infrastructure.Organization;
 using FlowPilot.Infrastructure.Persistence;
 using FlowPilot.Infrastructure.ProcessDefinitions;
+using FlowPilot.Infrastructure.ProcessInstances;
 using FlowPilot.Infrastructure.TaskCenter;
+using FlowPilot.Application.Attachments;
 using FlowPilot.Application.ProcessDefinitions;
+using FlowPilot.Application.ProcessInstances;
 using FlowPilot.Application.Organization;
 using FlowPilot.Application.TaskCenter;
 using Microsoft.AspNetCore.Diagnostics;
@@ -89,11 +93,48 @@ if (deploymentPaths is not null)
     builder.Services.AddSingleton(deploymentPaths);
 }
 
+var apiProjectDirectory = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", ".."));
+var configuredAttachmentRoot = builder.Configuration["FlowPilot:Attachments:RootDirectory"];
+var attachmentRoot = deploymentPaths?.AttachmentsDirectory
+    ?? (!string.IsNullOrWhiteSpace(configuredAttachmentRoot)
+        && Path.IsPathFullyQualified(configuredAttachmentRoot)
+        ? Path.GetFullPath(configuredAttachmentRoot)
+        : Path.GetFullPath(Path.Combine(
+            apiProjectDirectory,
+            string.IsNullOrWhiteSpace(configuredAttachmentRoot)
+                ? ".local-data/Attachments"
+                : configuredAttachmentRoot)));
+var maximumAttachmentSizeMb = builder.Configuration.GetValue<long>(
+    "FlowPilot:Attachments:MaximumFileSizeMb",
+    100);
+if (maximumAttachmentSizeMb is < 1 or > 100)
+{
+    throw new InvalidOperationException("FlowPilot:Attachments:MaximumFileSizeMb must be between 1 and 100.");
+}
+
+var minimumAttachmentFreeSpace = builder.Configuration.GetValue<long>(
+    "FlowPilot:Attachments:MinimumFreeSpaceBytes",
+    2L * 1024 * 1024 * 1024);
+if (minimumAttachmentFreeSpace < 0)
+{
+    throw new InvalidOperationException("FlowPilot:Attachments:MinimumFreeSpaceBytes cannot be negative.");
+}
+
+var attachmentStorageOptions = new AttachmentStorageOptions(
+    attachmentRoot,
+    checked(maximumAttachmentSizeMb * 1024 * 1024),
+    minimumAttachmentFreeSpace);
+builder.Services.AddSingleton(attachmentStorageOptions);
+builder.Services.AddSingleton<AttachmentFileStorage>();
+
 builder.Services.AddFlowPilotPersistence(builder.Configuration);
 builder.Services.AddFlowPilotAuthentication();
+builder.Services.AddScoped<IAttachmentService, SqlServerAttachmentService>();
 builder.Services.AddScoped<IOrganizationService, SqlServerOrganizationService>();
 builder.Services.AddScoped<IProcessDefinitionQueryService, SqlServerProcessDefinitionQueryService>();
 builder.Services.AddScoped<IProcessDefinitionCommandService, SqlServerProcessDefinitionCommandService>();
+builder.Services.AddScoped<IProcessInstanceCommandService, SqlServerProcessInstanceCommandService>();
+builder.Services.AddScoped<IProcessInstanceQueryService, SqlServerProcessInstanceQueryService>();
 builder.Services.AddScoped<ITaskCenterQueryService, SqlServerTaskCenterQueryService>();
 
 var app = builder.Build();

@@ -10,7 +10,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace FlowPilot.Infrastructure.ProcessDefinitions;
 
-public sealed class SqlServerProcessDefinitionQueryService : IProcessDefinitionQueryService
+public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDefinitionQueryService
 {
     private const string EffectiveGroupsCte =
         """
@@ -230,6 +230,7 @@ public sealed class SqlServerProcessDefinitionQueryService : IProcessDefinitionQ
         [pv].[first_published_by] AS [pv_first_published_by_id],
         [pv_first_published_by].[display_name] AS [pv_first_published_by_name],
         [pv].[latest_published_at] AS [pv_latest_published_at],
+        [pv].[change_note] AS [pv_change_note],
         [pv].[unpublished_at] AS [pv_unpublished_at],
         [pv].[unpublished_by] AS [pv_unpublished_by_id],
         [pv_unpublished_by].[display_name] AS [pv_unpublished_by_name],
@@ -277,6 +278,7 @@ public sealed class SqlServerProcessDefinitionQueryService : IProcessDefinitionQ
         [v].[first_published_by] AS [version_first_published_by_id],
         [version_first_published_by].[display_name] AS [version_first_published_by_name],
         [v].[latest_published_at],
+        [v].[change_note],
         [v].[unpublished_at],
         [v].[unpublished_by] AS [version_unpublished_by_id],
         [version_unpublished_by].[display_name] AS [version_unpublished_by_name],
@@ -640,6 +642,7 @@ public sealed class SqlServerProcessDefinitionQueryService : IProcessDefinitionQ
         GetNullableDateTime(reader, "pv_first_published_at"),
         ReadNullableUserRef(reader, "pv_first_published_by_id", "pv_first_published_by_name"),
         GetNullableDateTime(reader, "pv_latest_published_at"),
+        GetNullableString(reader, "pv_change_note"),
         GetNullableDateTime(reader, "pv_unpublished_at"),
         ReadNullableUserRef(reader, "pv_unpublished_by_id", "pv_unpublished_by_name"),
         GetNullableString(reader, "pv_unpublished_reason"));
@@ -668,6 +671,7 @@ public sealed class SqlServerProcessDefinitionQueryService : IProcessDefinitionQ
             "version_first_published_by_id",
             "version_first_published_by_name"),
         GetNullableDateTime(reader, "latest_published_at"),
+        GetNullableString(reader, "change_note"),
         GetNullableDateTime(reader, "unpublished_at"),
         ReadNullableUserRef(reader, "version_unpublished_by_id", "version_unpublished_by_name"),
         GetNullableString(reader, "unpublished_reason"));
@@ -873,6 +877,7 @@ public sealed class SqlServerProcessDefinitionQueryService : IProcessDefinitionQ
         DateTime? FirstPublishedAt,
         ProcessDefinitionUserRefDto? FirstPublishedBy,
         DateTime? LatestPublishedAt,
+        string? ChangeNote,
         DateTime? UnpublishedAt,
         ProcessDefinitionUserRefDto? UnpublishedBy,
         string? UnpublishedReason)
@@ -900,6 +905,7 @@ public sealed class SqlServerProcessDefinitionQueryService : IProcessDefinitionQ
             FirstPublishedAt = FirstPublishedAt.HasValue ? AsUtc(FirstPublishedAt.Value) : null,
             FirstPublishedBy = FirstPublishedBy,
             PublishedAt = LatestPublishedAt.HasValue ? AsUtc(LatestPublishedAt.Value) : null,
+            ChangeNote = ChangeNote,
             LastUnpublishedAt = UnpublishedAt.HasValue ? AsUtc(UnpublishedAt.Value) : null,
             LastUnpublishedBy = UnpublishedBy,
             LastUnpublishReason = UnpublishedReason,
@@ -929,6 +935,7 @@ public sealed class SqlServerProcessDefinitionQueryService : IProcessDefinitionQ
                 FirstPublishedAt = summary.FirstPublishedAt,
                 FirstPublishedBy = summary.FirstPublishedBy,
                 PublishedAt = summary.PublishedAt,
+                ChangeNote = summary.ChangeNote,
                 LastUnpublishedAt = summary.LastUnpublishedAt,
                 LastUnpublishedBy = summary.LastUnpublishedBy,
                 LastUnpublishReason = summary.LastUnpublishReason,

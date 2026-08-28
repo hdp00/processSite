@@ -9,6 +9,7 @@ test-results
 **/obj/
 **/TestResults/
 apps/api/artifacts/
+apps/api/.local-data/
 *.user
 *.suo
 .env

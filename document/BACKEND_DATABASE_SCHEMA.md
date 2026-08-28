@@ -88,6 +88,7 @@
 - `basic_json nvarchar(max)`、`snapshot_json nvarchar(max)`。
 - `validation_status`、`validation_json nvarchar(max)`、`validated_at`。
 - `instance_count`、`revision`。
+- `change_note nvarchar(1000) null` 保存该版本最近一次发布说明。
 - 创建、更新、首次发布、最近发布和取消发布的操作者、时间与原因。
 
 约束与索引：
@@ -173,7 +174,7 @@
 
 ### 4.6 `flowpilot.number_counters`
 
-按 `(prefix, year_month)` 唯一，保存 `next_value` 和 revision。编号分配在实例创建事务内使用 `SERIALIZABLE` 或 `UPDLOCK/HOLDLOCK`，成功提交后才消耗号码；同一幂等请求重放不得再次分配。
+按 `(prefix, year_month)` 唯一，`prefix` 与流程配置一致为 `nvarchar(30)`，保存 `next_value` 和 revision。编号分配在实例创建事务内使用 `SERIALIZABLE` 和 `UPDLOCK/HOLDLOCK`，成功提交后才消耗号码；同一幂等请求重放不得再次分配。
 
 ## 5. 附件
 

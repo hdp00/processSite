@@ -18,6 +18,7 @@ public sealed class ProcessDefinitionsController(
     private const string DefinitionPublishPermission = "config-definition:发布";
     private const string FormEditPermission = "config-form:编辑";
     private const string ProcessLaunchViewPermission = "work-launch:查看";
+    private const string ProcessLaunchPermission = "work-launch:发起";
     private const string ProcessListViewPermission = "work-list:查看";
     private const string TaskViewPermission = "work-task:查看";
     private const string ProcessMonitorPermission = "system-monitor:查看";
@@ -114,6 +115,30 @@ public sealed class ProcessDefinitionsController(
         return Created(location, value.Response);
     }
 
+    [HttpGet("me/launchable-process-definitions")]
+    [ProducesResponseType<IReadOnlyList<LaunchableProcessDefinitionDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<IReadOnlyList<LaunchableProcessDefinitionDto>>> ListLaunchable(
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return AuthenticationRequired();
+        }
+
+        if (!HasPermission(session, ProcessLaunchViewPermission))
+        {
+            return Forbidden("当前账号没有查看流程发起中心的权限。");
+        }
+
+        var items = await queryService.ListLaunchableAsync(
+            new ProcessDefinitionActor(session.User.Id, session.SuperAdmin, false),
+            cancellationToken).ConfigureAwait(false);
+        return Ok(items);
+    }
+
     [HttpGet("me/visible-process-definitions")]
     [ProducesResponseType<ProcessDefinitionPageDto<VisibleProcessDefinitionDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
@@ -177,6 +202,57 @@ public sealed class ProcessDefinitionsController(
 
         Response.Headers.ETag = new Revision(definition.Revision).ToStrongEntityTag();
         return Ok(definition);
+    }
+
+    [HttpGet("process-definitions/{definitionId:guid}/launch-config")]
+    [ProducesResponseType<ProcessLaunchConfigDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ProcessLaunchConfigDto>> GetLaunchConfig(
+        Guid definitionId,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return AuthenticationRequired();
+        }
+
+        if (!HasPermission(session, ProcessLaunchPermission))
+        {
+            return Forbidden("当前账号没有发起流程的权限。");
+        }
+
+        var result = await queryService.GetLaunchConfigAsync(
+            definitionId,
+            new ProcessDefinitionActor(session.User.Id, session.SuperAdmin, false),
+            cancellationToken).ConfigureAwait(false);
+        if (result.Config is not null)
+        {
+            Response.Headers.ETag = new Revision(result.Config.Version.Revision).ToStrongEntityTag();
+            return Ok(result.Config);
+        }
+
+        return result.Error switch
+        {
+            ProcessLaunchConfigError.NotFound => NotFoundProblem(
+                "DEFINITION_NOT_FOUND",
+                "流程定义不存在",
+                "未找到指定的流程定义。"),
+            ProcessLaunchConfigError.Forbidden => ProblemResponse(
+                StatusCodes.Status403Forbidden,
+                "LAUNCH_FORBIDDEN",
+                "无权发起该流程",
+                "当前用户不属于该流程的发起权限组。"),
+            ProcessLaunchConfigError.NotLaunchable => ProblemResponse(
+                StatusCodes.Status409Conflict,
+                "DEFINITION_NOT_LAUNCHABLE",
+                "流程暂不可发起",
+                "流程未发布、已经停用，或发布版本的外部依赖当前不可用。"),
+            _ => throw new InvalidOperationException("Process launch query returned no result."),
+        };
     }
 
     [HttpGet("process-definitions/{definitionId:guid}/versions")]
@@ -431,6 +507,134 @@ public sealed class ProcessDefinitionsController(
             ?? throw new InvalidOperationException("Process validation command returned no result.");
         Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
         return Ok(value.Validation);
+    }
+
+    [HttpPost("process-definitions/{definitionId:guid}/versions/{versionId:guid}/publish")]
+    [ProducesResponseType<PublishProcessVersionResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<PublishProcessVersionResponseDto>> Publish(
+        Guid definitionId,
+        Guid versionId,
+        [FromBody] PublishProcessVersionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return AuthenticationRequired();
+        }
+
+        if (!HasPermission(session, DefinitionPublishPermission))
+        {
+            return Forbidden("当前账号没有发布流程版本的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var idempotencyProblem))
+        {
+            return idempotencyProblem!;
+        }
+
+        var result = await commandService.PublishAsync(
+            definitionId,
+            versionId,
+            request,
+            expectedRevision,
+            CreateMutationActor(session),
+            idempotencyKey,
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            return CommandFailure(result.Failure!);
+        }
+
+        var value = result.Value
+            ?? throw new InvalidOperationException("Process publish command returned no result.");
+        var definition = await queryService.GetAsync(definitionId, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Published process definition could not be reloaded.");
+        var version = await queryService.GetVersionAsync(definitionId, versionId, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Published process version could not be reloaded.");
+
+        Response.Headers.ETag = new Revision(value.DefinitionRevision).ToStrongEntityTag();
+        return Ok(new PublishProcessVersionResponseDto(
+            definition,
+            version,
+            value.PreviousPublishedVersionId));
+    }
+
+    [HttpPost("process-definitions/{definitionId:guid}/versions/{versionId:guid}/unpublish")]
+    [ProducesResponseType<ProcessDefinitionDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<ProcessDefinitionDto>> Unpublish(
+        Guid definitionId,
+        Guid versionId,
+        [FromBody] UnpublishProcessVersionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return AuthenticationRequired();
+        }
+
+        if (!HasPermission(session, DefinitionPublishPermission))
+        {
+            return Forbidden("当前账号没有取消发布流程版本的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var idempotencyProblem))
+        {
+            return idempotencyProblem!;
+        }
+
+        var result = await commandService.UnpublishAsync(
+            definitionId,
+            versionId,
+            request,
+            expectedRevision,
+            CreateMutationActor(session),
+            idempotencyKey,
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            return CommandFailure(result.Failure!);
+        }
+
+        var value = result.Value
+            ?? throw new InvalidOperationException("Process unpublish command returned no result.");
+        var definition = await queryService.GetAsync(definitionId, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Unpublished process definition could not be reloaded.");
+
+        Response.Headers.ETag = new Revision(value.DefinitionRevision).ToStrongEntityTag();
+        return Ok(definition);
     }
 
     private async Task<ActionResult<SaveProcessVersionResponseDto>> SavedVersionResponseAsync(

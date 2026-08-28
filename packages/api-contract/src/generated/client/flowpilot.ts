@@ -3835,7 +3835,7 @@ const validateProcessVersion = (
 
 /**
  * 事务内重新校验目标快照、当前指针和外部依赖，再以一次条件更新替换
- * publishedVersionId，并同步定义名称、菜单名称、审计和 Outbox。
+ * publishedVersionId，并同步定义名称、菜单名称和审计。
  * @summary 首次发布或原子切换当前发布版本
  */
 const publishProcessVersion = (

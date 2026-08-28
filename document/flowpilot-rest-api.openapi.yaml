@@ -1782,7 +1782,7 @@ paths:
       summary: 首次发布或原子切换当前发布版本
       description: |
         事务内重新校验目标快照、当前指针和外部依赖，再以一次条件更新替换
-        publishedVersionId，并同步定义名称、菜单名称、审计和 Outbox。
+        publishedVersionId，并同步定义名称、菜单名称和审计。
       parameters:
         - $ref: "#/components/parameters/DefinitionId"
         - $ref: "#/components/parameters/VersionId"
@@ -1804,6 +1804,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PublishProcessVersionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1846,6 +1848,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProcessDefinitionDto"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1856,6 +1860,8 @@ paths:
           $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
         "428":
           $ref: "#/components/responses/PreconditionRequired"
 

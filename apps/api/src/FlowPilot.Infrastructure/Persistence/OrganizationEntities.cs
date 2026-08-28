@@ -35,10 +35,12 @@ internal sealed class PositionEntity
     public Guid? UpdatedBy { get; set; }
 }
 
-// 组织模块只需要用这几个字段判断部门或职务是否仍被用户引用。
+// 组织和流程运行时共用这份轻量用户投影，避免为同一张表重复建模。
 internal sealed class OrganizationUserReference
 {
     public Guid Id { get; set; }
     public Guid? DepartmentId { get; set; }
     public Guid? PositionId { get; set; }
+    public string DisplayName { get; set; } = string.Empty;
+    public bool IsEnabled { get; set; }
 }

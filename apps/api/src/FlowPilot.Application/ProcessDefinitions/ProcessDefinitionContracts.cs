@@ -51,6 +51,9 @@ public record ProcessVersionSummaryDto
 
     public required string Checksum { get; init; }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ChangeNote { get; init; }
+
     public required DateTimeOffset CreatedAt { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -167,6 +170,37 @@ public sealed record VisibleProcessDefinitionDto
     public required IReadOnlyList<VisibleProcessVersionDto> Versions { get; init; }
 }
 
+public sealed record ProcessDefinitionGroupRefDto(
+    Guid Id,
+    string Name);
+
+public sealed record LaunchableProcessDefinitionDto(
+    Guid DefinitionId,
+    string Code,
+    string Name,
+    string Type,
+    Guid VersionId,
+    string VersionLabel,
+    string Description,
+    IReadOnlyList<ProcessDefinitionGroupRefDto> StarterGroups);
+
+public sealed record ProcessLaunchConfigDto(
+    ProcessDefinitionDto Definition,
+    ProcessVersionDto Version,
+    IReadOnlyDictionary<string, IReadOnlyList<ProcessDefinitionUserRefDto>> AssigneeCandidatesByNode,
+    IReadOnlyList<ProcessDefinitionUserRefDto> FirstAssigneeCandidates);
+
+public enum ProcessLaunchConfigError
+{
+    NotFound,
+    NotLaunchable,
+    Forbidden,
+}
+
+public sealed record ProcessLaunchConfigResult(
+    ProcessLaunchConfigDto? Config,
+    ProcessLaunchConfigError? Error);
+
 public sealed record ProcessDefinitionActor(
     Guid UserId,
     bool IsSuperAdmin,
@@ -249,6 +283,20 @@ public sealed record SaveFlowDesignerRequest
     public required JsonObject Flow { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record PublishProcessVersionRequest
+{
+    [Required(AllowEmptyStrings = true)]
+    public required string ChangeNote { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record UnpublishProcessVersionRequest
+{
+    [Required(AllowEmptyStrings = true)]
+    public required string Reason { get; init; }
+}
+
 public sealed record CreateProcessDefinitionResponseDto(
     ProcessDefinitionDto Definition,
     ProcessVersionDto Version);
@@ -262,6 +310,12 @@ public sealed record RemovedSnapshotReferenceDto(
 public sealed record SaveProcessVersionResponseDto(
     ProcessVersionDto Version,
     IReadOnlyList<RemovedSnapshotReferenceDto> RemovedReferences);
+
+public sealed record PublishProcessVersionResponseDto(
+    ProcessDefinitionDto Definition,
+    ProcessVersionDto PublishedVersion,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Guid? PreviousPublishedVersionId);
 
 public sealed record ProcessDefinitionMutationActor(
     Guid EffectiveUserId,
@@ -313,8 +367,28 @@ public sealed record ValidateProcessVersionCommandValue(
     int Revision,
     bool Replayed);
 
+public sealed record PublishProcessVersionCommandValue(
+    int DefinitionRevision,
+    int VersionRevision,
+    Guid? PreviousPublishedVersionId,
+    bool Replayed);
+
+public sealed record UnpublishProcessVersionCommandValue(
+    int DefinitionRevision,
+    int VersionRevision,
+    bool Replayed);
+
 public interface IProcessDefinitionQueryService
 {
+    Task<IReadOnlyList<LaunchableProcessDefinitionDto>> ListLaunchableAsync(
+        ProcessDefinitionActor actor,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessLaunchConfigResult> GetLaunchConfigAsync(
+        Guid definitionId,
+        ProcessDefinitionActor actor,
+        CancellationToken cancellationToken = default);
+
     Task<ProcessDefinitionPageDto<ProcessDefinitionDto>> ListAsync(
         ProcessDefinitionPageQuery query,
         CancellationToken cancellationToken = default);
@@ -378,6 +452,26 @@ public interface IProcessDefinitionCommandService
         Guid definitionId,
         Guid versionId,
         int expectedRevision,
+        ProcessDefinitionMutationActor actor,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessDefinitionCommandResult<PublishProcessVersionCommandValue>> PublishAsync(
+        Guid definitionId,
+        Guid versionId,
+        PublishProcessVersionRequest request,
+        int expectedRevision,
+        ProcessDefinitionMutationActor actor,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessDefinitionCommandResult<UnpublishProcessVersionCommandValue>> UnpublishAsync(
+        Guid definitionId,
+        Guid versionId,
+        UnpublishProcessVersionRequest request,
+        int expectedDefinitionRevision,
         ProcessDefinitionMutationActor actor,
         string idempotencyKey,
         string traceId,
