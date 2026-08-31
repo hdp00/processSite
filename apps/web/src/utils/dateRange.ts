@@ -12,6 +12,8 @@ export const normalizeDayRange = (range: RequiredDateRange): RequiredDateRange =
   range[1].endOf("day"),
 ];
 
+export const formatDateOnlyQuery = (value: Dayjs) => value.format("YYYY-MM-DD");
+
 export const isDateTimeInRange = (value: string, range: RequiredDateRange) => {
   const parsed = dayjs(value);
   if (!parsed.isValid()) return false;

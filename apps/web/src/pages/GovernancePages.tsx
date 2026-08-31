@@ -80,7 +80,7 @@ import {
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { readLocalAuditEvents } from "../utils/localAuditRepository";
-import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
+import { createDefaultDateRange, formatDateOnlyQuery, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
 import { compareDomainTimestamps, formatDisplayDateTime } from "../utils/domainTime";
 import { collectRuntimeAuditEvents } from "../utils/runtimeAudit";
 import { isBrowserMockMode } from "../utils/runtimeMode";
@@ -299,6 +299,9 @@ export function UserManagementPage() {
   const roleOptions = roles.map((role) => role.name);
   const assignableRoleOptions = roles.filter((role) => !role.builtIn && role.status === "启用").map((role) => role.name);
   const managerTitleName = jobTitles.find((item) => item.id === "JOB-001")?.name;
+  const defaultJobTitleName = jobTitles.find((item) => item.name === "员工" && item.status === "启用")?.name;
+  const positionFilterId = jobTitles.find((item) => item.name === filters.jobTitle)?.id;
+  const roleFilterId = roles.find((item) => item.name === filters.role)?.id;
   const drawerJobTitle = drawerUser !== "new" ? drawerUser?.jobTitle : undefined;
   const selectableJobTitles = jobTitles
     .filter((item) => item.status === "启用" || item.name === drawerJobTitle)
@@ -308,15 +311,13 @@ export function UserManagementPage() {
     if (isBrowserMockMode) return;
     let cancelled = false;
     setRemoteLoading(true);
-    const positionId = jobTitles.find((item) => item.name === filters.jobTitle)?.id;
-    const roleId = roles.find((item) => item.name === filters.role)?.id;
     void flowPilotApi.directory.users({
       page,
       pageSize,
       q: filters.keyword || undefined,
       departmentId: filters.department.at(-1),
-      positionId,
-      roleId,
+      positionId: positionFilterId,
+      roleId: roleFilterId,
       status: filters.status === "启用" || filters.status === "停用" ? filters.status : undefined,
     }).then((result) => {
       if (cancelled) return;
@@ -334,7 +335,7 @@ export function UserManagementPage() {
       if (!cancelled) setRemoteLoading(false);
     });
     return () => { cancelled = true; };
-  }, [filters, jobTitles, page, pageSize, roles, setUsers]);
+  }, [filters, page, pageSize, positionFilterId, roleFilterId, setUsers]);
 
   const filtered = useMemo(() => (isBrowserMockMode ? users : remoteRows).filter((user) => {
     if (!isBrowserMockMode) return true;
@@ -358,7 +359,7 @@ export function UserManagementPage() {
     setEditorDirty(false);
     form.resetFields();
     form.setFieldsValue(user === "new" ? {
-      account: "", email: "", name: "", authenticationMode: "domain", password: "", newPassword: "", department: [], jobTitle: undefined, roles: [], status: true,
+      account: "", email: "", name: "", authenticationMode: "domain", password: "", newPassword: "", department: [], jobTitle: defaultJobTitleName, roles: [], status: true,
     } : { ...user, newPassword: "" });
     if (user !== "new") {
       void flowPilotApi.directory.userResource(user.id).then((resource) => setEditorEtag(resource.etag)).catch(() => message.error("用户最新版本加载失败，请刷新后重试"));
@@ -1512,8 +1513,8 @@ export function AuditLogPage() {
       q: appliedFilters.keyword.trim() || undefined,
       category: appliedFilters.module ? categoryByModule[appliedFilters.module] : undefined,
       result: appliedFilters.result === "成功" ? "success" : appliedFilters.result === "失败" ? "failure" : undefined,
-      dateFrom: normalizedRange[0].toISOString(),
-      dateTo: normalizedRange[1].toISOString(),
+      dateFrom: formatDateOnlyQuery(normalizedRange[0]),
+      dateTo: formatDateOnlyQuery(normalizedRange[1]),
     }).then((response) => {
       if (!cancelled) {
         setRemoteAuditEvents(response.items);

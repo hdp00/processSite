@@ -34,3 +34,13 @@ test("超级管理员可遍历全部主要路由且页面正常加载", async ({
     });
   }
 });
+
+test("新增用户默认选择员工职务", async ({ page }) => {
+  test.skip(!isMockTarget, "该用例只校验本地演示目录中的默认职务。");
+  await loginAs(page, "superadmin");
+  await gotoApp(page, "admin/users");
+
+  await page.getByRole("button", { name: "新增用户" }).click();
+
+  await expect(page.getByRole("dialog", { name: "新增用户" }).getByText("员工", { exact: true })).toBeVisible();
+});
