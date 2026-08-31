@@ -75,6 +75,9 @@ public sealed partial class SqlServerProcessInstanceCommandService
             var version = await _dbContext.RuntimeWorkflowVersions
                 .SingleAsync(item => item.Id == instance.VersionId, cancellationToken)
                 .ConfigureAwait(false);
+            var definition = await _dbContext.RuntimeWorkflowDefinitions
+                .SingleAsync(item => item.Id == instance.DefinitionId, cancellationToken)
+                .ConfigureAwait(false);
             if (!TryParseVersion(version, out var basic, out var snapshot))
             {
                 return await RollbackDecisionFailureAsync(
@@ -214,6 +217,15 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 .ConfigureAwait(false);
 
             AddTaskDecisionFacts(instance, pendingTask, node, snapshot!, revisedFieldIds, actor, traceId, now);
+            var activatedTaskIds = transition.ActivatedTaskIds.ToHashSet();
+            await _emailOutboxWriter.EnqueueAsync(
+                instance,
+                definition,
+                version,
+                snapshot!,
+                roundTasks.Where(task => activatedTaskIds.Contains(task.Id)).ToArray(),
+                now,
+                cancellationToken).ConfigureAwait(false);
             var value = new TaskDecisionCommandValue(
                 instance.Id,
                 pendingTask.Id,

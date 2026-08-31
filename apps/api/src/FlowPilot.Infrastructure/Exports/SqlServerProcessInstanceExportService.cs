@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq.Expressions;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -43,6 +44,10 @@ public sealed partial class SqlServerProcessInstanceExportService(
         {
             return new(null, ProcessInstanceExportError.NoColumns);
         }
+        var fieldCatalog = await _dbContext.RuntimeVersionFields.AsNoTracking()
+            .Where(item => item.VersionId == publishedVersionId && item.TableFieldId == null)
+            .ToDictionaryAsync(item => item.FieldId, StringComparer.Ordinal, cancellationToken)
+            .ConfigureAwait(false);
 
         var dateFrom = filter.DateFrom.ToDateTime(TimeOnly.MinValue);
         var dateToExclusive = filter.DateTo.AddDays(1).ToDateTime(TimeOnly.MinValue);
@@ -53,20 +58,27 @@ public sealed partial class SqlServerProcessInstanceExportService(
         if (!string.IsNullOrWhiteSpace(filter.Status)) source = source.Where(item => item.Status == filter.Status);
         if (filter.InitiatorId.HasValue) source = source.Where(item => item.InitiatorUserId == filter.InitiatorId);
 
-        var instances = await source.ToArrayAsync(cancellationToken).ConfigureAwait(false);
-        var visible = await ApplyVisibilityAsync(instances, actor, cancellationToken).ConfigureAwait(false);
-        var users = await LoadUsersAsync(visible, cancellationToken).ConfigureAwait(false);
-        var visibleVersionIds = visible.Select(item => item.VersionId).Distinct().ToArray();
+        source = await ApplyVisibilityAsync(source, filter.DefinitionId, actor, cancellationToken).ConfigureAwait(false);
+        source = ApplyTextFilters(source, filter);
+        source = ApplyDynamicFilters(source, filter.DynamicFilters, fieldCatalog);
+        source = ApplySort(source, filter.Sort, fieldCatalog);
+
+        var filteredIds = await source
+            .Select(item => item.Id)
+            .Take(MaximumRows + 1)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (filteredIds.Length == 0) return new(null, ProcessInstanceExportError.EmptyResult);
+        if (filteredIds.Length > MaximumRows) return new(null, ProcessInstanceExportError.RowLimitExceeded);
+
+        var filtered = await source.Take(MaximumRows).ToArrayAsync(cancellationToken).ConfigureAwait(false);
+
+        var users = await LoadUsersAsync(filtered, cancellationToken).ConfigureAwait(false);
+        var visibleVersionIds = filtered.Select(item => item.VersionId).Distinct().ToArray();
         var versionLabels = await _dbContext.RuntimeWorkflowVersions.AsNoTracking()
             .Where(item => visibleVersionIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, item => item.VersionLabel, cancellationToken)
             .ConfigureAwait(false);
-        var filtered = ApplyFilters(visible, users, filter).ToList();
-        ApplySort(filtered, filter.Sort);
-
-        if (filtered.Count == 0) return new(null, ProcessInstanceExportError.EmptyResult);
-        if (filtered.Count > MaximumRows) return new(null, ProcessInstanceExportError.RowLimitExceeded);
-
         var rows = filtered.Select(instance => (IReadOnlyList<object?>)columns
             .Select(column => ReadCell(column, instance, definition, users, versionLabels))
             .ToArray()).ToArray();
@@ -98,23 +110,21 @@ public sealed partial class SqlServerProcessInstanceExportService(
         return new(dataset, null);
     }
 
-    private async Task<IReadOnlyList<WorkflowInstanceEntity>> ApplyVisibilityAsync(
-        WorkflowInstanceEntity[] instances,
+    private async Task<IQueryable<WorkflowInstanceEntity>> ApplyVisibilityAsync(
+        IQueryable<WorkflowInstanceEntity> source,
+        Guid definitionId,
         ProcessInstanceExportActor actor,
         CancellationToken cancellationToken)
     {
-        if (actor.CanViewAllInstances || instances.Length == 0) return instances;
+        if (actor.CanViewAllInstances) return source;
 
-        var instanceIds = instances.Select(item => item.Id).ToArray();
-        var participantIds = await _dbContext.FreeParticipants.AsNoTracking()
-            .Where(item => instanceIds.Contains(item.InstanceId) && item.UserId == actor.UserId)
-            .Select(item => item.InstanceId).ToArrayAsync(cancellationToken).ConfigureAwait(false);
-        var taskIds = await _dbContext.WorkflowTasks.AsNoTracking()
-            .Where(item => instanceIds.Contains(item.InstanceId)
-                && (item.AssigneeId == actor.UserId || item.DefaultAssigneeId == actor.UserId || item.ActualAssigneeId == actor.UserId))
-            .Select(item => item.InstanceId).Distinct().ToArrayAsync(cancellationToken).ConfigureAwait(false);
         var groups = await LoadEffectiveGroupIdsAsync(actor.UserId, cancellationToken).ConfigureAwait(false);
-        var versionIds = instances.Select(item => item.VersionId).Distinct().ToArray();
+        var versions = await _dbContext.RuntimeWorkflowVersions.AsNoTracking()
+            .Where(item => item.DefinitionId == definitionId)
+            .Select(item => new { item.Id, item.BasicJson })
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var versionIds = versions.Select(item => item.Id).ToArray();
         var groupVersions = await _dbContext.RuntimeWorkflowGroupReferences.AsNoTracking()
             .Where(item => versionIds.Contains(item.VersionId) && groups.Contains(item.GroupId)
                 && (item.Purpose == "start" || item.Purpose == "review" || item.Purpose == "close"))
@@ -126,23 +136,27 @@ public sealed partial class SqlServerProcessInstanceExportService(
         var roleVersions = await _dbContext.RuntimeWorkflowRoleReferences.AsNoTracking()
             .Where(item => versionIds.Contains(item.VersionId) && item.Purpose == "visible" && roles.Contains(item.RoleId))
             .Select(item => item.VersionId).Distinct().ToArrayAsync(cancellationToken).ConfigureAwait(false);
-        var basicByVersion = await _dbContext.RuntimeWorkflowVersions.AsNoTracking()
-            .Where(item => versionIds.Contains(item.Id))
-            .ToDictionaryAsync(item => item.Id, item => item.BasicJson, cancellationToken).ConfigureAwait(false);
+        var explicitlyVisibleVersions = versions
+            .Where(item => IsExplicitlyVisible(item.BasicJson, actor.UserId))
+            .Select(item => item.Id);
+        var visibleVersionIds = groupVersions
+            .Concat(roleVersions)
+            .Concat(explicitlyVisibleVersions)
+            .Distinct()
+            .ToArray();
 
-        var participantSet = participantIds.ToHashSet();
-        var taskSet = taskIds.ToHashSet();
-        var groupSet = groupVersions.ToHashSet();
-        var roleSet = roleVersions.ToHashSet();
-        return instances.Where(item =>
+        return source.Where(item =>
             item.InitiatorUserId == actor.UserId
             || item.ActualInitiatorUserId == actor.UserId
             || item.CurrentAssigneeId == actor.UserId
-            || participantSet.Contains(item.Id)
-            || taskSet.Contains(item.Id)
-            || groupSet.Contains(item.VersionId)
-            || roleSet.Contains(item.VersionId)
-            || IsExplicitlyVisible(basicByVersion.GetValueOrDefault(item.VersionId), actor.UserId)).ToArray();
+            || _dbContext.FreeParticipants.Any(participant =>
+                participant.InstanceId == item.Id && participant.UserId == actor.UserId)
+            || _dbContext.WorkflowTasks.Any(task =>
+                task.InstanceId == item.Id
+                && (task.AssigneeId == actor.UserId
+                    || task.DefaultAssigneeId == actor.UserId
+                    || task.ActualAssigneeId == actor.UserId))
+            || visibleVersionIds.Contains(item.VersionId));
     }
 
     private async Task<HashSet<Guid>> LoadEffectiveGroupIdsAsync(Guid userId, CancellationToken cancellationToken)
@@ -176,51 +190,185 @@ public sealed partial class SqlServerProcessInstanceExportService(
             item => new UserSnapshot(item.DisplayName, item.DepartmentId.HasValue ? paths.GetValueOrDefault(item.DepartmentId.Value) : null));
     }
 
-    private static IEnumerable<WorkflowInstanceEntity> ApplyFilters(
-        IEnumerable<WorkflowInstanceEntity> source,
-        IReadOnlyDictionary<Guid, UserSnapshot> users,
+    private IQueryable<WorkflowInstanceEntity> ApplyTextFilters(
+        IQueryable<WorkflowInstanceEntity> source,
         ProcessInstanceExportFilterDto filter)
     {
         var search = filter.Q?.Trim();
         var currentNode = filter.CurrentNode?.Trim();
-        foreach (var instance in source)
+        if (!string.IsNullOrEmpty(search))
         {
-            var initiator = users.GetValueOrDefault(instance.InitiatorUserId)?.Name ?? string.Empty;
-            if (!string.IsNullOrEmpty(search)
-                && !string.Join(' ', instance.InstanceNumber, instance.Title, initiator, instance.CurrentNodeSummary)
-                    .Contains(search, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!string.IsNullOrEmpty(currentNode)
-                && !(instance.CurrentNodeSummary ?? string.Empty).Contains(currentNode, StringComparison.OrdinalIgnoreCase)) continue;
-            var values = ParseObject(instance.FormValuesJson);
-            if (filter.DynamicFilters?.Any(item => !ContainsValue(values[item.Key], item.Value)) == true) continue;
-            yield return instance;
+            source = source.Where(instance =>
+                instance.InstanceNumber.Contains(search)
+                || instance.Title.Contains(search)
+                || (instance.CurrentNodeSummary != null && instance.CurrentNodeSummary.Contains(search))
+                || _dbContext.OrganizationUserReferences.Any(user =>
+                    user.Id == instance.InitiatorUserId && user.DisplayName.Contains(search)));
         }
+
+        return string.IsNullOrEmpty(currentNode)
+            ? source
+            : source.Where(instance => instance.CurrentNodeSummary != null
+                && instance.CurrentNodeSummary.Contains(currentNode));
     }
 
-    private static void ApplySort(List<WorkflowInstanceEntity> rows, IReadOnlyList<ProcessInstanceExportSortDto>? sort)
+    private IQueryable<WorkflowInstanceEntity> ApplyDynamicFilters(
+        IQueryable<WorkflowInstanceEntity> source,
+        IReadOnlyDictionary<string, JsonElement>? filters,
+        Dictionary<string, RuntimeVersionField> fieldCatalog)
     {
-        IOrderedEnumerable<WorkflowInstanceEntity>? ordered = null;
+        foreach (var item in filters ?? new Dictionary<string, JsonElement>())
+        {
+            var text = FilterText(item.Value);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            if (!fieldCatalog.TryGetValue(item.Key, out var field) || !field.IsQueryable)
+            {
+                return source.Where(_ => false);
+            }
+
+            var fieldId = item.Key;
+            if (field.FieldType is "select" or "radio")
+            {
+                source = source.Where(instance => _dbContext.InstanceFieldValues.Any(value =>
+                    value.InstanceId == instance.Id && value.FieldId == fieldId && value.OptionId == text));
+            }
+            else if (field.FieldType == "number")
+            {
+                if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var number))
+                {
+                    return source.Where(_ => false);
+                }
+
+                source = source.Where(instance => _dbContext.InstanceFieldValues.Any(value =>
+                    value.InstanceId == instance.Id && value.FieldId == fieldId && value.NumberValue == number));
+            }
+            else if (field.FieldType is "date" or "datetime")
+            {
+                if (!DateTime.TryParse(
+                    text,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var date))
+                {
+                    return source.Where(_ => false);
+                }
+
+                var end = date.Date.AddDays(1);
+                var start = date.Date;
+                source = source.Where(instance => _dbContext.InstanceFieldValues.Any(value =>
+                    value.InstanceId == instance.Id
+                    && value.FieldId == fieldId
+                    && value.DatetimeValue >= start
+                    && value.DatetimeValue < end));
+            }
+            else if (field.FieldType == "boolean")
+            {
+                if (!bool.TryParse(text, out var boolean))
+                {
+                    return source.Where(_ => false);
+                }
+
+                source = source.Where(instance => _dbContext.InstanceFieldValues.Any(value =>
+                    value.InstanceId == instance.Id && value.FieldId == fieldId && value.BooleanValue == boolean));
+            }
+            else
+            {
+                source = source.Where(instance => _dbContext.InstanceFieldValues.Any(value =>
+                    value.InstanceId == instance.Id
+                    && value.FieldId == fieldId
+                    && value.TextValue != null
+                    && value.TextValue.Contains(text)));
+            }
+        }
+
+        return source;
+    }
+
+    private IQueryable<WorkflowInstanceEntity> ApplySort(
+        IQueryable<WorkflowInstanceEntity> source,
+        IReadOnlyList<ProcessInstanceExportSortDto>? sort,
+        Dictionary<string, RuntimeVersionField> fieldCatalog)
+    {
+        IOrderedQueryable<WorkflowInstanceEntity>? ordered = null;
         foreach (var item in sort ?? [])
         {
-            Func<WorkflowInstanceEntity, object?> selector = item.Field switch
-            {
-                "code" => row => row.InstanceNumber,
-                "status" => row => row.Status,
-                "currentNode" => row => row.CurrentNodeSummary,
-                "createdAt" => row => row.CreatedAt,
-                "updatedAt" => row => row.UpdatedAt,
-                _ when item.Field.StartsWith("form-", StringComparison.Ordinal) => row => ReadScalar(ParseObject(row.FormValuesJson)[item.Field[5..]]),
-                _ => row => row.UpdatedAt,
-            };
             var descending = string.Equals(item.Direction, "desc", StringComparison.OrdinalIgnoreCase);
-            ordered = ordered is null
-                ? descending ? rows.OrderByDescending(selector) : rows.OrderBy(selector)
-                : descending ? ordered.ThenByDescending(selector) : ordered.ThenBy(selector);
+            switch (item.Field)
+            {
+                case "code":
+                    ordered = Order(source, ordered, row => row.InstanceNumber, descending);
+                    break;
+                case "status":
+                    ordered = Order(source, ordered, row => row.Status, descending);
+                    break;
+                case "currentNode":
+                    ordered = Order(source, ordered, row => row.CurrentNodeSummary, descending);
+                    break;
+                case "createdAt":
+                    ordered = Order(source, ordered, row => row.CreatedAt, descending);
+                    break;
+                case "updatedAt":
+                    ordered = Order(source, ordered, row => row.UpdatedAt, descending);
+                    break;
+                default:
+                    ordered = ApplyDynamicSort(source, ordered, item.Field, descending, fieldCatalog);
+                    break;
+            }
         }
-        var result = (ordered ?? rows.OrderByDescending(item => item.UpdatedAt)).ThenByDescending(item => item.Id).ToArray();
-        rows.Clear();
-        rows.AddRange(result);
+
+        return (ordered ?? source.OrderByDescending(item => item.UpdatedAt))
+            .ThenByDescending(item => item.Id);
     }
+
+    private IOrderedQueryable<WorkflowInstanceEntity>? ApplyDynamicSort(
+        IQueryable<WorkflowInstanceEntity> source,
+        IOrderedQueryable<WorkflowInstanceEntity>? ordered,
+        string sortField,
+        bool descending,
+        Dictionary<string, RuntimeVersionField> fieldCatalog)
+    {
+        if (!sortField.StartsWith("form-", StringComparison.Ordinal)
+            || !fieldCatalog.TryGetValue(sortField[5..], out var field))
+        {
+            return ordered;
+        }
+
+        var fieldId = field.FieldId;
+        return field.FieldType switch
+        {
+            "number" => Order(source, ordered, row => _dbContext.InstanceFieldValues
+                .Where(value => value.InstanceId == row.Id && value.FieldId == fieldId)
+                .Select(value => value.NumberValue).FirstOrDefault(), descending),
+            "date" or "datetime" => Order(source, ordered, row => _dbContext.InstanceFieldValues
+                .Where(value => value.InstanceId == row.Id && value.FieldId == fieldId)
+                .Select(value => value.DatetimeValue).FirstOrDefault(), descending),
+            "boolean" => Order(source, ordered, row => _dbContext.InstanceFieldValues
+                .Where(value => value.InstanceId == row.Id && value.FieldId == fieldId)
+                .Select(value => value.BooleanValue).FirstOrDefault(), descending),
+            _ => Order(source, ordered, row => _dbContext.InstanceFieldValues
+                .Where(value => value.InstanceId == row.Id && value.FieldId == fieldId)
+                .Select(value => value.TextValue ?? value.OptionId).FirstOrDefault(), descending),
+        };
+    }
+
+    private static IOrderedQueryable<WorkflowInstanceEntity> Order<TKey>(
+        IQueryable<WorkflowInstanceEntity> source,
+        IOrderedQueryable<WorkflowInstanceEntity>? ordered,
+        Expression<Func<WorkflowInstanceEntity, TKey>> selector,
+        bool descending) => ordered is null
+            ? descending ? source.OrderByDescending(selector) : source.OrderBy(selector)
+            : descending ? ordered.ThenByDescending(selector) : ordered.ThenBy(selector);
+
+    private static string? FilterText(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.Null or JsonValueKind.Undefined => null,
+        JsonValueKind.String => value.GetString()?.Trim(),
+        _ => value.GetRawText().Trim(),
+    };
 
     private static List<ExportColumn> ReadColumns(string snapshotJson)
     {
@@ -274,13 +422,6 @@ public sealed partial class SqlServerProcessInstanceExportService(
         !string.IsNullOrWhiteSpace(basicJson)
         && ParseObject(basicJson)["visibleUserIds"] is JsonArray values
         && values.Any(item => Guid.TryParse(item?.GetValue<string>(), out var id) && id == userId);
-
-    private static bool ContainsValue(JsonNode? actual, JsonElement expected)
-    {
-        if (expected.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return true;
-        var text = expected.ValueKind == JsonValueKind.String ? expected.GetString() : expected.GetRawText();
-        return string.IsNullOrWhiteSpace(text) || (ReadScalar(actual)?.ToString() ?? string.Empty).Contains(text, StringComparison.OrdinalIgnoreCase);
-    }
 
     private static object? ReadScalar(JsonNode? value, IReadOnlyDictionary<string, string>? optionLabels = null)
     {

@@ -241,6 +241,7 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         field.Property(item => item.FieldType).HasColumnName("field_type");
         field.Property(item => item.IsQueryable).HasColumnName("is_queryable");
         field.Property(item => item.IsListed).HasColumnName("is_listed");
+        field.Property(item => item.IsExportable).HasColumnName("is_exportable");
     }
 
     private static void ConfigureInstanceRuntime(ModelBuilder modelBuilder)
@@ -270,7 +271,7 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         instance.Property(item => item.Revision).HasColumnName("revision").IsConcurrencyToken();
 
         var task = modelBuilder.Entity<WorkflowTaskEntity>();
-        task.ToTable("workflow_tasks");
+        task.ToTable("workflow_tasks", table => table.UseSqlOutputClause(false));
         task.HasKey(item => item.Id);
         task.Property(item => item.Id).HasColumnName("id");
         task.Property(item => item.TaskType).HasColumnName("task_type");

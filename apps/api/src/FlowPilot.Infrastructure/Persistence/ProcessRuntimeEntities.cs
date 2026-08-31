@@ -105,6 +105,7 @@ internal sealed class RuntimeVersionField
     public string FieldType { get; set; } = string.Empty;
     public bool IsQueryable { get; set; }
     public bool IsListed { get; set; }
+    public bool IsExportable { get; set; }
 }
 
 internal sealed class WorkflowInstanceEntity

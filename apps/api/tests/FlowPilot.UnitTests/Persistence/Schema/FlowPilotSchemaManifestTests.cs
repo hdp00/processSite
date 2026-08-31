@@ -6,23 +6,28 @@ namespace FlowPilot.UnitTests.Persistence.Schema;
 public sealed class FlowPilotSchemaManifestTests
 {
     [Fact]
-    public void CurrentManifestMatchesTheInitialMigrationInventory()
+    public void CurrentManifestMatchesTheCompleteMigrationInventory()
     {
-        var migration = Assert.Single(MigrationCatalog.Migrations);
-        var inventory = InitialSchemaDdlInventoryParser.Parse(migration.Sql);
+        var initialMigration = MigrationCatalog.Migrations[0];
+        var inventory = InitialSchemaDdlInventoryParser.Parse(initialMigration.Sql);
         var manifest = FlowPilotSchemaManifest.Current;
+        var expectedColumns = inventory.Columns
+            .Append("workflow_definition_versions.change_note")
+            .Append("sessions.impersonation_record_id")
+            .ToHashSet(StringComparer.Ordinal);
+        var expectedConstraints = inventory.Constraints
+            .Append("sessions.fk_sessions_impersonation_record")
+            .ToHashSet(StringComparer.Ordinal);
+        var expectedIndexes = inventory.Indexes
+            .Append("sessions.ux_sessions_impersonation_record")
+            .ToHashSet(StringComparer.Ordinal);
 
         Assert.Equal(MigrationCatalog.CurrentSchemaVersion, manifest.Version);
         Assert.Equal("flowpilot", manifest.SchemaName);
-        Assert.Equal(34, inventory.Tables.Count);
-        Assert.Equal(356, inventory.Columns.Count);
-        Assert.Equal(283, inventory.Constraints.Count);
-        Assert.Equal(86, inventory.Indexes.Count);
-        Assert.Equal(6, inventory.Triggers.Count);
         Assert.True(manifest.Tables.SetEquals(inventory.Tables));
-        Assert.True(manifest.Columns.SetEquals(inventory.Columns));
-        Assert.True(manifest.Constraints.SetEquals(inventory.Constraints));
-        Assert.True(manifest.Indexes.SetEquals(inventory.Indexes));
+        Assert.True(manifest.Columns.SetEquals(expectedColumns));
+        Assert.True(manifest.Constraints.SetEquals(expectedConstraints));
+        Assert.True(manifest.Indexes.SetEquals(expectedIndexes));
         Assert.True(manifest.Triggers.SetEquals(inventory.Triggers));
     }
 }

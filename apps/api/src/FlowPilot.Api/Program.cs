@@ -141,6 +141,7 @@ builder.Services.AddScoped<IProcessDefinitionQueryService, SqlServerProcessDefin
 builder.Services.AddScoped<IProcessDefinitionCommandService, SqlServerProcessDefinitionCommandService>();
 builder.Services.AddScoped<IGovernanceService, SqlServerGovernanceService>();
 builder.Services.AddScoped<IProcessInstanceExportService, SqlServerProcessInstanceExportService>();
+builder.Services.AddScoped<EmailOutboxWriter>();
 builder.Services.AddScoped<IProcessInstanceCommandService, SqlServerProcessInstanceCommandService>();
 builder.Services.AddScoped<IProcessInstanceQueryService, SqlServerProcessInstanceQueryService>();
 builder.Services.AddScoped<ITaskCenterQueryService, SqlServerTaskCenterQueryService>();

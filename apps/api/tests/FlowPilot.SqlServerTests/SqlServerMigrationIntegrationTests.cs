@@ -1,3 +1,4 @@
+using System.Data;
 using FlowPilot.Database.Migrations;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
@@ -10,9 +11,9 @@ public sealed class SqlServerMigrationIntegrationTests
     public async Task EmptyDedicatedDatabaseExecutesMigrationAndRollsBackValidation()
     {
         var configuration = SqlServerTestConfiguration.Load();
-        var connectionString = SqlServerTestConfiguration.RequireOrSkip(
-            configuration.GetConnectionString("FlowPilotMigrationTest"),
-            "ConnectionStrings:FlowPilotMigrationTest");
+        var connectionString = await ResolveMigrationTestConnectionStringAsync(
+            configuration,
+            TestContext.Current.CancellationToken);
         var expectedCollation = SqlServerTestConfiguration.RequireOrSkip(
             configuration["FlowPilot:Database:ExpectedCollation"],
             "FlowPilot:Database:ExpectedCollation");
@@ -31,7 +32,7 @@ public sealed class SqlServerMigrationIntegrationTests
             request,
             TestContext.Current.CancellationToken);
         Assert.Equal(DatabaseMigrationOutcome.Validated, firstResult.Outcome);
-        Assert.Equal(1, firstResult.AppliedMigrationCount);
+        Assert.Equal(MigrationCatalog.Migrations.Count, firstResult.AppliedMigrationCount);
 
         var failingMigration = new SchemaMigration(
             "999999999999",
@@ -54,6 +55,60 @@ public sealed class SqlServerMigrationIntegrationTests
             request,
             TestContext.Current.CancellationToken);
         Assert.Equal(DatabaseMigrationOutcome.Validated, afterFailure.Outcome);
+    }
+
+    private static async Task<string> ResolveMigrationTestConnectionStringAsync(
+        IConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        var configured = configuration.GetConnectionString("FlowPilotMigrationTest");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
+        var runtimeConnectionString = SqlServerTestConfiguration.RequireOrSkip(
+            configuration.GetConnectionString("FlowPilot"),
+            "ConnectionStrings:FlowPilot");
+        var testBuilder = new SqlConnectionStringBuilder(runtimeConnectionString);
+        if (string.IsNullOrWhiteSpace(testBuilder.InitialCatalog)
+            || testBuilder.InitialCatalog.Length > 113)
+        {
+            Assert.Fail("Configure ConnectionStrings:FlowPilotMigrationTest with a dedicated empty test database.");
+        }
+
+        testBuilder.InitialCatalog += "_MigrationTests";
+        var masterBuilder = new SqlConnectionStringBuilder(runtimeConnectionString)
+        {
+            InitialCatalog = "master",
+        };
+        try
+        {
+            await using var connection = new SqlConnection(masterBuilder.ConnectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                IF DB_ID(@databaseName) IS NULL
+                BEGIN
+                    DECLARE @sql nvarchar(max) = N'CREATE DATABASE ' + QUOTENAME(@databaseName);
+                    EXEC sys.sp_executesql @sql;
+                END;
+                """;
+            command.CommandTimeout = 30;
+            command.Parameters.Add(new SqlParameter("@databaseName", SqlDbType.NVarChar, 128)
+            {
+                Value = testBuilder.InitialCatalog,
+            });
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException exception)
+        {
+            Assert.Fail(
+                $"Unable to create the dedicated migration test database. Configure ConnectionStrings:FlowPilotMigrationTest. SQL error {exception.Number}.");
+        }
+
+        return testBuilder.ConnectionString;
     }
 
     private static async Task AssertDedicatedTestDatabaseAsync(

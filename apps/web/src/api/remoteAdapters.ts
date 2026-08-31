@@ -175,7 +175,9 @@ export const normalizeEmailOutboxItem = (value: unknown): EmailOutboxItem => {
   const status = text(value.status);
   return {
     id: text(value.id),
-    kind: text(value.eventType) === "process-completed" ? "process-completed" : "task-activated",
+    kind: ["process-completed", "free-collaboration-closed"].includes(text(value.eventType))
+      ? "process-completed"
+      : "task-activated",
     instanceId: text(value.instanceId),
     taskId: text(value.taskId) || undefined,
     recipientUserId: text(recipient?.id),

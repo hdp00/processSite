@@ -5,6 +5,7 @@ import { assignAttachmentsToFreeReply, getAttachmentRecords } from "../attachmen
 import { findIdentityUser } from "../../state/useIdentityStore";
 import { canUserTransferFreeFlow, isSuperAdminPersona, usePrototypeStore } from "../../state/usePrototypeStore";
 import { canEditProcessInstanceSubmission } from "../../utils/processInstanceAccess";
+import { dispatchWorkflowEmailNotifications } from "./attachmentsNotifications";
 import {
   apiOk,
   apiProblem,
@@ -113,6 +114,7 @@ export const freeFlowHandlers = [
       const updated = instanceById(found.instance.id);
       if (!changed(found.instance, updated)) return apiProblem(request, 403, "TRANSFER_FORBIDDEN", "不能变更受理人", "只有当前有效的发起或受理权限组成员可以变更为其他有效受理人。 ");
       audit(auth.actor.id, auth.actor.name, "transfer", updated!, `将 ${updated!.code} 的受理人变更为 ${assignee.name}`);
+      dispatchWorkflowEmailNotifications(request, updated!.id);
       return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
     });
   }),
@@ -183,6 +185,7 @@ export const freeFlowHandlers = [
       const updated = instanceById(found.instance.id);
       if (!changed(found.instance, updated)) return apiProblem(request, 403, "CLOSE_FORBIDDEN", "不能关闭该事项", "只有关闭流程权限组成员可以关闭。 ");
       audit(auth.actor.id, auth.actor.name, "close", updated!, `关闭自由协作事项 ${updated!.code}`, { reason: body.reason });
+      dispatchWorkflowEmailNotifications(request, updated!.id);
       return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
     });
   }),
@@ -207,6 +210,7 @@ export const freeFlowHandlers = [
       const updated = instanceById(found.instance.id);
       if (!changed(found.instance, updated)) return apiProblem(request, 403, "REOPEN_FORBIDDEN", "不能重新打开该事项", "只有参与人或发起权限组成员可以重新打开。 ");
       audit(auth.actor.id, auth.actor.name, "reopen", updated!, `重新打开自由协作事项 ${updated!.code}`, { reason: body.reason, assigneeId: assignee.id });
+      dispatchWorkflowEmailNotifications(request, updated!.id);
       return apiOk(request, structuredClone(updated!), { headers: { ETag: entityEtag(updated) } });
     });
   }),

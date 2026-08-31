@@ -435,6 +435,18 @@ const deriveOutboxCandidates = (instanceId?: string) => {
     .filter((task) => task.status === "待处理")
     .forEach((task) => {
       const instance = instances.find((item) => item.id === task.instanceId);
+      if (instance?.workflowType === "free" && task.taskType === "free-collaboration") {
+        validRecipients(task.assigneeId ? [task.assigneeId] : []).forEach((recipient) => {
+          candidates.push(makeDelivery(
+            `email:free-collaboration-assigned:${task.id}:${recipient.user.id}`,
+            "task-activated",
+            instance,
+            recipient,
+            { taskId: task.id },
+          ));
+        });
+        return;
+      }
       const version = instance ? resolveLockedVersion(instance) : undefined;
       const node = version?.snapshot.flow.nodes.find((item) => item.id === task.nodeId);
       const notification = node?.data?.emailNotification;
@@ -467,6 +479,23 @@ const deriveOutboxCandidates = (instanceId?: string) => {
             { nodeId: node.id },
           ));
         });
+    });
+  });
+  instances.filter((instance) =>
+    (!instanceId || instance.id === instanceId)
+    && instance.workflowType === "free"
+    && instance.status === "已关闭",
+  ).forEach((instance) => {
+    const closeEntryId = [...(instance.freeTimeline ?? [])].reverse().find((entry) => entry.type === "closed")?.id ?? instance.id;
+    const initiatorId = initiatorIdOf(instance);
+    validRecipients(initiatorId ? [initiatorId] : []).forEach((recipient) => {
+      candidates.push(makeDelivery(
+        `email:free-collaboration-closed:${closeEntryId}:${recipient.user.id}`,
+        "process-completed",
+        instance,
+        recipient,
+        {},
+      ));
     });
   });
   return candidates;

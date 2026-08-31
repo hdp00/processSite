@@ -112,6 +112,10 @@ public sealed partial class SqlServerProcessInstanceCommandService
                     && task.TaskType == "approval")
                 .ToArrayAsync(cancellationToken)
                 .ConfigureAwait(false);
+            var previouslyPendingTaskIds = tasks
+                .Where(task => task.Status == "pending")
+                .Select(task => task.Id)
+                .ToHashSet();
             var runtime = PrepareUpdatedRuntime(
                 lockedSnapshot,
                 form.Values!,
@@ -185,6 +189,14 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 actor,
                 traceId,
                 now);
+            await _emailOutboxWriter.EnqueueAsync(
+                editableInstance,
+                definition,
+                version,
+                lockedSnapshot,
+                tasks.Where(task => task.Status == "pending" && !previouslyPendingTaskIds.Contains(task.Id)).ToArray(),
+                now,
+                cancellationToken).ConfigureAwait(false);
 
             await _dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);

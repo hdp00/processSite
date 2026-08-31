@@ -5,6 +5,7 @@ import {
   normalizeAuditEvent,
   normalizeDomainRole,
   normalizeDirectoryUser,
+  normalizeEmailOutboxItem,
   normalizePageResult,
   normalizeProcessInstance,
   normalizeProcessVersion,
@@ -151,5 +152,27 @@ describe("formal REST response adapters", () => {
       operator: { id: "admin", name: "管理员", departmentPath: "系统" }, result: "success",
       occurredAt: "2026-08-25T08:00:00Z", details: { summary: "确认研发节点" },
     })).toMatchObject({ category: "task", actorId: "user-1", actorName: "张三", actorDepartmentPath: "研发 / 软件", operatorName: "管理员", operatorDepartmentPath: "系统", result: "success", resourceType: "workflow-task", resourceId: "task-1", summary: "确认研发节点" });
+  });
+
+  it("maps free-collaboration mail events to the existing notification categories", () => {
+    const common = {
+      id: "mail-1",
+      instanceId: "instance-1",
+      recipient: { id: "user-1", name: "张三" },
+      recipientEmailSnapshot: "zhangsan@example.test",
+      status: "pending",
+      attemptCount: 0,
+      createdAt: "2026-08-31T08:00:00Z",
+    };
+
+    expect(normalizeEmailOutboxItem({
+      ...common,
+      eventType: "free-collaboration-assigned",
+      taskId: "task-1",
+    })).toMatchObject({ kind: "task-activated", taskId: "task-1" });
+    expect(normalizeEmailOutboxItem({
+      ...common,
+      eventType: "free-collaboration-closed",
+    })).toMatchObject({ kind: "process-completed", taskId: undefined });
   });
 });

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -176,7 +177,7 @@ public sealed partial class SqlServerProcessInstanceCommandService
             .AsNoTracking()
             .Where(item => item.VersionId == instance.VersionId
                 && item.TableFieldId == null
-                && item.IsQueryable)
+                && (item.IsQueryable || item.IsListed || item.IsExportable))
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
         foreach (var field in fields)
@@ -211,6 +212,20 @@ public sealed partial class SqlServerProcessInstanceCommandService
         {
             projection.ValueType = "option";
             projection.OptionId = DisplayValue(value);
+            return projection;
+        }
+
+        if (field.FieldType is "date" or "datetime"
+            && value is JsonValue dateValue
+            && dateValue.TryGetValue<string>(out var dateText)
+            && DateTime.TryParse(
+                dateText,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var date))
+        {
+            projection.ValueType = "datetime";
+            projection.DatetimeValue = date;
             return projection;
         }
 

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FlowPilot.Application.ProcessInstances;
+using FlowPilot.Infrastructure.BackgroundJobs;
 using FlowPilot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,12 +11,14 @@ namespace FlowPilot.Infrastructure.ProcessInstances;
 
 public sealed partial class SqlServerProcessInstanceCommandService(
     FlowPilotDbContext dbContext,
-    TimeProvider timeProvider) : IProcessInstanceCommandService
+    TimeProvider timeProvider,
+    EmailOutboxWriter emailOutboxWriter) : IProcessInstanceCommandService
 {
     private const string CreateRouteScope = "POST /process-instances";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly FlowPilotDbContext _dbContext = dbContext;
     private readonly TimeProvider _timeProvider = timeProvider;
+    private readonly EmailOutboxWriter _emailOutboxWriter = emailOutboxWriter;
 
     public async Task<ProcessInstanceCommandResult<CreateProcessInstanceCommandValue>> CreateAsync(
         CreateProcessInstanceRequest request,
@@ -191,6 +194,14 @@ public sealed partial class SqlServerProcessInstanceCommandService(
             AddRuntimeFacts(instance, runtime.Value, actor, request.CopySourceInstanceId, traceId, now);
             await AddFieldProjectionsAsync(instance, form.Values!, cancellationToken).ConfigureAwait(false);
             AddAttachmentReferences(instanceId, attachments.Value!, actor.EffectiveUserId, now);
+            await _emailOutboxWriter.EnqueueAsync(
+                instance,
+                definition,
+                version,
+                snapshot!,
+                runtime.Value.Tasks,
+                now,
+                cancellationToken).ConfigureAwait(false);
 
             definition.InstanceCount = checked(definition.InstanceCount + 1);
             definition.Revision = checked(definition.Revision + 1);

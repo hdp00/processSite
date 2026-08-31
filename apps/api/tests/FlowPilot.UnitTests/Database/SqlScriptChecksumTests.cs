@@ -30,14 +30,21 @@ public sealed class SqlScriptChecksumTests
     }
 
     [Fact]
-    public void MigrationCatalog_LoadsTheFixedCurrentMigration()
+    public void MigrationCatalog_LoadsTheOrderedChecksummedMigrationChain()
     {
-        var migration = Assert.Single(MigrationCatalog.Migrations);
+        var migrations = MigrationCatalog.Migrations;
 
-        Assert.Equal(MigrationCatalog.CurrentSchemaVersion, migration.Id);
-        Assert.Equal("initial_schema", migration.Name);
-        Assert.Equal(SqlScriptChecksum.ComputeSha256(migration.Sql), migration.Checksum);
-        Assert.DoesNotContain("\nGO\n", migration.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(5, migrations.Count);
+        Assert.Equal("202608260001", migrations[0].Id);
+        Assert.Equal("initial_schema", migrations[0].Name);
+        Assert.Equal(MigrationCatalog.CurrentSchemaVersion, migrations[^1].Id);
+        Assert.Equal("session_impersonation_link", migrations[^1].Name);
+        Assert.Equal(migrations.OrderBy(item => item.Id).Select(item => item.Id), migrations.Select(item => item.Id));
+        Assert.All(migrations, migration =>
+        {
+            Assert.Equal(SqlScriptChecksum.ComputeSha256(migration.Sql), migration.Checksum);
+            Assert.DoesNotContain("\nGO\n", migration.Sql, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Theory]

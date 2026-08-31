@@ -209,6 +209,14 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 actor,
                 traceId,
                 now);
+            await _emailOutboxWriter.EnqueueAsync(
+                rejectedInstance,
+                definition,
+                version,
+                lockedSnapshot,
+                runtime.Value.Tasks,
+                now,
+                cancellationToken).ConfigureAwait(false);
             var value = new ResubmitProcessInstanceCommandValue(
                 rejectedInstance.Id,
                 rejectedInstance.Revision,

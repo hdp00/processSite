@@ -71,7 +71,10 @@ public sealed partial class SqlServerProcessInstanceCommandService
             var version = await _dbContext.RuntimeWorkflowVersions
                 .SingleAsync(item => item.Id == instance.VersionId, cancellationToken)
                 .ConfigureAwait(false);
-            if (!TryParseVersion(version, out var basic, out _))
+            var definition = await _dbContext.RuntimeWorkflowDefinitions
+                .SingleAsync(item => item.Id == instance.DefinitionId, cancellationToken)
+                .ConfigureAwait(false);
+            if (!TryParseVersion(version, out var basic, out var snapshot))
             {
                 await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
                 return CloseFailed(Failure(
@@ -141,6 +144,14 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 requestHash,
                 value,
                 now));
+            await _emailOutboxWriter.EnqueueAsync(
+                instance,
+                definition,
+                version,
+                snapshot!,
+                [currentTask],
+                now,
+                cancellationToken).ConfigureAwait(false);
 
             await _dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);

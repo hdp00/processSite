@@ -6,11 +6,11 @@ namespace FlowPilot.Infrastructure.Persistence.Schema;
 
 public sealed class FlowPilotSchemaManifest
 {
-    public const string CurrentVersion = "202608260001";
+    public const string CurrentVersion = "202608280003";
     public const string FlowPilotSchemaName = "flowpilot";
 
     private const string CurrentResourceSuffix =
-        ".Persistence.Schema.Manifests.202608260001.schema.txt";
+        ".Persistence.Schema.Manifests.202608280003.schema.txt";
 
     private static readonly Lazy<FlowPilotSchemaManifest> CurrentManifest =
         new(LoadCurrent, LazyThreadSafetyMode.ExecutionAndPublication);

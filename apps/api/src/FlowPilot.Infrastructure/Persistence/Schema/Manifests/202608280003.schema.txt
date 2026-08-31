@@ -1,7 +1,7 @@
-# Version-controlled exact object inventory for the initial FlowPilot schema.
+# Version-controlled exact object inventory for the current FlowPilot schema.
 # Keys below are case-sensitive and table-qualified where applicable.
 # Structural signature format: 3.
-version=202608260001
+version=202608280003
 schema=flowpilot
 
 [tables]
