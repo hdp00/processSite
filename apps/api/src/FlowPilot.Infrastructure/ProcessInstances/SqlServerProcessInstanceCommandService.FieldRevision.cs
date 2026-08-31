@@ -393,19 +393,19 @@ public sealed partial class SqlServerProcessInstanceCommandService
         string requestHash,
         ReviseTaskFieldsCommandValue value,
         DateTimeOffset now) => new()
-    {
-        Id = Guid.NewGuid(),
-        ActorId = actorId,
-        RouteScope = TaskFieldRevisionRouteScope,
-        IdempotencyKey = idempotencyKey,
-        RequestHash = requestHash,
-        Status = "completed",
-        FirstHttpStatus = 201,
-        ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
-        CreatedAt = now.UtcDateTime,
-        CompletedAt = now.UtcDateTime,
-        ExpiresAt = now.AddDays(7).UtcDateTime,
-    };
+        {
+            Id = Guid.NewGuid(),
+            ActorId = actorId,
+            RouteScope = TaskFieldRevisionRouteScope,
+            IdempotencyKey = idempotencyKey,
+            RequestHash = requestHash,
+            Status = "completed",
+            FirstHttpStatus = 201,
+            ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
+            CreatedAt = now.UtcDateTime,
+            CompletedAt = now.UtcDateTime,
+            ExpiresAt = now.AddDays(7).UtcDateTime,
+        };
 
     private static ProcessInstanceCommandResult<ReviseTaskFieldsCommandValue> FieldRevisionFailed(
         ProcessInstanceCommandFailure failure) => new(null, failure);

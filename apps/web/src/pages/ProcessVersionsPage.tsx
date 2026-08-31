@@ -55,7 +55,7 @@ function VersionFormSnapshot({ version }: { version: ProcessVersion }) {
       }).join(field.displayCondition.mode === "all" ? " 且 " : " 或 ")}</span></div> : null}
       {field.type === "attachment" ? <div className="pa-snapshot-options"><small>附件规则</small><span>最多 {field.attachment?.maxCount ?? 20} 个，单文件不超过 {field.attachment?.maxSizeMb ?? 100} MB；PDF {field.attachment?.inlinePdf ? "在页面内展示" : "仅提供下载"}{field.attachment?.excelToPdf ? `；xlsx 在浏览器转 PDF，最多 ${field.attachment.maxPreviewPages ?? 1} 页` : ""}</span></div> : null}
       {field.type === "table" ? <VersionTableColumns field={field} /> : null}
-    </article>) : <Alert type="warning" showIcon message="该版本尚未配置初始表单字段" />}
+    </article>) : <Alert type="warning" showIcon title="该版本尚未配置初始表单字段" />}
     <section className="pa-snapshot-list-fields">
       <div className="pa-snapshot-subtitle"><TableOutlined /><strong>系统列表字段</strong></div>
       <div>{version.snapshot.systemFields.map((field) => <span key={field.key}><strong>{field.label}</strong><small>{[field.taskVisible && "任务中心", field.processListVisible && "流程清单", field.exportVisible && "Excel 导出"].filter(Boolean).join("、") || "不展示"}</small></span>)}</div>
@@ -138,8 +138,8 @@ function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type:
           {index < levels.length - 1 && <div className="pa-version-flow-arrow"><ArrowDownOutlined /><small>{level.length > 1 ? "全部通过或确认后继续" : "继续"}</small></div>}
         </div>;
       })}
-    </div> : <Alert type="warning" showIcon message="该版本尚未形成可展示的审批拓扑" />}
-    <Alert type="info" showIcon message={`驳回处理：${rejectionHandlingLabel(version.snapshot.flow.meta?.rejectionHandling)}`} description={version.snapshot.flow.meta?.rejectionHandling === "auto-close" ? "任一节点驳回后流程自动关闭。" : version.snapshot.flow.meta?.rejectionHandling === "resubmit-only" ? "发起方修改后重新提交，所有审批节点重新开始。" : "发起方可修改后重新提交并重新开始全部审批；关闭权限组也可以直接关闭流程。"} />
+    </div> : <Alert type="warning" showIcon title="该版本尚未形成可展示的审批拓扑" />}
+    <Alert type="info" showIcon title={`驳回处理：${rejectionHandlingLabel(version.snapshot.flow.meta?.rejectionHandling)}`} description={version.snapshot.flow.meta?.rejectionHandling === "auto-close" ? "任一节点驳回后流程自动关闭。" : version.snapshot.flow.meta?.rejectionHandling === "resubmit-only" ? "发起方修改后重新提交，所有审批节点重新开始。" : "发起方可修改后重新提交并重新开始全部审批；关闭权限组也可以直接关闭流程。"} />
   </div>;
 }
 
@@ -160,7 +160,7 @@ export function ProcessVersionsPage() {
   const [validatingVersionId, setValidatingVersionId] = useState<string>();
 
   const versions = useMemo(() => definition ? [...definition.versions].sort((a, b) => Number(b.version.slice(1)) - Number(a.version.slice(1))) : [], [definition]);
-  if (!definition) return <Alert type="error" showIcon message="流程定义不存在" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
+  if (!definition) return <Alert type="error" showIcon title="流程定义不存在" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
 
   const edit = (version: ProcessVersion) => navigate(`/admin/processes/${definition.id}/basic?versionId=${version.id}`);
   const copy = async (version: ProcessVersion) => {
@@ -241,8 +241,8 @@ export function ProcessVersionsPage() {
     { title: "版本", dataIndex: "version", width: 92, render: (value: string, record) => <button type="button" className="pa-version-button" onClick={() => setSelected(record)}><span className="pa-version">{value}</span></button> },
     { title: "版本状态", key: "status", width: 130, render: (_, record) => <StatusPill status={getVersionStatus(definition, record.id)} /> },
     { title: "来源版本", dataIndex: "basedOn", width: 110, render: (value?: string) => value ?? "首次创建" },
-    { title: "完整快照", key: "snapshot", width: 190, render: (_, record) => <Space size={6} wrap><Tag bordered={false}>{record.formFieldCount} 个字段</Tag>{definition.type === "approval" && <Tag bordered={false}>{record.nodeCount} 个节点</Tag>}</Space> },
-    { title: "编号前缀", key: "prefix", width: 120, render: (_, record) => record.basic.instancePrefix ? <Tag color="blue" bordered={false}>{record.basic.instancePrefix}</Tag> : "—" },
+    { title: "完整快照", key: "snapshot", width: 190, render: (_, record) => <Space size={6} wrap><Tag variant="filled">{record.formFieldCount} 个字段</Tag>{definition.type === "approval" && <Tag variant="filled">{record.nodeCount} 个节点</Tag>}</Space> },
+    { title: "编号前缀", key: "prefix", width: 120, render: (_, record) => record.basic.instancePrefix ? <Tag color="blue" variant="filled">{record.basic.instancePrefix}</Tag> : "—" },
     { title: "实例数", dataIndex: "instanceCount", width: 88, align: "right" },
     { title: "最近更新", dataIndex: "updatedAt", width: 190, render: (value: string, record) => <span className="pa-two-line-cell"><span>{formatDisplayDateTime(value)}</span><small>{record.updatedBy}</small></span> },
     {
@@ -262,18 +262,18 @@ export function ProcessVersionsPage() {
 
   const published = getPublishedVersion(definition);
   return <div className="page-stack pa-page">
-    <Card className="pa-config-head" bordered={false}>
+    <Card className="pa-config-head" variant="borderless">
       <div className="pa-config-head__main"><AppBackButton onClick={() => navigate("/admin/processes")} /><div><Space size={10} wrap><Typography.Title level={3}>{definition.name}</Typography.Title><StatusPill status={definitionStatus(definition)} /></Space><Typography.Text type="secondary">{definition.code} · 流程定义与版本记录</Typography.Text></div></div>
       <Button icon={<CheckCircleOutlined />} onClick={() => published ? setSelected(published) : message.info("当前没有发布版本")}>查看发布版本</Button>
     </Card>
-    <div className="pa-version-stats"><Card bordered={false}><span className="pa-stat-icon"><HistoryOutlined /></span><span><small>正式版本</small><strong>{versions.length}</strong></span></Card><Card bordered={false}><span className="pa-stat-icon is-green"><RocketOutlined /></span><span><small>当前发布</small><strong>{published?.version ?? "无"}</strong></span></Card><Card bordered={false}><span className="pa-stat-icon is-orange"><SafetyCertificateOutlined /></span><span><small>校验通过</small><strong>{versions.filter((item) => item.validation.status === "通过").length}</strong></span></Card></div>
-    <Alert type="info" showIcon message="流程定义负责入口，版本保存完整配置" description="名称相同的各版本共用一个员工侧菜单。每个版本独立保存基本信息、表单、列表字段、流程图和规则；发布只是把流程定义的发布指针切换到一个校验通过版本。" />
-    <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}><div className="table-result-head pa-table-head"><div><strong>版本记录</strong><Tag bordered={false}>{versions.length} 个</Tag></div><Typography.Text type="secondary">任何版本都可复制新建；已有实例的版本永久只读</Typography.Text></div><Table<ProcessVersion> rowKey="id" columns={columns} dataSource={versions} scroll={{ x: 1210 }} pagination={false} rowClassName={(record) => definition.publishedVersionId === record.id ? "pa-effective-row" : ""} /></Card>
+    <div className="pa-version-stats"><Card variant="borderless"><span className="pa-stat-icon"><HistoryOutlined /></span><span><small>正式版本</small><strong>{versions.length}</strong></span></Card><Card variant="borderless"><span className="pa-stat-icon is-green"><RocketOutlined /></span><span><small>当前发布</small><strong>{published?.version ?? "无"}</strong></span></Card><Card variant="borderless"><span className="pa-stat-icon is-orange"><SafetyCertificateOutlined /></span><span><small>校验通过</small><strong>{versions.filter((item) => item.validation.status === "通过").length}</strong></span></Card></div>
+    <Alert type="info" showIcon title="流程定义负责入口，版本保存完整配置" description="名称相同的各版本共用一个员工侧菜单。每个版本独立保存基本信息、表单、列表字段、流程图和规则；发布只是把流程定义的发布指针切换到一个校验通过版本。" />
+    <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}><div className="table-result-head pa-table-head"><div><strong>版本记录</strong><Tag variant="filled">{versions.length} 个</Tag></div><Typography.Text type="secondary">任何版本都可复制新建；已有实例的版本永久只读</Typography.Text></div><Table<ProcessVersion> rowKey="id" columns={columns} dataSource={versions} scroll={{ x: 1210 }} pagination={false} rowClassName={(record) => definition.publishedVersionId === record.id ? "pa-effective-row" : ""} /></Card>
     <Drawer title={selected ? `${definition.name} · ${selected.version} 完整快照` : "版本详情"} size="large" open={Boolean(selected)} onClose={() => setSelected(undefined)} extra={selected && canEditDefinition && canEditVersion(definition, selected) ? <Button type="primary" icon={<EditOutlined />} onClick={() => edit(selected)}>编辑版本</Button> : null}>
       {selected && <Tabs className="pa-version-snapshot-tabs" defaultActiveKey="overview" items={[
         { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.starterGroups).join("、") || "—", span: 2 }, { key: "closer", label: "关闭权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.closeGroups).join("、") || "—", span: 2 }, ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.assigneeGroups ?? []).join("、") || "—", span: 2 as const }] : []), { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles.map((roleId) => roles.find((role) => role.id === roleId)?.name ?? "已删除角色"), ...selected.basic.visibleUsers.map((userId) => users.find((user) => user.id === userId)?.name ?? "已删除用户")].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${formatDisplayDateTime(selected.updatedAt)} · ${selected.updatedBy}`, span: 2 }]} />
-          <Alert type={selected.validation.status === "通过" ? "success" : "error"} showIcon message={selected.validation.status === "通过" ? "版本校验通过，可以发布" : "版本校验未通过"} description={selected.validation.issues.length ? selected.validation.issues.join("；") : `自动校验于 ${formatDisplayDateTime(selected.validation.checkedAt)} 完成`} />
-          <Timeline items={[{ color: "blue", children: <><strong>创建 {selected.version}</strong><br /><Typography.Text type="secondary">{formatDisplayDateTime(selected.createdAt)} · {selected.createdBy}</Typography.Text></> }, ...(selected.firstPublishedAt ? [{ color: "green", children: <><strong>首次发布</strong><br /><Typography.Text type="secondary">{formatDisplayDateTime(selected.firstPublishedAt)} · {selected.firstPublishedBy}</Typography.Text></> }] : []), ...(selected.lastUnpublishedAt ? [{ color: "gray", children: <><strong>最近取消发布</strong><br /><Typography.Text type="secondary">{formatDisplayDateTime(selected.lastUnpublishedAt)} · {selected.lastUnpublishedBy}<br />原因：{selected.lastUnpublishReason ?? "—"}</Typography.Text></> }] : [])]} />
+          <Alert type={selected.validation.status === "通过" ? "success" : "error"} showIcon title={selected.validation.status === "通过" ? "版本校验通过，可以发布" : "版本校验未通过"} description={selected.validation.issues.length ? selected.validation.issues.join("；") : `自动校验于 ${formatDisplayDateTime(selected.validation.checkedAt)} 完成`} />
+          <Timeline items={[{ color: "blue", content: <><strong>创建 {selected.version}</strong><br /><Typography.Text type="secondary">{formatDisplayDateTime(selected.createdAt)} · {selected.createdBy}</Typography.Text></> }, ...(selected.firstPublishedAt ? [{ color: "green", content: <><strong>首次发布</strong><br /><Typography.Text type="secondary">{formatDisplayDateTime(selected.firstPublishedAt)} · {selected.firstPublishedBy}</Typography.Text></> }] : []), ...(selected.lastUnpublishedAt ? [{ color: "gray", content: <><strong>最近取消发布</strong><br /><Typography.Text type="secondary">{formatDisplayDateTime(selected.lastUnpublishedAt)} · {selected.lastUnpublishedBy}<br />原因：{selected.lastUnpublishReason ?? "—"}</Typography.Text></> }] : [])]} />
         </Space> },
         { key: "form", label: <span><FormOutlined /> 初始表单</span>, children: <VersionFormSnapshot version={selected} /> },
         { key: "flow", label: <span><ApartmentOutlined /> {definition.type === "approval" ? "审批流程" : "协作规则"}</span>, children: <VersionFlowSnapshot version={selected} type={definition.type} /> },
@@ -299,7 +299,7 @@ export function ProcessVersionsPage() {
         }
       }}
     >
-      <Alert type="warning" showIcon message="取消后流程将没有发布版本" description={unpublishTarget?.instanceCount ? "员工不能发起新实例，已有实例继续按原版本运行；由于已有实例，该版本仍不可编辑。" : "员工不能发起新实例；版本号和完整配置保留，取消后可直接编辑。"} />
+      <Alert type="warning" showIcon title="取消后流程将没有发布版本" description={unpublishTarget?.instanceCount ? "员工不能发起新实例，已有实例继续按原版本运行；由于已有实例，该版本仍不可编辑。" : "员工不能发起新实例；版本号和完整配置保留，取消后可直接编辑。"} />
       <div className="pa-unpublish-reason">
         <Typography.Text strong>取消发布原因</Typography.Text>
         <Input.TextArea value={unpublishReason} onChange={(event) => setUnpublishReason(event.target.value)} rows={3} maxLength={200} showCount placeholder="请说明取消发布原因" />

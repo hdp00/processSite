@@ -94,6 +94,8 @@ public sealed record TransferFreeCollaborationRequest
     public string? Content { get; init; }
 
     public Guid NextAssigneeId { get; init; }
+
+    public IReadOnlyList<Guid> AttachmentIds { get; init; } = [];
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -163,7 +165,8 @@ public sealed record FreeTimelineEntryDto(
     Guid? RelatedEntryId = null,
     TaskCenterUserRefDto? EditedBy = null,
     DateTimeOffset? EditedAt = null,
-    IReadOnlyList<WorkflowFieldChangeDto>? FieldChanges = null);
+    IReadOnlyList<WorkflowFieldChangeDto>? FieldChanges = null,
+    IReadOnlyList<ProcessInstanceAttachmentDto>? Attachments = null);
 
 public sealed record ProcessInstanceDetailDto
 {
@@ -194,6 +197,8 @@ public sealed record ProcessInstanceDetailDto
     public TaskCenterUserRefDto? CurrentAssignee { get; init; }
 
     public required TaskCenterUserRefDto Initiator { get; init; }
+
+    public required IReadOnlyList<TaskCenterUserRefDto> Participants { get; init; }
 
     public required DateTimeOffset CreatedAt { get; init; }
 

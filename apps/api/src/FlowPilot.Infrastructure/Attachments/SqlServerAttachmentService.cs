@@ -123,7 +123,7 @@ public sealed partial class SqlServerAttachmentService(
                 .ConfigureAwait(false);
             throw;
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             await FailUploadAsync(attachment, "Attachment file could not be written.", CancellationToken.None)
                 .ConfigureAwait(false);

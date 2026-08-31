@@ -465,7 +465,7 @@ public sealed class TaskCenterController(
 
 public sealed class WorkflowTaskListParameters
 {
-    [Range(1, int.MaxValue)]
+    [Range(1, 1_000_000)]
     public int Page { get; init; } = 1;
 
     [Range(1, 200)]
@@ -481,7 +481,7 @@ public sealed class WorkflowTaskListParameters
 
 public sealed class ProcessInstanceListParameters
 {
-    [Range(1, int.MaxValue)]
+    [Range(1, 1_000_000)]
     public int Page { get; init; } = 1;
 
     [Range(1, 200)]

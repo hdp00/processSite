@@ -94,6 +94,30 @@ export const assignAttachmentsToInstance = async (
   return updated.map((item) => item.record);
 };
 
+export const assignAttachmentsToFreeReply = async (ids: string[], instanceId: string) => {
+  if (!ids.length) return [];
+  const database = await openDatabase();
+  const transaction = database.transaction(STORE_NAME, "readwrite");
+  const store = transaction.objectStore(STORE_NAME);
+  const all = await requestResult(store.getAll()) as StoredAttachment[];
+  const updated = all
+    .filter((item) => ids.includes(item.record.id))
+    .map((item) => ({
+      ...item,
+      record: {
+        ...item.record,
+        instanceId,
+        purpose: "free-reply" as const,
+        lifecycle: "active" as const,
+        cleanupAfter: undefined,
+      },
+    }));
+  updated.forEach((item) => store.put(item));
+  await transactionDone(transaction);
+  database.close();
+  return updated.map((item) => item.record);
+};
+
 export const reconcileAttachmentsForInstance = async (
   instanceId: string,
   attachmentIdsByField: Record<string, string[]>,

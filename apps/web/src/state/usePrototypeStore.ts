@@ -97,8 +97,8 @@ interface PrototypeState {
   closeInstance: (id: string, reason: string) => RuntimeCommandResult;
   updateUnreviewedInstance: (id: string, changes: UnreviewedInstanceChanges) => RuntimeCommandResult;
   republishInstance: (id: string, changes: RepublishChanges) => RuntimeCommandResult;
-  replyFreeFlow: (id: string, content: string) => void;
-  transferFreeFlow: (id: string, nextAssignee: string, content?: string) => void;
+  replyFreeFlow: (id: string, content: string, attachments?: FreeFlowEntry["attachments"]) => void;
+  transferFreeFlow: (id: string, nextAssignee: string, content?: string, attachments?: FreeFlowEntry["attachments"]) => void;
   editFreeFlowReply: (id: string, entryId: string, content: string) => void;
   updateFreeFlowInitial: (id: string, changes: FreeFlowInitialChanges) => void;
   closeFreeFlow: (id: string, reason: string) => void;
@@ -1054,7 +1054,7 @@ export const usePrototypeStore = create<PrototypeState>()(
           });
           return { ok: true };
         },
-      replyFreeFlow: (id, content) =>
+      replyFreeFlow: (id, content, attachments) =>
         set((state) => {
           const persona = currentPersona(state.personaId);
           const actionAt = nowText();
@@ -1076,35 +1076,29 @@ export const usePrototypeStore = create<PrototypeState>()(
                   : [...new Set([...(instance.participantIds ?? []), persona.id])],
                 freeTimeline: [
                   ...(instance.freeTimeline ?? []),
-                  freeEntry("reply", persona.name, { content }),
+                  freeEntry("reply", persona.name, { content, attachments }),
                 ],
               };
             }),
           };
         }),
-      transferFreeFlow: (id, nextAssignee, content) =>
+      transferFreeFlow: (id, nextAssignee, content, attachments) =>
         set((state) => {
           const persona = currentPersona(state.personaId);
           const actionAt = nowText();
           const target = state.instances.find((instance) => instance.id === id);
           const nextAssigneeId = userIdByIdOrName(nextAssignee);
           const hasContent = Boolean(content?.trim());
-          const canAttachReply = Boolean(
-            !hasContent
-            || target?.participantIds?.includes(persona.id)
-            || isSuperAdminPersona(state.personaId),
-          );
           const canTransfer = Boolean(
             target
             && canUserTransferFreeFlow(target, state.personaId)
             && nextAssigneeId !== target.currentAssigneeId
             && isAllowedFreeAssignee(target, nextAssignee)
-            && canAttachReply
           );
           if (!target || !canTransfer) return state;
           const entries: FreeFlowEntry[] = [
             ...(target.freeTimeline ?? []),
-            ...(hasContent ? [freeEntry("reply", persona.name, { content, time: actionAt })] : []),
+            ...(hasContent ? [freeEntry("reply", persona.name, { content, attachments, time: actionAt })] : []),
             freeEntry("assigned", persona.name, {
               assignee: nextAssignee,
               previousAssignee: target.currentAssignee,
@@ -1154,10 +1148,6 @@ export const usePrototypeStore = create<PrototypeState>()(
                         ...entry,
                         content,
                         editedAt,
-                        revisions: [
-                          ...(entry.revisions ?? []),
-                          { content: entry.content ?? "", editedAt },
-                        ],
                       }
                     : entry,
                 ),

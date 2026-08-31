@@ -344,7 +344,7 @@ describe("实例命令失败码", () => {
 describe("自由协作异常操作", () => {
   it("仅回复作者可以在进行中的事项内修改回复，并同步事项更新时间", () => {
     const entry = instanceById("free-18")!.freeTimeline!.find((item) => item.type === "reply" && item.actor === "张伟")!;
-    const originalContent = entry.content;
+    const originalRevisions = structuredClone(entry.revisions);
     const before = structuredClone(instanceById("free-18")!);
 
     setActor("lina");
@@ -357,8 +357,8 @@ describe("自由协作异常操作", () => {
     const updatedEntry = updated.freeTimeline?.find((item) => item.id === entry.id);
     expect(updatedEntry).toMatchObject({
       content: "研发修订后的结论",
-      revisions: expect.arrayContaining([expect.objectContaining({ content: originalContent })]),
     });
+    expect(updatedEntry?.revisions).toEqual(originalRevisions);
     expect(updated.updatedAt).toBe(updatedEntry?.editedAt);
 
     const afterEdit = structuredClone(updated);

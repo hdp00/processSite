@@ -81,6 +81,13 @@ public sealed partial class SqlServerProcessInstanceQueryService(
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
         var attachmentIds = attachmentReferences.Select(item => item.AttachmentId).Distinct().ToArray();
+        var participantIds = await _dbContext.FreeParticipants
+            .AsNoTracking()
+            .Where(item => item.InstanceId == instance.Id)
+            .OrderBy(item => item.FirstParticipatedAt)
+            .Select(item => item.UserId)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
         var attachments = await _dbContext.RuntimeAttachments
             .AsNoTracking()
             .Where(item => attachmentIds.Contains(item.Id)
@@ -117,6 +124,7 @@ public sealed partial class SqlServerProcessInstanceQueryService(
                 item.EditedBy,
             }))
             .Concat(attachments.Select(item => (Guid?)item.UploadedBy))
+            .Concat(participantIds.Select(item => (Guid?)item))
             .Where(item => item.HasValue)
             .Select(item => item!.Value)
             .Distinct()
@@ -161,6 +169,7 @@ public sealed partial class SqlServerProcessInstanceQueryService(
             attachments,
             users,
             initiator,
+            participantIds,
             effectiveGroupIds,
             actor));
         return new ProcessInstanceQueryResult(detail, null);
@@ -299,6 +308,7 @@ public sealed partial class SqlServerProcessInstanceQueryService(
         IReadOnlyList<RuntimeAttachment> Attachments,
         IReadOnlyDictionary<Guid, TaskCenterUserRefDto> Users,
         TaskCenterUserRefDto Initiator,
+        IReadOnlyList<Guid> ParticipantIds,
         IReadOnlySet<Guid> EffectiveGroupIds,
         ProcessInstanceQueryActor Actor);
 }

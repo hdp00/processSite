@@ -60,6 +60,7 @@ public static class PersistenceServiceCollectionExtensions
         services.AddScoped<SqlServerDatabaseReadinessCheck>();
         services.AddScoped<IBuiltinSeedVersionReader, SqlServerBuiltinSeedVersionReader>();
         services.AddScoped<IDatabaseReadinessCheck, ApplicationDatabaseReadinessCheck>();
+        services.AddScoped<IOperationalHealthService, OperationalHealthService>();
 
         return services;
     }

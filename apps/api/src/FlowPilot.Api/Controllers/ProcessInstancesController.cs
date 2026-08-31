@@ -308,11 +308,6 @@ public sealed class ProcessInstancesController(
             return ProblemResponse(401, "AUTHENTICATION_REQUIRED", "尚未登录", "当前会话不存在或已失效，请重新登录。");
         }
 
-        if (!HasPermission(session, TaskViewPermission))
-        {
-            return ProblemResponse(403, "PERMISSION_DENIED", "没有操作权限", "当前账号没有查看和参与任务的权限。");
-        }
-
         if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
         {
             return revisionProblem!;
@@ -423,11 +418,6 @@ public sealed class ProcessInstancesController(
             return ProblemResponse(401, "AUTHENTICATION_REQUIRED", "尚未登录", "当前会话不存在或已失效，请重新登录。");
         }
 
-        if (!HasPermission(session, TaskViewPermission))
-        {
-            return ProblemResponse(403, "PERMISSION_DENIED", "没有操作权限", "当前账号没有查看和参与任务的权限。");
-        }
-
         if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
         {
             return revisionProblem!;
@@ -477,11 +467,6 @@ public sealed class ProcessInstancesController(
         if (session is null)
         {
             return ProblemResponse(401, "AUTHENTICATION_REQUIRED", "尚未登录", "当前会话不存在或已失效，请重新登录。");
-        }
-
-        if (!HasPermission(session, TaskViewPermission))
-        {
-            return ProblemResponse(403, "PERMISSION_DENIED", "没有操作权限", "当前账号没有查看和参与任务的权限。");
         }
 
         if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
@@ -595,11 +580,6 @@ public sealed class ProcessInstancesController(
         if (session is null)
         {
             return ProblemResponse(401, "AUTHENTICATION_REQUIRED", "尚未登录", "当前会话不存在或已失效，请重新登录。");
-        }
-
-        if (!HasPermission(session, TaskViewPermission))
-        {
-            return ProblemResponse(403, "PERMISSION_DENIED", "没有操作权限", "当前账号没有查看和参与任务的权限。");
         }
 
         if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))

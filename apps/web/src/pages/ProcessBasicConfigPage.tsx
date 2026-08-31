@@ -169,23 +169,23 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
   };
 
   if ((!definition || !version) && !isNew) {
-    return <Alert type="error" showIcon message="流程版本不存在" description="请返回流程管理重新选择。" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
+    return <Alert type="error" showIcon title="流程版本不存在" description="请返回流程管理重新选择。" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
   }
 
   if (definition && version && !canEditVersion(definition, version)) {
-    return <Alert type="info" showIcon message={`${version.version} 为只读版本`} description={definition.publishedVersionId === version.id ? "已发布版本不能直接修改。没有实例时可先取消发布；已有实例时请复制新建版本。" : "该版本已有流程实例，只能查看或复制新建版本。"} action={<AppBackButton onClick={() => navigate(`/admin/processes/${resolvedId}/versions`)} />} />;
+    return <Alert type="info" showIcon title={`${version.version} 为只读版本`} description={definition.publishedVersionId === version.id ? "已发布版本不能直接修改。没有实例时可先取消发布；已有实例时请复制新建版本。" : "该版本已有流程实例，只能查看或复制新建版本。"} action={<AppBackButton onClick={() => navigate(`/admin/processes/${resolvedId}/versions`)} />} />;
   }
 
   return (
     <div className="page-stack pa-page pa-config-page">
-      <Card className="pa-config-head" bordered={false}>
+      <Card className="pa-config-head" variant="borderless">
         <div className="pa-config-head__main">
           <AppBackButton onClick={() => navigate("/admin/processes")} />
           <div>
             <Space size={10} wrap>
               <Typography.Title level={3}>{initialConfig.name}</Typography.Title>
               <Tag color="blue">{isNew ? "首次保存后生成 V1" : `正式版本 ${version?.version}`}</Tag>
-              {version?.basedOn && <Tag bordered={false}>来源 {version.basedOn}</Tag>}
+              {version?.basedOn && <Tag variant="filled">来源 {version.basedOn}</Tag>}
             </Space>
             <Typography.Text type="secondary">配置流程身份、实例编号前缀、发起范围和额外查看范围。</Typography.Text>
           </div>
@@ -200,7 +200,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
         </div>
       </Card>
 
-      <Card className="pa-steps-card" bordered={false}>
+      <Card className="pa-steps-card" variant="borderless">
         <ProcessWizardSteps workflowType={workflowType} current={0} />
       </Card>
 
@@ -275,13 +275,13 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
             <Card
               className="pa-section-card"
               title={<span className="pa-card-title"><TeamOutlined /> 操作权限范围</span>}
-              extra={<Tag bordered={false}>人员变更立即生效</Tag>}
+              extra={<Tag variant="filled">人员变更立即生效</Tag>}
             >
               <Alert
                 className="pa-section-alert"
                 type="info"
                 showIcon
-                message="流程权限组决定谁可以执行操作"
+                title="流程权限组决定谁可以执行操作"
                 description="权限组可直接加入人员，也可关联角色。组内任意一位符合条件的成员完成操作，即视为该节点完成。"
               />
               <Row gutter={20}>
@@ -378,7 +378,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
           </div>
 
           <aside className="pa-config-aside">
-            <Card className="pa-help-card" bordered={false}>
+            <Card className="pa-help-card" variant="borderless">
               <div className="pa-help-card__icon"><InfoCircleOutlined /></div>
               <Typography.Title level={5}>当前配置说明</Typography.Title>
               {workflowType === "approval" ? (

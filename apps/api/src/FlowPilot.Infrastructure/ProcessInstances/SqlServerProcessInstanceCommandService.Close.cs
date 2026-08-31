@@ -292,23 +292,23 @@ public sealed partial class SqlServerProcessInstanceCommandService
         string requestHash,
         CloseProcessInstanceCommandValue value,
         DateTimeOffset now) => new()
-    {
-        Id = Guid.NewGuid(),
-        ActorId = actorId,
-        RouteScope = CloseRouteScope,
-        IdempotencyKey = idempotencyKey,
-        RequestHash = requestHash,
-        Status = "completed",
-        FirstHttpStatus = 200,
-        ReplayHeadersJson = new JsonObject
         {
-            ["etag"] = $"\"{value.Revision}\"",
-        }.ToJsonString(JsonOptions),
-        ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
-        CreatedAt = now.UtcDateTime,
-        CompletedAt = now.UtcDateTime,
-        ExpiresAt = now.AddDays(7).UtcDateTime,
-    };
+            Id = Guid.NewGuid(),
+            ActorId = actorId,
+            RouteScope = CloseRouteScope,
+            IdempotencyKey = idempotencyKey,
+            RequestHash = requestHash,
+            Status = "completed",
+            FirstHttpStatus = 200,
+            ReplayHeadersJson = new JsonObject
+            {
+                ["etag"] = $"\"{value.Revision}\"",
+            }.ToJsonString(JsonOptions),
+            ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
+            CreatedAt = now.UtcDateTime,
+            CompletedAt = now.UtcDateTime,
+            ExpiresAt = now.AddDays(7).UtcDateTime,
+        };
 
     private static ProcessInstanceCommandResult<CloseProcessInstanceCommandValue> CloseFailed(
         ProcessInstanceCommandFailure failure) => new(null, failure);

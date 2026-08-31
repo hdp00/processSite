@@ -156,8 +156,8 @@ export function ProcessLaunchCenterPage() {
               <div className="launch-card-head">
                 <span className="launch-card-icon">{definition.icon}</span>
                 <Space size={6} wrap>
-                  <Tag bordered={false}>{definition.categoryLabel}</Tag>
-                  <Tag bordered={false} className="launch-version-tag">{definition.version}</Tag>
+                  <Tag variant="filled">{definition.categoryLabel}</Tag>
+                  <Tag variant="filled" className="launch-version-tag">{definition.version}</Tag>
                 </Space>
               </div>
               <div className="launch-card-copy">

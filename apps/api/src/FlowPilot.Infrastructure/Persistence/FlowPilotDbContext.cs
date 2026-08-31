@@ -25,6 +25,8 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
     internal DbSet<WorkflowTaskEntity> WorkflowTasks => Set<WorkflowTaskEntity>();
     internal DbSet<WorkflowEventEntity> WorkflowEvents => Set<WorkflowEventEntity>();
     internal DbSet<RuntimeAuditEvent> RuntimeAuditEvents => Set<RuntimeAuditEvent>();
+    internal DbSet<RuntimeEmailOutboxMessage> RuntimeEmailOutboxMessages => Set<RuntimeEmailOutboxMessage>();
+    internal DbSet<RuntimeEmailDeliveryAttempt> RuntimeEmailDeliveryAttempts => Set<RuntimeEmailDeliveryAttempt>();
     internal DbSet<FreeTimelineEntryEntity> FreeTimelineEntries => Set<FreeTimelineEntryEntity>();
     internal DbSet<FreeParticipantEntity> FreeParticipants => Set<FreeParticipantEntity>();
     internal DbSet<NumberCounterEntity> NumberCounters => Set<NumberCounterEntity>();
@@ -32,6 +34,7 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
     internal DbSet<RuntimeAttachment> RuntimeAttachments => Set<RuntimeAttachment>();
     internal DbSet<AttachmentReferenceEntity> AttachmentReferences => Set<AttachmentReferenceEntity>();
     internal DbSet<IdempotencyRecordEntity> IdempotencyRecords => Set<IdempotencyRecordEntity>();
+    internal DbSet<RuntimeSessionEntity> RuntimeSessions => Set<RuntimeSessionEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -42,8 +45,27 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         ConfigurePosition(modelBuilder.Entity<PositionEntity>());
         ConfigureOrganizationUserReference(modelBuilder.Entity<OrganizationUserReference>());
         ConfigureProcessRuntime(modelBuilder);
+        ConfigureRuntimeSession(modelBuilder.Entity<RuntimeSessionEntity>());
 
         base.OnModelCreating(modelBuilder);
+    }
+
+    private static void ConfigureRuntimeSession(EntityTypeBuilder<RuntimeSessionEntity> entity)
+    {
+        entity.ToTable("sessions");
+        entity.HasKey(item => item.Id);
+        entity.Property(item => item.Id).HasColumnName("id");
+        entity.Property(item => item.TokenHash).HasColumnName("token_hash");
+        entity.Property(item => item.OperatorUserId).HasColumnName("operator_user_id");
+        entity.Property(item => item.EffectiveUserId).HasColumnName("effective_user_id");
+        entity.Property(item => item.ImpersonationRecordId).HasColumnName("impersonation_record_id");
+        entity.Property(item => item.PermissionSnapshotVersion).HasColumnName("permission_snapshot_version");
+        entity.Property(item => item.CreatedAt).HasColumnName("created_at").HasPrecision(3);
+        entity.Property(item => item.LastAccessedAt).HasColumnName("last_accessed_at").HasPrecision(3);
+        entity.Property(item => item.IdleExpiresAt).HasColumnName("idle_expires_at").HasPrecision(3);
+        entity.Property(item => item.AbsoluteExpiresAt).HasColumnName("absolute_expires_at").HasPrecision(3);
+        entity.Property(item => item.RevokedAt).HasColumnName("revoked_at").HasPrecision(3);
+        entity.Property(item => item.RevocationReason).HasColumnName("revocation_reason");
     }
 
     private static void ConfigureDepartment(EntityTypeBuilder<DepartmentEntity> entity)
@@ -97,8 +119,11 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         entity.Property(item => item.Id).HasColumnName("id");
         entity.Property(item => item.DepartmentId).HasColumnName("department_id");
         entity.Property(item => item.PositionId).HasColumnName("position_id");
+        entity.Property(item => item.LoginName).HasColumnName("login_name").HasMaxLength(100);
         entity.Property(item => item.DisplayName).HasColumnName("display_name").HasMaxLength(200);
+        entity.Property(item => item.Email).HasColumnName("email").HasMaxLength(320);
         entity.Property(item => item.IsEnabled).HasColumnName("is_enabled");
+        entity.Property(item => item.IsBuiltInSuperAdmin).HasColumnName("is_builtin_super_admin");
     }
 
     private static void ConfigureProcessRuntime(ModelBuilder modelBuilder)
@@ -107,13 +132,19 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         definition.ToTable("workflow_definitions");
         definition.HasKey(item => item.Id);
         definition.Property(item => item.Id).HasColumnName("id");
+        definition.Property(item => item.Code).HasColumnName("code");
+        definition.Property(item => item.NormalizedCode).HasColumnName("normalized_code");
         definition.Property(item => item.Name).HasColumnName("name");
+        definition.Property(item => item.Description).HasColumnName("description");
         definition.Property(item => item.Type).HasColumnName("type");
         definition.Property(item => item.IsDisabled).HasColumnName("is_disabled");
         definition.Property(item => item.PublishedVersionId).HasColumnName("published_version_id");
+        definition.Property(item => item.NextVersionNumber).HasColumnName("next_version_number");
         definition.Property(item => item.InstanceCount).HasColumnName("instance_count");
         definition.Property(item => item.Revision).HasColumnName("revision").IsConcurrencyToken();
+        definition.Property(item => item.CreatedAt).HasColumnName("created_at").HasPrecision(3);
         definition.Property(item => item.UpdatedAt).HasColumnName("updated_at").HasPrecision(3);
+        definition.Property(item => item.CreatedBy).HasColumnName("created_by");
         definition.Property(item => item.UpdatedBy).HasColumnName("updated_by");
 
         var version = modelBuilder.Entity<RuntimeWorkflowVersion>();
@@ -121,12 +152,27 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         version.HasKey(item => item.Id);
         version.Property(item => item.Id).HasColumnName("id");
         version.Property(item => item.DefinitionId).HasColumnName("definition_id");
+        version.Property(item => item.VersionNumber).HasColumnName("version_number");
         version.Property(item => item.VersionLabel).HasColumnName("version_label");
         version.Property(item => item.BasicJson).HasColumnName("basic_json");
         version.Property(item => item.SnapshotJson).HasColumnName("snapshot_json");
         version.Property(item => item.ValidationStatus).HasColumnName("validation_status");
+        version.Property(item => item.ValidationJson).HasColumnName("validation_json");
+        version.Property(item => item.ValidatedAt).HasColumnName("validated_at").HasPrecision(3);
         version.Property(item => item.InstanceCount).HasColumnName("instance_count");
         version.Property(item => item.Revision).HasColumnName("revision").IsConcurrencyToken();
+        version.Property(item => item.CreatedAt).HasColumnName("created_at").HasPrecision(3);
+        version.Property(item => item.CreatedBy).HasColumnName("created_by");
+        version.Property(item => item.UpdatedAt).HasColumnName("updated_at").HasPrecision(3);
+        version.Property(item => item.UpdatedBy).HasColumnName("updated_by");
+        version.Property(item => item.FirstPublishedAt).HasColumnName("first_published_at").HasPrecision(3);
+        version.Property(item => item.FirstPublishedBy).HasColumnName("first_published_by");
+        version.Property(item => item.LatestPublishedAt).HasColumnName("latest_published_at").HasPrecision(3);
+        version.Property(item => item.LatestPublishedBy).HasColumnName("latest_published_by");
+        version.Property(item => item.UnpublishedAt).HasColumnName("unpublished_at").HasPrecision(3);
+        version.Property(item => item.UnpublishedBy).HasColumnName("unpublished_by");
+        version.Property(item => item.UnpublishedReason).HasColumnName("unpublished_reason");
+        version.Property(item => item.ChangeNote).HasColumnName("change_note");
 
         ConfigureGroupRuntime(modelBuilder);
         ConfigureInstanceRuntime(modelBuilder);
@@ -155,6 +201,7 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         group.ToTable("workflow_permission_groups");
         group.HasKey(item => item.Id);
         group.Property(item => item.Id).HasColumnName("id");
+        group.Property(item => item.Name).HasColumnName("name");
         group.Property(item => item.IsEnabled).HasColumnName("is_enabled");
 
         var groupUser = modelBuilder.Entity<RuntimeWorkflowGroupUser>();
@@ -173,7 +220,9 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         role.ToTable("roles");
         role.HasKey(item => item.Id);
         role.Property(item => item.Id).HasColumnName("id");
+        role.Property(item => item.Name).HasColumnName("name");
         role.Property(item => item.IsEnabled).HasColumnName("is_enabled");
+        role.Property(item => item.IsBuiltIn).HasColumnName("is_builtin");
 
         var userRole = modelBuilder.Entity<RuntimeUserRole>();
         userRole.ToTable("user_roles");
@@ -268,6 +317,46 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         auditEvent.Property(item => item.TraceId).HasColumnName("trace_id");
         auditEvent.Property(item => item.Result).HasColumnName("result");
         auditEvent.Property(item => item.OccurredAt).HasColumnName("occurred_at").HasPrecision(3);
+
+        var outbox = modelBuilder.Entity<RuntimeEmailOutboxMessage>();
+        outbox.ToTable("email_outbox");
+        outbox.HasKey(item => item.Id);
+        outbox.Property(item => item.Id).HasColumnName("id");
+        outbox.Property(item => item.Revision).HasColumnName("revision").IsConcurrencyToken();
+        outbox.Property(item => item.IdempotencyKey).HasColumnName("idempotency_key");
+        outbox.Property(item => item.EventType).HasColumnName("event_type");
+        outbox.Property(item => item.InstanceId).HasColumnName("instance_id");
+        outbox.Property(item => item.TaskId).HasColumnName("task_id");
+        outbox.Property(item => item.TemplateKey).HasColumnName("template_key");
+        outbox.Property(item => item.RecipientUserId).HasColumnName("recipient_user_id");
+        outbox.Property(item => item.RecipientEmailSnapshot).HasColumnName("recipient_email_snapshot");
+        outbox.Property(item => item.Subject).HasColumnName("subject");
+        outbox.Property(item => item.TemplateDataJson).HasColumnName("template_data_json");
+        outbox.Property(item => item.TargetPath).HasColumnName("target_path");
+        outbox.Property(item => item.LinkBaseUrl).HasColumnName("link_base_url");
+        outbox.Property(item => item.ResolvedTargetUrl).HasColumnName("resolved_target_url");
+        outbox.Property(item => item.Status).HasColumnName("status");
+        outbox.Property(item => item.ScheduledAt).HasColumnName("scheduled_at").HasPrecision(3);
+        outbox.Property(item => item.AttemptCount).HasColumnName("attempt_count");
+        outbox.Property(item => item.LeaseOwner).HasColumnName("lease_owner");
+        outbox.Property(item => item.LeaseUntil).HasColumnName("lease_until").HasPrecision(3);
+        outbox.Property(item => item.LastErrorCode).HasColumnName("last_error_code");
+        outbox.Property(item => item.LastErrorSummary).HasColumnName("last_error_summary");
+        outbox.Property(item => item.CreatedAt).HasColumnName("created_at").HasPrecision(3);
+        outbox.Property(item => item.SentAt).HasColumnName("sent_at").HasPrecision(3);
+        outbox.Property(item => item.DeadLetteredAt).HasColumnName("dead_lettered_at").HasPrecision(3);
+
+        var attempt = modelBuilder.Entity<RuntimeEmailDeliveryAttempt>();
+        attempt.ToTable("email_delivery_attempts");
+        attempt.HasKey(item => item.Id);
+        attempt.Property(item => item.Id).HasColumnName("id");
+        attempt.Property(item => item.OutboxId).HasColumnName("outbox_id");
+        attempt.Property(item => item.AttemptNumber).HasColumnName("attempt_number");
+        attempt.Property(item => item.StartedAt).HasColumnName("started_at").HasPrecision(3);
+        attempt.Property(item => item.CompletedAt).HasColumnName("completed_at").HasPrecision(3);
+        attempt.Property(item => item.Result).HasColumnName("result");
+        attempt.Property(item => item.ErrorCategory).HasColumnName("error_category");
+        attempt.Property(item => item.ServerResponseSummary).HasColumnName("server_response_summary");
     }
 
     private static void ConfigureRuntimeSupport(ModelBuilder modelBuilder)

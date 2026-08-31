@@ -41,6 +41,11 @@
           "Microsoft.Identity.Client.Extensions.Msal": "4.78.0"
         }
       },
+      "BouncyCastle.Cryptography": {
+        "type": "Transitive",
+        "resolved": "2.6.2",
+        "contentHash": "7oWOcvnntmMKNzDLsdxAYqApt+AjpRpP2CShjMfIa3umZ42UQMvH0tl1qAliYPNYO6vTdcGMqnRrCPmsfzTI1w=="
+      },
       "Microsoft.ApplicationInsights": {
         "type": "Transitive",
         "resolved": "2.23.0",
@@ -358,6 +363,15 @@
         "resolved": "5.0.0",
         "contentHash": "dDoKi0PnDz31yAyETfRntsLArTlVAVzUzCIvvEDsDsucrl33Dl8pIJG06ePTJTI3tGpeyHS9Cq7Foc/s4EeKcg=="
       },
+      "MimeKit": {
+        "type": "Transitive",
+        "resolved": "4.17.0",
+        "contentHash": "h/KXsCreJf8RpR/PSAtlbvYtZFndp9N8Wn1Bs248AL7ITyhn+AiIY5bLTvt60tbN2mu6g8KadtBNWygTji2lqg==",
+        "dependencies": {
+          "BouncyCastle.Cryptography": "2.6.2",
+          "System.Security.Cryptography.Pkcs": "10.0.0"
+        }
+      },
       "System.ClientModel": {
         "type": "Transitive",
         "resolved": "1.8.0",
@@ -402,8 +416,8 @@
       },
       "System.Security.Cryptography.Pkcs": {
         "type": "Transitive",
-        "resolved": "9.0.11",
-        "contentHash": "YS2YqtN6fFjlTDIQI+ucjbbrEvwMn796r+VLTQRr/5Oy6g+i+m7nIou83KnJCnAcKna2I+5eVJRks6SoHSpetQ=="
+        "resolved": "10.0.0",
+        "contentHash": "UPWqLSygJlFerRi9XNIuM0a1VC8gHUIufyP24xQ0sc+XimqUAEcjpOz9DhKpyDjH+5B/wO3RpC0KpkEeDj/ddg=="
       },
       "System.Security.Cryptography.ProtectedData": {
         "type": "Transitive",
@@ -506,8 +520,19 @@
         "dependencies": {
           "FlowPilot.Application": "[1.0.0, )",
           "FlowPilot.Domain": "[1.0.0, )",
+          "MailKit": "[4.17.0, )",
           "Microsoft.Data.SqlClient": "[6.1.6, )",
-          "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.11, )"
+          "Microsoft.EntityFrameworkCore.SqlServer": "[10.0.11, )",
+          "System.DirectoryServices.Protocols": "[10.0.11, )"
+        }
+      },
+      "MailKit": {
+        "type": "CentralTransitive",
+        "requested": "[4.17.0, )",
+        "resolved": "4.17.0",
+        "contentHash": "1nUAVLxM9fhT/78we6/AGsCesnpn5dRNLLeRqOfr52Wnk87pzVwo5YMTMyqnmoXrYc7piGhmayiMA/OgDluIjg==",
+        "dependencies": {
+          "MimeKit": "4.17.0"
         }
       },
       "Microsoft.Data.SqlClient": {
@@ -554,6 +579,12 @@
           "Microsoft.Extensions.Logging": "10.0.11",
           "Microsoft.Extensions.Options": "10.0.11"
         }
+      },
+      "System.DirectoryServices.Protocols": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.11, )",
+        "resolved": "10.0.11",
+        "contentHash": "Q4DEPB0wfAMAM6zjCjioFQoDZGC6uCeAZMU30sdjMgVtKbSuSBjhASVlxVOTYmQKCdUqZInnDwZ3W/ZTWB4m3Q=="
       }
     },
     "net10.0/win-x64": {
@@ -584,8 +615,8 @@
       },
       "System.Security.Cryptography.Pkcs": {
         "type": "Transitive",
-        "resolved": "9.0.11",
-        "contentHash": "YS2YqtN6fFjlTDIQI+ucjbbrEvwMn796r+VLTQRr/5Oy6g+i+m7nIou83KnJCnAcKna2I+5eVJRks6SoHSpetQ=="
+        "resolved": "10.0.0",
+        "contentHash": "UPWqLSygJlFerRi9XNIuM0a1VC8gHUIufyP24xQ0sc+XimqUAEcjpOz9DhKpyDjH+5B/wO3RpC0KpkEeDj/ddg=="
       },
       "Microsoft.Data.SqlClient": {
         "type": "CentralTransitive",
@@ -606,6 +637,12 @@
           "System.IdentityModel.Tokens.Jwt": "7.7.1",
           "System.Security.Cryptography.Pkcs": "9.0.11"
         }
+      },
+      "System.DirectoryServices.Protocols": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.11, )",
+        "resolved": "10.0.11",
+        "contentHash": "Q4DEPB0wfAMAM6zjCjioFQoDZGC6uCeAZMU30sdjMgVtKbSuSBjhASVlxVOTYmQKCdUqZInnDwZ3W/ZTWB4m3Q=="
       }
     }
   }

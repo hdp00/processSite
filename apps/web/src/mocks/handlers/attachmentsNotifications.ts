@@ -69,6 +69,7 @@ interface ParsedUpload {
   definitionId?: string;
   versionId?: string;
   fieldId?: string;
+  purpose: "form-field" | "free-reply";
 }
 
 const pathParam = (value: string | readonly string[] | undefined) =>
@@ -257,6 +258,20 @@ const parseUpload = async (request: Request): Promise<ParsedUpload | Response> =
   const definitionIdValue = String(form.get("definitionId") ?? "").trim() || undefined;
   const versionIdValue = String(form.get("versionId") ?? "").trim() || undefined;
   const fieldIdValue = String(form.get("fieldId") ?? "").trim() || undefined;
+  const purposeValue = String(form.get("purpose") ?? "form-field").trim();
+  if (purposeValue !== "form-field" && purposeValue !== "free-reply") {
+    return apiProblem(request, 422, "ATTACHMENT_PURPOSE_INVALID", "附件用途无效", "purpose 只支持 form-field 或 free-reply。 ");
+  }
+  if (purposeValue === "free-reply") {
+    if (!instanceIdValue || definitionIdValue || versionIdValue || fieldIdValue) {
+      return apiProblem(request, 422, "ATTACHMENT_SCOPE_INCOMPLETE", "附件范围无效", "回复附件只需要提供 instanceId 和 purpose=free-reply。 ");
+    }
+    return {
+      file: candidate,
+      instanceId: instanceIdValue,
+      purpose: "free-reply",
+    };
+  }
   const hasInstanceScope = Boolean(instanceIdValue);
   const hasDefinitionScope = Boolean(definitionIdValue || versionIdValue);
   if ((hasInstanceScope && (!fieldIdValue || hasDefinitionScope)) || (hasDefinitionScope && (!definitionIdValue || !versionIdValue || !fieldIdValue))) {
@@ -267,7 +282,7 @@ const parseUpload = async (request: Request): Promise<ParsedUpload | Response> =
   if (!candidate.name.trim()) {
     return apiProblem(request, 422, "ATTACHMENT_NAME_REQUIRED", "文件名无效", "上传文件必须具有有效名称。 ");
   }
-  return { file: candidate, instanceId: instanceIdValue, definitionId: definitionIdValue, versionId: versionIdValue, fieldId: fieldIdValue };
+  return { file: candidate, instanceId: instanceIdValue, definitionId: definitionIdValue, versionId: versionIdValue, fieldId: fieldIdValue, purpose: "form-field" };
 };
 
 const validateFile = async (
@@ -503,9 +518,6 @@ const uploadHandler = http.post(`${API_BASE}/attachments`, async ({ request }) =
   const authenticated = requireActor(request);
   if (authenticated.response) return authenticated.response;
   const actor = authenticated.actor;
-  if (!hasUserPermission(actor.id, "work-launch:发起") && !hasUserPermission(actor.id, "work-task:审核")) {
-    return apiProblem(request, 403, "ATTACHMENT_UPLOAD_FORBIDDEN", "不能上传附件", "当前账号没有发起流程或处理审核任务的权限。 ");
-  }
   if (scenarioOf(request) === "upload-fail") {
     return apiProblem(request, 503, "UPLOAD_STORAGE_UNAVAILABLE", "附件上传失败", "模拟附件存储服务当前不可用，请稍后重试。 ");
   }
@@ -513,6 +525,17 @@ const uploadHandler = http.post(`${API_BASE}/attachments`, async ({ request }) =
   return withIdempotency(request, async () => {
     const parsed = await parseUpload(request);
     if (parsed instanceof Response) return parsed;
+    if (parsed.purpose === "free-reply") {
+      const instance = usePrototypeStore.getState().instances.find((item) => item.id === parsed.instanceId);
+      const canReply = instance?.workflowType === "free"
+        && instance.status === "进行中"
+        && (isSuperAdminPersona(actor.id) || instance.participantIds?.includes(actor.id));
+      if (!canReply) {
+        return apiProblem(request, 403, "FREE_REPLY_FORBIDDEN", "不能回复该事项", "只有发起人、当前受理人或历史参与人可以上传回复附件。 ");
+      }
+    } else if (!hasUserPermission(actor.id, "work-launch:发起") && !hasUserPermission(actor.id, "work-task:审核")) {
+      return apiProblem(request, 403, "ATTACHMENT_UPLOAD_FORBIDDEN", "不能上传附件", "当前账号没有发起流程或处理审核任务的权限。 ");
+    }
     let scope: AttachmentScope | undefined;
     if (parsed.instanceId && parsed.fieldId) {
       const result = findAttachmentScope(request, actor, parsed.instanceId, parsed.fieldId);
@@ -546,9 +569,11 @@ const uploadHandler = http.post(`${API_BASE}/attachments`, async ({ request }) =
         }
       }
 
-      const record = attachmentRecord(parsed.file, actor, parsed.instanceId && parsed.fieldId
-        ? { instanceId: parsed.instanceId, fieldId: parsed.fieldId }
-        : undefined);
+      const record = parsed.purpose === "free-reply"
+        ? { ...attachmentRecord(parsed.file, actor), instanceId: parsed.instanceId, purpose: "free-reply" as const }
+        : attachmentRecord(parsed.file, actor, parsed.instanceId && parsed.fieldId
+          ? { instanceId: parsed.instanceId, fieldId: parsed.fieldId }
+          : undefined);
       await putAttachment({ record, blob: parsed.file });
       if (scope && parsed.instanceId && parsed.fieldId) {
         const references = [...attachmentValues(scope.instance.formValues?.[parsed.fieldId]), attachmentReference(record)];
@@ -609,6 +634,8 @@ const attachmentContentHandler = http.get(`${API_BASE}/attachments/:attachmentId
         "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(stored.record.name)}`,
         "Content-Length": String(stored.record.size),
         "Content-Type": stored.record.contentType,
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
         "X-Request-Id": requestIdOf(request),
       },
     });

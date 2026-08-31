@@ -482,7 +482,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
       <div className="process-start-toolbar">
         <div className="process-start-title">
           <AppBackButton onClick={() => navigate(copySource ? `/processes?definitionId=${encodeURIComponent(definition.id)}` : "/launch")} />
-          <Divider type="vertical" />
+          <Divider orientation="vertical" />
           <div>
             <strong>{version.basic.name}</strong>
             <span>{version.version} · {starterGroupLabels.join("、")}</span>
@@ -494,7 +494,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
       {copySource ? <Alert
         type="info"
         showIcon
-        message={`正在复制新建：${copySource.code}`}
+        title={`正在复制新建：${copySource.code}`}
         description="已带入来源流程中与当前发布版本兼容的最终表单内容，附件、审批记录和人员选择未复制。当前尚未创建新流程，也未占用实例编号；请修改并确认无误后点击提交。"
       /> : null}
 
@@ -542,22 +542,22 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
         <div className="process-start-layout">
           <main className="process-start-main">
             <Card className="form-card" title="初始表单" extra={<Typography.Text type="secondary">实例编号提交后由系统生成</Typography.Text>}>
-              {initiatorFields.length ? <div className="start-form-grid">{visibleInitiatorFields.map(renderField)}</div> : <Alert type="warning" showIcon message="当前发布版本没有可由发起人填写的字段" />}
+              {initiatorFields.length ? <div className="start-form-grid">{visibleInitiatorFields.map(renderField)}</div> : <Alert type="warning" showIcon title="当前发布版本没有可由发起人填写的字段" />}
             </Card>
           </main>
 
           <aside className="process-start-aside">
             {definition.type === "approval" ? (
               <Card className="approval-card start-reviewer-card" title="审批与确认节点" extra={<TeamOutlined />}>
-                <Alert type="info" showIcon message={`将按当前版本创建 ${approvalNodes.length} 个处理节点`} description="指定人员仅是默认责任人，同一流程权限组的其他成员仍可代办。" />
+                <Alert type="info" showIcon title={`将按当前版本创建 ${approvalNodes.length} 个处理节点`} description="指定人员仅是默认责任人，同一流程权限组的其他成员仍可代办。" />
                 <div className="start-reviewer-list">
                   {approvalNodes.map((node) => (
                     <div className="start-reviewer-item" key={node.id}>
                       <div className="start-reviewer-head">
                         <span><CheckCircleOutlined /><strong>{node.data?.label}</strong></span>
                         <Space size={4}>
-                          <Tag bordered={false} color={node.data?.handlingMode === "confirmation" ? "cyan" : "blue"}>{node.data?.handlingMode === "confirmation" ? "确认" : "审批"}</Tag>
-                          <Tag bordered={false}>{node.data?.specifyAssignee ? "可指定人员" : "组内任一人"}</Tag>
+                          <Tag variant="filled" color={node.data?.handlingMode === "confirmation" ? "cyan" : "blue"}>{node.data?.handlingMode === "confirmation" ? "确认" : "审批"}</Tag>
+                          <Tag variant="filled">{node.data?.specifyAssignee ? "可指定人员" : "组内任一人"}</Tag>
                         </Space>
                       </div>
                       {node.data?.specifyAssignee && (
@@ -572,7 +572,7 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
               </Card>
             ) : (
               <Card className="approval-card start-reviewer-card" title="首位受理人" extra={<TeamOutlined />}>
-                <Alert type="info" showIcon message="受理后可继续选择下一位受理人" description={`候选人来自：${assigneeGroupLabels.join("、") || "尚未配置受理流程权限组"}`} />
+                <Alert type="info" showIcon title="受理后可继续选择下一位受理人" description={`候选人来自：${assigneeGroupLabels.join("、") || "尚未配置受理流程权限组"}`} />
                 <Form.Item name="firstAssignee" label="选择受理人" rules={[{ required: true, message: "请选择首位受理人" }]}>
                   <Select showSearch optionFilterProp="label" placeholder="搜索并选择首位受理人" options={peopleOptions(version.basic.assigneeGroups ?? [])} />
                 </Form.Item>

@@ -3,13 +3,19 @@ namespace FlowPilot.Infrastructure.Persistence;
 internal sealed class RuntimeWorkflowDefinition
 {
     public Guid Id { get; set; }
+    public string Code { get; set; } = string.Empty;
+    public string NormalizedCode { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
     public string Type { get; set; } = string.Empty;
     public bool IsDisabled { get; set; }
     public Guid? PublishedVersionId { get; set; }
+    public int NextVersionNumber { get; set; }
     public int InstanceCount { get; set; }
     public int Revision { get; set; }
+    public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+    public Guid CreatedBy { get; set; }
     public Guid UpdatedBy { get; set; }
 }
 
@@ -17,12 +23,27 @@ internal sealed class RuntimeWorkflowVersion
 {
     public Guid Id { get; set; }
     public Guid DefinitionId { get; set; }
+    public int VersionNumber { get; set; }
     public string VersionLabel { get; set; } = string.Empty;
     public string BasicJson { get; set; } = string.Empty;
     public string SnapshotJson { get; set; } = string.Empty;
     public string? ValidationStatus { get; set; }
+    public string? ValidationJson { get; set; }
+    public DateTime? ValidatedAt { get; set; }
     public int InstanceCount { get; set; }
     public int Revision { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public Guid CreatedBy { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public Guid UpdatedBy { get; set; }
+    public DateTime? FirstPublishedAt { get; set; }
+    public Guid? FirstPublishedBy { get; set; }
+    public DateTime? LatestPublishedAt { get; set; }
+    public Guid? LatestPublishedBy { get; set; }
+    public DateTime? UnpublishedAt { get; set; }
+    public Guid? UnpublishedBy { get; set; }
+    public string? UnpublishedReason { get; set; }
+    public string? ChangeNote { get; set; }
 }
 
 internal sealed class RuntimeWorkflowGroupReference
@@ -44,6 +65,7 @@ internal sealed class RuntimeWorkflowRoleReference
 internal sealed class RuntimeWorkflowGroup
 {
     public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
     public bool IsEnabled { get; set; }
 }
 
@@ -62,7 +84,9 @@ internal sealed class RuntimeWorkflowGroupRole
 internal sealed class RuntimeRole
 {
     public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
     public bool IsEnabled { get; set; }
+    public bool IsBuiltIn { get; set; }
 }
 
 internal sealed class RuntimeUserRole
@@ -154,6 +178,46 @@ internal sealed class RuntimeAuditEvent
     public string TraceId { get; set; } = string.Empty;
     public string Result { get; set; } = string.Empty;
     public DateTime OccurredAt { get; set; }
+}
+
+internal sealed class RuntimeEmailOutboxMessage
+{
+    public Guid Id { get; set; }
+    public int Revision { get; set; }
+    public string IdempotencyKey { get; set; } = string.Empty;
+    public string EventType { get; set; } = string.Empty;
+    public Guid InstanceId { get; set; }
+    public Guid? TaskId { get; set; }
+    public string TemplateKey { get; set; } = string.Empty;
+    public Guid RecipientUserId { get; set; }
+    public string RecipientEmailSnapshot { get; set; } = string.Empty;
+    public string Subject { get; set; } = string.Empty;
+    public string TemplateDataJson { get; set; } = "{}";
+    public string TargetPath { get; set; } = string.Empty;
+    public string? LinkBaseUrl { get; set; }
+    public string? ResolvedTargetUrl { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public DateTime ScheduledAt { get; set; }
+    public int AttemptCount { get; set; }
+    public string? LeaseOwner { get; set; }
+    public DateTime? LeaseUntil { get; set; }
+    public string? LastErrorCode { get; set; }
+    public string? LastErrorSummary { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? SentAt { get; set; }
+    public DateTime? DeadLetteredAt { get; set; }
+}
+
+internal sealed class RuntimeEmailDeliveryAttempt
+{
+    public Guid Id { get; set; }
+    public Guid OutboxId { get; set; }
+    public int AttemptNumber { get; set; }
+    public DateTime StartedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public string Result { get; set; } = string.Empty;
+    public string? ErrorCategory { get; set; }
+    public string? ServerResponseSummary { get; set; }
 }
 
 internal sealed class FreeTimelineEntryEntity
@@ -261,4 +325,20 @@ internal sealed class IdempotencyRecordEntity
     public DateTime CreatedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime ExpiresAt { get; set; }
+}
+
+internal sealed class RuntimeSessionEntity
+{
+    public Guid Id { get; set; }
+    public byte[] TokenHash { get; set; } = [];
+    public Guid OperatorUserId { get; set; }
+    public Guid EffectiveUserId { get; set; }
+    public Guid? ImpersonationRecordId { get; set; }
+    public int PermissionSnapshotVersion { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime LastAccessedAt { get; set; }
+    public DateTime IdleExpiresAt { get; set; }
+    public DateTime AbsoluteExpiresAt { get; set; }
+    public DateTime? RevokedAt { get; set; }
+    public string? RevocationReason { get; set; }
 }

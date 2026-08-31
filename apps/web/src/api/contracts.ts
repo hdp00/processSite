@@ -171,6 +171,7 @@ export interface AttachmentRecord {
   uploadedAt: string;
   instanceId?: string;
   fieldId?: string;
+  purpose?: "form-field" | "free-reply";
   lifecycle?: "temporary" | "active" | "cleanup-pending";
   cleanupAfter?: string;
 }

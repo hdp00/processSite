@@ -14,7 +14,7 @@ export default defineConfig({
     },
     output: {
       baseUrl: "/api/flowpilot/v1",
-      clean: true,
+      clean: false,
       client: "axios",
       headers: true,
       mode: "single",
@@ -31,7 +31,7 @@ export default defineConfig({
       target: openApiDocument,
     },
     output: {
-      clean: true,
+      clean: false,
       client: "zod",
       headers: true,
       mode: "single",

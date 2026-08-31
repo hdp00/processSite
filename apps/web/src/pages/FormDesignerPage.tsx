@@ -720,11 +720,11 @@ const SortableField = ({ field, selected, locked, onSelect, onPatch, onDelete }:
               <DragOutlined />
             </button>
           </Tooltip>
-          <Tag bordered={false} icon={typeIcon[field.type]}>{typeLabel[field.type]}</Tag>
-          {locked ? <Tag bordered={false} color="gold">固定字段</Tag> : null}
-          {field.displayCondition ? <Tag bordered={false} color="cyan">条件显示</Tag> : null}
+          <Tag variant="filled" icon={typeIcon[field.type]}>{typeLabel[field.type]}</Tag>
+          {locked ? <Tag variant="filled" color="gold">固定字段</Tag> : null}
+          {field.displayCondition ? <Tag variant="filled" color="cyan">条件显示</Tag> : null}
           {field.inputStage === "reviewer" ? <Tag variant="filled" color="purple">审核人输入</Tag> : null}
-          {field.inputStage === "both" ? <Tag bordered={false} color="blue">发起人/审核人</Tag> : null}
+          {field.inputStage === "both" ? <Tag variant="filled" color="blue">发起人/审核人</Tag> : null}
         </Space>
         {locked ? (
           <Tooltip title="标题是所有流程必备字段，不能删除">
@@ -1187,7 +1187,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
             className="fd-component-tip"
             type="info"
             showIcon
-            message="输入权限"
+            title="输入权限"
             description="选择“发起人/审核人”或“审核人”后，再到审批节点分配具体可输入字段。"
           />
         </aside>
@@ -1196,8 +1196,8 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
           <div className="fd-canvas-toolbar">
             <Text type="secondary">{workflowName} · 初始表单</Text>
             <Space size={8}>
-              <Tag bordered={false}>{fields.length} 个字段</Tag>
-              <Tag bordered={false} color="blue">单列布局</Tag>
+              <Tag variant="filled">{fields.length} 个字段</Tag>
+              <Tag variant="filled" color="blue">单列布局</Tag>
             </Space>
           </div>
           <div className="fd-canvas-scroll">
@@ -1262,7 +1262,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                     <Alert
                       type="info"
                       showIcon
-                      message="流程标题字段"
+                      title="流程标题字段"
                       description="字段标识、文本框类型和必填规则由系统固定；字段名称、说明、提示、输入权限以及任务中心和流程清单的展示位置可在此配置。"
                     />
                   ) : null}
@@ -1419,7 +1419,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                     <Alert
                       type="warning"
                       showIcon
-                      message={(selectedField.attachment?.inlinePdf ?? true) ? "PDF 单文件替换规则" : "安全限制"}
+                      title={(selectedField.attachment?.inlinePdf ?? true) ? "PDF 单文件替换规则" : "安全限制"}
                       description={(selectedField.attachment?.inlinePdf ?? true)
                         ? "开启内嵌展示后固定只保留 1 个文件；继续上传会删除原文件并保留新文件。"
                         : "可上传任意业务附件；系统默认阻止可执行文件和脚本类型。"}
@@ -1436,7 +1436,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                     <Alert
                       type="info"
                       showIcon
-                      message="行操作规则"
+                      title="行操作规则"
                       description="发起人可新增、删除、复制行；审批节点仅可修改授权单元格。"
                     />
                     {(selectedField.columns ?? []).map((column, index) => (
@@ -1715,7 +1715,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                 <Alert
                   type="info"
                   showIcon
-                  message="系统字段展示"
+                  title="系统字段展示"
                   description="分别控制系统自动生成的信息在任务中心、流程清单和 Excel 导出中的使用。配置跟随流程版本保存。"
                 />
                 <div className="fd-system-field-list">
@@ -1723,7 +1723,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                     <div className="fd-system-field-card" key={field.key}>
                       <div className="fd-system-field-card__head">
                         <Text strong>{field.label}</Text>
-                        <Tag bordered={false}>系统生成</Tag>
+                        <Tag variant="filled">系统生成</Tag>
                       </div>
                       <Text className="fd-system-field-card__description" type="secondary">{field.description}</Text>
                       <div className="fd-system-field-targets">
@@ -1837,10 +1837,10 @@ const FormDesignerPage = () => {
   const versionId = searchParams.get("versionId") ?? definition?.versions[0]?.id ?? "";
   const version = definition?.versions.find((item) => item.id === versionId);
   if (!definition || !version) {
-    return <Alert type="error" showIcon message="流程版本不存在" description="表单设计必须绑定到一个明确的正式版本。" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
+    return <Alert type="error" showIcon title="流程版本不存在" description="表单设计必须绑定到一个明确的正式版本。" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
   }
   if (!canEditVersion(definition, version)) {
-    return <Alert type="info" showIcon message={`${version.version} 为只读版本`} description={definition.publishedVersionId === version.id ? "已发布版本不能直接修改。没有实例时可先取消发布；已有实例时请复制新建版本。" : "该版本已经创建过流程实例，只能查看或复制新建版本。"} action={<AppBackButton onClick={() => navigate(`/admin/processes/${definitionId}/versions`)} />} />;
+    return <Alert type="info" showIcon title={`${version.version} 为只读版本`} description={definition.publishedVersionId === version.id ? "已发布版本不能直接修改。没有实例时可先取消发布；已有实例时请复制新建版本。" : "该版本已经创建过流程实例，只能查看或复制新建版本。"} action={<AppBackButton onClick={() => navigate(`/admin/processes/${definitionId}/versions`)} />} />;
   }
   return <FormDesignerWorkspace key={`${definitionId}-${versionId}`} definitionId={definitionId} versionId={versionId} />;
 };

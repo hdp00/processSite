@@ -337,7 +337,7 @@ export function AppShell() {
                 options={personaOptions}
               />
             </div>}
-            {(debugMode || operatorSuperAdmin) && <Divider type="vertical" />}
+            {(debugMode || operatorSuperAdmin) && <Divider orientation="vertical" />}
             <Dropdown menu={{ items: userMenu }} trigger={["click"]}>
               <button className="user-button" type="button">
                 <Avatar className="user-avatar">{persona.name.slice(-1)}</Avatar>
@@ -356,7 +356,7 @@ export function AppShell() {
               className="impersonation-alert"
               type="warning"
               showIcon
-              message={`正在以 ${persona.name} 的身份操作`}
+              title={`正在以 ${persona.name} 的身份操作`}
               description="权限与数据范围按模拟用户计算；审计记录会同时保留真实操作者和当前模拟用户。"
               action={<Button size="small" loading={switchingPersona} onClick={() => void selectPersona(operatorUserId)}>退出模拟</Button>}
             />

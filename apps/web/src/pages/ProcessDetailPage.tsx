@@ -352,7 +352,7 @@ export function ProcessDetailPage() {
   const historyItems = [
     {
       color: "blue",
-      children: <HistoryItem title="流程发起" person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} />,
+      content: <HistoryItem title="流程发起" person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} />,
     },
     ...Array.from({ length: instance.round }, (_, index) => index + 1).flatMap((round) => {
       const resubmission = instance.resubmissions?.find((record) => record.round === round);
@@ -366,7 +366,7 @@ export function ProcessDetailPage() {
                 time: task.completedAt ?? "",
                 order: 0,
                 color: task.action === "通过" || task.action === "确认" ? "green" : "red",
-                children: <HistoryItem
+                content: <HistoryItem
                   title={prefixWithRound(task.round, `${task.nodeName} · ${task.action ? `已${task.action}` : "已完成"}`)}
                   person={`实际处理人 ${task.completedByName ?? "未知"}${task.defaultAssigneeId && task.completedById && task.defaultAssigneeId !== task.completedById ? "（代办）" : ""}`}
                   time={task.completedAt ?? ""}
@@ -382,7 +382,7 @@ export function ProcessDetailPage() {
             time: revision.editedAt,
             order: 1,
             color: "blue",
-            children: <HistoryItem
+            content: <HistoryItem
               title={prefixWithRound(task.round, `${task.nodeName} · 继续修改`)}
               person={`修改人 ${revision.editedByName} · 原结果 ${task.action}`}
               time={revision.editedAt}
@@ -395,12 +395,12 @@ export function ProcessDetailPage() {
           return [...decision, ...revisions];
         })
         .sort((left, right) => left.time.localeCompare(right.time, "zh-CN") || left.order - right.order)
-        .map(({ key, color, children }) => ({ key, color, children }));
+        .map(({ key, color, content }) => ({ key, color, content }));
       return [
         ...(resubmission ? [{
           key: `resubmission-${round}`,
           color: "blue",
-          children: <HistoryItem
+          content: <HistoryItem
             title={formatRoundStartLabel(round)}
             person={`${resubmission.submittedByName} · 重新提交`}
             time={resubmission.submittedAt}
@@ -888,7 +888,7 @@ export function ProcessDetailPage() {
               <StatusPill status={instance.status} />
               {instance.priority === "紧急" && <Tag color="error">紧急</Tag>}
             </div>
-            <Space split={<Divider type="vertical" />} wrap>
+            <Space split={<Divider orientation="vertical" />} wrap>
               <Typography.Text copyable>{instance.code}</Typography.Text>
               <span>{instance.template} · {instance.templateVersion}</span>
               {instance.round > 1 ? <span>{formatRoundLabel(instance.round)}</span> : null}
@@ -935,7 +935,7 @@ export function ProcessDetailPage() {
           type="info"
           showIcon
           icon={<TeamOutlined />}
-          message={isSuperAdmin ? `超级管理员正在处理“${currentReviewer?.shortGroup ?? "审批"}”待办` : `这是 ${findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name ?? "其他成员"} 的默认任务，你可以作为同组成员直接代办`}
+          title={isSuperAdmin ? `超级管理员正在处理“${currentReviewer?.shortGroup ?? "审批"}”待办` : `这是 ${findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name ?? "其他成员"} 的默认任务，你可以作为同组成员直接代办`}
           description={isSuperAdmin ? "这是系统级处理权限，不会把超级管理员加入该节点的流程权限组或人员名单；提交后仍记录实际处理人。" : "无需转交或填写代办原因；提交后系统会记录实际处理人为你。"}
         />
       )}
@@ -944,7 +944,7 @@ export function ProcessDetailPage() {
         <Alert
           type="warning"
           showIcon
-          message="流程已驳回，发起内容现已解锁"
+          title="流程已驳回，发起内容现已解锁"
           description={hasConfiguredAttachmentField ? "你可以修改表单，并按需上传或更换附件；确认重新提交后将开启新一轮，全部审批分支重新审核。" : "你可以修改表单；确认重新提交后将开启新一轮，全部审批分支重新审核。"}
         />
       )}
@@ -954,7 +954,7 @@ export function ProcessDetailPage() {
           type="success"
           showIcon
           icon={<EditOutlined />}
-          message="本轮尚无人提交审核，发起内容可以修改"
+          title="本轮尚无人提交审核，发起内容可以修改"
           description="保存修改不会创建新轮次；表单、条件节点和默认审核人员会同步到本轮待办。任一审批人提交结果后，内容和人员选择将立即锁定。"
         />
       )}
@@ -964,7 +964,7 @@ export function ProcessDetailPage() {
           type="info"
           showIcon
           icon={<LockOutlined />}
-          message="本轮已有审核结果，发起内容已锁定"
+          title="本轮已有审核结果，发起内容已锁定"
           description={hasConfiguredAttachmentField ? "发起方不能再修改表单或附件；如果本轮被驳回，内容会重新开放编辑。" : "发起方不能再修改表单；如果本轮被驳回，内容会重新开放编辑。"}
         />
       )}
@@ -974,7 +974,7 @@ export function ProcessDetailPage() {
           type="success"
           showIcon
           icon={<EditOutlined />}
-          message={`继续修改 · ${repeatTask.nodeName}`}
+          title={`继续修改 · ${repeatTask.nodeName}`}
           description={`原结果“${repeatTask.action}”保持不变；仅可修改本节点授权字段，保存后自动记录修改人、时间和完整字段差异。`}
         />
       )}
@@ -984,7 +984,7 @@ export function ProcessDetailPage() {
         defaultActiveKey={[]}
         items={[{
           key: "workflow-progress",
-          label: <div className="detail-collapse-heading"><strong>流程进度</strong><Tag bordered={false}>按实例锁定版本的拓扑推进</Tag></div>,
+          label: <div className="detail-collapse-heading"><strong>流程进度</strong><Tag variant="filled">按实例锁定版本的拓扑推进</Tag></div>,
           children: <div className="topology-progress">
           <div className="topology-endpoint is-complete"><CheckOutlined /><span><strong>开始</strong><small>{formatDisplayDateTime(instance.createdAt).slice(5)}</small></span></div>
           {progressStages.map((stage) => (
@@ -993,7 +993,7 @@ export function ProcessDetailPage() {
               <section className="topology-stage">
                 <header>
                   <span>步骤 {stage.index}</span>
-                  <Tag bordered={false} color={stage.parallel ? "blue" : "default"}>{stage.parallel ? `并行 · ${stage.nodes.length} 个节点` : "顺序处理"}</Tag>
+                  <Tag variant="filled" color={stage.parallel ? "blue" : "default"}>{stage.parallel ? `并行 · ${stage.nodes.length} 个节点` : "顺序处理"}</Tag>
                 </header>
                 <div className={`topology-stage-nodes${stage.parallel ? " is-parallel" : ""}`}>
                   {stage.nodes.map((node) => {
@@ -1004,7 +1004,7 @@ export function ProcessDetailPage() {
                       <div className="branch-card-top">
                         <span className="branch-icon">{progressStatusIcon(node.status)}</span>
                         <Space size={4} wrap>
-                          <Tag bordered={false} color={node.handlingMode === "confirmation" ? "cyan" : "blue"}>{node.handlingMode === "confirmation" ? "确认" : "审批"}</Tag>
+                          <Tag variant="filled" color={node.handlingMode === "confirmation" ? "cyan" : "blue"}>{node.handlingMode === "confirmation" ? "确认" : "审批"}</Tag>
                           <StatusPill status={node.status} compact />
                         </Space>
                       </div>
@@ -1094,7 +1094,7 @@ export function ProcessDetailPage() {
 
           {repeatTask && (
             <Card className="approval-card" title={`继续修改 · ${repeatTask.nodeName}`}>
-              <Alert type="info" showIcon message={`原处理结果：${repeatTask.action}`} description="本次只保存授权字段差异，不重新生成审核记录，也不能改变原处理结果。" />
+              <Alert type="info" showIcon title={`原处理结果：${repeatTask.action}`} description="本次只保存授权字段差异，不重新生成审核记录，也不能改变原处理结果。" />
               <label className="field-block">
                 <span>修改说明（选填）</span>
                 <Input.TextArea value={repeatComment} onChange={(event) => setRepeatComment(event.target.value)} placeholder="可说明本次继续修改的原因" autoSize={{ minRows: 3, maxRows: 6 }} maxLength={500} showCount />
@@ -1107,12 +1107,12 @@ export function ProcessDetailPage() {
           )}
 
           {!canReview && !repeatTask && instance.status === "审核中" && (
-            !isDcc && <Alert message="当前以只读方式查看" description="你没有此待办的处理权限，或该节点已由其他成员完成。" type="info" showIcon />
+            !isDcc && <Alert title="当前以只读方式查看" description="你没有此待办的处理权限，或该节点已由其他成员完成。" type="info" showIcon />
           )}
         </div>
       </div>
 
-      <Card title="流转记录" extra={<Tag bordered={false}>按轮次留痕</Tag>}>
+      <Card title="流转记录" extra={<Tag variant="filled">按轮次留痕</Tag>}>
         <Timeline items={historyItems} />
       </Card>
 
@@ -1134,7 +1134,7 @@ export function ProcessDetailPage() {
       </Modal>
 
       <Modal open={closeOpen} title="关闭流程" okText="确认关闭" okButtonProps={{ danger: true }} cancelText="取消" onOk={confirmClose} onCancel={() => setCloseOpen(false)}>
-        <Alert type="warning" showIcon message="关闭后不可恢复，所有未完成待办将被取消。" />
+        <Alert type="warning" showIcon title="关闭后不可恢复，所有未完成待办将被取消。" />
         <label className="field-block modal-field"><span>关闭说明 <em className="required-hint">必填</em></span><Input.TextArea value={closeReason} onChange={(event) => setCloseReason(event.target.value)} placeholder="请说明关闭原因" rows={3} /></label>
       </Modal>
       <ExcelPdfPreviewModal

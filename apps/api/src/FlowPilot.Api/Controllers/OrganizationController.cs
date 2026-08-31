@@ -999,6 +999,35 @@ public sealed class OrganizationController(
         return page is null ? NotFoundProblem() : Ok(page);
     }
 
+    [HttpPost("workflow-permission-groups/{groupId:guid}/change-impact")]
+    [ProducesResponseType<WorkflowGroupChangeImpactDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<WorkflowGroupChangeImpactDto>> PreviewWorkflowGroupChangeImpact(
+        Guid groupId,
+        [FromBody] WorkflowGroupChangeImpactRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null)
+        {
+            return AuthenticationRequired();
+        }
+
+        if (!HasPermission(session, "org-group:编辑"))
+        {
+            return Forbidden("当前账号没有修改流程权限组的权限。");
+        }
+
+        var result = await organizationService.PreviewWorkflowGroupChangeImpactAsync(
+            groupId,
+            request,
+            cancellationToken).ConfigureAwait(false);
+        return result.Succeeded ? Ok(result.Value!.Data) : CommandFailure(result.Failure!);
+    }
+
     [HttpPost("workflow-permission-groups")]
     [ProducesResponseType<WorkflowPermissionGroupDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -1306,7 +1335,7 @@ public sealed class OrganizationController(
 
 public class OrganizationListParameters
 {
-    [Range(1, int.MaxValue)]
+    [Range(1, 1_000_000)]
     public int Page { get; init; } = 1;
 
     [Range(1, 200)]
@@ -1325,7 +1354,7 @@ public sealed class WorkflowGroupListParameters : OrganizationListParameters
 
 public sealed class MemberListParameters
 {
-    [Range(1, int.MaxValue)]
+    [Range(1, 1_000_000)]
     public int Page { get; init; } = 1;
 
     [Range(1, 200)]

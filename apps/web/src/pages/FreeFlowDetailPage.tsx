@@ -1,8 +1,11 @@
 import {
+  DeleteOutlined,
+  DownloadOutlined,
   EditOutlined,
   HistoryOutlined,
   LockOutlined,
   MessageOutlined,
+  PaperClipOutlined,
   ReloadOutlined,
   SwapOutlined,
   UserOutlined,
@@ -22,6 +25,7 @@ import {
   Timeline,
   Tooltip,
   Typography,
+  Upload,
   message,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -30,6 +34,7 @@ import { AppBackButton } from "../components/AppBackButton";
 import { cacheProcessRuntime } from "../api/entityCache";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
+import type { AttachmentRecord } from "../api/contracts";
 import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
@@ -74,6 +79,10 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === instance?.definitionId));
   const lockedVersion = definition?.versions.find((version) => version.id === instance?.versionId);
   const hasConfiguredAttachmentField = Boolean(lockedVersion?.snapshot.form.fields.some((field) => field.type === "attachment"));
+  const showsInitialAttachments = Boolean(
+    hasConfiguredAttachmentField
+    && (instance?.attachmentNames?.length || (instance?.pdfName && !["无附件", "—"].includes(instance.pdfName))),
+  );
   const assigneeIds = new Set((lockedVersion?.basic.assigneeGroups ?? []).flatMap(effectiveGroupMemberIds));
   const userOptions = identityUsers.filter((user) => assigneeIds.has(user.id)).map((user) => ({
     value: user.id,
@@ -81,6 +90,8 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   }));
   const isSuperAdmin = isSuperAdminPersona(personaId);
   const [replyContent, setReplyContent] = useState("");
+  const [replyAttachments, setReplyAttachments] = useState<AttachmentRecord[]>([]);
+  const [replyUploading, setReplyUploading] = useState(false);
   const [nextAssignee, setNextAssignee] = useState<string>();
   const [editEntry, setEditEntry] = useState<FreeFlowEntry>();
   const [editContent, setEditContent] = useState("");
@@ -127,12 +138,13 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const collaborationActionLabel = nextAssignee
     ? hasReplyDraft ? "回复并变更" : "变更受理人"
     : canReply ? "发表回复" : "变更受理人";
-  const collaborationActionDisabled = nextAssignee
+  const collaborationActionDisabled = replyUploading || (nextAssignee
     ? !canTransfer
-    : !(canReply && hasReplyDraft);
+    : !(canReply && hasReplyDraft));
   const { guard } = useUnsavedChangesGuard({
     dirty: Boolean(
       hasRichContent(replyContent)
+      || replyAttachments.length > 0
       || nextAssignee
       || (editEntry && editContent !== editEntry.content)
       || closeReason.trim()
@@ -194,25 +206,79 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   };
 
   const submitCollaboration = async () => {
+    const attachmentIds = replyAttachments.map((attachment) => attachment.id);
     if (nextAssignee) {
       const assigneeName = findIdentityUser(nextAssignee)?.name ?? "所选人员";
       const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.transfer(
         instance.id,
         nextAssignee,
         hasReplyDraft ? replyContent : undefined,
+        hasReplyDraft ? attachmentIds : [],
         etag,
       ));
       if (!updated) return;
-      if (hasReplyDraft) setReplyContent("");
+      if (hasReplyDraft) {
+        setReplyContent("");
+        setReplyAttachments([]);
+      }
       setNextAssignee(undefined);
       message.success(hasReplyDraft ? `回复已发表，受理人已变更为${assigneeName}` : `受理人已变更为${assigneeName}`);
       return;
     }
     if (!hasReplyDraft) return message.warning("请输入回复内容");
-    const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.reply(instance.id, replyContent, etag));
+    const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.reply(
+      instance.id,
+      replyContent,
+      attachmentIds,
+      etag,
+    ));
     if (!updated) return;
     setReplyContent("");
+    setReplyAttachments([]);
     message.success("回复已发表，不改变当前受理人");
+  };
+
+  const uploadReplyAttachment = async (file: File) => {
+    if (replyAttachments.length >= 20) {
+      message.warning("每条回复最多添加 20 个附件");
+      return Upload.LIST_IGNORE;
+    }
+    setReplyUploading(true);
+    try {
+      const attachment = await flowPilotApi.attachments.upload(file, {
+        instanceId: instance.id,
+        purpose: "free-reply",
+      });
+      setReplyAttachments((current) => [...current, attachment]);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "附件上传失败，请稍后重试");
+    } finally {
+      setReplyUploading(false);
+    }
+    return Upload.LIST_IGNORE;
+  };
+
+  const removeReplyAttachment = async (attachment: AttachmentRecord) => {
+    try {
+      await flowPilotApi.attachments.remove(attachment.id);
+      setReplyAttachments((current) => current.filter((item) => item.id !== attachment.id));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "附件删除失败，请稍后重试");
+    }
+  };
+
+  const downloadAttachment = async (attachment: { id: string; name: string }) => {
+    try {
+      const result = await flowPilotApi.attachments.content(attachment.id);
+      const url = URL.createObjectURL(result.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.fileName || attachment.name;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "附件下载失败，请稍后重试");
+    }
   };
 
   const renderSystemEvent = (entry: FreeFlowEntry) => {
@@ -242,7 +308,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
       <div className="free-system-event">
         <Avatar size={22}>{entry.actor.slice(-1)}</Avatar>
         <Text strong className="free-system-event__actor">{entry.actor}</Text>
-        <Tag bordered={false} color={meta.color}>{meta.label}</Tag>
+        <Tag variant="filled" color={meta.color}>{meta.label}</Tag>
         <Tooltip title={fullDetail ?? (typeof entry.content === "string" ? entry.content : undefined)}>
           <Text className="free-system-event__detail">{detail}</Text>
         </Tooltip>
@@ -287,8 +353,8 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
             <Descriptions column={2} size="small">
               <Descriptions.Item label="事项分类">{instance.category}</Descriptions.Item>
               <Descriptions.Item label="优先级"><Tag color={instance.priority === "紧急" ? "red" : "default"}>{instance.priority}</Tag></Descriptions.Item>
-              <Descriptions.Item label="发起人">{instance.initiator}</Descriptions.Item>
-              {hasConfiguredAttachmentField && (instance.attachmentNames?.length || (instance.pdfName && !["无附件", "—"].includes(instance.pdfName))) ? (
+              <Descriptions.Item label="发起人" span={showsInitialAttachments ? 1 : 2}>{instance.initiator}</Descriptions.Item>
+              {showsInitialAttachments ? (
                 <Descriptions.Item label="附件">
                   {instance.attachmentNames?.length ? instance.attachmentNames.join("、") : instance.pdfName}
                 </Descriptions.Item>
@@ -304,12 +370,12 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
             className="free-timeline"
             items={timeline.map((entry) => ({
               color: entry.type === "closed" ? "gray" : entry.type === "reopened" ? "green" : entry.type === "reply" ? "blue" : "purple",
-              children: entry.type === "reply" ? (
+              content: entry.type === "reply" ? (
                 <Card className="free-reply-card" size="small">
                   <div className="free-reply-card__head">
                     <Space><Avatar size={30}>{entry.actor.slice(-1)}</Avatar><Text strong>{entry.actor}</Text></Space>
                     <Space>
-                      {entry.editedAt && <Tooltip title={`首次发表：${formatDisplayDateTime(entry.time)}；最后编辑：${formatDisplayDateTime(entry.editedAt)}`}><Tag bordered={false}>已编辑</Tag></Tooltip>}
+                      {entry.editedAt && <Tooltip title={`首次发表：${formatDisplayDateTime(entry.time)}；最后编辑：${formatDisplayDateTime(entry.editedAt)}`}><Tag variant="filled">已编辑</Tag></Tooltip>}
                       <Text type="secondary">{entry.editedAt ? `最后编辑 ${formatDisplayDateTime(entry.editedAt)}` : formatDisplayDateTime(entry.time)}</Text>
                       {isOpen && entry.actor === persona?.name && (
                         <Button type="text" size="small" icon={<EditOutlined />} onClick={() => { setEditEntry(entry); setEditContent(entry.content ?? ""); }}>编辑</Button>
@@ -317,6 +383,18 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
                     </Space>
                   </div>
                   <RichTextContent html={entry.content ?? ""} />
+                  {entry.attachments?.length ? (
+                    <Space wrap size={[8, 8]}>
+                      {entry.attachments.map((attachment) => (
+                        <Button
+                          key={attachment.id}
+                          size="small"
+                          icon={<DownloadOutlined />}
+                          onClick={() => downloadAttachment(attachment)}
+                        >{attachment.name}</Button>
+                      ))}
+                    </Space>
+                  ) : null}
                 </Card>
               ) : renderSystemEvent(entry),
             }))}
@@ -326,6 +404,33 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
             canReply || canTransfer ? (
               <Card className="free-compose-card" title={<Space><MessageOutlined />协作处理</Space>}>
                 {canReply && <RichTextEditor value={replyContent} onChange={setReplyContent} placeholder="补充协作信息…" minHeight={180} />}
+                {canReply && (
+                  <div>
+                    <Upload
+                      multiple
+                      showUploadList={false}
+                      beforeUpload={uploadReplyAttachment}
+                      disabled={replyUploading || replyAttachments.length >= 20}
+                    >
+                      <Button icon={<PaperClipOutlined />} loading={replyUploading}>添加回复附件</Button>
+                    </Upload>
+                    {replyAttachments.length ? (
+                      <Space wrap size={[8, 8]} style={{ marginTop: 10 }}>
+                        {replyAttachments.map((attachment) => (
+                          <Tag
+                            key={attachment.id}
+                            closable={!replyUploading}
+                            closeIcon={<DeleteOutlined />}
+                            onClose={(event) => {
+                              event.preventDefault();
+                              void removeReplyAttachment(attachment);
+                            }}
+                          >{attachment.name}</Tag>
+                        ))}
+                      </Space>
+                    ) : null}
+                  </div>
+                )}
                 <div className="free-compose-actions">
                   <Text type="secondary">发表回复不会改变当前受理人；发起或受理权限组成员可直接变更受理人。</Text>
                   <Space wrap>
@@ -341,8 +446,8 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
                   </Space>
                 </div>
               </Card>
-            ) : <Alert showIcon type="info" message="当前为只读查看" description="发起人、当前或历史参与人可以回复；发起或受理权限组成员可以切换当前受理人。" />
-          ) : <Alert showIcon icon={<LockOutlined />} type="warning" message="事项已关闭，内容已锁定" description="重新打开后，参与人可继续回复，原作者也可继续编辑自己的历史回复。" />}
+            ) : <Alert showIcon type="info" title="当前为只读查看" description="发起人、当前或历史参与人可以回复；发起或受理权限组成员可以切换当前受理人。" />
+          ) : <Alert showIcon icon={<LockOutlined />} type="warning" title="事项已关闭，内容已锁定" description="重新打开后，参与人可继续回复，原作者也可继续编辑自己的历史回复。" />}
         </main>
 
         <aside className="free-flow-side">
@@ -383,7 +488,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
         setInitialEditOpen(false);
         message.success("初始表单已更新，修改记录已写入时间线");
       }}>
-        <Alert type="info" showIcon message="进行中允许发起人修改，关闭后自动锁定" description="字段变化和修改时间会保留在流程记录中。" />
+        <Alert type="info" showIcon title="进行中允许发起人修改，关闭后自动锁定" description="字段变化和修改时间会保留在流程记录中。" />
         <div className="free-modal-form">
           <label><span>事项标题</span><Input value={draftInitial.title} onChange={(event) => setDraftInitial((current) => ({ ...current, title: event.target.value }))} /></label>
           <div className="free-modal-grid">
@@ -407,7 +512,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
         const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.reopen(instance.id, reopenReason, reopenAssignee, etag));
         if (!updated) return;
         setReopenOpen(false); setReopenReason(""); setReopenAssignee(undefined); message.success("事项已重新打开并生成待办");
-      }}><div className="free-modal-form"><Alert type="info" showIcon message="重新打开后恢复回复和编辑能力" /><label><span>打开理由</span><Input.TextArea rows={4} value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} /></label><label><span>受理人</span><Select showSearch optionFilterProp="label" value={reopenAssignee} onChange={setReopenAssignee} options={userOptions} /></label></div></Modal>
+      }}><div className="free-modal-form"><Alert type="info" showIcon title="重新打开后恢复回复和编辑能力" /><label><span>打开理由</span><Input.TextArea rows={4} value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} /></label><label><span>受理人</span><Select showSearch optionFilterProp="label" value={reopenAssignee} onChange={setReopenAssignee} options={userOptions} /></label></div></Modal>
     </div>
   );
 }

@@ -101,7 +101,7 @@ function ProcessDefinitionLoader({ children }: { children: ReactNode }) {
       });
     return () => { cancelled = true; };
   }, [definitionId, loadedDefinitionId]);
-  if (loading) return <Spin fullscreen tip="正在加载流程版本…" />;
+  if (loading) return <Spin fullscreen description="正在加载流程版本…" />;
   if (failed) return <Result status="error" title="流程版本加载失败" subTitle="请刷新页面后重试。" />;
   return children;
 }
@@ -157,7 +157,7 @@ function LaunchDefinitionLoader({ children }: { children: ReactNode }) {
     })().catch(() => { if (!cancelled) setFailed(true); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [copySourceId, definitionId]);
-  if (loading) return <Spin fullscreen tip="正在加载发起配置…" />;
+  if (loading) return <Spin fullscreen description="正在加载发起配置…" />;
   if (failed) return <Result status="403" title="流程当前不可发起" subTitle="流程可能已停用、取消发布或当前身份不在发起权限组中。" />;
   return children;
 }
@@ -192,7 +192,7 @@ function ProcessDetailRoute() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [id]);
-  if (loading) return <Spin fullscreen tip="正在加载流程详情…" />;
+  if (loading) return <Spin fullscreen description="正在加载流程详情…" />;
   if (failed) return <Result status="404" title="流程不存在或无权查看" />;
   if (!instance || !canUserViewInstance(personaId, instance)) {
     return <Result status="403" title="无权查看此流程" subTitle="流程数据范围会在每次打开详情时重新校验。" extra={<AppBackButton onClick={() => window.history.back()} />} />;
@@ -232,7 +232,7 @@ function ProcessPrintRoute() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [id]);
-  if (loading) return <Spin fullscreen tip="正在加载打印数据…" />;
+  if (loading) return <Spin fullscreen description="正在加载打印数据…" />;
   if (failed) return <Result status="404" title="流程不存在或无权打印" />;
   return instance && hasPersonaPermission(personaId, "work-list:打印") && canUserViewInstance(personaId, instance)
     ? <ProcessPrintPage />
@@ -316,7 +316,7 @@ export default function App() {
       }}
     >
       <AntApp>
-        <Suspense fallback={<div className="route-loading"><Spin size="large" tip="页面加载中" /></div>}>
+        <Suspense fallback={<div className="route-loading"><Spin size="large" description="页面加载中" /></div>}>
           <RouterProvider router={router} />
         </Suspense>
       </AntApp>

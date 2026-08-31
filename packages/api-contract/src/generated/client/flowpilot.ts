@@ -116,6 +116,7 @@ export const ProblemCode = {
   RESOURCE_NOT_FOUND: 'RESOURCE_NOT_FOUND',
   REVISION_MISMATCH: 'REVISION_MISMATCH',
   VALIDATION_FAILED: 'VALIDATION_FAILED',
+  USER_ROLE_REQUIRED: 'USER_ROLE_REQUIRED',
   IDEMPOTENCY_KEY_REUSED: 'IDEMPOTENCY_KEY_REUSED',
   IDEMPOTENCY_REQUEST_IN_PROGRESS: 'IDEMPOTENCY_REQUEST_IN_PROGRESS',
   IMMUTABLE_BUILTIN_RESOURCE: 'IMMUTABLE_BUILTIN_RESOURCE',
@@ -155,6 +156,35 @@ export const ProblemCode = {
   IMPERSONATION_NOT_ALLOWED: 'IMPERSONATION_NOT_ALLOWED',
   IMPERSONATION_TARGET_INVALID: 'IMPERSONATION_TARGET_INVALID',
   IMPERSONATION_ALREADY_ACTIVE: 'IMPERSONATION_ALREADY_ACTIVE',
+  IMPERSONATION_SESSION_INVALID: 'IMPERSONATION_SESSION_INVALID',
+  IMPERSONATION_TARGET_NOT_FOUND: 'IMPERSONATION_TARGET_NOT_FOUND',
+  IF_MATCH_REQUIRED: 'IF_MATCH_REQUIRED',
+  PRECONDITION_REQUIRED: 'PRECONDITION_REQUIRED',
+  DEFINITION_NOT_FOUND: 'DEFINITION_NOT_FOUND',
+  VERSION_NOT_FOUND: 'VERSION_NOT_FOUND',
+  TASK_NOT_FOUND: 'TASK_NOT_FOUND',
+  INSTANCE_NOT_FOUND: 'INSTANCE_NOT_FOUND',
+  INSTANCE_VIEW_FORBIDDEN: 'INSTANCE_VIEW_FORBIDDEN',
+  DEFINITION_NOT_LAUNCHABLE: 'DEFINITION_NOT_LAUNCHABLE',
+  LAUNCH_FORBIDDEN: 'LAUNCH_FORBIDDEN',
+  USER_NOT_FOUND: 'USER_NOT_FOUND',
+  ROLE_NOT_FOUND: 'ROLE_NOT_FOUND',
+  DEPARTMENT_NOT_FOUND: 'DEPARTMENT_NOT_FOUND',
+  POSITION_NOT_FOUND: 'POSITION_NOT_FOUND',
+  WORKFLOW_GROUP_NOT_FOUND: 'WORKFLOW_GROUP_NOT_FOUND',
+  ATTACHMENT_FILE_REQUIRED: 'ATTACHMENT_FILE_REQUIRED',
+  ATTACHMENT_FILE_INVALID: 'ATTACHMENT_FILE_INVALID',
+  ATTACHMENT_SCOPE_INVALID: 'ATTACHMENT_SCOPE_INVALID',
+  ATTACHMENT_UPLOAD_FORBIDDEN: 'ATTACHMENT_UPLOAD_FORBIDDEN',
+  ATTACHMENT_INLINE_NOT_ALLOWED: 'ATTACHMENT_INLINE_NOT_ALLOWED',
+  INVALID_MULTIPART_BODY: 'INVALID_MULTIPART_BODY',
+  MULTIPLE_RANGES_NOT_SUPPORTED: 'MULTIPLE_RANGES_NOT_SUPPORTED',
+  EMAIL_OUTBOX_NOT_FOUND: 'EMAIL_OUTBOX_NOT_FOUND',
+  AUDIT_EVENT_NOT_FOUND: 'AUDIT_EVENT_NOT_FOUND',
+  DATE_RANGE_INVALID: 'DATE_RANGE_INVALID',
+  EXPORT_EMPTY_RESULT: 'EXPORT_EMPTY_RESULT',
+  EXPORT_NO_COLUMNS: 'EXPORT_NO_COLUMNS',
+  EXPORT_ROW_LIMIT_EXCEEDED: 'EXPORT_ROW_LIMIT_EXCEEDED',
 } as const;
 
 export type ValidationIssueDtoSeverity = typeof ValidationIssueDtoSeverity[keyof typeof ValidationIssueDtoSeverity];
@@ -1174,56 +1204,32 @@ export interface CreateProcessDefinitionRequest {
   basic: ProcessBasicConfigInput;
 }
 
-/**
- * 该版本完整基本信息；人员资格只保存稳定业务引用，不复制成员名单
- */
-export type ProcessDefinitionExportVersionDtoBasic = { [key: string]: unknown };
+export type ProcessDefinitionExportDocumentDtoProperty = typeof ProcessDefinitionExportDocumentDtoProperty[keyof typeof ProcessDefinitionExportDocumentDtoProperty];
+
+
+export const ProcessDefinitionExportDocumentDtoProperty = {
+  固定审批: '固定审批',
+  自由协作: '自由协作',
+} as const;
 
 /**
- * 完整表单定义；选择项输出可读名称，文档内引用使用局部标识
+ * 可由业务人员直接阅读的中文流程定义文档；所有外部引用使用显示名称，不包含数据库主键或流程内部标识。
  */
-export type ProcessDefinitionExportVersionDtoForm = { [key: string]: unknown };
-
-export type ProcessDefinitionExportVersionDtoSystemFieldsItem = { [key: string]: unknown };
-
-/**
- * 完整节点、连线、条件、通知、可修改字段和驳回规则
- */
-export type ProcessDefinitionExportVersionDtoFlow = { [key: string]: unknown };
-
-export interface ProcessDefinitionExportVersionDto {
-  /** @minimum 1 */
-  versionNumber: number;
-  /** 该版本完整基本信息；人员资格只保存稳定业务引用，不复制成员名单 */
-  basic: ProcessDefinitionExportVersionDtoBasic;
-  /** 完整表单定义；选择项输出可读名称，文档内引用使用局部标识 */
-  form: ProcessDefinitionExportVersionDtoForm;
-  systemFields: ProcessDefinitionExportVersionDtoSystemFieldsItem[];
-  /** 完整节点、连线、条件、通知、可修改字段和驳回规则 */
-  flow: ProcessDefinitionExportVersionDtoFlow;
-}
-
-export interface ProcessDefinitionExportDefinitionDto {
-  /** 可读来源编码；导入冲突时必须由服务端按导入规则生成新编码，不能覆盖现有定义 */
-  code: string;
-  name: string;
-  description: string;
-  type: ProcessDefinitionType;
-  /** @minItems 1 */
-  versions: ProcessDefinitionExportVersionDto[];
-}
-
 export interface ProcessDefinitionExportDocumentDto {
-  product: 'FlowPilot';
-  documentType: 'process-definition';
-  formatVersion: 1;
-  exportedAt: string;
-  definition: ProcessDefinitionExportDefinitionDto;
+  文件类型: 'FlowPilot 流程定义';
+  格式版本: '1.0';
+  导出时间: string;
+  流程定义: ProcessDefinitionExportDocumentDtoProperty;
 }
 
 export interface ImportProcessDefinitionRequest {
   document: ProcessDefinitionExportDocumentDto;
 }
+
+/**
+ * 使用中文属性保存完整基本信息、初始表单、系统列表字段和流程设计；内部引用均转换为可读名称。
+ */
+export type ProcessDefinitionExportDocumentDtoPropertyItem = { [key: string]: unknown };
 
 export interface CreateProcessDefinitionResponse {
   definition: ProcessDefinitionDto;
@@ -1657,10 +1663,12 @@ export type ProcessInstanceDetailDto = ProcessInstanceSummaryDto & {
   /** 每个稳定字段 ID 的当前并发版本 */
   fieldRevisions: ProcessInstanceDetailDtoFieldRevisions;
   attachments: AttachmentDto[];
+  /** 自由协作事项的发起人、当前受理人及历史参与人；审批流程为空数组。 */
+  participants: UserRef[];
   reviewProgress: ReviewProgressDto[];
   tasks: WorkflowTaskDto[];
   timeline: TimelineEventDto[];
-  freeTimeline?: FreeTimelineEntryDto[];
+  freeTimeline: FreeTimelineEntryDto[];
 };
 
 export type TaskCenterAllowedAction = typeof TaskCenterAllowedAction[keyof typeof TaskCenterAllowedAction];
@@ -1804,6 +1812,7 @@ export interface CreateFreeReplyRequest {
      * @maxLength 20000
      */
   content: string;
+  /** @maxItems 20 */
   attachmentIds?: string[];
 }
 
@@ -1822,6 +1831,11 @@ export interface TransferFreeCollaborationRequest {
      */
   content?: string;
   nextAssigneeId: string;
+  /**
+     * 与 content 对应的回复附件；不传 content 时必须为空。
+     * @maxItems 20
+     */
+  attachmentIds?: string[];
 }
 
 export interface ReopenFreeCollaborationRequest {

@@ -17,4 +17,6 @@ public enum ProductionConfigurationFailure
     MissingRequiredBuiltinSeedVersion,
     MissingExpectedCollation,
     InvalidDatabaseCommandTimeout,
+    InvalidLdapConfiguration,
+    InvalidSmtpConfiguration,
 }

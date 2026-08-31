@@ -1,8 +1,9 @@
 import { http } from "msw";
 import { MOCK_API_BASE_URL } from "../apiBase";
 import type { ProcessInstance } from "../../data/types";
+import { assignAttachmentsToFreeReply, getAttachmentRecords } from "../attachmentRepository";
 import { findIdentityUser } from "../../state/useIdentityStore";
-import { isSuperAdminPersona, usePrototypeStore } from "../../state/usePrototypeStore";
+import { canUserTransferFreeFlow, isSuperAdminPersona, usePrototypeStore } from "../../state/usePrototypeStore";
 import { canEditProcessInstanceSubmission } from "../../utils/processInstanceAccess";
 import {
   apiOk,
@@ -12,6 +13,7 @@ import {
   checkIfMatch,
   entityEtag,
   parseJsonBody,
+  requireActor,
   requirePermission,
   withIdempotency,
 } from "../runtime";
@@ -38,21 +40,45 @@ const changed = (before: ProcessInstance, after?: ProcessInstance) =>
 const audit = (actorId: string, actorName: string, action: string, instance: ProcessInstance, summary: string, details?: Record<string, unknown>) =>
   appendAuditEvent({ category: "instance", action, actorId, actorName, resourceType: "free-flow-instance", resourceId: instance.id, summary, details });
 
+const prepareReplyAttachments = async (
+  request: Request,
+  instanceId: string,
+  actorId: string,
+  attachmentIds: string[],
+) => {
+  if (attachmentIds.length > 20 || new Set(attachmentIds).size !== attachmentIds.length) {
+    return { response: apiProblem(request, 422, "ATTACHMENT_IDS_INVALID", "回复附件无效", "每条回复最多添加 20 个不重复附件。 ") };
+  }
+  const records = await getAttachmentRecords(attachmentIds);
+  const valid = records.length === attachmentIds.length && records.every((record) =>
+    record.uploadedById === actorId
+    && record.instanceId === instanceId
+    && record.purpose === "free-reply"
+    && record.lifecycle === "temporary",
+  );
+  return valid
+    ? { records }
+    : { response: apiProblem(request, 403, "ATTACHMENT_REFERENCE_FORBIDDEN", "不能使用部分回复附件", "回复只能使用当前用户为该事项上传且尚未被引用的暂存附件。 ") };
+};
+
 export const freeFlowHandlers = [
   http.post(`${API}/process-instances/:instanceId/free-collaboration/replies`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
     return withIdempotency(request, async () => {
-      const auth = requirePermission(request, "work-task:查看");
+      const auth = requireActor(request);
       if (auth.response) return auth.response;
       const mismatch = ensureSessionActor(request, auth.actor.id);
       if (mismatch) return mismatch;
       const found = ensureFreeFlow(request, String(params.instanceId ?? ""));
       if ("response" in found) return found.response;
-      const body = await parseJsonBody<{ content?: string }>(request);
+      const body = await parseJsonBody<{ content?: string; attachmentIds?: string[] }>(request);
       if (body instanceof Response) return body;
       if (!body.content?.trim()) return apiProblem(request, 422, "CONTENT_REQUIRED", "回复内容不能为空", "请填写回复内容。 ");
-      usePrototypeStore.getState().replyFreeFlow(found.instance.id, body.content);
+      const prepared = await prepareReplyAttachments(request, found.instance.id, auth.actor.id, body.attachmentIds ?? []);
+      if ("response" in prepared) return prepared.response;
+      const attachments = await assignAttachmentsToFreeReply(body.attachmentIds ?? [], found.instance.id);
+      usePrototypeStore.getState().replyFreeFlow(found.instance.id, body.content, attachments);
       const updated = instanceById(found.instance.id);
       if (!changed(found.instance, updated)) return apiProblem(request, 403, "REPLY_FORBIDDEN", "不能回复该事项", "只有参与人可以在进行中的事项中回复。 ");
       audit(auth.actor.id, auth.actor.name, "reply", updated!, `回复自由协作事项 ${updated!.code}`);
@@ -64,7 +90,7 @@ export const freeFlowHandlers = [
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
     return withIdempotency(request, async () => {
-      const auth = requirePermission(request, "work-task:查看");
+      const auth = requireActor(request);
       if (auth.response) return auth.response;
       const mismatch = ensureSessionActor(request, auth.actor.id);
       if (mismatch) return mismatch;
@@ -72,11 +98,18 @@ export const freeFlowHandlers = [
       if ("response" in found) return found.response;
       const conflict = checkIfMatch(request, found.instance, true);
       if (conflict) return conflict;
-      const body = await parseJsonBody<{ nextAssigneeId?: string; content?: string }>(request);
+      const body = await parseJsonBody<{ nextAssigneeId?: string; content?: string; attachmentIds?: string[] }>(request);
       if (body instanceof Response) return body;
       const assignee = body.nextAssigneeId ? findIdentityUser(body.nextAssigneeId) : undefined;
       if (!assignee) return apiProblem(request, 422, "ASSIGNEE_REQUIRED", "受理人无效", "请选择有效的新受理人。 ");
-      usePrototypeStore.getState().transferFreeFlow(found.instance.id, assignee.name, body.content);
+      if (!canUserTransferFreeFlow(found.instance, auth.actor.id)) {
+        return apiProblem(request, 403, "TRANSFER_FORBIDDEN", "不能变更受理人", "只有当前有效的发起或受理权限组成员可以变更受理人。 ");
+      }
+      if (!body.content?.trim() && body.attachmentIds?.length) return apiProblem(request, 422, "CONTENT_REQUIRED", "回复内容不能为空", "添加回复附件时必须同时填写回复内容。 ");
+      const prepared = await prepareReplyAttachments(request, found.instance.id, auth.actor.id, body.attachmentIds ?? []);
+      if ("response" in prepared) return prepared.response;
+      const attachments = await assignAttachmentsToFreeReply(body.attachmentIds ?? [], found.instance.id);
+      usePrototypeStore.getState().transferFreeFlow(found.instance.id, assignee.name, body.content, attachments);
       const updated = instanceById(found.instance.id);
       if (!changed(found.instance, updated)) return apiProblem(request, 403, "TRANSFER_FORBIDDEN", "不能变更受理人", "只有当前有效的发起或受理权限组成员可以变更为其他有效受理人。 ");
       audit(auth.actor.id, auth.actor.name, "transfer", updated!, `将 ${updated!.code} 的受理人变更为 ${assignee.name}`);
@@ -87,7 +120,7 @@ export const freeFlowHandlers = [
   http.patch(`${API}/process-instances/:instanceId/free-collaboration/replies/:entryId`, async ({ request, params }) => {
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
-    const auth = requirePermission(request, "work-task:查看");
+    const auth = requireActor(request);
     if (auth.response) return auth.response;
     const mismatch = ensureSessionActor(request, auth.actor.id);
     if (mismatch) return mismatch;
@@ -158,7 +191,7 @@ export const freeFlowHandlers = [
     const simulated = await applyMockScenario(request, true);
     if (simulated) return simulated;
     return withIdempotency(request, async () => {
-      const auth = requirePermission(request, "work-task:查看");
+      const auth = requireActor(request);
       if (auth.response) return auth.response;
       const mismatch = ensureSessionActor(request, auth.actor.id);
       if (mismatch) return mismatch;

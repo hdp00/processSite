@@ -1,4 +1,4 @@
-import type { AttachmentRecord, AuditEvent, AuthSession, PageResult, PermissionCatalogItem, DepartmentRecord, DirectoryUser, PositionRecord, LaunchableProcessDefinition } from "./contracts";
+import type { AttachmentRecord, AuditEvent, AuthSession, EmailOutboxItem, PageResult, PermissionCatalogItem, DepartmentRecord, DirectoryUser, PositionRecord, LaunchableProcessDefinition } from "./contracts";
 import type { DomainRole, WorkflowGroupPurpose, WorkflowPermissionGroup } from "../state/useIdentityStore";
 import type { ProcessBasicConfig, ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
 import type {
@@ -109,6 +109,7 @@ export const normalizeAttachmentRecord = (value: unknown): AttachmentRecord => {
   const uploader = isRecord(value.uploadedBy) ? value.uploadedBy : undefined;
   const references = Array.isArray(value.referencedBy) ? value.referencedBy.filter(isRecord) : [];
   const instanceReference = references.find((item) => item.aggregateType === "process-instance");
+  const freeTimelineReference = references.find((item) => item.aggregateType === "free-timeline-entry");
   return {
     id: text(value.id),
     name: text(value.originalName),
@@ -116,7 +117,9 @@ export const normalizeAttachmentRecord = (value: unknown): AttachmentRecord => {
     contentType: text(value.contentType),
     uploadedById: text(uploader?.id),
     uploadedAt: text(value.uploadedAt),
-    instanceId: instanceReference ? text(instanceReference.aggregateId) || undefined : undefined,
+    instanceId: instanceReference
+      ? text(instanceReference.aggregateId) || undefined
+      : freeTimelineReference ? text(value.instanceId) || undefined : undefined,
     fieldId: instanceReference ? text(instanceReference.fieldId) || undefined : undefined,
     lifecycle: attachmentLifecycle(value.status),
     cleanupAfter: text(value.cleanupAfter) || undefined,
@@ -160,6 +163,29 @@ export const normalizeAuditEvent = (value: unknown): AuditEvent => {
       ...(value.before !== undefined ? { before: value.before } : {}),
       ...(value.after !== undefined ? { after: value.after } : {}),
     },
+  };
+};
+
+export const normalizeEmailOutboxItem = (value: unknown): EmailOutboxItem => {
+  if (!isRecord(value)) throw new Error("邮件投递响应格式不正确");
+  if (value.kind === "task-activated" || value.kind === "process-completed") {
+    return value as unknown as EmailOutboxItem;
+  }
+  const recipient = isRecord(value.recipient) ? value.recipient : undefined;
+  const status = text(value.status);
+  return {
+    id: text(value.id),
+    kind: text(value.eventType) === "process-completed" ? "process-completed" : "task-activated",
+    instanceId: text(value.instanceId),
+    taskId: text(value.taskId) || undefined,
+    recipientUserId: text(recipient?.id),
+    recipientName: text(recipient?.name, "未知用户"),
+    email: text(value.recipientEmailSnapshot),
+    status: status === "sent" ? "sent" : status === "dead-letter" || status === "retry-wait" ? "failed" : "queued",
+    attempts: number(value.attemptCount),
+    createdAt: text(value.createdAt),
+    sentAt: text(value.sentAt) || undefined,
+    lastError: text(value.lastError) || undefined,
   };
 };
 
@@ -654,6 +680,12 @@ export const normalizeProcessInstance = (value: unknown): ProcessInstance => {
     priority: formValues.priority === "紧急" ? "紧急" : "普通",
     currentAssignee: currentAssignee ? text(currentAssignee.name) || undefined : undefined,
     currentAssigneeId: currentAssignee ? text(currentAssignee.id) || undefined : undefined,
+    participants: Array.isArray(value.participants)
+      ? value.participants.filter(isRecord).map((item) => actorName(item)).filter(Boolean)
+      : [],
+    participantIds: Array.isArray(value.participants)
+      ? value.participants.filter(isRecord).map((item) => text(item.id)).filter(Boolean)
+      : [],
     description: text(formValues.description),
     category: text(formValues.category) || undefined,
     formValues,
@@ -687,6 +719,9 @@ export const normalizeProcessInstance = (value: unknown): ProcessInstance => {
             ? text(item.previousAssignee.name)
             : text(item.previousAssignee) || undefined,
           editedAt: text(item.editedAt) || undefined,
+          attachments: Array.isArray(item.attachments)
+            ? item.attachments.filter(isRecord).map(normalizeAttachmentRecord)
+            : [],
           fieldChanges: Array.isArray(item.fieldChanges)
             ? item.fieldChanges.filter(isRecord).map((change) => ({
                 field: text(change.labelSnapshot, text(change.fieldId)),

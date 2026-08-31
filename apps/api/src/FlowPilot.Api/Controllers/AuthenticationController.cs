@@ -1,5 +1,5 @@
-using System.Diagnostics;
 using System.ComponentModel.DataAnnotations;
+using System.Diagnostics;
 using FlowPilot.Application.Authentication;
 using Microsoft.AspNetCore.Mvc;
 
@@ -57,7 +57,7 @@ public sealed class AuthenticationController(
                 StatusCodes.Status503ServiceUnavailable,
                 "DOMAIN_AUTHENTICATION_UNAVAILABLE",
                 "域认证暂不可用",
-                "当前后端尚未启用域认证，请使用密码登录账号或联系管理员。"),
+                "域认证服务当前不可用或配置不完整，请稍后重试或联系管理员。"),
             AuthenticationFailure.RateLimited => RateLimitedProblem(result.RetryAfterSeconds),
             _ => throw new InvalidOperationException("Authentication service returned no result."),
         };
@@ -298,7 +298,7 @@ public sealed class AuthenticationController(
 
 public sealed class ImpersonationCandidateParameters
 {
-    [Range(1, int.MaxValue)]
+    [Range(1, 1_000_000)]
     public int Page { get; init; } = 1;
 
     [Range(1, 100)]

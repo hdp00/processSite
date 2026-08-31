@@ -287,16 +287,20 @@ public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDef
 
     private readonly string? _connectionString;
     private readonly int _commandTimeoutSeconds;
+    private readonly TimeProvider _timeProvider;
 
     public SqlServerProcessDefinitionQueryService(
         IConfiguration configuration,
-        FlowPilotDatabaseOptions databaseOptions)
+        FlowPilotDatabaseOptions databaseOptions,
+        TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(databaseOptions);
+        ArgumentNullException.ThrowIfNull(timeProvider);
 
         _connectionString = configuration.GetConnectionString("FlowPilot");
         _commandTimeoutSeconds = databaseOptions.ApplicationCommandTimeoutSeconds;
+        _timeProvider = timeProvider;
     }
 
     public async Task<ProcessDefinitionPageDto<ProcessDefinitionDto>> ListAsync(
@@ -597,18 +601,18 @@ public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDef
     private static VisibleProcessDefinitionDto ToVisible(
         ProcessDefinitionDto definition,
         IReadOnlyList<VisibleProcessVersionDto> versions) => new()
-    {
-        Id = definition.Id,
-        Code = definition.Code,
-        Name = definition.Name,
-        Description = definition.Description,
-        Type = definition.Type,
-        Disabled = definition.Disabled,
-        Status = definition.Status,
-        PublishedVersionId = definition.PublishedVersionId,
-        PublishedInstancePrefix = definition.PublishedInstancePrefix,
-        Versions = versions,
-    };
+        {
+            Id = definition.Id,
+            Code = definition.Code,
+            Name = definition.Name,
+            Description = definition.Description,
+            Type = definition.Type,
+            Disabled = definition.Disabled,
+            Status = definition.Status,
+            PublishedVersionId = definition.PublishedVersionId,
+            PublishedInstancePrefix = definition.PublishedInstancePrefix,
+            Versions = versions,
+        };
 
     private static VisibleProcessVersionDto ToVisibleVersion(ProcessVersionDto version) => new()
     {

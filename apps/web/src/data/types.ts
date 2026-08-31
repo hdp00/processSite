@@ -32,7 +32,14 @@ export interface FreeFlowEntry {
   assignee?: string;
   previousAssignee?: string;
   editedAt?: string;
+  /** 仅用于初始表单的旧内容记录；回复编辑不得写入此字段。 */
   revisions?: FreeFlowRevision[];
+  attachments?: Array<{
+    id: string;
+    name: string;
+    size: number;
+    contentType: string;
+  }>;
   fieldChanges?: Array<{ field: string; before?: string; after?: string }>;
 }
 

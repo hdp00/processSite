@@ -337,7 +337,7 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 ProcessInstanceCommandError.Forbidden,
                 "INSTANCE_RESUBMIT_FORBIDDEN",
                 "不能重新提交该流程",
-                "只有该实例的实际创建人可以重新提交。" );
+                "只有该实例的实际创建人可以重新提交。");
         }
 
         return instance.Status != "rejected-pending"
@@ -466,23 +466,23 @@ public sealed partial class SqlServerProcessInstanceCommandService
         string requestHash,
         ResubmitProcessInstanceCommandValue value,
         DateTimeOffset now) => new()
-    {
-        Id = Guid.NewGuid(),
-        ActorId = actorId,
-        RouteScope = ResubmitRouteScope,
-        IdempotencyKey = idempotencyKey,
-        RequestHash = requestHash,
-        Status = "completed",
-        FirstHttpStatus = 200,
-        ReplayHeadersJson = new JsonObject
         {
-            ["etag"] = $"\"{value.Revision}\"",
-        }.ToJsonString(JsonOptions),
-        ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
-        CreatedAt = now.UtcDateTime,
-        CompletedAt = now.UtcDateTime,
-        ExpiresAt = now.AddDays(7).UtcDateTime,
-    };
+            Id = Guid.NewGuid(),
+            ActorId = actorId,
+            RouteScope = ResubmitRouteScope,
+            IdempotencyKey = idempotencyKey,
+            RequestHash = requestHash,
+            Status = "completed",
+            FirstHttpStatus = 200,
+            ReplayHeadersJson = new JsonObject
+            {
+                ["etag"] = $"\"{value.Revision}\"",
+            }.ToJsonString(JsonOptions),
+            ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
+            CreatedAt = now.UtcDateTime,
+            CompletedAt = now.UtcDateTime,
+            ExpiresAt = now.AddDays(7).UtcDateTime,
+        };
 
     private static ProcessInstanceCommandResult<ResubmitProcessInstanceCommandValue> ResubmitFailed(
         ProcessInstanceCommandFailure failure) => new(null, failure);

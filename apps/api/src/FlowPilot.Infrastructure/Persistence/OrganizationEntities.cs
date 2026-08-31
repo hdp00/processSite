@@ -41,6 +41,9 @@ internal sealed class OrganizationUserReference
     public Guid Id { get; set; }
     public Guid? DepartmentId { get; set; }
     public Guid? PositionId { get; set; }
+    public string LoginName { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
     public bool IsEnabled { get; set; }
+    public bool IsBuiltInSuperAdmin { get; set; }
 }

@@ -75,6 +75,9 @@ public sealed partial class SqlServerProcessInstanceCommandService
             CurrentNodeNames = runtime.CurrentNodeNames,
             CurrentAssignee = runtime.CurrentAssignee,
             Initiator = initiator,
+            Participants = definition.Type == "free"
+                ? new[] { initiator, runtime.FirstAssignee }.Where(item => item is not null).DistinctBy(item => item!.Id).Select(item => item!).ToArray()
+                : [],
             CreatedAt = AsUtc(instance.CreatedAt),
             UpdatedAt = AsUtc(instance.UpdatedAt),
             ListValues = formValues.DeepClone().AsObject(),
@@ -147,24 +150,24 @@ public sealed partial class SqlServerProcessInstanceCommandService
         string requestHash,
         ProcessInstanceDetailDto detail,
         DateTimeOffset now) => new()
-    {
-        Id = Guid.NewGuid(),
-        ActorId = actorId,
-        RouteScope = CreateRouteScope,
-        IdempotencyKey = idempotencyKey,
-        RequestHash = requestHash,
-        Status = "completed",
-        FirstHttpStatus = 201,
-        ReplayHeadersJson = new JsonObject
         {
-            ["etag"] = $"\"{detail.Revision}\"",
-            ["location"] = $"/api/flowpilot/v1/process-instances/{detail.Id:D}",
-        }.ToJsonString(JsonOptions),
-        ResponseBodyJson = JsonSerializer.Serialize(detail, JsonOptions),
-        CreatedAt = now.UtcDateTime,
-        CompletedAt = now.UtcDateTime,
-        ExpiresAt = now.AddDays(7).UtcDateTime,
-    };
+            Id = Guid.NewGuid(),
+            ActorId = actorId,
+            RouteScope = CreateRouteScope,
+            IdempotencyKey = idempotencyKey,
+            RequestHash = requestHash,
+            Status = "completed",
+            FirstHttpStatus = 201,
+            ReplayHeadersJson = new JsonObject
+            {
+                ["etag"] = $"\"{detail.Revision}\"",
+                ["location"] = $"/api/flowpilot/v1/process-instances/{detail.Id:D}",
+            }.ToJsonString(JsonOptions),
+            ResponseBodyJson = JsonSerializer.Serialize(detail, JsonOptions),
+            CreatedAt = now.UtcDateTime,
+            CompletedAt = now.UtcDateTime,
+            ExpiresAt = now.AddDays(7).UtcDateTime,
+        };
 
     private static DateTimeOffset AsUtc(DateTime value) =>
         new(DateTime.SpecifyKind(value, DateTimeKind.Utc));

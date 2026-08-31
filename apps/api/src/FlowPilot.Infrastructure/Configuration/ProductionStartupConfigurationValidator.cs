@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using MimeKit;
 
 namespace FlowPilot.Infrastructure.Configuration;
 
@@ -29,6 +30,53 @@ public static class ProductionStartupConfigurationValidator
             ProductionConfigurationFailure.MissingRequiredBuiltinSeedVersion);
         RequireValue(configuration, ExpectedCollationKey, ProductionConfigurationFailure.MissingExpectedCollation);
         ValidateDatabaseOptions(configuration);
+        ValidateLdap(configuration);
+        ValidateSmtp(configuration);
+    }
+
+    private static void ValidateLdap(IConfiguration configuration)
+    {
+        var urlText = configuration["FlowPilot:Ldap:Url"];
+        var anyValue = !string.IsNullOrWhiteSpace(urlText)
+            || !string.IsNullOrWhiteSpace(configuration["FlowPilot:Ldap:BaseDn"])
+            || !string.IsNullOrWhiteSpace(configuration["FlowPilot:Ldap:UpnSuffix"]);
+        if (!anyValue) return;
+        if (!Uri.TryCreate(urlText, UriKind.Absolute, out var url)
+            || url.Scheme != "ldaps"
+            || string.IsNullOrWhiteSpace(url.Host)
+            || url.Port is < 1 or > 65535
+            || !string.IsNullOrEmpty(url.UserInfo)
+            || url.AbsolutePath != "/"
+            || !string.IsNullOrEmpty(url.Query)
+            || !string.IsNullOrEmpty(url.Fragment)
+            || string.IsNullOrWhiteSpace(configuration["FlowPilot:Ldap:BaseDn"])
+            || string.IsNullOrWhiteSpace(configuration["FlowPilot:Ldap:UpnSuffix"]))
+        {
+            throw new ProductionConfigurationException(
+                ProductionConfigurationFailure.InvalidLdapConfiguration,
+                "FlowPilot:Ldap");
+        }
+    }
+
+    private static void ValidateSmtp(IConfiguration configuration)
+    {
+        if (!configuration.GetValue("FlowPilot:Smtp:Enabled", false)) return;
+        var security = configuration["FlowPilot:Smtp:Security"]?.Trim().ToLowerInvariant();
+        var plainTextAllowed = configuration.GetValue("FlowPilot:Smtp:AllowPlainText", false);
+        var port = configuration.GetValue("FlowPilot:Smtp:Port", 587);
+        var userName = configuration["FlowPilot:Smtp:UserName"];
+        var password = configuration["FlowPilot:Smtp:Password"];
+        if (string.IsNullOrWhiteSpace(configuration["FlowPilot:Smtp:Host"])
+            || !MailboxAddress.TryParse(configuration["FlowPilot:Smtp:From"], out _)
+            || port is < 1 or > 65535
+            || string.IsNullOrWhiteSpace(userName) != string.IsNullOrWhiteSpace(password)
+            || security is not ("starttls" or "ssl" or "none")
+            || security == "none" && !plainTextAllowed)
+        {
+            throw new ProductionConfigurationException(
+                ProductionConfigurationFailure.InvalidSmtpConfiguration,
+                "FlowPilot:Smtp");
+        }
     }
 
     private static void ValidateDatabaseOptions(IConfiguration configuration)

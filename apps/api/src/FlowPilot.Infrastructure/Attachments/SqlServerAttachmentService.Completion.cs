@@ -129,9 +129,15 @@ public sealed partial class SqlServerAttachmentService
         RuntimeAttachment attachment,
         CancellationToken cancellationToken)
     {
+        if (string.Equals(scope.Purpose, "free-reply", StringComparison.Ordinal))
+        {
+            return await ValidateFreeReplyUploadScopeAsync(scope, actor, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         if (!string.Equals(scope.Purpose, "form-field", StringComparison.Ordinal))
         {
-            return Failure(422, "ATTACHMENT_PURPOSE_INVALID", "附件用途无效", "当前接口仅支持表单附件字段上传。");
+            return Failure(422, "ATTACHMENT_PURPOSE_INVALID", "附件用途无效", "purpose 只支持 form-field 或 free-reply。");
         }
 
         if (scope.InstanceId is not null)
@@ -189,6 +195,57 @@ public sealed partial class SqlServerAttachmentService
         }
 
         return ValidateFieldPolicy(field, attachment);
+    }
+
+    private async Task<AttachmentFailure?> ValidateFreeReplyUploadScopeAsync(
+        AttachmentUploadScope scope,
+        AttachmentActor actor,
+        CancellationToken cancellationToken)
+    {
+        if (scope.InstanceId is null
+            || scope.DefinitionId is not null
+            || scope.VersionId is not null
+            || !string.IsNullOrWhiteSpace(scope.FieldId))
+        {
+            return Failure(
+                422,
+                "ATTACHMENT_SCOPE_INCOMPLETE",
+                "附件范围无效",
+                "回复附件只需要提供 instanceId 和 purpose=free-reply。");
+        }
+
+        var instance = await _dbContext.WorkflowInstances
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == scope.InstanceId.Value, cancellationToken)
+            .ConfigureAwait(false);
+        if (instance is null)
+        {
+            return Failure(404, "INSTANCE_NOT_FOUND", "流程实例不存在", "指定的流程实例不存在。");
+        }
+
+        var workflowType = await _dbContext.RuntimeWorkflowDefinitions
+            .AsNoTracking()
+            .Where(item => item.Id == instance.DefinitionId)
+            .Select(item => item.Type)
+            .SingleAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (workflowType != "free")
+        {
+            return Failure(422, "FREE_REPLY_ATTACHMENT_INVALID", "不能上传回复附件", "指定实例不是自由协作事项。");
+        }
+
+        if (instance.Status != "in-progress")
+        {
+            return Failure(409, "FREE_FLOW_NOT_IN_PROGRESS", "事项当前不能回复", "只有进行中的自由协作事项可以上传回复附件。");
+        }
+
+        var isParticipant = await _dbContext.FreeParticipants
+            .AsNoTracking()
+            .AnyAsync(item => item.InstanceId == instance.Id && item.UserId == actor.UserId, cancellationToken)
+            .ConfigureAwait(false);
+        return actor.IsSuperAdmin || isParticipant
+            ? null
+            : Failure(403, "FREE_REPLY_FORBIDDEN", "不能回复该事项", "只有发起人、当前受理人或历史参与人可以上传回复附件。");
     }
 
     private async Task<AttachmentFailure?> ValidateInstanceUploadScopeAsync(

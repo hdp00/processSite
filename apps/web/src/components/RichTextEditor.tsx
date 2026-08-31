@@ -14,6 +14,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Button, Space, Tooltip, message } from "antd";
+import DOMPurify from "dompurify";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { getRichMedia, richMediaIdFromSource, richMediaSource, saveRichMedia } from "../utils/richMediaRepository";
 import "./rich-text-editor.css";
@@ -68,20 +69,24 @@ const normalizeMediaSourcesForStorage = (documentNode: Document) => {
 };
 
 export const sanitizeRichText = (html: string) => {
-  if (typeof window === "undefined") return html;
+  if (typeof window === "undefined") return "";
   const documentNode = new DOMParser().parseFromString(html, "text/html");
-  documentNode.querySelectorAll("script,style,iframe,object,embed,form").forEach((node) => node.remove());
-  documentNode.querySelectorAll("*").forEach((node) => {
-    [...node.attributes].forEach((attribute) => {
-      const name = attribute.name.toLowerCase();
-      const value = attribute.value.trim().toLowerCase();
-      if (name.startsWith("on") || ((name === "href" || name === "src") && value.startsWith("javascript:"))) {
-        node.removeAttribute(attribute.name);
-      }
-    });
-  });
   normalizeMediaSourcesForStorage(documentNode);
-  return documentNode.body.innerHTML;
+  documentNode.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img,video").forEach((node) => {
+    if (!richMediaIdFromSource(node.getAttribute("src"))) node.remove();
+  });
+  documentNode.querySelectorAll<HTMLAnchorElement>("a").forEach((node) => {
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noopener noreferrer");
+  });
+  return DOMPurify.sanitize(documentNode.body.innerHTML, {
+    ALLOWED_TAGS: [
+      "p", "br", "strong", "em", "s", "ul", "ol", "li", "blockquote", "code", "pre",
+      "h1", "h2", "h3", "h4", "h5", "h6", "a", "img", "video",
+    ],
+    ALLOWED_ATTR: ["href", "target", "rel", "src", "alt", "title", "controls", "data-media-id"],
+    ALLOW_UNKNOWN_PROTOCOLS: false,
+  });
 };
 
 const hydrateRichText = async (html: string) => {

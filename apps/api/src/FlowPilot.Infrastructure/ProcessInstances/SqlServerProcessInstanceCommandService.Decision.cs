@@ -469,7 +469,7 @@ public sealed partial class SqlServerProcessInstanceCommandService
                     "FIELD_REVISION_CONFLICT",
                     "字段已发生变化",
                     "其他处理人刚刚修改了同一字段，请刷新后重试。",
-                    [Issue($"baseFieldRevisions.{fieldId}", "FIELD_REVISION_CONFLICT", "字段版本与当前数据不一致。")] );
+                    [Issue($"baseFieldRevisions.{fieldId}", "FIELD_REVISION_CONFLICT", "字段版本与当前数据不一致。")]);
             }
         }
 
@@ -722,19 +722,19 @@ public sealed partial class SqlServerProcessInstanceCommandService
         string requestHash,
         TaskDecisionCommandValue value,
         DateTimeOffset now) => new()
-    {
-        Id = Guid.NewGuid(),
-        ActorId = actorId,
-        RouteScope = TaskDecisionRouteScope,
-        IdempotencyKey = idempotencyKey,
-        RequestHash = requestHash,
-        Status = "completed",
-        FirstHttpStatus = 200,
-        ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
-        CreatedAt = now.UtcDateTime,
-        CompletedAt = now.UtcDateTime,
-        ExpiresAt = now.AddDays(7).UtcDateTime,
-    };
+        {
+            Id = Guid.NewGuid(),
+            ActorId = actorId,
+            RouteScope = TaskDecisionRouteScope,
+            IdempotencyKey = idempotencyKey,
+            RequestHash = requestHash,
+            Status = "completed",
+            FirstHttpStatus = 200,
+            ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
+            CreatedAt = now.UtcDateTime,
+            CompletedAt = now.UtcDateTime,
+            ExpiresAt = now.AddDays(7).UtcDateTime,
+        };
 
     private static string? NormalizeComment(string? comment) =>
         string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();

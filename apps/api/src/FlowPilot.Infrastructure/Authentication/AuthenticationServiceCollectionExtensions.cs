@@ -11,6 +11,7 @@ public static class AuthenticationServiceCollectionExtensions
 
         services.AddMemoryCache();
         services.AddSingleton<LoginAttemptLimiter>();
+        services.AddSingleton<IDomainAuthenticator, LdapDomainAuthenticator>();
         services.AddScoped<IAuthService, SqlServerAuthService>();
         return services;
     }

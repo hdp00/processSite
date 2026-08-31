@@ -10,6 +10,8 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="System.DirectoryServices.Protocols" />
+    <PackageReference Include="MailKit" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Persistence\Schema\Manifests\*.schema.txt" />

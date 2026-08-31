@@ -71,7 +71,7 @@ export const OperationalHealthDto = zod.strictObject({
 export type OperationalHealthDto = zod.input<typeof OperationalHealthDto>;
 export type OperationalHealthDtoOutput = zod.output<typeof OperationalHealthDto>;
 
-export const ProblemCode = zod.enum(['BAD_REQUEST', 'AUTHENTICATION_REQUIRED', 'INVALID_CREDENTIALS', 'CSRF_VALIDATION_FAILED', 'PERMISSION_DENIED', 'DATA_SCOPE_DENIED', 'RESOURCE_NOT_FOUND', 'REVISION_MISMATCH', 'VALIDATION_FAILED', 'IDEMPOTENCY_KEY_REUSED', 'IDEMPOTENCY_REQUEST_IN_PROGRESS', 'IMMUTABLE_BUILTIN_RESOURCE', 'RESOURCE_IN_USE', 'DELETE_BLOCKED', 'VERSION_NOT_EDITABLE', 'VERSION_PUBLISHED', 'VERSION_HAS_INSTANCES', 'VERSION_VALIDATION_FAILED', 'PUBLISH_POINTER_CHANGED', 'DEFINITION_DISABLED', 'DEFINITION_NOT_PUBLISHED', 'EXTERNAL_DEPENDENCY_INVALID', 'TASK_ALREADY_COMPLETED', 'ACTION_NOT_ALLOWED_FOR_NODE', 'REVIEW_COMMENT_REQUIRED', 'INSTANCE_CONTENT_LOCKED', 'INSTANCE_NOT_REJECTED', 'INSTANCE_ALREADY_CLOSED', 'REPEAT_EDIT_FORBIDDEN', 'NO_FIELD_CHANGES', 'FIELD_REVISION_CONFLICT', 'ATTACHMENT_NOT_STAGED', 'ATTACHMENT_IN_USE', 'ATTACHMENT_LIMIT_EXCEEDED', 'INVALID_ATTACHMENT_TYPE', 'PDF_ATTACHMENT_REQUIRED', 'ATTACHMENT_RANGE_NOT_SATISFIABLE', 'INSUFFICIENT_STORAGE', 'OUTBOX_MESSAGE_NOT_RETRYABLE', 'EXPORT_NOT_READY', 'EXPORT_EXPIRED', 'RATE_LIMITED', 'INTERNAL_SERVER_ERROR', 'DOMAIN_AUTHENTICATION_UNAVAILABLE', 'AUTHENTICATION_MODE_CONFLICT', 'IMPERSONATION_NOT_ALLOWED', 'IMPERSONATION_TARGET_INVALID', 'IMPERSONATION_ALREADY_ACTIVE']);
+export const ProblemCode = zod.enum(['BAD_REQUEST', 'AUTHENTICATION_REQUIRED', 'INVALID_CREDENTIALS', 'CSRF_VALIDATION_FAILED', 'PERMISSION_DENIED', 'DATA_SCOPE_DENIED', 'RESOURCE_NOT_FOUND', 'REVISION_MISMATCH', 'VALIDATION_FAILED', 'USER_ROLE_REQUIRED', 'IDEMPOTENCY_KEY_REUSED', 'IDEMPOTENCY_REQUEST_IN_PROGRESS', 'IMMUTABLE_BUILTIN_RESOURCE', 'RESOURCE_IN_USE', 'DELETE_BLOCKED', 'VERSION_NOT_EDITABLE', 'VERSION_PUBLISHED', 'VERSION_HAS_INSTANCES', 'VERSION_VALIDATION_FAILED', 'PUBLISH_POINTER_CHANGED', 'DEFINITION_DISABLED', 'DEFINITION_NOT_PUBLISHED', 'EXTERNAL_DEPENDENCY_INVALID', 'TASK_ALREADY_COMPLETED', 'ACTION_NOT_ALLOWED_FOR_NODE', 'REVIEW_COMMENT_REQUIRED', 'INSTANCE_CONTENT_LOCKED', 'INSTANCE_NOT_REJECTED', 'INSTANCE_ALREADY_CLOSED', 'REPEAT_EDIT_FORBIDDEN', 'NO_FIELD_CHANGES', 'FIELD_REVISION_CONFLICT', 'ATTACHMENT_NOT_STAGED', 'ATTACHMENT_IN_USE', 'ATTACHMENT_LIMIT_EXCEEDED', 'INVALID_ATTACHMENT_TYPE', 'PDF_ATTACHMENT_REQUIRED', 'ATTACHMENT_RANGE_NOT_SATISFIABLE', 'INSUFFICIENT_STORAGE', 'OUTBOX_MESSAGE_NOT_RETRYABLE', 'EXPORT_NOT_READY', 'EXPORT_EXPIRED', 'RATE_LIMITED', 'INTERNAL_SERVER_ERROR', 'DOMAIN_AUTHENTICATION_UNAVAILABLE', 'AUTHENTICATION_MODE_CONFLICT', 'IMPERSONATION_NOT_ALLOWED', 'IMPERSONATION_TARGET_INVALID', 'IMPERSONATION_ALREADY_ACTIVE', 'IMPERSONATION_SESSION_INVALID', 'IMPERSONATION_TARGET_NOT_FOUND', 'IF_MATCH_REQUIRED', 'PRECONDITION_REQUIRED', 'DEFINITION_NOT_FOUND', 'VERSION_NOT_FOUND', 'TASK_NOT_FOUND', 'INSTANCE_NOT_FOUND', 'INSTANCE_VIEW_FORBIDDEN', 'DEFINITION_NOT_LAUNCHABLE', 'LAUNCH_FORBIDDEN', 'USER_NOT_FOUND', 'ROLE_NOT_FOUND', 'DEPARTMENT_NOT_FOUND', 'POSITION_NOT_FOUND', 'WORKFLOW_GROUP_NOT_FOUND', 'ATTACHMENT_FILE_REQUIRED', 'ATTACHMENT_FILE_INVALID', 'ATTACHMENT_SCOPE_INVALID', 'ATTACHMENT_UPLOAD_FORBIDDEN', 'ATTACHMENT_INLINE_NOT_ALLOWED', 'INVALID_MULTIPART_BODY', 'MULTIPLE_RANGES_NOT_SUPPORTED', 'EMAIL_OUTBOX_NOT_FOUND', 'AUDIT_EVENT_NOT_FOUND', 'DATE_RANGE_INVALID', 'EXPORT_EMPTY_RESULT', 'EXPORT_NO_COLUMNS', 'EXPORT_ROW_LIMIT_EXCEEDED']);
 
 export type ProblemCode = zod.input<typeof ProblemCode>;
 export type ProblemCodeOutput = zod.output<typeof ProblemCode>;
@@ -1161,38 +1161,18 @@ export type CreateProcessDefinitionRequestOutput = zod.output<typeof CreateProce
 
 
 
-export const ProcessDefinitionExportVersionDto = zod.strictObject({
-  "versionNumber": zod.int().min(1),
-  "basic": zod.record(zod.string(), zod.unknown()).describe('该版本完整基本信息；人员资格只保存稳定业务引用，不复制成员名单'),
-  "form": zod.record(zod.string(), zod.unknown()).describe('完整表单定义；选择项输出可读名称，文档内引用使用局部标识'),
-  "systemFields": zod.array(zod.record(zod.string(), zod.unknown())),
-  "flow": zod.record(zod.string(), zod.unknown()).describe('完整节点、连线、条件、通知、可修改字段和驳回规则')
-});
-
-export type ProcessDefinitionExportVersionDto = zod.input<typeof ProcessDefinitionExportVersionDto>;
-export type ProcessDefinitionExportVersionDtoOutput = zod.output<typeof ProcessDefinitionExportVersionDto>;
-
-
-
-
-export const ProcessDefinitionExportDefinitionDto = zod.strictObject({
-  "code": zod.string().describe('可读来源编码；导入冲突时必须由服务端按导入规则生成新编码，不能覆盖现有定义'),
-  "name": zod.string(),
-  "description": zod.string(),
-  "type": ProcessDefinitionType,
-  "versions": zod.array(ProcessDefinitionExportVersionDto).min(1)
-});
-
-export type ProcessDefinitionExportDefinitionDto = zod.input<typeof ProcessDefinitionExportDefinitionDto>;
-export type ProcessDefinitionExportDefinitionDtoOutput = zod.output<typeof ProcessDefinitionExportDefinitionDto>;
-
 export const ProcessDefinitionExportDocumentDto = zod.strictObject({
-  "product": zod.literal("FlowPilot"),
-  "documentType": zod.literal("process-definition"),
-  "formatVersion": zod.literal(1),
-  "exportedAt": zod.iso.datetime({"offset":true}),
-  "definition": ProcessDefinitionExportDefinitionDto
-});
+  "文件类型": zod.literal("FlowPilot 流程定义"),
+  "格式版本": zod.literal("1.0"),
+  "导出时间": zod.string(),
+  "流程定义": zod.strictObject({
+  "名称": zod.string(),
+  "类型": zod.enum(['固定审批', '自由协作']),
+  "说明": zod.string(),
+  "原状态": zod.string(),
+  "版本": zod.array(zod.record(zod.string(), zod.unknown()).describe('使用中文属性保存完整基本信息、初始表单、系统列表字段和流程设计；内部引用均转换为可读名称。')).min(1)
+})
+}).describe('可由业务人员直接阅读的中文流程定义文档；所有外部引用使用显示名称，不包含数据库主键或流程内部标识。');
 
 export type ProcessDefinitionExportDocumentDto = zod.input<typeof ProcessDefinitionExportDocumentDto>;
 export type ProcessDefinitionExportDocumentDtoOutput = zod.output<typeof ProcessDefinitionExportDocumentDto>;
@@ -1588,10 +1568,11 @@ export const ProcessInstanceDetailDto = ProcessInstanceSummaryDto.and(zod.strict
   "formValues": zod.record(zod.string(), JsonValue),
   "fieldRevisions": zod.record(zod.string(), zod.int().min(processInstanceDetailDtoTwoFieldRevisionsMinOne)).describe('每个稳定字段 ID 的当前并发版本'),
   "attachments": zod.array(AttachmentDto),
+  "participants": zod.array(UserRef).describe('自由协作事项的发起人、当前受理人及历史参与人；审批流程为空数组。'),
   "reviewProgress": zod.array(ReviewProgressDto),
   "tasks": zod.array(WorkflowTaskDto),
   "timeline": zod.array(TimelineEventDto),
-  "freeTimeline": zod.array(FreeTimelineEntryDto).optional()
+  "freeTimeline": zod.array(FreeTimelineEntryDto)
 }));
 
 export type ProcessInstanceDetailDto = zod.input<typeof ProcessInstanceDetailDto>;
@@ -1735,11 +1716,13 @@ export type ReviseTaskFieldsResponseOutput = zod.output<typeof ReviseTaskFieldsR
 
 export const createFreeReplyRequestContentMax = 20000;
 
+export const createFreeReplyRequestAttachmentIdsMax = 20;
+
 
 
 export const CreateFreeReplyRequest = zod.strictObject({
   "content": zod.string().min(1).max(createFreeReplyRequestContentMax),
-  "attachmentIds": zod.array(zod.uuid()).optional()
+  "attachmentIds": zod.array(zod.uuid()).max(createFreeReplyRequestAttachmentIdsMax).optional()
 });
 
 export type CreateFreeReplyRequest = zod.input<typeof CreateFreeReplyRequest>;
@@ -1758,11 +1741,14 @@ export type EditFreeReplyRequestOutput = zod.output<typeof EditFreeReplyRequest>
 
 export const transferFreeCollaborationRequestContentMax = 20000;
 
+export const transferFreeCollaborationRequestAttachmentIdsMax = 20;
+
 
 
 export const TransferFreeCollaborationRequest = zod.strictObject({
   "content": zod.string().min(1).max(transferFreeCollaborationRequestContentMax).optional(),
-  "nextAssigneeId": zod.uuid()
+  "nextAssigneeId": zod.uuid(),
+  "attachmentIds": zod.array(zod.uuid()).max(transferFreeCollaborationRequestAttachmentIdsMax).optional().describe('与 content 对应的回复附件；不传 content 时必须为空。')
 });
 
 export type TransferFreeCollaborationRequest = zod.input<typeof TransferFreeCollaborationRequest>;

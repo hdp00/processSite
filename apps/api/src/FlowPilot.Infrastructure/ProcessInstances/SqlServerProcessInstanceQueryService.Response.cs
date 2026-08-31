@@ -20,6 +20,7 @@ public sealed partial class SqlServerProcessInstanceQueryService
         var taskDtos = source.Tasks
             .Select(task => BuildTaskDto(task, source))
             .ToArray();
+        var attachments = BuildAttachments(source);
 
         return new ProcessInstanceDetailDto
         {
@@ -37,16 +38,17 @@ public sealed partial class SqlServerProcessInstanceQueryService
             CurrentNodeNames = currentNodeNames,
             CurrentAssignee = User(source.Users, source.Instance.CurrentAssigneeId),
             Initiator = source.Initiator,
+            Participants = source.ParticipantIds.Select(id => source.Users[id]).ToArray(),
             CreatedAt = AsUtc(source.Instance.CreatedAt),
             UpdatedAt = AsUtc(source.Instance.UpdatedAt),
             ListValues = ProjectListValues(source.FormValues, source.Fields),
             FormValues = source.FormValues.DeepClone().AsObject(),
             FieldRevisions = source.FieldRevisions.DeepClone().AsObject(),
-            Attachments = BuildAttachments(source),
+            Attachments = attachments,
             ReviewProgress = BuildReviewProgress(source),
             Tasks = taskDtos,
             Timeline = BuildTimeline(source),
-            FreeTimeline = BuildFreeTimeline(source),
+            FreeTimeline = BuildFreeTimeline(source, attachments),
         };
     }
 
@@ -243,7 +245,9 @@ public sealed partial class SqlServerProcessInstanceQueryService
         return names.Length == 0 ? prefix : $"{prefix}：{string.Join("、", names)}";
     }
 
-    private static FreeTimelineEntryDto[] BuildFreeTimeline(DetailSource source) =>
+    private static FreeTimelineEntryDto[] BuildFreeTimeline(
+        DetailSource source,
+        IReadOnlyList<ProcessInstanceAttachmentDto> attachments) =>
         source.FreeTimeline.Select(item => new FreeTimelineEntryDto(
             item.Id,
             item.Revision,
@@ -258,7 +262,10 @@ public sealed partial class SqlServerProcessInstanceQueryService
             item.RelatedEntryId,
             User(source.Users, item.EditedBy),
             item.EditedAt.HasValue ? AsUtc(item.EditedAt.Value) : null,
-            BuildFreeFieldChanges(item.FieldChangesJson)))
+            BuildFreeFieldChanges(item.FieldChangesJson),
+            attachments.Where(attachment => attachment.ReferencedBy.Any(reference =>
+                reference.AggregateType == "free-timeline-entry"
+                && reference.AggregateId == item.Id)).ToArray()))
         .ToArray();
 
     private static WorkflowFieldChangeDto[] BuildFreeFieldChanges(string? json)

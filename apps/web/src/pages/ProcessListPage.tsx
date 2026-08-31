@@ -417,7 +417,7 @@ export function ProcessListPage() {
 
       <Card className="content-card" styles={{ body: { padding: 0 } }}>
         <div className="table-result-head">
-          <div><strong>流程实例</strong><Tag bordered={false}>{isBrowserMockMode ? filtered.length : remoteTotal} 条</Tag></div>
+          <div><strong>流程实例</strong><Tag variant="filled">{isBrowserMockMode ? filtered.length : remoteTotal} 条</Tag></div>
           <Space>
             <Typography.Text type="secondary">{definition.label} · 包含当前用户可见的全部历史版本实例</Typography.Text>
             <Button icon={<ExportOutlined />} loading={exporting} onClick={() => void exportCurrentQuery()}>导出 Excel</Button>

@@ -128,6 +128,11 @@ public record ProcessDefinitionDto
     public required ProcessDefinitionUserRefDto UpdatedBy { get; init; }
 }
 
+public sealed record ProcessDefinitionWithVersionsDto : ProcessDefinitionDto
+{
+    public required IReadOnlyList<ProcessVersionDto> Versions { get; init; }
+}
+
 public sealed record VisibleProcessVersionDto
 {
     public required Guid Id { get; init; }
@@ -251,6 +256,34 @@ public sealed record CreateProcessDefinitionRequest
 {
     [Required]
     public required ProcessBasicConfigInput Basic { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record UpdateProcessDefinitionRequest
+{
+    public required bool Disabled { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record CopyProcessDefinitionRequest
+{
+    public Guid? SourceVersionId { get; init; }
+
+    [StringLength(100)]
+    public string? Name { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record CreateProcessVersionRequest
+{
+    public required Guid SourceVersionId { get; init; }
+}
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record ImportProcessDefinitionRequest
+{
+    [Required]
+    public required JsonObject Document { get; init; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
@@ -378,6 +411,22 @@ public sealed record UnpublishProcessVersionCommandValue(
     int VersionRevision,
     bool Replayed);
 
+public sealed record UpdateProcessDefinitionCommandValue(int Revision);
+
+public sealed record CopyProcessDefinitionCommandValue(
+    CreateProcessDefinitionResponseDto Response,
+    int Revision,
+    bool Replayed);
+
+public sealed record CreateProcessVersionCommandValue(
+    ProcessVersionDto Version,
+    bool Replayed);
+
+public sealed record ImportProcessDefinitionCommandValue(
+    Guid DefinitionId,
+    int Revision,
+    bool Replayed);
+
 public interface IProcessDefinitionQueryService
 {
     Task<IReadOnlyList<LaunchableProcessDefinitionDto>> ListLaunchableAsync(
@@ -410,6 +459,10 @@ public interface IProcessDefinitionQueryService
         Guid definitionId,
         Guid versionId,
         CancellationToken cancellationToken = default);
+
+    Task<JsonObject?> ExportAsync(
+        Guid definitionId,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IProcessDefinitionCommandService
@@ -418,6 +471,53 @@ public interface IProcessDefinitionCommandService
         ProcessBasicConfigInput basic,
         ProcessDefinitionMutationActor actor,
         string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessDefinitionCommandResult<ImportProcessDefinitionCommandValue>> ImportAsync(
+        ImportProcessDefinitionRequest request,
+        ProcessDefinitionMutationActor actor,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessDefinitionCommandResult<UpdateProcessDefinitionCommandValue>> UpdateAvailabilityAsync(
+        Guid definitionId,
+        UpdateProcessDefinitionRequest request,
+        int expectedRevision,
+        ProcessDefinitionMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessDefinitionCommandResult<bool>> DeleteDefinitionAsync(
+        Guid definitionId,
+        int expectedRevision,
+        ProcessDefinitionMutationActor actor,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessDefinitionCommandResult<CopyProcessDefinitionCommandValue>> CopyAsync(
+        Guid definitionId,
+        CopyProcessDefinitionRequest request,
+        ProcessDefinitionMutationActor actor,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessDefinitionCommandResult<CreateProcessVersionCommandValue>> CreateVersionAsync(
+        Guid definitionId,
+        CreateProcessVersionRequest request,
+        int expectedDefinitionRevision,
+        ProcessDefinitionMutationActor actor,
+        string idempotencyKey,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
+    Task<ProcessDefinitionCommandResult<bool>> DeleteVersionAsync(
+        Guid definitionId,
+        Guid versionId,
+        int expectedRevision,
+        ProcessDefinitionMutationActor actor,
         string traceId,
         CancellationToken cancellationToken = default);
 

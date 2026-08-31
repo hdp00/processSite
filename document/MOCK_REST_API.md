@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-当前仓库已有可启动的 .NET 后端，并已实现数据库基础、超级管理员会话、任务中心，以及流程定义/版本读取、定义创建与 V1 分区保存和重新校验切片，但尚不能支撑完整业务演示。开发和 debug 演示模式仍使用 MSW 2 的页面内 Fetch/XHR 拦截器处理请求，不注册 Service Worker，因此通过普通 HTTP 部署到 IIS 时也可以运行。页面仍通过标准 HTTP 语义访问 Mock API，而不是直接调用 Mock handler 或 Zustand action。
+当前仓库已有可启动并覆盖首版 REST 契约的 .NET 后端。开发和 debug 演示模式仍使用 MSW 2 的页面内 Fetch/XHR 拦截器处理请求，不注册 Service Worker，因此无需数据库也可以运行独立演示。页面始终通过标准 HTTP 语义访问 Mock 或正式 API，而不是直接调用 Mock handler 或 Zustand action。
 
 - 正式接口契约：[`flowpilot-rest-api.openapi.yaml`](./flowpilot-rest-api.openapi.yaml)
 - 类型化客户端：`apps/web/src/api/flowPilotApi.ts`
@@ -149,12 +149,6 @@ await flowPilotApi.system.updateMockSettings({
 - 邮件只模拟 Outbox 状态，不连接 SMTP，也不会在浏览器关闭后后台发送。
 - Excel 在浏览器中使用 ExcelJS 生成真正的 `.xlsx`；Mock 和正式后端都只返回已鉴权、已筛选的列定义与数据行，不生成或保存 Excel 文件。单次最多返回 10000 行，超过上限要求用户缩小查询范围。
 
-## 8. 正式后端迁移清单
+## 8. 正式后端对接现状
 
-1. 以 OpenAPI 通过 Orval 生成前端 TypeScript 类型和 Axios 客户端，并对 ASP.NET Core 实际响应和实现侧 OpenAPI 做语义契约测试。
-2. 保持正式基础路径 `/api/flowpilot/v1`、错误码、分页、ETag 与幂等语义，逐域替换 Mock 兼容 DTO。
-3. 将会话改为 HttpOnly/SameSite Cookie；移除 `mock:<userId>` Bearer 方案。
-4. 将领域命令迁移到 ASP.NET Core、EF Core 10 和 SQL Server 2016 SP2 及之后版本：常规持久化使用领域仓储与 EF Core，锁语义和复杂投影通过共享同一 `DbConnection`/`DbTransaction` 的参数化 SqlClient 命令执行；共享 SQL 仍以 2016 SP2/兼容级别 130 为最低能力基线。
-5. 将附件迁移到服务器文件目录，将邮件迁移到持久化 Outbox worker；Excel 继续由浏览器生成，后端只实现导出数据集查询和权限控制。
-6. 逐页切换到生成客户端；登录只水合会话、权限和小型字典，用户、实例、任务、审计和 Outbox 改为服务端分页，流程完整版本按需加载。最后设置 `VITE_API_MODE=remote` 并删除浏览器业务数据双写和正式模式 Bearer 逻辑。
-7. 对 OpenAPI、领域服务、Handler、组件集成和关键 E2E 分层测试。
+首版 ASP.NET Core、EF Core、SQL Server、HttpOnly Cookie、附件存储、邮件 Outbox、审计和导出数据集接口已经实现。正式构建固定使用 remote 模式，不携带 Mock Bearer；Mock 仅保留为独立演示和前端开发数据源。仍需在目标环境完成 SQL Server 2016 SP2 最低基线、LDAPS、SMTP、IIS 和 Windows Service 验收，具体见后端实施清单。

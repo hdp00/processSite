@@ -1297,7 +1297,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                 <Alert
                   type="success"
                   showIcon
-                  message="结束条件"
+                  title="结束条件"
                   description="存在多个前置节点时，系统会自动按 AND 汇聚处理：全部前置节点通过、确认或因条件不满足而跳过后才会到达。"
                 />
               )}
@@ -1379,7 +1379,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                         {!selectedEmailNotification.notifyReviewers
                           && !selectedEmailNotification.notifyInitiator
                           && !selectedEmailNotification.extraUserIds.length ? (
-                            <Alert type="warning" showIcon message="请至少选择一类邮件收件人" />
+                            <Alert type="warning" showIcon title="请至少选择一类邮件收件人" />
                           ) : null}
                       </div>
                     ) : null}
@@ -1448,7 +1448,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
               <Alert
                 type="info"
                 showIcon
-                message="正在编辑完整版本快照"
+                title="正在编辑完整版本快照"
                 description="未发布且没有流程实例的版本可以直接保存；发布后需先取消发布，已有实例后则只能复制新建版本。"
               />
             </div>
@@ -1485,7 +1485,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
         <Alert
           type={allValidationPassed ? "success" : "warning"}
           showIcon
-          message={allValidationPassed ? "流程结构校验通过" : "流程暂不满足发布条件"}
+          title={allValidationPassed ? "流程结构校验通过" : "流程暂不满足发布条件"}
           description="通过后进入统一发布页面，当前正在运行的流程实例不会受到影响。"
           className="validation-drawer__summary"
         />
@@ -1593,7 +1593,7 @@ export const FlowDesignerPage = () => {
         <Alert
           type="error"
           showIcon
-          message="流程不存在"
+          title="流程不存在"
           description="请返回流程管理重新选择需要编辑的流程。"
           action={<AppBackButton onClick={() => navigate("/admin/processes")} />}
         />
@@ -1607,7 +1607,7 @@ export const FlowDesignerPage = () => {
         <Alert
           type="error"
           showIcon
-          message="版本不存在"
+          title="版本不存在"
           description="流程设计必须绑定到一个明确的正式版本。"
           action={<AppBackButton onClick={() => navigate(`/admin/processes/${definitionId}/versions`)} />}
         />
@@ -1621,7 +1621,7 @@ export const FlowDesignerPage = () => {
         <Alert
           type="info"
           showIcon
-          message={`${version.version} 为只读版本`}
+          title={`${version.version} 为只读版本`}
           description={definition.publishedVersionId === version.id
             ? "已发布版本不能直接修改。没有实例时可先在版本记录中取消发布；已有实例时请复制新建版本。"
             : "该版本已经创建过流程实例，只能查看或复制新建版本。"}

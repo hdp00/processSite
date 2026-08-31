@@ -23,6 +23,7 @@ import type { ApiResourceResult } from "./client";
 import {
   normalizeAttachmentRecord,
   normalizeAuditEvent,
+  normalizeEmailOutboxItem,
   normalizeAuthSession,
   normalizeDepartments,
   normalizeDirectoryUser,
@@ -690,6 +691,8 @@ export const flowPilotApi = {
     },
     copy: (definitionId: string, sourceVersionId?: string) =>
       apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/copies`, { method: "POST", body: { sourceVersionId }, ...mutation() }).then(normalizeDefinitionVersionResult),
+    export: (definitionId: string) =>
+      apiDownload(`/process-definitions/${encodeURIComponent(definitionId)}/export`),
     updateAvailability: async (definitionId: string, disabled: boolean, ifMatch?: string) => {
       const value = await apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}`, { method: "PATCH", body: { disabled }, ifMatch });
       const versions = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId)?.versions;
@@ -843,14 +846,14 @@ export const flowPilotApi = {
       });
       return normalizeInstanceDetail(result).instance;
     },
-    reply: async (instanceId: string, content: string, ifMatch?: string) => {
-      const result = await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies`, { method: "POST", body: { content }, ifMatch, ...mutation() });
+    reply: async (instanceId: string, content: string, attachmentIds: string[] = [], ifMatch?: string) => {
+      const result = await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies`, { method: "POST", body: { content, attachmentIds }, ifMatch, ...mutation() });
       return remoteMode
         ? normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`)).instance
         : normalizeProcessInstance(result);
     },
-    transfer: (instanceId: string, nextAssigneeId: string, content?: string, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/transfers`, { method: "POST", body: { nextAssigneeId, content }, ifMatch, ...mutation() })
+    transfer: (instanceId: string, nextAssigneeId: string, content?: string, attachmentIds: string[] = [], ifMatch?: string) =>
+      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/transfers`, { method: "POST", body: { nextAssigneeId, content, attachmentIds }, ifMatch, ...mutation() })
         .then((value) => normalizeInstanceDetail(value).instance),
     editReply: async (instanceId: string, entryId: string, content: string, ifMatch?: string) => {
       const result = await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies/${encodeURIComponent(entryId)}`, { method: "PATCH", body: { content }, ifMatch });
@@ -899,13 +902,14 @@ export const flowPilotApi = {
         .then((value) => normalizeInstanceDetail(value).instance),
   },
   attachments: {
-    upload: (file: File, input: { instanceId?: string; definitionId?: string; versionId?: string; fieldId?: string } = {}) => {
+    upload: (file: File, input: { instanceId?: string; definitionId?: string; versionId?: string; fieldId?: string; purpose?: "form-field" | "free-reply" } = {}) => {
       const form = new FormData();
       form.set("file", file);
       if (input.instanceId) form.set("instanceId", input.instanceId);
       if (input.definitionId) form.set("definitionId", input.definitionId);
       if (input.versionId) form.set("versionId", input.versionId);
       if (input.fieldId) form.set("fieldId", input.fieldId);
+      if (input.purpose) form.set("purpose", input.purpose);
       return apiRequest<unknown>("/attachments", { method: "POST", body: form, ...mutation(), timeoutMs: 60_000 }).then(normalizeAttachmentRecord);
     },
     get: (attachmentId: string) => apiRequest<unknown>(`/attachments/${encodeURIComponent(attachmentId)}`).then(normalizeAttachmentRecord),
@@ -927,11 +931,32 @@ export const flowPilotApi = {
     },
   },
   notifications: {
-    emailOutbox: (query: PageQuery & { status?: EmailOutboxItem["status"] } = {}) =>
-      apiRequest<PageResult<EmailOutboxItem>>("/email-outbox", { query }),
-    emailDelivery: (deliveryId: string) => apiRequest<EmailOutboxItem>(`/email-outbox/${encodeURIComponent(deliveryId)}`),
-    retryEmail: (deliveryId: string) =>
-      apiRequest<EmailOutboxItem>(`/email-outbox/${encodeURIComponent(deliveryId)}/retry`, { method: "POST", ...mutation() }),
+    emailOutbox: (query: PageQuery & { status?: EmailOutboxItem["status"]; dateFrom?: string; dateTo?: string } = {}) => {
+      const today = new Date();
+      const dateTo = today.toISOString().slice(0, 10);
+      today.setDate(today.getDate() - 30);
+      const dateFrom = today.toISOString().slice(0, 10);
+      const remoteStatus = query.status === "sent" ? "sent" : query.status === "failed" ? "dead-letter" : query.status === "queued" ? "pending" : undefined;
+      return pageRequest("/email-outbox", {
+        ...query,
+        status: remoteMode ? remoteStatus : query.status,
+        dateFrom: query.dateFrom ?? dateFrom,
+        dateTo: query.dateTo ?? dateTo,
+      }, normalizeEmailOutboxItem);
+    },
+    emailDelivery: (deliveryId: string) =>
+      apiRequest<unknown>(`/email-outbox/${encodeURIComponent(deliveryId)}`).then(normalizeEmailOutboxItem),
+    retryEmail: async (deliveryId: string) => {
+      if (!remoteMode) {
+        return apiRequest<unknown>(`/email-outbox/${encodeURIComponent(deliveryId)}/retry`, { method: "POST", ...mutation() }).then(normalizeEmailOutboxItem);
+      }
+      const resource = await apiResource<unknown>(`/email-outbox/${encodeURIComponent(deliveryId)}`);
+      return apiRequest<unknown>(`/email-outbox/${encodeURIComponent(deliveryId)}/retry`, {
+        method: "POST",
+        ifMatch: resource.etag,
+        ...mutation(),
+      }).then(normalizeEmailOutboxItem);
+    },
   },
   audit: {
     events: (query: PageQuery & { category?: AuditEvent["category"]; result?: "success" | "failure"; dateFrom?: string; dateTo?: string } = {}) =>

@@ -456,7 +456,7 @@ export function TaskCenterPage() {
 
         <Card className="content-card task-list-card" styles={{ body: { padding: 0 } }}>
           <div className="task-list-context">
-            <div><strong>{activeCategoryLabel}</strong><Tag bordered={false}>{isBrowserMockMode ? filtered.length : remoteTotal} 项</Tag></div>
+            <div><strong>{activeCategoryLabel}</strong><Tag variant="filled">{isBrowserMockMode ? filtered.length : remoteTotal} 项</Tag></div>
             <span>{activeTemplate ? "公共列 + 当前流程自定义列" : "全部流程仅显示公共列"}</span>
           </div>
           <Table<ProcessInstance>

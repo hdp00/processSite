@@ -53,7 +53,7 @@ export function useUnsavedChangesGuard({
     open={blocker.state === "blocked"}
     title={title}
     closable={false}
-    maskClosable={false}
+    mask={{ closable: false }}
     keyboard={false}
     footer={[
       <Button key="stay" onClick={() => blocker.state === "blocked" && blocker.reset()}>留在当前页</Button>,

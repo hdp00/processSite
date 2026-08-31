@@ -25,22 +25,26 @@ public sealed partial class SqlServerAuthService : IAuthService
     private readonly int _commandTimeoutSeconds;
     private readonly TimeProvider _timeProvider;
     private readonly LoginAttemptLimiter _loginAttemptLimiter;
+    private readonly IDomainAuthenticator _domainAuthenticator;
 
     public SqlServerAuthService(
         IConfiguration configuration,
         FlowPilotDatabaseOptions databaseOptions,
         TimeProvider timeProvider,
-        LoginAttemptLimiter loginAttemptLimiter)
+        LoginAttemptLimiter loginAttemptLimiter,
+        IDomainAuthenticator domainAuthenticator)
     {
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(databaseOptions);
         ArgumentNullException.ThrowIfNull(timeProvider);
         ArgumentNullException.ThrowIfNull(loginAttemptLimiter);
+        ArgumentNullException.ThrowIfNull(domainAuthenticator);
 
         _connectionString = configuration.GetConnectionString("FlowPilot");
         _commandTimeoutSeconds = databaseOptions.ApplicationCommandTimeoutSeconds;
         _timeProvider = timeProvider;
         _loginAttemptLimiter = loginAttemptLimiter;
+        _domainAuthenticator = domainAuthenticator;
     }
 
     public async Task<LoginResult> LoginAsync(
@@ -94,15 +98,23 @@ public sealed partial class SqlServerAuthService : IAuthService
             return FailedCredentialResult(normalizedLoginName, sourceIp);
         }
 
-        if (string.Equals(
-            user.AuthenticationMode,
-            DomainAuthenticationMode,
-            StringComparison.Ordinal))
+        PasswordVerificationResult? verification = null;
+        if (string.Equals(user.AuthenticationMode, DomainAuthenticationMode, StringComparison.Ordinal))
         {
-            return LoginResult.Failed(AuthenticationFailure.DomainAuthenticationUnavailable);
+            var domainResult = await _domainAuthenticator.AuthenticateAsync(
+                user.LoginName,
+                password,
+                cancellationToken).ConfigureAwait(false);
+            if (domainResult == DomainAuthenticationResult.Unavailable)
+            {
+                return LoginResult.Failed(AuthenticationFailure.DomainAuthenticationUnavailable);
+            }
+            if (domainResult == DomainAuthenticationResult.InvalidCredentials)
+            {
+                return FailedCredentialResult(normalizedLoginName, sourceIp);
+            }
         }
-
-        if (!string.Equals(
+        else if (!string.Equals(
                 user.AuthenticationMode,
                 PasswordAuthenticationMode,
                 StringComparison.Ordinal)
@@ -115,13 +127,16 @@ public sealed partial class SqlServerAuthService : IAuthService
             return FailedCredentialResult(normalizedLoginName, sourceIp);
         }
 
-        var verification = FlowPilotPasswordHasher.VerifyHashedPassword(
-            normalizedLoginName,
-            user.PasswordHash,
-            password);
-        if (verification == PasswordVerificationResult.Failed)
+        else
         {
-            return FailedCredentialResult(normalizedLoginName, sourceIp);
+            verification = FlowPilotPasswordHasher.VerifyHashedPassword(
+                normalizedLoginName,
+                user.PasswordHash!,
+                password);
+            if (verification == PasswordVerificationResult.Failed)
+            {
+                return FailedCredentialResult(normalizedLoginName, sourceIp);
+            }
         }
 
         var now = TruncateToMilliseconds(_timeProvider.GetUtcNow());
@@ -144,7 +159,7 @@ public sealed partial class SqlServerAuthService : IAuthService
                 connection,
                 transaction,
                 user.Id,
-                expectedPasswordHash,
+                expectedPasswordHash!,
                 replacementHash,
                 now,
                 cancellationToken).ConfigureAwait(false);
@@ -160,6 +175,7 @@ public sealed partial class SqlServerAuthService : IAuthService
             connection,
             transaction,
             user,
+            user.AuthenticationMode,
             expectedPasswordHash,
             tokenHash,
             now,
@@ -475,7 +491,8 @@ public sealed partial class SqlServerAuthService : IAuthService
         SqlConnection connection,
         SqlTransaction transaction,
         UserRecord user,
-        string expectedPasswordHash,
+        string expectedAuthenticationMode,
+        string? expectedPasswordHash,
         byte[] tokenHash,
         DateTimeOffset now,
         DateTimeOffset idleExpiresAt,
@@ -514,16 +531,17 @@ public sealed partial class SqlServerAuthService : IAuthService
                 NULL
             FROM [flowpilot].[users] AS [u]
             WHERE [u].[id] = @user_id
-              AND [u].[password_hash] = @expected_password_hash
-              AND [u].[authentication_mode] = N'password'
+              AND [u].[authentication_mode] = @expected_authentication_mode
+              AND (@expected_authentication_mode = N'domain' OR [u].[password_hash] = @expected_password_hash)
               AND [u].[is_enabled] = 1;
             """);
         command.Parameters.Add("@session_id", SqlDbType.UniqueIdentifier).Value = Guid.NewGuid();
         command.Parameters.Add("@user_id", SqlDbType.UniqueIdentifier).Value = user.Id;
         command.Parameters.Add("@permission_snapshot_version", SqlDbType.Int).Value =
             BuiltinCatalog.PermissionSnapshotVersion;
+        command.Parameters.Add("@expected_authentication_mode", SqlDbType.NVarChar, 20).Value = expectedAuthenticationMode;
         command.Parameters.Add("@expected_password_hash", SqlDbType.NVarChar, 500).Value =
-            expectedPasswordHash;
+            (object?)expectedPasswordHash ?? DBNull.Value;
         AddBinaryParameter(command, "@token_hash", tokenHash);
         AddUtcParameter(command, "@now", now);
         AddUtcParameter(command, "@idle_expires_at", idleExpiresAt);

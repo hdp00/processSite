@@ -68,7 +68,7 @@ export function LoginPage() {
         </div>
 
         <div className="login-hero-copy">
-          <Tag className="login-kicker" bordered={false}>公司内网专用</Tag>
+          <Tag className="login-kicker" variant="filled">公司内网专用</Tag>
           <Typography.Title>让每一次审核，<br />都清晰可追溯。</Typography.Title>
           <Typography.Paragraph>
             灵活配置表单与审批路径，让研发、质量、生产并行协作，

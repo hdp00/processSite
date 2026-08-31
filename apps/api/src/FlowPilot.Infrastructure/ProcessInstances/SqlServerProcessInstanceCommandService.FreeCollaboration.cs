@@ -77,6 +77,16 @@ public sealed partial class SqlServerProcessInstanceCommandService
                     "只有发起人、当前受理人或历史参与人可以回复。"));
             }
 
+            var attachmentPreparation = await PrepareFreeReplyAttachmentsAsync(
+                attachmentIds,
+                actor.EffectiveUserId,
+                cancellationToken).ConfigureAwait(false);
+            if (attachmentPreparation.Failure is not null)
+            {
+                await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                return FreeReplyFailed(attachmentPreparation.Failure);
+            }
+
             var now = _timeProvider.GetUtcNow();
             var entry = new FreeTimelineEntryEntity
             {
@@ -89,6 +99,12 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 Revision = 1,
             };
             _dbContext.FreeTimelineEntries.Add(entry);
+            AddFreeReplyAttachmentReferences(
+                instanceId,
+                entry.Id,
+                attachmentPreparation.Value!,
+                actor.EffectiveUserId,
+                now);
             await AddFreeParticipantAsync(instanceId, actor.EffectiveUserId, 4, now, cancellationToken)
                 .ConfigureAwait(false);
 
@@ -136,13 +152,14 @@ public sealed partial class SqlServerProcessInstanceCommandService
         ArgumentNullException.ThrowIfNull(actor);
 
         var content = request.Content?.Trim();
-        var requestFailure = ValidateFreeTransferRequest(request.NextAssigneeId, content);
+        var attachmentIds = request.AttachmentIds ?? [];
+        var requestFailure = ValidateFreeTransferRequest(request.NextAssigneeId, content, attachmentIds);
         if (requestFailure is not null)
         {
             return FreeTransferFailed(requestFailure);
         }
 
-        var requestHash = RequestHash(new { instanceId, request.NextAssigneeId, content });
+        var requestHash = RequestHash(new { instanceId, request.NextAssigneeId, content, attachmentIds });
         await using var transaction = await _dbContext.Database
             .BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
             .ConfigureAwait(false);
@@ -222,6 +239,16 @@ public sealed partial class SqlServerProcessInstanceCommandService
                     [Issue("nextAssigneeId", "INVALID_REFERENCE", "所选用户当前不具备受理资格。")]));
             }
 
+            var attachmentPreparation = await PrepareFreeReplyAttachmentsAsync(
+                attachmentIds,
+                actor.EffectiveUserId,
+                cancellationToken).ConfigureAwait(false);
+            if (attachmentPreparation.Failure is not null)
+            {
+                await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                return FreeTransferFailed(attachmentPreparation.Failure);
+            }
+
             var currentTask = await _dbContext.WorkflowTasks
                 .SingleOrDefaultAsync(task => task.InstanceId == instanceId
                     && task.TaskType == "free-collaboration"
@@ -260,6 +287,12 @@ public sealed partial class SqlServerProcessInstanceCommandService
                     OccurredAt = now.UtcDateTime,
                     Revision = 1,
                 });
+                AddFreeReplyAttachmentReferences(
+                    instanceId,
+                    replyEntryId.Value,
+                    attachmentPreparation.Value!,
+                    actor.EffectiveUserId,
+                    now);
                 await AddFreeParticipantAsync(instanceId, actor.EffectiveUserId, 4, now, cancellationToken)
                     .ConfigureAwait(false);
                 AddFreeAudit(instanceId, "reply", actor, traceId, now);
@@ -620,19 +653,19 @@ public sealed partial class SqlServerProcessInstanceCommandService
         string requestHash,
         T value,
         DateTimeOffset now) => new()
-    {
-        Id = Guid.NewGuid(),
-        ActorId = actorId,
-        RouteScope = routeScope,
-        IdempotencyKey = idempotencyKey,
-        RequestHash = requestHash,
-        Status = "completed",
-        FirstHttpStatus = routeScope == FreeReplyRouteScope ? (short)201 : (short)200,
-        ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
-        CreatedAt = now.UtcDateTime,
-        CompletedAt = now.UtcDateTime,
-        ExpiresAt = now.AddDays(7).UtcDateTime,
-    };
+        {
+            Id = Guid.NewGuid(),
+            ActorId = actorId,
+            RouteScope = routeScope,
+            IdempotencyKey = idempotencyKey,
+            RequestHash = requestHash,
+            Status = "completed",
+            FirstHttpStatus = routeScope == FreeReplyRouteScope ? (short)201 : (short)200,
+            ResponseBodyJson = JsonSerializer.Serialize(value, JsonOptions),
+            CreatedAt = now.UtcDateTime,
+            CompletedAt = now.UtcDateTime,
+            ExpiresAt = now.AddDays(7).UtcDateTime,
+        };
 
     private void AddFreeAudit(
         Guid resourceId,
@@ -641,20 +674,20 @@ public sealed partial class SqlServerProcessInstanceCommandService
         string traceId,
         DateTimeOffset now,
         IReadOnlyList<string>? fieldIds = null) => _dbContext.RuntimeAuditEvents.Add(new RuntimeAuditEvent
-    {
-        Id = Guid.NewGuid(),
-        ResourceType = "free-collaboration",
-        ResourceId = resourceId,
-        Action = action,
-        FieldIdentifiersJson = fieldIds is null
+        {
+            Id = Guid.NewGuid(),
+            ResourceType = "free-collaboration",
+            ResourceId = resourceId,
+            Action = action,
+            FieldIdentifiersJson = fieldIds is null
             ? null
             : JsonSerializer.Serialize(fieldIds, JsonOptions),
-        OperatorUserId = actor.OperatorUserId,
-        EffectiveUserId = actor.EffectiveUserId,
-        TraceId = traceId,
-        Result = "success",
-        OccurredAt = now.UtcDateTime,
-    });
+            OperatorUserId = actor.OperatorUserId,
+            EffectiveUserId = actor.EffectiveUserId,
+            TraceId = traceId,
+            Result = "success",
+            OccurredAt = now.UtcDateTime,
+        });
 
     private static ProcessInstanceCommandFailure? ValidateFreeReplyRequest(
         string content,
@@ -666,14 +699,90 @@ public sealed partial class SqlServerProcessInstanceCommandService
             return contentFailure;
         }
 
-        return attachmentIds.Count == 0
-            ? null
-            : Failure(
+        return ValidateFreeReplyAttachmentIds(attachmentIds);
+    }
+
+    private static ProcessInstanceCommandFailure? ValidateFreeReplyAttachmentIds(
+        IReadOnlyList<Guid> attachmentIds)
+    {
+        if (attachmentIds.Count > 20)
+        {
+            return Failure(
                 ProcessInstanceCommandError.ValidationFailed,
-                "FREE_REPLY_ATTACHMENTS_NOT_SUPPORTED",
-                "回复附件暂不可用",
-                "当前版本尚未开放自由协作回复附件，请先提交回复正文。",
-                [Issue("attachmentIds", "NOT_SUPPORTED", "当前版本尚未开放自由协作回复附件。")]);
+                "ATTACHMENT_LIMIT_REACHED",
+                "回复附件过多",
+                "每条回复最多可以添加 20 个附件。",
+                [Issue("attachmentIds", "MAX_ITEMS", "每条回复最多可以添加 20 个附件。")]);
+        }
+
+        return attachmentIds.Any(id => id == Guid.Empty)
+            || attachmentIds.Distinct().Count() != attachmentIds.Count
+            ? Failure(
+                ProcessInstanceCommandError.ValidationFailed,
+                "ATTACHMENT_IDS_INVALID",
+                "回复附件无效",
+                "attachmentIds 不能包含空值或重复值。",
+                [Issue("attachmentIds", "UNIQUE_VALID_IDS_REQUIRED", "请选择有效且不重复的附件。")])
+            : null;
+    }
+
+    private async Task<FreeReplyAttachmentPreparation> PrepareFreeReplyAttachmentsAsync(
+        IReadOnlyList<Guid> attachmentIds,
+        Guid actorId,
+        CancellationToken cancellationToken)
+    {
+        if (attachmentIds.Count == 0)
+        {
+            return FreeReplyAttachmentPreparation.Succeeded([]);
+        }
+
+        var attachments = await _dbContext.RuntimeAttachments
+            .Where(item => attachmentIds.Contains(item.Id))
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var hasReferences = await _dbContext.AttachmentReferences
+            .AsNoTracking()
+            .AnyAsync(item => attachmentIds.Contains(item.AttachmentId), cancellationToken)
+            .ConfigureAwait(false);
+        if (attachments.Length != attachmentIds.Count
+            || hasReferences
+            || attachments.Any(item => item.State != "staged"
+                || item.UploadedBy != actorId
+                || item.Purpose != "free-reply"))
+        {
+            return FreeReplyAttachmentPreparation.Failed(Failure(
+                ProcessInstanceCommandError.Forbidden,
+                "ATTACHMENT_REFERENCE_FORBIDDEN",
+                "不能使用部分回复附件",
+                "回复只能使用当前用户为该事项上传且尚未被引用的暂存附件。"));
+        }
+
+        return FreeReplyAttachmentPreparation.Succeeded(attachments);
+    }
+
+    private void AddFreeReplyAttachmentReferences(
+        Guid instanceId,
+        Guid entryId,
+        IReadOnlyList<RuntimeAttachment> attachments,
+        Guid actorId,
+        DateTimeOffset now)
+    {
+        foreach (var attachment in attachments)
+        {
+            attachment.State = "active";
+            attachment.CleanupAfter = null;
+            attachment.Revision = checked(attachment.Revision + 1);
+            _dbContext.AttachmentReferences.Add(new AttachmentReferenceEntity
+            {
+                Id = Guid.NewGuid(),
+                AttachmentId = attachment.Id,
+                InstanceId = instanceId,
+                FreeTimelineEntryId = entryId,
+                ReferenceType = "free-timeline",
+                CreatedBy = actorId,
+                CreatedAt = now.UtcDateTime,
+            });
+        }
     }
 
     private static ProcessInstanceCommandFailure? ValidateFreeReplyContent(string content)
@@ -700,7 +809,8 @@ public sealed partial class SqlServerProcessInstanceCommandService
 
     private static ProcessInstanceCommandFailure? ValidateFreeTransferRequest(
         Guid nextAssigneeId,
-        string? content)
+        string? content,
+        IReadOnlyList<Guid> attachmentIds)
     {
         if (nextAssigneeId == Guid.Empty)
         {
@@ -720,6 +830,22 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 "回复内容不能为空",
                 "传入 content 时必须填写回复内容。",
                 [Issue("content", "REQUIRED", "请填写回复内容，或不传 content。")]);
+        }
+
+        if (content is null && attachmentIds.Count > 0)
+        {
+            return Failure(
+                ProcessInstanceCommandError.ValidationFailed,
+                "CONTENT_REQUIRED",
+                "回复内容不能为空",
+                "添加回复附件时必须同时填写回复内容。",
+                [Issue("content", "REQUIRED", "请填写回复内容，或移除回复附件。")]);
+        }
+
+        var attachmentFailure = ValidateFreeReplyAttachmentIds(attachmentIds);
+        if (attachmentFailure is not null)
+        {
+            return attachmentFailure;
         }
 
         return content?.Length <= 20000 || content is null
@@ -757,5 +883,14 @@ public sealed partial class SqlServerProcessInstanceCommandService
         public static FreeInstancePreparation Succeeded(WorkflowInstanceEntity value) => new(value, null);
 
         public static FreeInstancePreparation Failed(ProcessInstanceCommandFailure failure) => new(null, failure);
+    }
+
+    private sealed record FreeReplyAttachmentPreparation(
+        IReadOnlyList<RuntimeAttachment>? Value,
+        ProcessInstanceCommandFailure? Failure)
+    {
+        public static FreeReplyAttachmentPreparation Succeeded(IReadOnlyList<RuntimeAttachment> value) => new(value, null);
+
+        public static FreeReplyAttachmentPreparation Failed(ProcessInstanceCommandFailure failure) => new(null, failure);
     }
 }

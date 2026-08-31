@@ -24,7 +24,7 @@ import { usePrototypeStore } from "../../state/usePrototypeStore";
 import { canUserViewDefinition, canUserViewInstance } from "../../state/workflowAccess";
 import { compareDomainTimestamps } from "../../utils/domainTime";
 import type { CompleteDesignerSnapshot } from "../../utils/designerStorage";
-import { parseProcessDefinitionImport } from "../../utils/processDefinitionTransfer";
+import { createProcessDefinitionExport, parseProcessDefinitionImport } from "../../utils/processDefinitionTransfer";
 import { MOCK_API_BASE_URL } from "../apiBase";
 import {
   apiNoContent,
@@ -263,6 +263,22 @@ export const definitionHandlers = [
     const found = requireDefinition(request, definitionId);
     if ("response" in found) return found.response;
     return apiOk(request, structuredClone(found.definition), { headers: withEtag(found.definition) });
+  }),
+
+  http.get(`${API}/process-definitions/:definitionId/export`, async ({ request, params }) => {
+    const simulated = await applyMockScenario(request);
+    if (simulated) return simulated;
+    const auth = requirePermission(request, "config-definition:查看");
+    if (auth.response) return auth.response;
+    const { definitionId } = routeIds(params);
+    const found = requireDefinition(request, definitionId);
+    if ("response" in found) return found.response;
+    const identities = useIdentityStore.getState();
+    const document = createProcessDefinitionExport(found.definition, identities);
+    const fileName = encodeURIComponent(`${found.definition.name}_流程定义.json`);
+    return apiOk(request, document, {
+      headers: { "Content-Disposition": `attachment; filename*=UTF-8''${fileName}` },
+    });
   }),
 
   http.patch(`${API}/process-definitions/:definitionId`, async ({ request, params }) => {

@@ -3300,6 +3300,7 @@ components:
         - RESOURCE_NOT_FOUND
         - REVISION_MISMATCH
         - VALIDATION_FAILED
+        - USER_ROLE_REQUIRED
         - IDEMPOTENCY_KEY_REUSED
         - IDEMPOTENCY_REQUEST_IN_PROGRESS
         - IMMUTABLE_BUILTIN_RESOURCE
@@ -3339,6 +3340,35 @@ components:
         - IMPERSONATION_NOT_ALLOWED
         - IMPERSONATION_TARGET_INVALID
         - IMPERSONATION_ALREADY_ACTIVE
+        - IMPERSONATION_SESSION_INVALID
+        - IMPERSONATION_TARGET_NOT_FOUND
+        - IF_MATCH_REQUIRED
+        - PRECONDITION_REQUIRED
+        - DEFINITION_NOT_FOUND
+        - VERSION_NOT_FOUND
+        - TASK_NOT_FOUND
+        - INSTANCE_NOT_FOUND
+        - INSTANCE_VIEW_FORBIDDEN
+        - DEFINITION_NOT_LAUNCHABLE
+        - LAUNCH_FORBIDDEN
+        - USER_NOT_FOUND
+        - ROLE_NOT_FOUND
+        - DEPARTMENT_NOT_FOUND
+        - POSITION_NOT_FOUND
+        - WORKFLOW_GROUP_NOT_FOUND
+        - ATTACHMENT_FILE_REQUIRED
+        - ATTACHMENT_FILE_INVALID
+        - ATTACHMENT_SCOPE_INVALID
+        - ATTACHMENT_UPLOAD_FORBIDDEN
+        - ATTACHMENT_INLINE_NOT_ALLOWED
+        - INVALID_MULTIPART_BODY
+        - MULTIPLE_RANGES_NOT_SUPPORTED
+        - EMAIL_OUTBOX_NOT_FOUND
+        - AUDIT_EVENT_NOT_FOUND
+        - DATE_RANGE_INVALID
+        - EXPORT_EMPTY_RESULT
+        - EXPORT_NO_COLUMNS
+        - EXPORT_ROW_LIMIT_EXCEEDED
     ValidationIssueDto:
       type: object
       required: [code, message]
@@ -4798,66 +4828,38 @@ components:
     ProcessDefinitionExportDocumentDto:
       type: object
       additionalProperties: false
-      required: [product, documentType, formatVersion, exportedAt, definition]
+      description: 可由业务人员直接阅读的中文流程定义文档；所有外部引用使用显示名称，不包含数据库主键或流程内部标识。
+      required: [文件类型, 格式版本, 导出时间, 流程定义]
       properties:
-        product:
+        文件类型:
           type: string
-          const: FlowPilot
-        documentType:
+          const: FlowPilot 流程定义
+        格式版本:
           type: string
-          const: process-definition
-        formatVersion:
-          type: integer
-          const: 1
-        exportedAt:
+          const: "1.0"
+        导出时间:
           type: string
-          format: date-time
-        definition:
-          $ref: "#/components/schemas/ProcessDefinitionExportDefinitionDto"
-    ProcessDefinitionExportDefinitionDto:
-      type: object
-      additionalProperties: false
-      required: [code, name, description, type, versions]
-      properties:
-        code:
-          type: string
-          description: 可读来源编码；导入冲突时必须由服务端按导入规则生成新编码，不能覆盖现有定义
-        name:
-          type: string
-        description:
-          type: string
-        type:
-          $ref: "#/components/schemas/ProcessDefinitionType"
-        versions:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/ProcessDefinitionExportVersionDto"
-    ProcessDefinitionExportVersionDto:
-      type: object
-      additionalProperties: false
-      required: [versionNumber, basic, form, systemFields, flow]
-      properties:
-        versionNumber:
-          type: integer
-          minimum: 1
-        basic:
+        流程定义:
           type: object
-          additionalProperties: true
-          description: 该版本完整基本信息；人员资格只保存稳定业务引用，不复制成员名单
-        form:
-          type: object
-          additionalProperties: true
-          description: 完整表单定义；选择项输出可读名称，文档内引用使用局部标识
-        systemFields:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        flow:
-          type: object
-          additionalProperties: true
-          description: 完整节点、连线、条件、通知、可修改字段和驳回规则
+          additionalProperties: false
+          required: [名称, 类型, 说明, 原状态, 版本]
+          properties:
+            名称:
+              type: string
+            类型:
+              type: string
+              enum: [固定审批, 自由协作]
+            说明:
+              type: string
+            原状态:
+              type: string
+            版本:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                additionalProperties: true
+                description: 使用中文属性保存完整基本信息、初始表单、系统列表字段和流程设计；内部引用均转换为可读名称。
     CreateProcessDefinitionResponse:
       type: object
       required: [definition, version]
@@ -5249,7 +5251,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/ProcessInstanceSummaryDto"
         - type: object
-          required: [formValues, fieldRevisions, attachments, reviewProgress, tasks, timeline]
+          required: [formValues, fieldRevisions, attachments, participants, reviewProgress, tasks, timeline, freeTimeline]
           properties:
             formValues:
               type: object
@@ -5265,6 +5267,11 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/AttachmentDto"
+            participants:
+              type: array
+              description: 自由协作事项的发起人、当前受理人及历史参与人；审批流程为空数组。
+              items:
+                $ref: "#/components/schemas/UserRef"
             reviewProgress:
               type: array
               items:
@@ -5620,6 +5627,7 @@ components:
           maxLength: 20000
         attachmentIds:
           type: array
+          maxItems: 20
           uniqueItems: true
           items:
             type: string
@@ -5645,6 +5653,14 @@ components:
         nextAssigneeId:
           type: string
           format: uuid
+        attachmentIds:
+          type: array
+          description: 与 content 对应的回复附件；不传 content 时必须为空。
+          maxItems: 20
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
     ReopenFreeCollaborationRequest:
       type: object
       additionalProperties: false

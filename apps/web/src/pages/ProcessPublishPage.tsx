@@ -66,7 +66,7 @@ export function ProcessPublishPage() {
     ].filter(Boolean);
     return recipients.length ? recipients.join("、") : "已启用，未配置收件人";
   };
-  if (!definition || !version) return <Alert type="error" showIcon message="流程版本不存在" description="发布必须绑定到一个明确的正式版本。" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
+  if (!definition || !version) return <Alert type="error" showIcon title="流程版本不存在" description="发布必须绑定到一个明确的正式版本。" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
 
   const status = getVersionStatus(definition, version.id);
   const current = getPublishedVersion(definition);
@@ -114,13 +114,13 @@ export function ProcessPublishPage() {
   };
 
   return <div className="page-stack pa-page">
-    <Card className="pa-config-head" bordered={false}>
+    <Card className="pa-config-head" variant="borderless">
       <div className="pa-config-head__main"><AppBackButton onClick={() => navigate(`/admin/processes/${definition.id}/versions`)} /><div><Space size={10} wrap><Typography.Title level={3}>{version.basic.name}</Typography.Title><Tag color="blue">正式版本 {version.version}</Tag><StatusPill status={status} /></Space><Typography.Text type="secondary">{definition.code} · 发布确认</Typography.Text></div></div>
       <Space><ProcessWizardPreviousButton step={definition.type === "free" ? "初始表单" : "流程设计"} onClick={() => navigate(previousUrl)} /><Button type="primary" icon={<RocketOutlined />} loading={validating} disabled={!canAttemptPublish} onClick={() => void preparePublish()}>{status === "已发布" ? "当前已发布" : version.validation.status === "通过" ? current ? "重新校验并切换" : "重新校验并发布" : "重新校验；通过后发布"}</Button></Space>
     </Card>
-    <Card className="pa-steps-card" bordered={false}><ProcessWizardSteps workflowType={definition.type} current={definition.type === "free" ? 2 : 3} /></Card>
+    <Card className="pa-steps-card" variant="borderless"><ProcessWizardSteps workflowType={definition.type} current={definition.type === "free" ? 2 : 3} /></Card>
 
-    {status === "已发布" ? <Alert type="success" showIcon message={`${version.version} 当前已发布`} description="新发起实例使用该版本的完整快照；如需修改，没有实例时先取消发布，有实例时复制新建版本。" /> : <Alert type={version.validation.status === "通过" ? "success" : "error"} showIcon message={version.validation.status === "通过" ? `${version.version} 当前校验通过` : `${version.version} 当前记录未通过校验`} description={version.validation.status === "通过" ? `点击发布时仍会按最新权限组重新校验。最近校验：${formatDisplayDateTime(version.validation.checkedAt)}` : `${version.validation.issues.join("；") || "校验结果需要刷新"}。修复权限组等外部依赖后，可直接点击“重新校验；通过后发布”，无需编辑版本。`} />}
+    {status === "已发布" ? <Alert type="success" showIcon title={`${version.version} 当前已发布`} description="新发起实例使用该版本的完整快照；如需修改，没有实例时先取消发布，有实例时复制新建版本。" /> : <Alert type={version.validation.status === "通过" ? "success" : "error"} showIcon title={version.validation.status === "通过" ? `${version.version} 当前校验通过` : `${version.version} 当前记录未通过校验`} description={version.validation.status === "通过" ? `点击发布时仍会按最新权限组重新校验。最近校验：${formatDisplayDateTime(version.validation.checkedAt)}` : `${version.validation.issues.join("；") || "校验结果需要刷新"}。修复权限组等外部依赖后，可直接点击“重新校验；通过后发布”，无需编辑版本。`} />}
 
     <div className="pa-publish-grid">
       <div className="pa-config-main">
@@ -139,7 +139,7 @@ export function ProcessPublishPage() {
             { key: "system", label: "系统列表字段", children: `${version.snapshot.systemFields.length} 个配置` },
           ]} />
           <Divider>初始表单字段</Divider>
-          <Space wrap>{version.snapshot.form.fields.length ? version.snapshot.form.fields.map((field) => <Tag key={field.id} color={field.displayCondition ? "cyan" : undefined} bordered={false}>{field.label}{field.displayCondition ? " · 条件显示" : ""}</Tag>) : <Typography.Text type="danger">尚未配置字段</Typography.Text>}</Space>
+          <Space wrap>{version.snapshot.form.fields.length ? version.snapshot.form.fields.map((field) => <Tag key={field.id} color={field.displayCondition ? "cyan" : undefined} variant="filled">{field.label}{field.displayCondition ? " · 条件显示" : ""}</Tag>) : <Typography.Text type="danger">尚未配置字段</Typography.Text>}</Space>
         </Card>
 
         {definition.type === "approval" ? <Card className="pa-section-card" title={<span className="pa-card-title"><ApartmentOutlined /> 审批拓扑与规则</span>}>
@@ -193,8 +193,8 @@ export function ProcessPublishPage() {
               <div><strong>驳回处理</strong><span>{rejectionHandlingLabel(version.snapshot.flow.meta?.rejectionHandling)}：{version.snapshot.flow.meta?.rejectionHandling === "auto-close" ? "流程立即关闭。" : version.snapshot.flow.meta?.rejectionHandling === "resubmit-only" ? "发起方修改后可重新提交，所有审批重新开始。" : "发起方可修改后重新提交；关闭权限组也可直接关闭流程。"}</span></div>
               <div><strong>内容锁定</strong><span>首个审核结果提交前，发起方可修改；提交后锁定，驳回后重新开放修改。</span></div>
             </div>
-          </> : <Alert type="error" showIcon message="尚未形成可预览的审批拓扑" description="请返回流程设计，配置开始、审批、结束节点并完成连线。" />}
-        </Card> : <Card className="pa-section-card" title={<span className="pa-card-title"><TeamOutlined /> 自由协作规则</span>}><Alert type="info" showIcon message="不使用流程图" description={`受理人从 ${version.basic.assigneeGroups?.length ?? 0} 个流程权限组的有效成员中选择；每次回复后可继续指定下一位受理人，直到手动关闭。`} /></Card>}
+          </> : <Alert type="error" showIcon title="尚未形成可预览的审批拓扑" description="请返回流程设计，配置开始、审批、结束节点并完成连线。" />}
+        </Card> : <Card className="pa-section-card" title={<span className="pa-card-title"><TeamOutlined /> 自由协作规则</span>}><Alert type="info" showIcon title="不使用流程图" description={`受理人从 ${version.basic.assigneeGroups?.length ?? 0} 个流程权限组的有效成员中选择；每次回复后可继续指定下一位受理人，直到手动关闭。`} /></Card>}
       </div>
 
       <aside className="pa-config-aside">
@@ -207,12 +207,12 @@ export function ProcessPublishPage() {
             <div className="pa-scope-line"><span>{definition.type === "approval" ? "审批拓扑" : "受理范围"}</span><StatusPill compact status={definition.type === "approval" ? (approvalNodes.length ? "已通过" : "失败") : (version.basic.assigneeGroups?.length ? "已通过" : "失败")} /></div>
           </Space>
         </Card>
-        <Card className="pa-help-card" bordered={false}><Typography.Title level={5}>发布影响</Typography.Title><ul><li>流程定义最多只有一个发布版本。</li><li>切换后新实例立即使用目标版本。</li><li>运行中实例继续锁定发起时版本。</li><li>历史版本及其完整快照不会被覆盖。</li></ul></Card>
+        <Card className="pa-help-card" variant="borderless"><Typography.Title level={5}>发布影响</Typography.Title><ul><li>流程定义最多只有一个发布版本。</li><li>切换后新实例立即使用目标版本。</li><li>运行中实例继续锁定发起时版本。</li><li>历史版本及其完整快照不会被覆盖。</li></ul></Card>
       </aside>
     </div>
 
     <Modal title={current ? `切换发布版本：${current.version} → ${version.version}` : `发布 ${version.version}`} open={confirmOpen} confirmLoading={publishing} okText="确认发布" cancelText="取消" onCancel={() => setConfirmOpen(false)} onOk={() => void publish()}>
-      <Alert type="warning" showIcon message="发布会立即影响新发起实例" description={current ? `原发布版本 ${current.version} 自动退出发布，已有实例不受影响。` : "符合发起权限的员工将看到此流程入口。"} />
+      <Alert type="warning" showIcon title="发布会立即影响新发起实例" description={current ? `原发布版本 ${current.version} 自动退出发布，已有实例不受影响。` : "符合发起权限的员工将看到此流程入口。"} />
       <Form layout="vertical" style={{ marginTop: 18 }}><Form.Item label="发布说明"><Input.TextArea value={changeNote} onChange={(event) => setChangeNote(event.target.value)} rows={3} maxLength={200} showCount placeholder="可选，说明本次发布或切换原因" /></Form.Item></Form>
     </Modal>
   </div>;

@@ -10,7 +10,7 @@ import { useIdentityStore } from "../state/useIdentityStore";
 import { hasPersonaPermission } from "../state/rolePermissions";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { definitionStatus, getPublishedVersion, useProcessDefinitionStore, type DefinitionStatus, type DefinitionType, type ProcessDefinition, type ProcessVersion } from "../state/useProcessDefinitionStore";
-import { createProcessDefinitionExport, parseProcessDefinitionImport, type ProcessDefinitionImportPreview } from "../utils/processDefinitionTransfer";
+import { parseProcessDefinitionImport, type ProcessDefinitionImportPreview } from "../utils/processDefinitionTransfer";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import "./process-admin-pages.css";
 import { isBrowserMockMode } from "../utils/runtimeMode";
@@ -130,16 +130,14 @@ export function ProcessManagementPage() {
   };
 
   const exportDefinition = async (record: ProcessDefinition) => {
-    const completeDefinition = record.versions.length ? record : await flowPilotApi.definitions.get(record.id);
-    const payload = createProcessDefinitionExport(completeDefinition, { users, roles, workflowGroups });
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const { blob, fileName } = await flowPilotApi.definitions.export(record.id);
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${record.name.replace(/[\\/:*?"<>|]/g, "_")}_流程定义.json`;
+    link.download = fileName;
     link.click();
     URL.revokeObjectURL(url);
-    message.success(`已导出“${completeDefinition.name}”的全部版本`);
+    message.success(`已导出“${record.name}”的全部版本`);
   };
 
   const readImportFile = async (file: File) => {
@@ -182,7 +180,7 @@ export function ProcessManagementPage() {
       render: (value: string, record) => <button type="button" className="pa-name-button" onClick={() => navigate(`/admin/processes/${record.id}/versions`)}><span className={`pa-definition-icon ${typeMeta[record.type].className}`}>{typeMeta[record.type].icon}</span><span><strong>{value}</strong><small>{record.code}</small></span></button>,
     },
     { title: "类型", dataIndex: "type", width: 120, render: (value: DefinitionType) => <Tag className="pa-type-tag">{typeMeta[value].label}</Tag> },
-    { title: "发布编号前缀", key: "prefix", width: 145, render: (_, record) => getPublishedVersion(record)?.basic.instancePrefix || record.publishedInstancePrefix ? <Tag bordered={false} color="blue">{getPublishedVersion(record)?.basic.instancePrefix ?? record.publishedInstancePrefix}</Tag> : <span className="pa-muted">—</span> },
+    { title: "发布编号前缀", key: "prefix", width: 145, render: (_, record) => getPublishedVersion(record)?.basic.instancePrefix || record.publishedInstancePrefix ? <Tag variant="filled" color="blue">{getPublishedVersion(record)?.basic.instancePrefix ?? record.publishedInstancePrefix}</Tag> : <span className="pa-muted">—</span> },
     { title: "定义状态", key: "status", width: 115, render: (_, record) => <StatusPill status={definitionStatus(record)} /> },
     { title: "发布版本", key: "published", width: 105, render: (_, record) => <span className={record.publishedVersionId ? "pa-version" : "pa-muted"}>{getPublishedVersion(record)?.version ?? record.publishedVersionLabel ?? "—"}</span> },
     { title: "版本数", key: "versions", width: 86, align: "right", render: (_, record) => record.versionCount ?? record.versions.length },
@@ -206,13 +204,13 @@ export function ProcessManagementPage() {
   return (
     <div className="page-stack pa-page">
       {createDefinitionGuard}
-      <Card className="pa-overview-card" bordered={false}>
+      <Card className="pa-overview-card" variant="borderless">
         <div className="pa-overview-copy"><span className="pa-eyebrow"><FileTextOutlined /> 流程配置</span><Typography.Title level={3}>流程定义概览</Typography.Title><Typography.Text type="secondary">流程定义负责名称与员工侧入口；每个版本都是完整快照，最多一个版本处于发布状态。</Typography.Text></div>
         <div className="pa-overview-stats" aria-label="流程统计"><span><strong>{isBrowserMockMode ? definitions.length : remoteTotal}</strong><small>流程定义</small></span><span><strong>{filteredDefinitions.filter((item) => definitionStatus(item) === "已发布").length}</strong><small>{isBrowserMockMode ? "已发布" : "当前页已发布"}</small></span><span><strong>{filteredDefinitions.reduce((total, item) => total + (item.versionCount ?? item.versions.length), 0)}</strong><small>{isBrowserMockMode ? "正式版本" : "当前页版本"}</small></span></div>
       </Card>
       <Card className="query-card pa-filter-card"><div className="pa-filter-row"><Input className="pa-keyword-input" prefix={<SearchOutlined />} allowClear value={keyword} onChange={(event) => { setPage(1); setKeyword(event.target.value); }} placeholder="搜索流程名称、编号或说明" /><Select<DefinitionType> className="pa-filter-select" allowClear value={type} onChange={(value) => { setPage(1); setType(value); }} placeholder="全部类型" options={Object.entries(typeMeta).map(([value, meta]) => ({ value: value as DefinitionType, label: meta.label }))} /><Select<DefinitionStatus> className="pa-filter-select" allowClear value={status} onChange={(value) => { setPage(1); setStatus(value); }} placeholder="全部状态" options={["未发布", "已发布", "已停用"].map((value) => ({ value: value as DefinitionStatus, label: value }))} /><Button icon={<ReloadOutlined />} onClick={() => { setPage(1); setKeyword(""); setStatus(undefined); setType(undefined); }}>重置</Button>{canEditDefinition && <Upload accept=".json" showUploadList={false} beforeUpload={(file) => { void readImportFile(file); return false; }}><Button icon={<UploadOutlined />}>导入</Button></Upload>}{canEditDefinition && <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建流程</Button>}</div></Card>
       <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}>
-        <div className="table-result-head pa-table-head"><div><strong>流程定义</strong><Tag bordered={false}>{isBrowserMockMode ? filteredDefinitions.length : remoteTotal} 条</Tag></div><Typography.Text type="secondary">进入版本记录可发布、取消发布、切换发布版本或从任意版本复制新建</Typography.Text></div>
+        <div className="table-result-head pa-table-head"><div><strong>流程定义</strong><Tag variant="filled">{isBrowserMockMode ? filteredDefinitions.length : remoteTotal} 条</Tag></div><Typography.Text type="secondary">进入版本记录可发布、取消发布、切换发布版本或从任意版本复制新建</Typography.Text></div>
         <Table<ProcessDefinition> loading={remoteLoading} rowKey="id" columns={columns} dataSource={filteredDefinitions} scroll={{ x: 1120 }} pagination={{ current: page, pageSize, total: isBrowserMockMode ? filteredDefinitions.length : remoteTotal, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录`, onChange: setPage }} />
       </Card>
       <Modal title="新建流程定义" open={createOpen} width={560} okText="继续填写基本信息" cancelText="取消" destroyOnHidden onCancel={() => { setCreateDirty(false); setCreateOpen(false); form.resetFields(); }} onOk={() => void createDefinition()}>
@@ -220,7 +218,7 @@ export function ProcessManagementPage() {
       </Modal>
       <Modal title="确认导入流程定义" open={Boolean(importPreview)} width={680} okText="导入为新流程" cancelText="取消" onCancel={() => setImportPreview(undefined)} onOk={confirmImport}>
         {importPreview && <Space orientation="vertical" size={16} style={{ width: "100%" }}>
-          <Alert type="info" showIcon message="导入不会覆盖或自动发布流程" description="系统会生成新的流程编号和内部标识；文件中的权限组、角色、用户只按显示名称匹配，未找到的引用自动省略。" />
+          <Alert type="info" showIcon title="导入不会覆盖或自动发布流程" description="系统会生成新的流程编号和内部标识；文件中的权限组、角色、用户只按显示名称匹配，未找到的引用自动省略。" />
           <Descriptions bordered size="small" column={2} items={[
             { key: "file", label: "文件", children: importPreview.fileName, span: 2 },
             { key: "name", label: "流程名称", children: definitions.some((definition) => definition.name === importPreview.definition.name) ? `${importPreview.definition.name}（导入）` : importPreview.definition.name },
@@ -228,7 +226,7 @@ export function ProcessManagementPage() {
             { key: "versions", label: "版本数量", children: `${importPreview.definition.versions.length} 个完整版本` },
             { key: "publish", label: "导入后状态", children: <Tag>未发布</Tag> },
           ]} />
-          {importPreview.warnings.length ? <Alert type="warning" showIcon message={`有 ${importPreview.warnings.length} 项同名信息未找到，将自动省略`} description={<div className="pa-import-warning-list">{importPreview.warnings.slice(0, 10).map((warning) => <div key={warning}>• {warning}</div>)}{importPreview.warnings.length > 10 && <div>• 另有 {importPreview.warnings.length - 10} 项</div>}</div>} /> : <Alert type="success" showIcon message="全部名称引用均已匹配" />}
+          {importPreview.warnings.length ? <Alert type="warning" showIcon title={`有 ${importPreview.warnings.length} 项同名信息未找到，将自动省略`} description={<div className="pa-import-warning-list">{importPreview.warnings.slice(0, 10).map((warning) => <div key={warning}>• {warning}</div>)}{importPreview.warnings.length > 10 && <div>• 另有 {importPreview.warnings.length - 10} 项</div>}</div>} /> : <Alert type="success" showIcon title="全部名称引用均已匹配" />}
         </Space>}
       </Modal>
     </div>

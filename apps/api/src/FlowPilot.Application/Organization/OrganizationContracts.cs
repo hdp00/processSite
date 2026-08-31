@@ -237,6 +237,22 @@ public sealed record RoleChangeImpactRequest
     public required string NextStatus { get; init; }
 }
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record WorkflowGroupChangeImpactRequest
+{
+    [Required]
+    public required IReadOnlyList<Guid> NextDirectUserIds { get; init; }
+
+    [Required]
+    public required IReadOnlyList<Guid> NextRoleIds { get; init; }
+
+    [Required, MinLength(1)]
+    public required IReadOnlyList<string> NextPurposes { get; init; }
+
+    [Required]
+    public required string NextStatus { get; init; }
+}
+
 public sealed record WorkflowGroupChangeImpactDto(
     int LosingEffectiveMemberCount,
     int AffectedPendingTaskCount,
@@ -607,6 +623,11 @@ public interface IOrganizationService
     Task<OrganizationPageDto<EffectiveWorkflowMemberDto>?> ListEffectiveMembersAsync(
         Guid groupId,
         OrganizationPageQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<OrganizationCommandResult<WorkflowGroupChangeImpactDto>> PreviewWorkflowGroupChangeImpactAsync(
+        Guid groupId,
+        WorkflowGroupChangeImpactRequest request,
         CancellationToken cancellationToken = default);
 
     Task<OrganizationCommandResult<WorkflowPermissionGroupDto>> CreateWorkflowGroupAsync(

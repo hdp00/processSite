@@ -43,7 +43,7 @@ export function ProcessStartPage() {
         <Alert
           type="error"
           showIcon
-          message="流程当前不可发起"
+          title="流程当前不可发起"
           description="没有找到可用的生效流程版本，或流程已经停用。"
           action={<AppBackButton onClick={() => navigate("/launch")} />}
         />
@@ -57,7 +57,7 @@ export function ProcessStartPage() {
         <Alert
           type="error"
           showIcon
-          message="无法复制新建"
+          title="无法复制新建"
           description="来源流程必须为当前流程中已完成且你有权查看的实例，同时当前账号需要复制新建和流程发起权限。"
           action={<AppBackButton onClick={() => navigate(`/processes?definitionId=${encodeURIComponent(definition.id)}`)} />}
         />

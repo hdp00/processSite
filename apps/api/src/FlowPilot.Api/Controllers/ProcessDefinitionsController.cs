@@ -16,6 +16,7 @@ public sealed class ProcessDefinitionsController(
     private const string DefinitionViewPermission = "config-definition:查看";
     private const string DefinitionEditPermission = "config-definition:编辑";
     private const string DefinitionPublishPermission = "config-definition:发布";
+    private const string DefinitionDeletePermission = "config-definition:删除";
     private const string FormEditPermission = "config-form:编辑";
     private const string ProcessLaunchViewPermission = "work-launch:查看";
     private const string ProcessLaunchPermission = "work-launch:发起";
@@ -115,6 +116,44 @@ public sealed class ProcessDefinitionsController(
         return Created(location, value.Response);
     }
 
+    [HttpPost("process-definitions/imports")]
+    [ProducesResponseType<ProcessDefinitionWithVersionsDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<ProcessDefinitionWithVersionsDto>> Import(
+        [FromBody] ImportProcessDefinitionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, DefinitionEditPermission))
+        {
+            return Forbidden("当前账号没有导入流程定义的权限。");
+        }
+
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var headerProblem))
+        {
+            return headerProblem!;
+        }
+
+        var result = await commandService.ImportAsync(
+            request,
+            CreateMutationActor(session),
+            idempotencyKey,
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+
+        var value = result.Value!;
+        var imported = await LoadDefinitionWithVersionsAsync(value.DefinitionId, cancellationToken)
+            .ConfigureAwait(false);
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        var location = $"{ApiConstants.PathBase}/process-definitions/{value.DefinitionId:D}";
+        return Created(location, imported);
+    }
+
     [HttpGet("me/launchable-process-definitions")]
     [ProducesResponseType<IReadOnlyList<LaunchableProcessDefinitionDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
@@ -204,6 +243,149 @@ public sealed class ProcessDefinitionsController(
         return Ok(definition);
     }
 
+    [HttpPatch("process-definitions/{definitionId:guid}")]
+    [ProducesResponseType<ProcessDefinitionDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<ProcessDefinitionDto>> UpdateAvailability(
+        Guid definitionId,
+        [FromBody] UpdateProcessDefinitionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, DefinitionEditPermission))
+        {
+            return Forbidden("当前账号没有启用或停用流程定义的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var headerProblem))
+        {
+            return headerProblem!;
+        }
+
+        var result = await commandService.UpdateAvailabilityAsync(
+            definitionId,
+            request,
+            expectedRevision,
+            CreateMutationActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+
+        var definition = await queryService.GetAsync(definitionId, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Updated process definition could not be reloaded.");
+        Response.Headers.ETag = new Revision(result.Value!.Revision).ToStrongEntityTag();
+        return Ok(definition);
+    }
+
+    [HttpDelete("process-definitions/{definitionId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<IActionResult> DeleteDefinition(
+        Guid definitionId,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, DefinitionDeletePermission))
+        {
+            return Forbidden("当前账号没有删除流程定义的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var headerProblem))
+        {
+            return headerProblem!;
+        }
+
+        var result = await commandService.DeleteDefinitionAsync(
+            definitionId,
+            expectedRevision,
+            CreateMutationActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        return result.Succeeded ? NoContent() : CommandFailure(result.Failure!);
+    }
+
+    [HttpPost("process-definitions/{definitionId:guid}/copies")]
+    [ProducesResponseType<CreateProcessDefinitionResponseDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity)]
+    public async Task<ActionResult<CreateProcessDefinitionResponseDto>> Copy(
+        Guid definitionId,
+        [FromBody] CopyProcessDefinitionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, DefinitionEditPermission))
+        {
+            return Forbidden("当前账号没有复制流程定义的权限。");
+        }
+
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var headerProblem))
+        {
+            return headerProblem!;
+        }
+
+        var result = await commandService.CopyAsync(
+            definitionId,
+            request,
+            CreateMutationActor(session),
+            idempotencyKey,
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+
+        var value = result.Value!;
+        Response.Headers.ETag = new Revision(value.Revision).ToStrongEntityTag();
+        var location = $"{ApiConstants.PathBase}/process-definitions/{value.Response.Definition.Id:D}";
+        return Created(location, value.Response);
+    }
+
+    [HttpGet("process-definitions/{definitionId:guid}/export")]
+    [ProducesResponseType<System.Text.Json.Nodes.JsonObject>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<System.Text.Json.Nodes.JsonObject>> Export(
+        Guid definitionId,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, DefinitionViewPermission))
+        {
+            return Forbidden("当前账号没有导出流程定义的权限。");
+        }
+
+        var document = await queryService.ExportAsync(definitionId, cancellationToken)
+            .ConfigureAwait(false);
+        if (document is null)
+        {
+            return NotFoundProblem("DEFINITION_NOT_FOUND", "流程定义不存在", "未找到指定的流程定义。");
+        }
+
+        var definition = await queryService.GetAsync(definitionId, cancellationToken)
+            .ConfigureAwait(false);
+        var fileName = Uri.EscapeDataString($"{definition!.Name}_流程定义.json");
+        Response.Headers.ContentDisposition = $"attachment; filename*=UTF-8''{fileName}";
+        return Ok(document);
+    }
+
     [HttpGet("process-definitions/{definitionId:guid}/launch-config")]
     [ProducesResponseType<ProcessLaunchConfigDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
@@ -282,6 +464,52 @@ public sealed class ProcessDefinitionsController(
             : Ok(versions);
     }
 
+    [HttpPost("process-definitions/{definitionId:guid}/versions")]
+    [ProducesResponseType<ProcessVersionDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<ActionResult<ProcessVersionDto>> CreateVersion(
+        Guid definitionId,
+        [FromBody] CreateProcessVersionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, DefinitionEditPermission))
+        {
+            return Forbidden("当前账号没有创建流程版本的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var revisionProblem))
+        {
+            return revisionProblem!;
+        }
+
+        if (!TryGetIdempotencyKey(out var idempotencyKey, out var idempotencyProblem))
+        {
+            return idempotencyProblem!;
+        }
+
+        var result = await commandService.CreateVersionAsync(
+            definitionId,
+            request,
+            expectedRevision,
+            CreateMutationActor(session),
+            idempotencyKey,
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) return CommandFailure(result.Failure!);
+
+        var version = result.Value!.Version;
+        Response.Headers.ETag = new Revision(version.Revision).ToStrongEntityTag();
+        var location = $"{ApiConstants.PathBase}/process-definitions/{definitionId:D}/versions/{version.Id:D}";
+        return Created(location, version);
+    }
+
     [HttpGet("process-definitions/{definitionId:guid}/versions/{versionId:guid}")]
     [ProducesResponseType<ProcessVersionDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
@@ -312,6 +540,41 @@ public sealed class ProcessDefinitionsController(
 
         Response.Headers.ETag = new Revision(version.Revision).ToStrongEntityTag();
         return Ok(version);
+    }
+
+    [HttpDelete("process-definitions/{definitionId:guid}/versions/{versionId:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status412PreconditionFailed)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired)]
+    public async Task<IActionResult> DeleteVersion(
+        Guid definitionId,
+        Guid versionId,
+        CancellationToken cancellationToken)
+    {
+        var session = await GetCurrentSessionAsync(cancellationToken).ConfigureAwait(false);
+        if (session is null) return AuthenticationRequired();
+        if (!HasPermission(session, DefinitionDeletePermission))
+        {
+            return Forbidden("当前账号没有删除流程版本的权限。");
+        }
+
+        if (!TryGetExpectedRevision(out var expectedRevision, out var headerProblem))
+        {
+            return headerProblem!;
+        }
+
+        var result = await commandService.DeleteVersionAsync(
+            definitionId,
+            versionId,
+            expectedRevision,
+            CreateMutationActor(session),
+            GetTraceId(),
+            cancellationToken).ConfigureAwait(false);
+        return result.Succeeded ? NoContent() : CommandFailure(result.Failure!);
     }
 
     [HttpPut("process-definitions/{definitionId:guid}/versions/{versionId:guid}/basic")]
@@ -774,6 +1037,46 @@ public sealed class ProcessDefinitionsController(
         return result.Session;
     }
 
+    private async Task<ProcessDefinitionWithVersionsDto> LoadDefinitionWithVersionsAsync(
+        Guid definitionId,
+        CancellationToken cancellationToken)
+    {
+        var definition = await queryService.GetAsync(definitionId, cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Imported process definition could not be reloaded.");
+        var summaries = await queryService.ListVersionsAsync(definitionId, cancellationToken)
+            .ConfigureAwait(false)
+            ?? [];
+        var versions = new List<ProcessVersionDto>(summaries.Count);
+        foreach (var summary in summaries)
+        {
+            var version = await queryService.GetVersionAsync(definitionId, summary.Id, cancellationToken)
+                .ConfigureAwait(false);
+            if (version is not null) versions.Add(version);
+        }
+
+        return new ProcessDefinitionWithVersionsDto
+        {
+            Id = definition.Id,
+            Revision = definition.Revision,
+            Code = definition.Code,
+            Name = definition.Name,
+            Description = definition.Description,
+            Type = definition.Type,
+            Disabled = definition.Disabled,
+            Status = definition.Status,
+            PublishedVersionId = definition.PublishedVersionId,
+            PublishedVersion = definition.PublishedVersion,
+            PublishedInstancePrefix = definition.PublishedInstancePrefix,
+            NextVersionNumber = definition.NextVersionNumber,
+            VersionCount = definition.VersionCount,
+            InstanceCount = definition.InstanceCount,
+            UpdatedAt = definition.UpdatedAt,
+            UpdatedBy = definition.UpdatedBy,
+            Versions = versions,
+        };
+    }
+
     private static bool HasPermission(SessionDto session, string permission) =>
         session.SuperAdmin || session.Permissions.Contains(permission, StringComparer.Ordinal);
 
@@ -839,7 +1142,7 @@ public sealed class ProcessDefinitionsController(
 
 public sealed class ProcessDefinitionListParameters
 {
-    [Range(1, int.MaxValue)]
+    [Range(1, 1_000_000)]
     public int Page { get; init; } = 1;
 
     [Range(1, 200)]
@@ -855,7 +1158,7 @@ public sealed class ProcessDefinitionListParameters
 
 public sealed class VisibleProcessDefinitionListParameters
 {
-    [Range(1, int.MaxValue)]
+    [Range(1, 1_000_000)]
     public int Page { get; init; } = 1;
 
     [Range(1, 200)]

@@ -1,7 +1,7 @@
 using System.Diagnostics;
+using FlowPilot.Api.Http;
 using FlowPilot.Application.Attachments;
 using FlowPilot.Application.Authentication;
-using FlowPilot.Api.Http;
 using FlowPilot.Domain.Common;
 using FlowPilot.Infrastructure.Configuration;
 using Microsoft.AspNetCore.Mvc;
@@ -37,11 +37,6 @@ public sealed class AttachmentsController(
         if (session is null)
         {
             return ProblemResponse(401, "AUTHENTICATION_REQUIRED", "尚未登录", "当前会话不存在或已失效，请重新登录。");
-        }
-
-        if (!HasPermission(session, LaunchPermission) && !HasPermission(session, ReviewPermission))
-        {
-            return ProblemResponse(403, "ATTACHMENT_UPLOAD_FORBIDDEN", "不能上传附件", "当前账号没有发起流程或处理审核任务的权限。");
         }
 
         if (!TryGetIdempotencyKey(out var idempotencyKey, out var headerProblem))
@@ -208,8 +203,11 @@ public sealed class AttachmentsController(
 
         Response.Headers.CacheControl = "private, no-store";
         Response.Headers.AcceptRanges = "bytes";
+        Response.Headers.XContentTypeOptions = "nosniff";
+        Response.Headers["Referrer-Policy"] = "no-referrer";
         if (inline)
         {
+            Response.Headers.ContentSecurityPolicy = "sandbox";
             Response.Headers.ContentDisposition = $"inline; filename*=UTF-8''{Uri.EscapeDataString(content.OriginalName)}";
         }
 

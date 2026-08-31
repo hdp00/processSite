@@ -188,7 +188,11 @@ async function performApiRequest<T>(path: string, options: ApiRequestOptions = {
   } = options;
   const controller = new AbortController();
   const requestId = `request-${createClientUuid()}`;
-  const timeout = window.setTimeout(() => controller.abort(new DOMException("REST API 请求超时", "TimeoutError")), timeoutMs);
+  let timedOut = false;
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException("REST API 请求超时", "TimeoutError"));
+  }, timeoutMs);
   const abortFromCaller = () => controller.abort(signal?.reason);
   signal?.addEventListener("abort", abortFromCaller, { once: true });
 
@@ -235,9 +239,10 @@ async function performApiRequest<T>(path: string, options: ApiRequestOptions = {
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    if (controller.signal.aborted) {
+    if (timedOut) {
       throw new ApiError(timeoutProblem(path, requestId));
     }
+    if (signal?.aborted) throw error;
     throw new ApiError(connectionProblem(path, requestId));
   } finally {
     window.clearTimeout(timeout);
@@ -264,7 +269,11 @@ export async function apiDownload(path: string, options: ApiRequestOptions = {})
   } = options;
   const controller = new AbortController();
   const requestId = `request-${createClientUuid()}`;
-  const timeout = window.setTimeout(() => controller.abort(new DOMException("REST API 请求超时", "TimeoutError")), timeoutMs);
+  let timedOut = false;
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException("REST API 请求超时", "TimeoutError"));
+  }, timeoutMs);
   const abortFromCaller = () => controller.abort(signal?.reason);
   signal?.addEventListener("abort", abortFromCaller, { once: true });
 
@@ -286,11 +295,18 @@ export async function apiDownload(path: string, options: ApiRequestOptions = {})
       throw new ApiError(await responseProblem(response, response.headers.get("X-Request-Id") ?? requestId));
     }
     const disposition = response.headers.get("Content-Disposition") ?? "";
-    const fileName = decodeURIComponent(disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1] ?? "download.bin");
+    const encodedFileName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1] ?? "download.bin";
+    let fileName = encodedFileName;
+    try {
+      fileName = decodeURIComponent(encodedFileName);
+    } catch {
+      // Keep the server-provided text when percent encoding is malformed.
+    }
     return { blob: await response.blob(), fileName };
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    if (controller.signal.aborted) throw new ApiError(timeoutProblem(path, requestId));
+    if (timedOut) throw new ApiError(timeoutProblem(path, requestId));
+    if (signal?.aborted) throw error;
     throw new ApiError(connectionProblem(path, requestId));
   } finally {
     window.clearTimeout(timeout);
