@@ -73,6 +73,7 @@ import {
 } from "../state/useIdentityStore";
 import {
   departmentCascaderOptions,
+  departmentCascaderValue,
   useOrganizationStore,
   type DepartmentRecord,
   type JobTitleRecord,
@@ -360,7 +361,7 @@ export function UserManagementPage() {
     form.resetFields();
     form.setFieldsValue(user === "new" ? {
       account: "", email: "", name: "", authenticationMode: "domain", password: "", newPassword: "", department: [], jobTitle: defaultJobTitleName, roles: [], status: true,
-    } : { ...user, newPassword: "" });
+    } : { ...user, department: departmentCascaderValue(user.department, departments), newPassword: "" });
     if (user !== "new") {
       void flowPilotApi.directory.userResource(user.id).then((resource) => setEditorEtag(resource.etag)).catch(() => message.error("用户最新版本加载失败，请刷新后重试"));
     }
@@ -428,12 +429,12 @@ export function UserManagementPage() {
           const path = department.length === 0 ? "" : department.length === 1 ? rootDepartment?.label ?? "" : `${rootDepartment?.label ?? ""} / ${childDepartment?.label ?? ""}`;
           try {
             if (drawerUser === "new") {
-              const created = await flowPilotApi.directory.createUser({ account: values.account, email: String(values.email).trim(), authenticationMode: values.authenticationMode, password: values.authenticationMode === "password" ? values.password : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用" });
+              const created = await flowPilotApi.directory.createUser({ account: values.account, email: String(values.email ?? "").trim(), authenticationMode: values.authenticationMode, password: values.authenticationMode === "password" ? values.password : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles, status: values.status ? "启用" : "停用" });
               cacheVisibleUser(created);
               message.success("用户已创建");
             } else if (drawerUser) {
               if (!editorEtag) throw new Error("用户最新版本尚未加载完成");
-              const updated = await flowPilotApi.directory.updateUser(drawerUser.id, { email: String(values.email).trim(), authenticationMode: values.authenticationMode, newPassword: drawerUser.authenticationMode === "domain" && values.authenticationMode === "password" ? values.newPassword : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles }, editorEtag);
+              const updated = await flowPilotApi.directory.updateUser(drawerUser.id, { account: values.account, email: String(values.email ?? "").trim(), authenticationMode: values.authenticationMode, newPassword: drawerUser.authenticationMode === "domain" && values.authenticationMode === "password" ? values.newPassword : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles }, editorEtag);
               cacheVisibleUser(updated);
               message.success("用户信息已保存");
             }
@@ -445,17 +446,16 @@ export function UserManagementPage() {
           setDrawerUser(null);
         }}>
           <div className="gov-form-grid">
-            <Form.Item name="account" label="登录账号" rules={[{ required: true, message: "请输入登录账号" }, { validator: (_, value) => String(value ?? "").trim().toLowerCase() === "superadmin" ? Promise.reject(new Error("该账号由系统内置，不能创建或修改")) : Promise.resolve() }]}><Input disabled={drawerUser !== "new"} maxLength={40} /></Form.Item>
+            <Form.Item name="account" label="登录账号" rules={[{ required: true, message: "请输入登录账号" }, { validator: (_, value) => String(value ?? "").trim().toLowerCase() === "superadmin" ? Promise.reject(new Error("该账号由系统内置，不能创建或修改")) : Promise.resolve() }]}><Input maxLength={40} /></Form.Item>
             <Form.Item name="name" label="员工姓名" rules={[{ required: true, message: "请输入员工姓名" }]}><Input maxLength={40} /></Form.Item>
           </div>
           <Form.Item
             name="email"
             label="邮箱"
             rules={[
-              { required: true, message: "请输入邮箱" },
               { type: "email", message: "请输入有效邮箱地址" },
             ]}
-            extra="流程进入审核节点或结束时，将按此邮箱发送已配置的通知。"
+            extra="可选。填写后，流程进入审核节点或结束时将按此邮箱发送已配置的通知。"
           >
             <Input maxLength={120} placeholder="name@company.com" />
           </Form.Item>

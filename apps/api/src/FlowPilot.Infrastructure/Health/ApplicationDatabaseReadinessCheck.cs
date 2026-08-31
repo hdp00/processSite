@@ -1,28 +1,20 @@
 using System.Data.Common;
 using FlowPilot.Application.Health;
+using FlowPilot.Application.Security;
 
 namespace FlowPilot.Infrastructure.Health;
 
 public sealed class ApplicationDatabaseReadinessCheck(
     SqlServerDatabaseReadinessCheck structuralReadinessCheck,
-    IBuiltinSeedVersionReader builtinSeedVersionReader,
-    BuiltinSeedReadinessRequirements requirements) : IDatabaseReadinessCheck
+    IBuiltinSeedVersionReader builtinSeedVersionReader) : IDatabaseReadinessCheck
 {
     private readonly SqlServerDatabaseReadinessCheck _structuralReadinessCheck =
         structuralReadinessCheck;
     private readonly IBuiltinSeedVersionReader _builtinSeedVersionReader =
         builtinSeedVersionReader;
-    private readonly BuiltinSeedReadinessRequirements _requirements = requirements;
-
     public async Task<DatabaseReadinessResult> CheckAsync(
         CancellationToken cancellationToken = default)
     {
-        var requiredVersion = Normalize(_requirements.RequiredBuiltinSeedVersion);
-        if (requiredVersion is null)
-        {
-            return DatabaseReadinessResult.NotReady(DatabaseReadinessCodes.ConfigurationMissing);
-        }
-
         var structuralResult = await _structuralReadinessCheck
             .CheckAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -41,7 +33,7 @@ public sealed class ApplicationDatabaseReadinessCheck(
                     DatabaseReadinessCodes.BuiltinSeedVersionMissing);
             }
 
-            return string.Equals(requiredVersion, appliedVersion, StringComparison.Ordinal)
+            return string.Equals(BuiltinCatalog.SeedVersion, appliedVersion, StringComparison.Ordinal)
                 ? DatabaseReadinessResult.Ready
                 : DatabaseReadinessResult.NotReady(
                     DatabaseReadinessCodes.BuiltinSeedVersionMismatch);

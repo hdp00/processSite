@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   DndContext,
@@ -84,10 +84,12 @@ import {
 import { canEditVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import {
   conditionOperatorLabel,
+  designerFieldSupportsOptions,
   ensureProcessTitleField,
   isDesignerFieldVisible,
   normalizeStoredCondition,
   normalizeDesignerInputPermission,
+  normalizeStoredDesignerField,
   PROCESS_TITLE_FIELD_ID,
   type ConditionOperator,
   type DesignerInputPermission,
@@ -154,6 +156,11 @@ interface DesignerField {
   attachment?: AttachmentConfig;
   columns?: TableColumnConfig[];
 }
+
+const formDraftFingerprint = (
+  fields: DesignerField[],
+  systemListFields: SystemListFieldConfig[],
+) => JSON.stringify({ fields, systemListFields });
 
 const typeLabel: Record<FieldType, string> = {
   text: "文本框",
@@ -760,10 +767,10 @@ const SortableField = ({ field, selected, locked, onSelect, onPatch, onDelete }:
           />
         </div>
         <div className="fd-inline-settings" onClick={(event) => event.stopPropagation()}>
-          {field.options ? (
+          {designerFieldSupportsOptions(field.type) ? (
             <div className="fd-inline-options">
               <Text type="secondary">选项</Text>
-              <ChoiceOptionsEditor options={field.options} hierarchical={field.type === "cascader"} compact onChange={updateOptions} />
+              <ChoiceOptionsEditor options={field.options ?? []} hierarchical={field.type === "cascader"} compact onChange={updateOptions} />
             </div>
           ) : null}
           <Space size={18} wrap>
@@ -796,23 +803,26 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   const workflowName = version?.basic.name ?? definition?.name ?? "流程";
   const [messageApi, messageHolder] = message.useMessage();
   const fallbackFields = useMemo(
-    () => ensureProcessTitleField(version?.snapshot.form.fields).map((field) => ({
-      ...field,
-      inputStage: field.id === PROCESS_TITLE_FIELD_ID && normalizeDesignerInputPermission(field) === "reviewer"
-        ? "initiator"
-        : normalizeDesignerInputPermission(field),
-      displayCondition: field.id === PROCESS_TITLE_FIELD_ID
-        ? undefined
-        : normalizeStoredCondition(field.displayCondition),
-      attachment: field.type === "attachment" ? {
-        maxSizeMb: field.attachment?.maxSizeMb ?? 100,
-        maxCount: (field.attachment?.inlinePdf ?? true) ? 1 : field.attachment?.maxCount ?? 20,
-        inlinePdf: field.attachment?.inlinePdf ?? true,
-        allowedExtensions: field.attachment?.allowedExtensions ?? ((field.attachment?.inlinePdf ?? true) ? ["pdf"] : []),
-        excelToPdf: field.attachment?.excelToPdf ?? false,
-        maxPreviewPages: field.attachment?.maxPreviewPages ?? 1,
-      } : field.attachment,
-    })) as DesignerField[],
+    () => ensureProcessTitleField(version?.snapshot.form.fields).map((source) => {
+      const field = normalizeStoredDesignerField(source);
+      return {
+        ...field,
+        inputStage: field.id === PROCESS_TITLE_FIELD_ID && normalizeDesignerInputPermission(field) === "reviewer"
+          ? "initiator"
+          : normalizeDesignerInputPermission(field),
+        displayCondition: field.id === PROCESS_TITLE_FIELD_ID
+          ? undefined
+          : normalizeStoredCondition(field.displayCondition),
+        attachment: field.type === "attachment" ? {
+          maxSizeMb: field.attachment?.maxSizeMb ?? 100,
+          maxCount: (field.attachment?.inlinePdf ?? true) ? 1 : field.attachment?.maxCount ?? 20,
+          inlinePdf: field.attachment?.inlinePdf ?? true,
+          allowedExtensions: field.attachment?.allowedExtensions ?? ((field.attachment?.inlinePdf ?? true) ? ["pdf"] : []),
+          excelToPdf: field.attachment?.excelToPdf ?? false,
+          maxPreviewPages: field.attachment?.maxPreviewPages ?? 1,
+        } : undefined,
+      };
+    }) as DesignerField[],
     [version],
   );
   const initialDraft = useMemo(
@@ -836,13 +846,17 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
         exportVisible: field.exportVisible ?? field.processListVisible,
       })),
   );
-  const [saveState, setSaveState] = useState<"dirty" | "saved">("saved");
-  const skipDirtyEffect = useRef(true);
   const [savedAt, setSavedAt] = useState(initialDraft.savedAt ?? formatDisplayDateTime(new Date().toISOString()));
   const designerHistoryValue = useMemo(
     () => ({ fields, systemListFields }),
     [fields, systemListFields],
   );
+  const draftFingerprint = useMemo(
+    () => formDraftFingerprint(fields, systemListFields),
+    [fields, systemListFields],
+  );
+  const [savedDraftFingerprint, setSavedDraftFingerprint] = useState(draftFingerprint);
+  const hasUnsavedChanges = draftFingerprint !== savedDraftFingerprint;
   const { canUndo, canRedo, undo, redo } = useUndoRedoHistory(
     designerHistoryValue,
     (snapshot) => {
@@ -892,14 +906,6 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     [previewFields, previewInitialValues, previewValues],
   );
   const isTitleField = selectedField?.id === PROCESS_TITLE_FIELD_ID;
-
-  useEffect(() => {
-    if (skipDirtyEffect.current) {
-      skipDirtyEffect.current = false;
-      return;
-    }
-    setSaveState("dirty");
-  }, [fields, systemListFields]);
 
   useEffect(() => {
     const handleHistoryShortcut = (event: KeyboardEvent) => {
@@ -1007,7 +1013,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     let cancelled = false;
     void flowPilotApi.definitions.versionResource(definitionId, versionId).then((resource) => {
       if (cancelled) return;
-      cacheProcessVersion(definitionId, resource.data);
+      if (import.meta.env.VITE_API_MODE === "remote") cacheProcessVersion(definitionId, resource.data);
       setVersionEtag(resource.etag);
     }).catch((error) => {
       if (!cancelled) messageApi.error(error instanceof Error ? error.message : "流程版本加载失败");
@@ -1017,34 +1023,34 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
 
   const saveVersion = async () => {
     const time = formatDisplayDateTime(new Date().toISOString());
-    skipDirtyEffect.current = true;
-    setSavedAt(time);
+    const nextSavedFingerprint = formDraftFingerprint(fields, systemListFields);
     try {
       if (!versionEtag) throw new Error("流程版本尚未加载完成，请稍后重试");
       const saved = await flowPilotApi.definitions.saveFormDesignerResource(definitionId, versionId, {
-        form: { fields: ensureProcessTitleField(fields), savedAt: time },
+        form: { fields: ensureProcessTitleField(fields).map(normalizeStoredDesignerField), savedAt: time },
         systemFields: systemListFields,
       }, versionEtag);
-      cacheProcessVersion(definitionId, saved.data.version);
+      if (import.meta.env.VITE_API_MODE === "remote") cacheProcessVersion(definitionId, saved.data.version);
       setVersionEtag(saved.etag);
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "当前版本不可编辑，请返回版本记录确认发布状态和实例数量");
       return false;
     }
-    setSaveState("saved");
+    setSavedDraftFingerprint(nextSavedFingerprint);
+    setSavedAt(time);
     messageApi.success("版本已保存并自动完成校验");
     return true;
   };
 
   const { guard, allowNextNavigation } = useUnsavedChangesGuard({
-    dirty: saveState === "dirty",
+    dirty: hasUnsavedChanges,
     onSave: saveVersion,
     title: "初始表单尚未保存",
     description: "可以先保存表单和列表字段配置再离开，也可以放弃本次修改。",
   });
 
   const goPrevious = async () => {
-    if (saveState === "dirty" && !await saveVersion()) return;
+    if (hasUnsavedChanges && !await saveVersion()) return;
     allowNextNavigation();
     navigate(`/admin/processes/${definitionId}/basic?versionId=${versionId}`);
   };
@@ -1057,7 +1063,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
       messageApi.error("存在未命名字段，请补充后继续");
       return;
     }
-    if (saveState === "dirty" && !await saveVersion()) return;
+    if (hasUnsavedChanges && !await saveVersion()) return;
     allowNextNavigation();
     navigate(definition?.type === "free"
       ? `/admin/processes/${definitionId}/publish?versionId=${versionId}`
@@ -1134,7 +1140,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
         <Space wrap>
           <div className="fd-save-status">
             <CheckCircleFilled />
-            <span>{saveState === "dirty" ? "有未保存修改" : `版本已保存 · ${savedAt}`}</span>
+            <span>{hasUnsavedChanges ? "有未保存修改" : `版本已保存 · ${savedAt}`}</span>
           </div>
           <ProcessWizardPreviousButton step="基本信息" onClick={goPrevious} />
           <Space.Compact>
@@ -1146,7 +1152,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
             </Tooltip>
           </Space.Compact>
           <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>预览</Button>
-          <Button icon={<SaveOutlined />} onClick={saveVersion}>保存</Button>
+          <Button icon={<SaveOutlined />} disabled={!versionEtag} onClick={saveVersion}>保存</Button>
           <ProcessWizardNextButton step={definition?.type === "free" ? "发布" : "流程设计"} onClick={goNext} />
         </Space>
       </div>
@@ -1284,12 +1290,12 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                   ) : null}
                 </div>
 
-                {selectedField.options ? (
+                {designerFieldSupportsOptions(selectedField.type) ? (
                   <div className="fd-property-section">
                     <div className="fd-property-section__title">选项设置</div>
                     <Form.Item label={selectedField.type === "cascader" ? "多级选项" : "可选项"}>
                       <ChoiceOptionsEditor
-                        options={selectedField.options}
+                        options={selectedField.options ?? []}
                         hierarchical={selectedField.type === "cascader"}
                         onChange={(options) => updateField({
                           options,

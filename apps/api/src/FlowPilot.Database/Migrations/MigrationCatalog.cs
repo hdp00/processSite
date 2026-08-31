@@ -1,12 +1,13 @@
 using System.Collections.ObjectModel;
 using System.Reflection;
 using System.Text;
+using FlowPilot.Application.Health;
 
 namespace FlowPilot.Database.Migrations;
 
 public static class MigrationCatalog
 {
-    public const string CurrentSchemaVersion = "202608280003";
+    public const string CurrentSchemaVersion = DatabaseSchemaVersion.Current;
     private static readonly (string Id, string Name, string ResourceSuffix)[] MigrationDefinitions =
     [
         ("202608260001", "initial_schema", ".Migrations.202608260001_initial_schema.sql"),
@@ -14,6 +15,7 @@ public static class MigrationCatalog
         ("202608280001", "process_version_change_note", ".Migrations.202608280001_process_version_change_note.sql"),
         ("202608280002", "number_counter_prefix_length", ".Migrations.202608280002_number_counter_prefix_length.sql"),
         ("202608280003", "session_impersonation_link", ".Migrations.202608280003_session_impersonation_link.sql"),
+        ("202608310001", "optional_user_email", ".Migrations.202608310001_optional_user_email.sql"),
     ];
 
     private static readonly Lazy<ReadOnlyCollection<SchemaMigration>> DefaultMigrations =

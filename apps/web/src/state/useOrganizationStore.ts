@@ -110,3 +110,10 @@ export const departmentCascaderOptions = (departments: DepartmentRecord[]) => de
       .sort((left, right) => left.sort - right.sort)
       .map((child) => ({ value: child.key, label: child.name })),
   }));
+
+export const departmentCascaderValue = (departmentIds: string[], departments: DepartmentRecord[]) => {
+  const departmentId = departmentIds.at(-1);
+  if (!departmentId) return [];
+  const department = departments.find((item) => item.key === departmentId);
+  return department?.parentKey ? [department.parentKey, departmentId] : [departmentId];
+};

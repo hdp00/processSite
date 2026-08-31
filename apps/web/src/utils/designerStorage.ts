@@ -100,6 +100,12 @@ export const PROCESS_TITLE_FIELD_ID = "title";
 export type DesignerInputPermission = "initiator" | "both" | "reviewer";
 
 const choiceFieldTypes = new Set(["select", "cascader", "radio", "checkbox"]);
+const choiceTableColumnTypes = new Set(["select", "radio", "checkbox"]);
+
+export const designerFieldSupportsOptions = (type: string) => choiceFieldTypes.has(type);
+
+export const designerTableColumnSupportsOptions = (type?: string) =>
+  choiceTableColumnTypes.has(type ?? "text");
 
 const normalizeConditionExpectedValue = (field: StoredDesignerField | undefined, value: unknown) => {
   if (!field || !choiceFieldTypes.has(field.type)) return value as string | string[] | undefined;
@@ -129,21 +135,21 @@ const normalizeConditionChoiceValues = (
   };
 };
 
-const normalizeDesignerFieldOptions = (field: StoredDesignerField): StoredDesignerField => {
-  const options = choiceFieldTypes.has(field.type)
+export const normalizeStoredDesignerField = (field: StoredDesignerField): StoredDesignerField => {
+  const options = designerFieldSupportsOptions(field.type)
     ? normalizeDesignerChoiceOptions(field.options, field.id, field.type === "cascader")
-    : field.options;
-  const columns = field.columns?.map((column) => {
-    const columnOptions = column.type && column.type !== "text"
+    : undefined;
+  const columns = field.type === "table" ? field.columns?.map((column) => {
+    const columnOptions = designerTableColumnSupportsOptions(column.type)
       ? normalizeDesignerChoiceOptions(column.options, `${field.id}.${column.id}`)
-      : column.options;
+      : undefined;
     const defaultValue = column.type === "checkbox"
       ? normalizeDesignerChoiceValue(columnOptions, column.defaultValue, { multiple: true })
       : column.type === "select" || column.type === "radio"
         ? normalizeDesignerChoiceValue(columnOptions, column.defaultValue)
         : column.defaultValue;
     return { ...column, options: columnOptions, defaultValue: defaultValue as string | string[] | undefined };
-  });
+  }) : undefined;
   const defaultValue = field.type === "checkbox"
     ? normalizeDesignerChoiceValue(options, field.defaultValue, { multiple: true })
     : field.type === "cascader"
@@ -164,7 +170,7 @@ const normalizeDesignerFieldOptions = (field: StoredDesignerField): StoredDesign
       : normalizedAllowedExtensions,
     excelToPdf,
     maxPreviewPages: Math.min(50, Math.max(1, field.attachment?.maxPreviewPages ?? 1)),
-  } : field.attachment;
+  } : undefined;
   return {
     ...field,
     options,
@@ -235,6 +241,7 @@ export const ensureProcessTitleField = (fields?: StoredDesignerField[]): StoredD
     ...source[titleIndex],
     id: PROCESS_TITLE_FIELD_ID,
     type: "text",
+    options: undefined,
     multiline: false,
     required: true,
     queryable: true,
@@ -332,7 +339,7 @@ export const readFormDesignerSnapshot = (definitionId: string): StoredFormDesign
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as Partial<StoredFormDesignerSnapshot>;
     if (!Array.isArray(parsed.fields)) return undefined;
-    const normalizedFields = ensureProcessTitleField(parsed.fields).map(normalizeDesignerFieldOptions);
+    const normalizedFields = ensureProcessTitleField(parsed.fields).map(normalizeStoredDesignerField);
     return {
       fields: normalizedFields.map((field) => ({
         ...field,
@@ -401,7 +408,7 @@ export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapsho
     systemFields: cloneDefaultSystemListFields(),
   };
   const legacyTitleConfig = snapshot.systemFields.find((field) => String(field.key) === "title");
-  const normalizedFields = ensureProcessTitleField(snapshot.form.fields).map(normalizeDesignerFieldOptions);
+  const normalizedFields = ensureProcessTitleField(snapshot.form.fields).map(normalizeStoredDesignerField);
   const fields = normalizedFields.map((field) => ({
     ...field,
     exportVisible: field.exportVisible ?? field.listVisible ?? false,

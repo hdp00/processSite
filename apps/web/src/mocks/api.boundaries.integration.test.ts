@@ -176,7 +176,7 @@ describe("Mock REST API 通用契约", () => {
   it("用户登录方式默认域登录，支持受约束地切换为密码登录", async () => {
     const created = await apiModule.flowPilotApi.directory.createUser({
       account: "domain.user",
-      email: "domain.user@company.local",
+      email: "",
       authenticationMode: "domain",
       name: "域登录用户",
       department: ["rd", "rd-software"],
@@ -186,6 +186,7 @@ describe("Mock REST API 通用契约", () => {
       status: "启用",
     });
     expect(created.authenticationMode).toBe("domain");
+    expect(created.email).toBe("");
     await expect(apiModule.flowPilotApi.directory.resetPassword(created.id)).rejects.toMatchObject({
       status: 409,
       problem: { code: "AUTHENTICATION_MODE_CONFLICT" },
@@ -200,10 +201,11 @@ describe("Mock REST API 通用契约", () => {
 
     const updated = await apiModule.flowPilotApi.directory.updateUser(
       created.id,
-      { authenticationMode: "password", newPassword: "1" },
+      { account: "renamed.domain.user", email: "", authenticationMode: "password", newPassword: "1" },
       resource.etag,
     );
     expect(updated.authenticationMode).toBe("password");
+    expect(updated.account).toBe("renamed.domain.user");
     await expect(apiModule.flowPilotApi.directory.resetPassword(created.id)).resolves.toHaveProperty("temporaryPassword");
 
     const superAdmin = identityModule.findIdentityUser("superadmin");

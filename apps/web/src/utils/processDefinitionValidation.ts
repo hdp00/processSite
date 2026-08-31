@@ -88,7 +88,8 @@ const groupProblem = (
   if (!group) return `流程权限组“${idOrName}”不存在`;
   if (group.status !== "启用") return `流程权限组“${group.name}”已停用`;
   if (!group.purposes.includes(purpose)) return `流程权限组“${group.name}”不具备“${purpose}”用途`;
-  if (!context.effectiveMemberIds(group.id).length) return `流程权限组“${group.name}”没有有效成员`;
+  const effectiveMemberCount = group.effectiveMemberCount ?? context.effectiveMemberIds(group.id).length;
+  if (!effectiveMemberCount) return `流程权限组“${group.name}”没有有效成员`;
   return undefined;
 };
 

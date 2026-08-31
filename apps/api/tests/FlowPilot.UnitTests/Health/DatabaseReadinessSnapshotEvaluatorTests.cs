@@ -4,7 +4,6 @@ namespace FlowPilot.UnitTests.Health;
 
 public sealed class DatabaseReadinessSnapshotEvaluatorTests
 {
-    private const string RequiredSchemaVersion = "202608260001";
     private const string ExpectedCollation = "Chinese_PRC_100_CI_AS_SC";
 
     [Theory]
@@ -175,33 +174,12 @@ public sealed class DatabaseReadinessSnapshotEvaluatorTests
     {
         var snapshot = CreateReadySnapshot() with
         {
-            AppliedSchemaVersion = $" {RequiredSchemaVersion} ",
-        };
-        var requirements = CreateRequirements() with
-        {
-            RequiredSchemaVersion = $" {RequiredSchemaVersion} ",
+            AppliedSchemaVersion = $" {DatabaseSchemaVersion.Current} ",
         };
 
-        var result = DatabaseReadinessSnapshotEvaluator.Evaluate(snapshot, requirements);
+        var result = DatabaseReadinessSnapshotEvaluator.Evaluate(snapshot, CreateRequirements());
 
         Assert.True(result.IsReady);
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void Evaluate_RejectsMissingRequiredSchemaVersionConfiguration(string? requiredSchemaVersion)
-    {
-        var requirements = CreateRequirements() with
-        {
-            RequiredSchemaVersion = requiredSchemaVersion,
-        };
-
-        AssertNotReady(
-            CreateReadySnapshot(),
-            requirements,
-            DatabaseReadinessCodes.ConfigurationMissing);
     }
 
     private static DatabaseReadinessSnapshot CreateReadySnapshot() =>
@@ -213,10 +191,10 @@ public sealed class DatabaseReadinessSnapshotEvaluatorTests
             FlowPilotSchemaExists: true,
             SchemaVersionStoreExists: true,
             SchemaVersionStoreIsValid: true,
-            RequiredSchemaVersion);
+            DatabaseSchemaVersion.Current);
 
     private static DatabaseReadinessRequirements CreateRequirements() =>
-        new(RequiredSchemaVersion, ExpectedCollation);
+        new(ExpectedCollation);
 
     private static void AssertNotReady(
         DatabaseReadinessSnapshot snapshot,

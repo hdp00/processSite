@@ -1,12 +1,13 @@
 import type { AttachmentRecord, AuditEvent, AuthSession, EmailOutboxItem, PageResult, PermissionCatalogItem, DepartmentRecord, DirectoryUser, PositionRecord, LaunchableProcessDefinition } from "./contracts";
 import type { DomainRole, WorkflowGroupPurpose, WorkflowPermissionGroup } from "../state/useIdentityStore";
 import type { ProcessBasicConfig, ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
-import type {
-  CompleteDesignerSnapshot,
-  StoredDesignerField,
-  StoredDesignerTableColumn,
-  StoredFlowNodeSnapshot,
-  StoredNodeCondition,
+import {
+  normalizeStoredDesignerField,
+  type CompleteDesignerSnapshot,
+  type StoredDesignerField,
+  type StoredDesignerTableColumn,
+  type StoredFlowNodeSnapshot,
+  type StoredNodeCondition,
 } from "../utils/designerStorage";
 import type { SystemListFieldConfig, SystemListFieldKey } from "../data/listFieldConfig";
 import { normalizeDesignerChoiceOptions } from "../utils/designerOptions";
@@ -355,7 +356,7 @@ const normalizeDesignerField = (value: unknown): StoredDesignerField | undefined
   const type = value.type === "rich-text"
     ? "richtext"
     : value.type === "textarea" ? "text" : text(value.type);
-  return {
+  return normalizeStoredDesignerField({
     id: fieldId,
     type,
     label: text(value.label),
@@ -386,7 +387,7 @@ const normalizeDesignerField = (value: unknown): StoredDesignerField | undefined
           return normalized ? [normalized] : [];
         })
       : undefined,
-  };
+  });
 };
 
 const normalizeFlowNode = (value: unknown): StoredFlowNodeSnapshot | undefined => {

@@ -428,6 +428,25 @@ const createGenericDraft = (starterGroups: string[]): Pick<StoredDraft, "nodes" 
 
 const formatTime = () => formatDisplayDateTime(new Date().toISOString());
 
+const flowDraftFingerprint = (
+  nodes: DesignerNode[],
+  edges: DesignerEdge[],
+  meta: FlowMeta,
+) => JSON.stringify({
+  name: meta.name,
+  rejectionHandling: meta.rejectionHandling,
+  nodes: nodes.map((node) => ({
+    id: node.id,
+    position: node.position,
+    data: node.data,
+  })),
+  edges: edges.map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+  })),
+});
+
 const readStoredDraft = (
   storageKey: string,
   fallbackMeta: FlowMeta,
@@ -579,8 +598,14 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
   const [propertyMode, setPropertyMode] = useState<"flow" | "node">("node");
   const [validationOpen, setValidationOpen] = useState(false);
   const [autoSaved, setAutoSaved] = useState(true);
-  const skipDirtyEffect = useRef(true);
   const { fitView, screenToFlowPosition } = useReactFlow<DesignerNode, DesignerEdge>();
+  const draftFingerprint = useMemo(
+    () => flowDraftFingerprint(nodes, edges, meta),
+    [edges, meta, nodes],
+  );
+  const savedFingerprint = useRef(draftFingerprint);
+  const currentFingerprint = useRef(draftFingerprint);
+  currentFingerprint.current = draftFingerprint;
   const designerHistoryValue = useMemo(
     () => ({
       nodes: nodes.map((node) => ({
@@ -637,12 +662,8 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
   const allValidationPassed = validationResults.every((result) => result.pass);
 
   useEffect(() => {
-    if (skipDirtyEffect.current) {
-      skipDirtyEffect.current = false;
-      return;
-    }
-    setAutoSaved(false);
-  }, [edges, meta, nodes]);
+    setAutoSaved(draftFingerprint === savedFingerprint.current);
+  }, [draftFingerprint]);
 
   useEffect(() => {
     const handleHistoryShortcut = (event: KeyboardEvent) => {
@@ -855,7 +876,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
 
   const saveVersion = async () => {
     const nextMeta = { ...meta, lastSavedAt: formatTime() };
-    skipDirtyEffect.current = true;
+    const nextSavedFingerprint = flowDraftFingerprint(nodes, edges, nextMeta);
     setMeta(nextMeta);
     const startGroups = nodes.find((node) => node.data.kind === "start")?.data.permissionGroups ?? starterGroups;
     try {
@@ -866,7 +887,8 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
       }, versionEtag);
       cacheProcessVersion(definitionId, saved.data.version);
       setVersionEtag(saved.etag);
-      setAutoSaved(true);
+      savedFingerprint.current = nextSavedFingerprint;
+      setAutoSaved(currentFingerprint.current === nextSavedFingerprint);
       message.success("版本已保存，并已自动更新校验结果");
       return true;
     } catch (error) {

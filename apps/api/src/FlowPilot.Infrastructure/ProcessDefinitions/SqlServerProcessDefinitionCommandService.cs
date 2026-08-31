@@ -1458,7 +1458,8 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
             CopyOptionalString(field, normalized, "placeholder", 500, path, issues);
             CopyOptionalNode(field, normalized, "defaultValue");
 
-            if (field["options"] is JsonArray options)
+            if (type is "radio" or "checkbox" or "select" or "cascader"
+                && field["options"] is JsonArray options)
             {
                 normalized["options"] = NormalizeOptions(options, $"{path}.options", optionIds, issues);
             }
@@ -1468,12 +1469,12 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
                 normalized["displayCondition"] = NormalizeCondition(condition, $"{path}.displayCondition", issues);
             }
 
-            if (field["attachment"] is JsonObject attachment)
+            if (type == "attachment" && field["attachment"] is JsonObject attachment)
             {
                 normalized["attachment"] = NormalizeAttachment(attachment, $"{path}.attachment", issues);
             }
 
-            if (field["columns"] is JsonArray columns)
+            if (type == "table" && field["columns"] is JsonArray columns)
             {
                 var normalizedColumns = new JsonArray();
                 var columnIds = new HashSet<string>(StringComparer.Ordinal);
@@ -1515,7 +1516,8 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
                     CopyOptionalNode(column, normalizedColumn, "defaultValue");
                     CopyOptionalInt(column, normalizedColumn, "width", 60, int.MaxValue, columnPath, issues);
                     CopyOptionalEnum(column, normalizedColumn, "align", ["left", "center", "right"], columnPath, issues);
-                    if (column["options"] is JsonArray columnOptions)
+                    if (columnType is "radio" or "checkbox" or "select"
+                        && column["options"] is JsonArray columnOptions)
                     {
                         normalizedColumn["options"] = NormalizeOptions(
                             columnOptions,

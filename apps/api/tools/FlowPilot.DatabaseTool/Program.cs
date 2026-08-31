@@ -197,16 +197,15 @@ static async Task<int> VerifyAsync(
     CancellationToken cancellationToken)
 {
     var connectionString = configuration.GetConnectionString("FlowPilot");
-    var requiredSchemaVersion = databaseOptions.RequiredSchemaVersion;
+    var requiredSchemaVersion = DatabaseSchemaVersion.Current;
     var expectedCollation = databaseOptions.ExpectedCollation;
 
     if (string.IsNullOrWhiteSpace(connectionString) ||
-        string.IsNullOrWhiteSpace(requiredSchemaVersion) ||
         string.IsNullOrWhiteSpace(expectedCollation))
     {
         WriteError(
             DatabaseReadinessCodes.ConfigurationMissing,
-            "缺少运行连接字符串、目标结构版本或预期排序规则。");
+            "缺少运行连接字符串或预期排序规则。");
         return 2;
     }
 
@@ -234,7 +233,7 @@ static async Task<int> VerifyAsync(
         databaseOptions);
     var check = new SqlServerDatabaseReadinessCheck(
         reader,
-        new DatabaseReadinessRequirements(requiredSchemaVersion, expectedCollation));
+        new DatabaseReadinessRequirements(expectedCollation));
     var result = await check.CheckAsync(cancellationToken).ConfigureAwait(false);
 
     if (!result.IsReady)

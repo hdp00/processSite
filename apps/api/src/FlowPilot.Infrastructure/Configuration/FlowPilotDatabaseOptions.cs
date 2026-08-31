@@ -14,8 +14,6 @@ public sealed record FlowPilotDatabaseOptions
     public const int MaximumCommandTimeoutSeconds = 3600;
 
     public FlowPilotDatabaseOptions(
-        string? requiredSchemaVersion = null,
-        string? requiredBuiltinSeedVersion = null,
         string? expectedCollation = null,
         int applicationCommandTimeoutSeconds = DefaultApplicationCommandTimeoutSeconds,
         int readinessCommandTimeoutSeconds = DefaultReadinessCommandTimeoutSeconds,
@@ -31,8 +29,6 @@ public sealed record FlowPilotDatabaseOptions
             nameof(migrationPreflightCommandTimeoutSeconds));
         ValidateCommandTimeout(migrationCommandTimeoutSeconds, nameof(migrationCommandTimeoutSeconds));
 
-        RequiredSchemaVersion = requiredSchemaVersion;
-        RequiredBuiltinSeedVersion = requiredBuiltinSeedVersion;
         ExpectedCollation = expectedCollation;
         ApplicationCommandTimeoutSeconds = applicationCommandTimeoutSeconds;
         ReadinessCommandTimeoutSeconds = readinessCommandTimeoutSeconds;
@@ -40,10 +36,6 @@ public sealed record FlowPilotDatabaseOptions
         MigrationPreflightCommandTimeoutSeconds = migrationPreflightCommandTimeoutSeconds;
         MigrationCommandTimeoutSeconds = migrationCommandTimeoutSeconds;
     }
-
-    public string? RequiredSchemaVersion { get; }
-
-    public string? RequiredBuiltinSeedVersion { get; }
 
     public string? ExpectedCollation { get; }
 
@@ -64,8 +56,6 @@ public sealed record FlowPilotDatabaseOptions
         ArgumentNullException.ThrowIfNull(configuration);
 
         return new FlowPilotDatabaseOptions(
-            configuration[$"{SectionName}:RequiredSchemaVersion"],
-            configuration[$"{SectionName}:RequiredBuiltinSeedVersion"],
             configuration[$"{SectionName}:ExpectedCollation"],
             ParseCommandTimeout(
                 configuration,

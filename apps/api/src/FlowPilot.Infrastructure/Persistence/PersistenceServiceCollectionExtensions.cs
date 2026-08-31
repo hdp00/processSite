@@ -30,12 +30,7 @@ public static class PersistenceServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(databaseOptions);
 
         services.AddSingleton(databaseOptions);
-        services.AddSingleton(
-            new DatabaseReadinessRequirements(
-                databaseOptions.RequiredSchemaVersion,
-                databaseOptions.ExpectedCollation));
-        services.AddSingleton(
-            new BuiltinSeedReadinessRequirements(databaseOptions.RequiredBuiltinSeedVersion));
+        services.AddSingleton(new DatabaseReadinessRequirements(databaseOptions.ExpectedCollation));
         services.AddDbContext<FlowPilotDbContext>(options =>
         {
             if (string.IsNullOrWhiteSpace(connectionString))

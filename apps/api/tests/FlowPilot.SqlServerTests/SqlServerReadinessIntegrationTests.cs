@@ -16,9 +16,6 @@ public sealed class SqlServerReadinessIntegrationTests
             configuration.GetConnectionString("FlowPilot"),
             $"ConnectionStrings:FlowPilot or {SqlServerTestConfiguration.ConnectionStringOverrideVariable}");
 
-        var requiredSchemaVersion = SqlServerTestConfiguration.RequireOrSkip(
-            configuration["FlowPilot:Database:RequiredSchemaVersion"],
-            $"FlowPilot:Database:RequiredSchemaVersion or {SqlServerTestConfiguration.RequiredSchemaVersionOverrideVariable}");
         var expectedCollation = SqlServerTestConfiguration.RequireOrSkip(
             configuration["FlowPilot:Database:ExpectedCollation"],
             $"FlowPilot:Database:ExpectedCollation or {SqlServerTestConfiguration.ExpectedCollationOverrideVariable}");
@@ -35,7 +32,7 @@ public sealed class SqlServerReadinessIntegrationTests
         var snapshot = await reader.ReadAsync(TestContext.Current.CancellationToken);
         var result = DatabaseReadinessSnapshotEvaluator.Evaluate(
             snapshot,
-            new DatabaseReadinessRequirements(requiredSchemaVersion, expectedCollation));
+            new DatabaseReadinessRequirements(expectedCollation));
 
         Assert.True(result.IsReady, $"Database readiness failed with code {result.Code}.");
     }

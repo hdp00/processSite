@@ -7,12 +7,14 @@ import type {
   ProcessVersion,
 } from "../state/useProcessDefinitionStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import type {
-  CompleteDesignerSnapshot,
-  StoredDesignerField,
-  StoredDesignerTableColumn,
-  StoredFlowDesignerSnapshot,
-  StoredNodeCondition,
+import {
+  designerTableColumnSupportsOptions,
+  normalizeStoredDesignerField,
+  type CompleteDesignerSnapshot,
+  type StoredDesignerField,
+  type StoredDesignerTableColumn,
+  type StoredFlowDesignerSnapshot,
+  type StoredNodeCondition,
 } from "../utils/designerStorage";
 import type { DesignerChoiceOption } from "../utils/designerOptions";
 import { usePrototypeStore } from "../state/usePrototypeStore";
@@ -350,7 +352,9 @@ const remoteTableColumn = (column: StoredDesignerTableColumn) => ({
   ...(column.width !== undefined ? { width: column.width } : {}),
   ...(column.align !== undefined ? { align: column.align } : {}),
   reviewEditable: column.reviewEditable ?? false,
-  ...(column.options !== undefined ? { options: remoteDesignerOptions(column.options) } : {}),
+  ...(designerTableColumnSupportsOptions(column.type) && column.options !== undefined
+    ? { options: remoteDesignerOptions(column.options) }
+    : {}),
 });
 
 const remoteDesignerFieldType = (field: StoredDesignerField) => {
@@ -359,7 +363,8 @@ const remoteDesignerFieldType = (field: StoredDesignerField) => {
   return field.type;
 };
 
-const remoteDesignerField = (field: StoredDesignerField) => {
+const remoteDesignerField = (source: StoredDesignerField) => {
+  const field = normalizeStoredDesignerField(source);
   const displayCondition = remoteDesignerCondition(field.displayCondition);
   return {
     id: field.id,

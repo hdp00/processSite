@@ -604,7 +604,7 @@ public sealed partial class SqlServerOrganizationService
             issues.Add(Issue("name", "INVALID_LENGTH", "用户姓名长度必须为 1 到 100 个字符。"));
         }
 
-        if (!new EmailAddressAttribute().IsValid(email))
+        if (email.Length > 0 && !new EmailAddressAttribute().IsValid(email))
         {
             issues.Add(Issue("email", "INVALID_FORMAT", "邮箱格式不正确。"));
         }

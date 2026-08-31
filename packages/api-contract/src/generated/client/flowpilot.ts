@@ -361,7 +361,8 @@ export interface CreateDomainUserRequest {
      * @maxLength 100
      */
   name: string;
-  email: string;
+  /** 可为空字符串；非空时必须是有效邮箱。 */
+  email?: string;
   /** @nullable */
   departmentId?: string | null;
   /** @nullable */
@@ -390,7 +391,8 @@ export interface CreatePasswordUserRequest {
      * @maxLength 100
      */
   name: string;
-  email: string;
+  /** 可为空字符串；非空时必须是有效邮箱。 */
+  email?: string;
   /** @nullable */
   departmentId?: string | null;
   /** @nullable */
@@ -408,7 +410,7 @@ export interface CreatePasswordUserRequest {
 }
 
 /**
- * 部门、职务和角色均可为空。password 模式必须提交 initialPassword，domain 模式不得提交该字段。
+ * 邮箱、部门、职务和角色均可为空。password 模式必须提交 initialPassword，domain 模式不得提交该字段。
  */
 export type CreateUserRequest = CreateDomainUserRequest | CreatePasswordUserRequest;
 
@@ -420,7 +422,13 @@ export interface UpdateUserRequest {
      * @minLength 1
      * @maxLength 100
      */
+  loginName?: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
   name?: string;
+  /** 可提交空字符串以清空邮箱；非空时必须是有效邮箱。 */
   email?: string;
   /** @nullable */
   departmentId?: string | null;
@@ -3114,8 +3122,8 @@ const getUser = (
   }
 
 /**
- * 超级管理员账号不可修改。账号状态由专用命令修改；切换为密码登录时必须在同一请求中设置新密码，切换为域登录时清除本地密码散列并使现存会话失效。
- * @summary 修改用户资料、登录方式、部门、职务和角色
+ * 超级管理员账号不可修改。普通用户登录账号变化后注销其现存会话；账号状态由专用命令修改；切换为密码登录时必须在同一请求中设置新密码，切换为域登录时清除本地密码散列并使现存会话失效。
+ * @summary 修改用户账号、资料、登录方式、部门、职务和角色
  */
 const updateUser = (
     userId: string,

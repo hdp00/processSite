@@ -29,8 +29,6 @@ public sealed class FlowPilotDbContextTests
     {
         var services = new ServiceCollection();
         var databaseOptions = new FlowPilotDatabaseOptions(
-            requiredSchemaVersion: "202608260001",
-            requiredBuiltinSeedVersion: "202608260001",
             applicationCommandTimeoutSeconds: 42);
         services.AddFlowPilotPersistence(
             ConnectionString,
@@ -61,8 +59,7 @@ public sealed class FlowPilotDbContextTests
     {
         var services = new ServiceCollection();
         var databaseOptions = new FlowPilotDatabaseOptions(
-            requiredSchemaVersion: "202608260001",
-            requiredBuiltinSeedVersion: "202608260001");
+            expectedCollation: "Chinese_PRC_100_CI_AS_SC");
         services.AddFlowPilotPersistence(ConnectionString, databaseOptions);
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
@@ -71,15 +68,10 @@ public sealed class FlowPilotDbContextTests
             databaseOptions,
             scope.ServiceProvider.GetRequiredService<FlowPilotDatabaseOptions>());
         Assert.Equal(
-            databaseOptions.RequiredSchemaVersion,
+            databaseOptions.ExpectedCollation,
             scope.ServiceProvider
                 .GetRequiredService<DatabaseReadinessRequirements>()
-                .RequiredSchemaVersion);
-        Assert.Equal(
-            databaseOptions.RequiredBuiltinSeedVersion,
-            scope.ServiceProvider
-                .GetRequiredService<BuiltinSeedReadinessRequirements>()
-                .RequiredBuiltinSeedVersion);
+                .ExpectedCollation);
         Assert.IsType<ApplicationDatabaseReadinessCheck>(
             scope.ServiceProvider.GetRequiredService<IDatabaseReadinessCheck>());
         Assert.IsType<SqlServerDatabaseReadinessCheck>(
@@ -97,8 +89,7 @@ public sealed class FlowPilotDbContextTests
         services.AddFlowPilotPersistence(
             connectionString: null,
             new FlowPilotDatabaseOptions(
-                requiredSchemaVersion: "202608260001",
-                requiredBuiltinSeedVersion: "202608260001"));
+                expectedCollation: "Chinese_PRC_100_CI_AS_SC"));
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
         var check = scope.ServiceProvider.GetRequiredService<IDatabaseReadinessCheck>();

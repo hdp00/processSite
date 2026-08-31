@@ -203,6 +203,19 @@ describe("流程发布校验边界", () => {
     expect(groupsCheck.detail).toContain("流程权限组“空审核组”没有有效成员");
   });
 
+  it("远程缓存未加载完整用户时使用服务端有效成员数", () => {
+    const remoteGroups = groups.map((group) => ({ ...group, effectiveMemberCount: 1 }));
+    const groupsCheck = check(validateApprovalFlow(
+      serialNodes(),
+      serialEdges,
+      [createProcessTitleField()],
+      { workflowGroups: remoteGroups, effectiveMemberIds: () => [] },
+    ), "groups");
+
+    expect(groupsCheck).toMatchObject({ pass: true });
+    expect(groupsCheck.detail).toContain("均已配置有效权限组");
+  });
+
   it("rejects incomplete execution rules, unowned reviewer fields, unsafe repeat editing and recipientless email", () => {
     const fields: StoredDesignerField[] = [
       createProcessTitleField(),

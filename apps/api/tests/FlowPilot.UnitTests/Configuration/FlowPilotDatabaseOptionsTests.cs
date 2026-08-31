@@ -19,12 +19,10 @@ public sealed class FlowPilotDatabaseOptionsTests
     }
 
     [Fact]
-    public void FromConfiguration_ReadsRequirementsAndEveryCommandTimeoutOverride()
+    public void FromConfiguration_ReadsExpectedCollationAndEveryCommandTimeoutOverride()
     {
         var configuration = new TestConfiguration
         {
-            ["FlowPilot:Database:RequiredSchemaVersion"] = "schema-v1",
-            ["FlowPilot:Database:RequiredBuiltinSeedVersion"] = "seed-v1",
             ["FlowPilot:Database:ExpectedCollation"] = "Chinese_PRC_CI_AS",
             ["FlowPilot:Database:ApplicationCommandTimeoutSeconds"] = "31",
             ["FlowPilot:Database:ReadinessCommandTimeoutSeconds"] = "6",
@@ -35,8 +33,6 @@ public sealed class FlowPilotDatabaseOptionsTests
 
         var options = FlowPilotDatabaseOptions.FromConfiguration(configuration);
 
-        Assert.Equal("schema-v1", options.RequiredSchemaVersion);
-        Assert.Equal("seed-v1", options.RequiredBuiltinSeedVersion);
         Assert.Equal("Chinese_PRC_CI_AS", options.ExpectedCollation);
         Assert.Equal(31, options.ApplicationCommandTimeoutSeconds);
         Assert.Equal(6, options.ReadinessCommandTimeoutSeconds);

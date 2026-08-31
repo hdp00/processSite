@@ -267,8 +267,8 @@ public sealed record CreateUserRequest
     [Required, StringLength(100, MinimumLength = 1)]
     public required string Name { get; init; }
 
-    [Required, EmailAddress, StringLength(320)]
-    public required string Email { get; init; }
+    [StringLength(320)]
+    public string Email { get; init; } = "";
 
     public Guid? DepartmentId { get; init; }
 
@@ -294,9 +294,12 @@ public sealed record UpdateUserRequest
     private Guid? _positionId;
 
     [StringLength(100, MinimumLength = 1)]
+    public string? LoginName { get; init; }
+
+    [StringLength(100, MinimumLength = 1)]
     public string? Name { get; init; }
 
-    [EmailAddress, StringLength(320)]
+    [StringLength(320)]
     public string? Email { get; init; }
 
     public Guid? DepartmentId
@@ -333,7 +336,8 @@ public sealed record UpdateUserRequest
     public string? NewPassword { get; init; }
 
     [JsonIgnore]
-    public bool HasChanges => Name is not null
+    public bool HasChanges => LoginName is not null
+        || Name is not null
         || Email is not null
         || DepartmentIdSpecified
         || PositionIdSpecified

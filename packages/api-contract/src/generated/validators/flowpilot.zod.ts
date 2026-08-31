@@ -254,12 +254,14 @@ export const createDomainUserRequestLoginNameMax = 100;
 
 export const createDomainUserRequestNameMax = 100;
 
+export const createDomainUserRequestEmailOneMax = 320;
+
 
 
 export const CreateDomainUserRequest = zod.strictObject({
   "loginName": zod.string().min(1).max(createDomainUserRequestLoginNameMax),
   "name": zod.string().min(1).max(createDomainUserRequestNameMax),
-  "email": zod.email(),
+  "email": zod.union([zod.email().max(createDomainUserRequestEmailOneMax),zod.literal("")]).optional().describe('可为空字符串；非空时必须是有效邮箱。'),
   "departmentId": zod.uuid().nullish(),
   "positionId": zod.uuid().nullish(),
   "roleIds": zod.array(zod.uuid()).describe('可为空；用户没有角色时不获得普通角色权限。'),
@@ -274,6 +276,8 @@ export const createPasswordUserRequestLoginNameMax = 100;
 
 export const createPasswordUserRequestNameMax = 100;
 
+export const createPasswordUserRequestEmailOneMax = 320;
+
 export const createPasswordUserRequestInitialPasswordMax = 200;
 
 
@@ -281,7 +285,7 @@ export const createPasswordUserRequestInitialPasswordMax = 200;
 export const CreatePasswordUserRequest = zod.strictObject({
   "loginName": zod.string().min(1).max(createPasswordUserRequestLoginNameMax),
   "name": zod.string().min(1).max(createPasswordUserRequestNameMax),
-  "email": zod.email(),
+  "email": zod.union([zod.email().max(createPasswordUserRequestEmailOneMax),zod.literal("")]).optional().describe('可为空字符串；非空时必须是有效邮箱。'),
   "departmentId": zod.uuid().nullish(),
   "positionId": zod.uuid().nullish(),
   "roleIds": zod.array(zod.uuid()).describe('可为空；用户没有角色时不获得普通角色权限。'),
@@ -293,20 +297,25 @@ export const CreatePasswordUserRequest = zod.strictObject({
 export type CreatePasswordUserRequest = zod.input<typeof CreatePasswordUserRequest>;
 export type CreatePasswordUserRequestOutput = zod.output<typeof CreatePasswordUserRequest>;
 
-export const CreateUserRequest = zod.discriminatedUnion('authenticationMode', [CreateDomainUserRequest,CreatePasswordUserRequest]).describe('部门、职务和角色均可为空。password 模式必须提交 initialPassword，domain 模式不得提交该字段。');
+export const CreateUserRequest = zod.discriminatedUnion('authenticationMode', [CreateDomainUserRequest,CreatePasswordUserRequest]).describe('邮箱、部门、职务和角色均可为空。password 模式必须提交 initialPassword，domain 模式不得提交该字段。');
 
 export type CreateUserRequest = zod.input<typeof CreateUserRequest>;
 export type CreateUserRequestOutput = zod.output<typeof CreateUserRequest>;
 
+export const updateUserRequestLoginNameMax = 100;
+
 export const updateUserRequestNameMax = 100;
+
+export const updateUserRequestEmailOneMax = 320;
 
 export const updateUserRequestNewPasswordMax = 200;
 
 
 
 export const UpdateUserRequest = zod.strictObject({
+  "loginName": zod.string().min(1).max(updateUserRequestLoginNameMax).optional(),
   "name": zod.string().min(1).max(updateUserRequestNameMax).optional(),
-  "email": zod.email().optional(),
+  "email": zod.union([zod.email().max(updateUserRequestEmailOneMax),zod.literal("")]).optional().describe('可提交空字符串以清空邮箱；非空时必须是有效邮箱。'),
   "departmentId": zod.uuid().nullish(),
   "positionId": zod.uuid().nullish(),
   "roleIds": zod.array(zod.uuid()).optional().describe('可提交空数组以清空角色，账号状态不影响该约束。'),
@@ -2150,8 +2159,8 @@ export const GetUser404Response = ProblemDetails
 
 
 /**
- * 超级管理员账号不可修改。账号状态由专用命令修改；切换为密码登录时必须在同一请求中设置新密码，切换为域登录时清除本地密码散列并使现存会话失效。
- * @summary 修改用户资料、登录方式、部门、职务和角色
+ * 超级管理员账号不可修改。普通用户登录账号变化后注销其现存会话；账号状态由专用命令修改；切换为密码登录时必须在同一请求中设置新密码，切换为域登录时清除本地密码散列并使现存会话失效。
+ * @summary 修改用户账号、资料、登录方式、部门、职务和角色
  */
 export const UpdateUserParams = zod.strictObject({
   "userId": zod.uuid()

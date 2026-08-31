@@ -150,6 +150,8 @@ SQL Server 连接字符串必须显式给出加密、证书信任、连接建立
 
 本地 Development 不要求模拟生产发布目录。API、数据库工具和 SQL Server 集成测试共同读取仓库内被忽略的 `apps/api/config/appsettings.Development.local.json`；仓库只提供 `.example.json`。数据库工具只从 `AppContext.BaseDirectory` 所在的预期 `tools/FlowPilot.DatabaseTool` 工程布局向上定位该固定路径，不读取当前工作目录且不接受任意配置文件路径覆盖；优先级为默认配置 < 本地 JSON < 环境变量 < 命令行配置值，文件只在进程启动时加载。该本地文件绝不进入生产发布包，生产环境也不读取它。
 
+数据库结构版本与内置数据版本是程序兼容边界，由后端代码分别统一定义，不能通过配置文件或环境变量覆盖。数据库迁移、Seed、验证工具和就绪检查必须引用同一代码常量；配置仅保存连接字符串、预期排序规则、超时及其他随环境变化的值。
+
 路径解析封装为可注入接口。生产实现从 `AppContext.BaseDirectory` 开始，包含当前目录在内最多检查 6 层祖先目录，必须且只能找到一个名为 `flowpilot.root` 的部署根标记；这样无论运行时保留 `current` 路径还是解析为实际 `releases\{releaseId}` 路径，都能得到同一部署根。禁止退回固定取父目录、Windows Service 当前工作目录或环境变量。测试实现使用独立临时目录。启动时还必须验证部署根不是磁盘根、当前 API 位于该根的 `App` 边界内、联接目标位于本机 `App\releases` 内、Config/Secrets 文件存在，并规范化和验证所有最终绝对路径。
 
 真实 Config/Secrets 文件不提交 Git、不进入发布包或 IIS 目录。首版不使用 `.env` 解析器、DPAPI、外部秘密平台或 Data Protection 密钥文件。Secrets 是明文 JSON，只允许服务账号读取、部署管理员修改；日志和健康接口不得输出连接字符串或完整配置。

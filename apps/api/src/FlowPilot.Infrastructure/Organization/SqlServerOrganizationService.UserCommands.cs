@@ -58,6 +58,7 @@ public sealed partial class SqlServerOrganizationService
         var referenceIssues = await ValidateUserUpdateReferencesAsync(
             connection,
             transaction,
+            userId,
             input,
             request,
             cancellationToken).ConfigureAwait(false);
@@ -73,7 +74,9 @@ public sealed partial class SqlServerOrganizationService
             command.CommandText =
                 """
                 UPDATE [flowpilot].[users]
-                SET [display_name] = @name,
+                SET [login_name] = @login_name,
+                    [normalized_login_name] = @normalized_login_name,
+                    [display_name] = @name,
                     [email] = @email,
                     [authentication_mode] = @authentication_mode,
                     [password_hash] = @password_hash,
@@ -92,6 +95,8 @@ public sealed partial class SqlServerOrganizationService
                 """;
             Add(command, "@id", SqlDbType.UniqueIdentifier, userId);
             Add(command, "@expected_revision", SqlDbType.Int, expectedRevision);
+            Add(command, "@login_name", SqlDbType.NVarChar, input.LoginName, 100);
+            Add(command, "@normalized_login_name", SqlDbType.NVarChar, input.NormalizedLoginName, 100);
             Add(command, "@name", SqlDbType.NVarChar, input.Name, 100);
             Add(command, "@email", SqlDbType.NVarChar, input.Email, 320);
             Add(command, "@authentication_mode", SqlDbType.NVarChar, input.AuthenticationMode, 20);
@@ -107,13 +112,15 @@ public sealed partial class SqlServerOrganizationService
             }
         }
 
-        if (!string.Equals(current!.AuthenticationMode, input.AuthenticationMode, StringComparison.Ordinal))
+        var authenticationModeChanged = !string.Equals(current!.AuthenticationMode, input.AuthenticationMode, StringComparison.Ordinal);
+        var loginNameChanged = !string.Equals(current.NormalizedLoginName, input.NormalizedLoginName, StringComparison.Ordinal);
+        if (authenticationModeChanged || loginNameChanged)
         {
             await RevokeUserSessionsAsync(
                 connection,
                 transaction,
                 userId,
-                "authentication-mode-changed",
+                loginNameChanged ? "login-name-changed" : "authentication-mode-changed",
                 now,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -391,7 +398,7 @@ public sealed partial class SqlServerOrganizationService
         await using var command = CreateCommand(connection, transaction);
         command.CommandText =
             """
-            SELECT [u].[revision], [u].[normalized_login_name], [u].[display_name], [u].[email],
+            SELECT [u].[revision], [u].[login_name], [u].[normalized_login_name], [u].[display_name], [u].[email],
                    [u].[authentication_mode], [u].[password_hash], [u].[department_id], [u].[position_id],
                    [u].[is_enabled], [u].[is_builtin_super_admin],
                    COALESCE((SELECT [role_id] AS [id] FROM [flowpilot].[user_roles]
@@ -410,12 +417,13 @@ public sealed partial class SqlServerOrganizationService
             reader.GetString(2),
             reader.GetString(3),
             reader.GetString(4),
-            reader.IsDBNull(5) ? null : reader.GetString(5),
-            reader.IsDBNull(6) ? null : reader.GetGuid(6),
+            reader.GetString(5),
+            reader.IsDBNull(6) ? null : reader.GetString(6),
             reader.IsDBNull(7) ? null : reader.GetGuid(7),
-            reader.GetBoolean(8),
+            reader.IsDBNull(8) ? null : reader.GetGuid(8),
             reader.GetBoolean(9),
-            DeserializeArray<IdRow>(reader.GetString(10)).Select(row => row.Id).ToArray());
+            reader.GetBoolean(10),
+            DeserializeArray<IdRow>(reader.GetString(11)).Select(row => row.Id).ToArray());
     }
 
     private static OrganizationCommandFailure? ValidateMutableUser(UserState? current, int expectedRevision)
@@ -451,6 +459,8 @@ public sealed partial class SqlServerOrganizationService
     private static NormalizedUserUpdateResult NormalizeUserUpdate(UpdateUserRequest request, UserState current)
     {
         var issues = new List<OrganizationInputIssueDto>();
+        var loginName = request.LoginName?.Trim() ?? current.LoginName;
+        var normalizedLoginName = IdentityValueNormalizer.Normalize(loginName);
         var name = request.Name?.Trim() ?? current.Name;
         var email = request.Email?.Trim() ?? current.Email;
         var authenticationMode = request.AuthenticationMode?.Trim() ?? current.AuthenticationMode;
@@ -458,9 +468,11 @@ public sealed partial class SqlServerOrganizationService
         var positionId = request.PositionIdSpecified ? request.PositionId : current.PositionId;
         var roleIds = (request.RoleIds ?? current.RoleIds).Distinct().Order().ToArray();
 
+        if (loginName.Length is < 1 or > 100)
+            issues.Add(Issue("loginName", "INVALID_LENGTH", "登录账号长度必须为 1 到 100 个字符。"));
         if (name.Length is < 1 or > 100)
             issues.Add(Issue("name", "INVALID_LENGTH", "用户姓名长度必须为 1 到 100 个字符。"));
-        if (!new EmailAddressAttribute().IsValid(email))
+        if (email.Length > 0 && !new EmailAddressAttribute().IsValid(email))
             issues.Add(Issue("email", "INVALID_FORMAT", "邮箱格式不正确。"));
         if (authenticationMode is not ("domain" or "password"))
             issues.Add(Issue("authenticationMode", "INVALID_VALUE", "登录方式只能是 domain 或 password。"));
@@ -479,7 +491,7 @@ public sealed partial class SqlServerOrganizationService
         }
         else if (switchingToPassword)
         {
-            passwordHash = FlowPilotPasswordHasher.HashPassword(current.NormalizedLoginName, request.NewPassword!);
+            passwordHash = FlowPilotPasswordHasher.HashPassword(normalizedLoginName, request.NewPassword!);
         }
         else if (authenticationMode == "domain")
         {
@@ -489,13 +501,14 @@ public sealed partial class SqlServerOrganizationService
         return issues.Count > 0
             ? new NormalizedUserUpdateResult(null, IdentityValidationFailure("用户校验失败", issues))
             : new NormalizedUserUpdateResult(
-                new NormalizedUserUpdate(name, email, authenticationMode, passwordHash, departmentId, positionId, roleIds),
+                new NormalizedUserUpdate(loginName, normalizedLoginName, name, email, authenticationMode, passwordHash, departmentId, positionId, roleIds),
                 null);
     }
 
     private async Task<IReadOnlyList<OrganizationInputIssueDto>> ValidateUserUpdateReferencesAsync(
         SqlConnection connection,
         SqlTransaction transaction,
+        Guid userId,
         NormalizedUserUpdate input,
         UpdateUserRequest request,
         CancellationToken cancellationToken)
@@ -504,6 +517,8 @@ public sealed partial class SqlServerOrganizationService
         command.CommandText =
             """
             SELECT
+                (SELECT COUNT_BIG(1) FROM [flowpilot].[users] WITH (UPDLOCK, HOLDLOCK)
+                 WHERE [normalized_login_name] = @normalized_login_name AND [id] <> @id),
                 (SELECT CASE WHEN @department_id IS NULL THEN 1 ELSE COUNT_BIG(1) END
                  FROM [flowpilot].[departments] WITH (UPDLOCK, HOLDLOCK)
                  WHERE [id] = @department_id AND (@check_department_enabled = 0 OR [is_enabled] = 1)),
@@ -519,6 +534,8 @@ public sealed partial class SqlServerOrganizationService
                  WHERE [r].[id] IS NULL);
             """;
         AddNullable(command, "@department_id", SqlDbType.UniqueIdentifier, input.DepartmentId);
+        Add(command, "@id", SqlDbType.UniqueIdentifier, userId);
+        Add(command, "@normalized_login_name", SqlDbType.NVarChar, input.NormalizedLoginName, 100);
         AddNullable(command, "@position_id", SqlDbType.UniqueIdentifier, input.PositionId);
         Add(command, "@check_department_enabled", SqlDbType.Bit, request.DepartmentIdSpecified);
         Add(command, "@check_position_enabled", SqlDbType.Bit, request.PositionIdSpecified);
@@ -528,11 +545,13 @@ public sealed partial class SqlServerOrganizationService
             .ConfigureAwait(false);
         await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
         var issues = new List<OrganizationInputIssueDto>();
-        if (reader.GetInt64(0) != 1)
-            issues.Add(Issue("departmentId", "INVALID_REFERENCE", "部门不存在或已停用。"));
+        if (reader.GetInt64(0) > 0)
+            issues.Add(Issue("loginName", "DUPLICATE", "登录账号已存在。"));
         if (reader.GetInt64(1) != 1)
+            issues.Add(Issue("departmentId", "INVALID_REFERENCE", "部门不存在或已停用。"));
+        if (reader.GetInt64(2) != 1)
             issues.Add(Issue("positionId", "INVALID_REFERENCE", "职务不存在或已停用。"));
-        if (reader.GetInt64(2) > 0)
+        if (reader.GetInt64(3) > 0)
             issues.Add(Issue("roleIds", "INVALID_REFERENCE", "角色必须存在、已启用且不是内置角色。"));
         return issues;
     }
@@ -616,6 +635,7 @@ public sealed partial class SqlServerOrganizationService
     private static List<string> UserUpdateFields(UpdateUserRequest request)
     {
         var fields = new List<string>();
+        if (request.LoginName is not null) fields.Add("loginName");
         if (request.Name is not null) fields.Add("name");
         if (request.Email is not null) fields.Add("email");
         if (request.DepartmentIdSpecified) fields.Add("departmentId");
@@ -628,6 +648,7 @@ public sealed partial class SqlServerOrganizationService
 
     private sealed record UserState(
         int Revision,
+        string LoginName,
         string NormalizedLoginName,
         string Name,
         string Email,
@@ -640,6 +661,8 @@ public sealed partial class SqlServerOrganizationService
         IReadOnlyList<Guid> RoleIds);
 
     private sealed record NormalizedUserUpdate(
+        string LoginName,
+        string NormalizedLoginName,
         string Name,
         string Email,
         string AuthenticationMode,

@@ -1,36 +1,20 @@
 using System.Data.Common;
 using FlowPilot.Application.Health;
+using FlowPilot.Application.Security;
 using FlowPilot.Infrastructure.Health;
 
 namespace FlowPilot.UnitTests.Health;
 
 public sealed class ApplicationDatabaseReadinessCheckTests
 {
-    private const string RequiredSchemaVersion = "202608260001";
-    private const string RequiredBuiltinSeedVersion = "202608260001";
     private const string ExpectedCollation = "Chinese_PRC_100_CI_AS_SC";
-
-    [Fact]
-    public async Task CheckAsync_RejectsMissingSeedRequirementWithoutReadingDatabase()
-    {
-        var structuralReader = new StubStructuralReader(CreateReadyStructuralSnapshot());
-        var seedReader = new StubBuiltinSeedVersionReader(RequiredBuiltinSeedVersion);
-        var check = CreateCheck(structuralReader, seedReader, requiredBuiltinSeedVersion: null);
-
-        var result = await check.CheckAsync(TestContext.Current.CancellationToken);
-
-        Assert.False(result.IsReady);
-        Assert.Equal(DatabaseReadinessCodes.ConfigurationMissing, result.Code);
-        Assert.Equal(0, structuralReader.ReadCount);
-        Assert.Equal(0, seedReader.ReadCount);
-    }
 
     [Fact]
     public async Task CheckAsync_PreservesStructuralFailureWithoutReadingSeedState()
     {
         var structuralReader = new StubStructuralReader(
             CreateReadyStructuralSnapshot() with { FlowPilotSchemaExists = false });
-        var seedReader = new StubBuiltinSeedVersionReader(RequiredBuiltinSeedVersion);
+        var seedReader = new StubBuiltinSeedVersionReader(BuiltinCatalog.SeedVersion);
         var check = CreateCheck(structuralReader, seedReader);
 
         var result = await check.CheckAsync(TestContext.Current.CancellationToken);
@@ -76,8 +60,7 @@ public sealed class ApplicationDatabaseReadinessCheckTests
     {
         var check = CreateCheck(
             new StubStructuralReader(CreateReadyStructuralSnapshot()),
-            new StubBuiltinSeedVersionReader($" {RequiredBuiltinSeedVersion} "),
-            $" {RequiredBuiltinSeedVersion} ");
+            new StubBuiltinSeedVersionReader($" {BuiltinCatalog.SeedVersion} "));
 
         var result = await check.CheckAsync(TestContext.Current.CancellationToken);
 
@@ -114,16 +97,14 @@ public sealed class ApplicationDatabaseReadinessCheckTests
 
     private static ApplicationDatabaseReadinessCheck CreateCheck(
         StubStructuralReader structuralReader,
-        IBuiltinSeedVersionReader seedReader,
-        string? requiredBuiltinSeedVersion = RequiredBuiltinSeedVersion)
+        IBuiltinSeedVersionReader seedReader)
     {
         var structuralCheck = new SqlServerDatabaseReadinessCheck(
             structuralReader,
-            new DatabaseReadinessRequirements(RequiredSchemaVersion, ExpectedCollation));
+            new DatabaseReadinessRequirements(ExpectedCollation));
         return new ApplicationDatabaseReadinessCheck(
             structuralCheck,
-            seedReader,
-            new BuiltinSeedReadinessRequirements(requiredBuiltinSeedVersion));
+            seedReader);
     }
 
     private static DatabaseReadinessSnapshot CreateReadyStructuralSnapshot() =>
@@ -135,7 +116,7 @@ public sealed class ApplicationDatabaseReadinessCheckTests
             FlowPilotSchemaExists: true,
             SchemaVersionStoreExists: true,
             SchemaVersionStoreIsValid: true,
-            RequiredSchemaVersion);
+            DatabaseSchemaVersion.Current);
 
     private sealed class StubStructuralReader(DatabaseReadinessSnapshot snapshot)
         : ISqlServerReadinessSnapshotReader

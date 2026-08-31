@@ -14,9 +14,8 @@ public static class DatabaseReadinessSnapshotEvaluator
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(requirements);
 
-        var requiredSchemaVersion = Normalize(requirements.RequiredSchemaVersion);
         var expectedCollation = Normalize(requirements.ExpectedCollation);
-        if (requiredSchemaVersion is null || expectedCollation is null)
+        if (expectedCollation is null)
         {
             return DatabaseReadinessResult.NotReady(DatabaseReadinessCodes.ConfigurationMissing);
         }
@@ -63,7 +62,7 @@ public static class DatabaseReadinessSnapshotEvaluator
         var appliedSchemaVersion = Normalize(snapshot.AppliedSchemaVersion);
         return appliedSchemaVersion is null
             ? DatabaseReadinessResult.NotReady(DatabaseReadinessCodes.SchemaVersionMissing)
-            : string.Equals(requiredSchemaVersion, appliedSchemaVersion, StringComparison.Ordinal)
+            : string.Equals(DatabaseSchemaVersion.Current, appliedSchemaVersion, StringComparison.Ordinal)
                 ? DatabaseReadinessResult.Ready
                 : DatabaseReadinessResult.NotReady(DatabaseReadinessCodes.SchemaVersionMismatch);
     }

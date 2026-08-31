@@ -7,28 +7,13 @@ namespace FlowPilot.UnitTests.Health;
 public sealed class SqlServerDatabaseReadinessCheckTests
 {
     private static readonly DatabaseReadinessRequirements Requirements =
-        new("202608260001", "Chinese_PRC_100_CI_AS_SC");
+        new("Chinese_PRC_100_CI_AS_SC");
 
     [Fact]
     public async Task CheckAsync_RejectsMissingConnectionConfigurationWithoutReadingDatabase()
     {
         var reader = new StubSnapshotReader(IsConfigured: false, CreateReadySnapshot());
         var check = new SqlServerDatabaseReadinessCheck(reader, Requirements);
-
-        var result = await check.CheckAsync(TestContext.Current.CancellationToken);
-
-        Assert.False(result.IsReady);
-        Assert.Equal(DatabaseReadinessCodes.ConfigurationMissing, result.Code);
-        Assert.Equal(0, reader.ReadCount);
-    }
-
-    [Fact]
-    public async Task CheckAsync_RejectsMissingRequiredSchemaVersionWithoutReadingDatabase()
-    {
-        var reader = new StubSnapshotReader(IsConfigured: true, CreateReadySnapshot());
-        var check = new SqlServerDatabaseReadinessCheck(
-            reader,
-            new DatabaseReadinessRequirements(null, null));
 
         var result = await check.CheckAsync(TestContext.Current.CancellationToken);
 
@@ -105,7 +90,7 @@ public sealed class SqlServerDatabaseReadinessCheckTests
             FlowPilotSchemaExists: true,
             SchemaVersionStoreExists: true,
             SchemaVersionStoreIsValid: true,
-            "202608260001");
+            DatabaseSchemaVersion.Current);
 
     private sealed class StubSnapshotReader : ISqlServerReadinessSnapshotReader
     {

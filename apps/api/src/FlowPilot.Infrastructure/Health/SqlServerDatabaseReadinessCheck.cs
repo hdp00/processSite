@@ -13,8 +13,7 @@ public sealed class SqlServerDatabaseReadinessCheck(
     public async Task<DatabaseReadinessResult> CheckAsync(
         CancellationToken cancellationToken = default)
     {
-        if (!_snapshotReader.IsConfigured ||
-            string.IsNullOrWhiteSpace(_requirements.RequiredSchemaVersion))
+        if (!_snapshotReader.IsConfigured)
         {
             return DatabaseReadinessResult.NotReady(DatabaseReadinessCodes.ConfigurationMissing);
         }

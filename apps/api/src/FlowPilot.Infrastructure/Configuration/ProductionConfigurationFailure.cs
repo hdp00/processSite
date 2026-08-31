@@ -13,8 +13,6 @@ public enum ProductionConfigurationFailure
     WeakEncryptSetting,
     MissingTrustServerCertificateSetting,
     TrustServerCertificateEnabled,
-    MissingRequiredSchemaVersion,
-    MissingRequiredBuiltinSeedVersion,
     MissingExpectedCollation,
     InvalidDatabaseCommandTimeout,
     InvalidLdapConfiguration,

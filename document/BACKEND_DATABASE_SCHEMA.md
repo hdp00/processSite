@@ -28,7 +28,7 @@
 - `id uniqueidentifier` 主键。
 - `login_name nvarchar(100)`：界面显示和登录输入使用的规范账号，不包含密码或域地址。
 - `normalized_login_name nvarchar(100)`：唯一索引。
-- `display_name nvarchar(100)`、`email nvarchar(320)`；普通用户邮箱非空，超级管理员固定为空字符串。
+- `display_name nvarchar(100)`、`email nvarchar(320)`；普通用户邮箱可为空，超级管理员固定为空字符串。
 - `authentication_mode nvarchar(20)`：`domain | password`。
 - `password_hash nvarchar(500) null`：仅本地密码账号保存 ASP.NET Core `PasswordHasher<TUser>` 生成的自描述、版本化编码字符串；应用通过 `SuccessRehashNeeded` 处理参数升级，不由数据库解释内部格式。
 - `department_id uniqueidentifier null`、`position_id uniqueidentifier null`：可空外键，普通用户按需要维护；超级管理员两项固定为空。

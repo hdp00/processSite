@@ -44,3 +44,77 @@ test("新增用户默认选择员工职务", async ({ page }) => {
 
   await expect(page.getByRole("dialog", { name: "新增用户" }).getByText("员工", { exact: true })).toBeVisible();
 });
+
+test("用户编辑正确显示部门并允许修改账号和清空邮箱", async ({ page }) => {
+  test.skip(!isMockTarget, "该用例使用本地演示用户验证编辑表单。");
+  await loginAs(page, "superadmin");
+  await gotoApp(page, "admin/users");
+
+  await page.getByRole("button", { name: "编辑用户：张伟" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "编辑用户" });
+  await expect(dialog.getByText("研发 / 软件", { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel("登录账号")).toBeEnabled();
+  await expect(dialog.getByText("可选。填写后，流程进入审核节点或结束时将按此邮箱发送已配置的通知。", { exact: true })).toBeVisible();
+});
+
+test("固定标题字段不显示选项设置", async ({ page }) => {
+  test.skip(!isMockTarget, "该用例使用本地演示流程验证固定标题字段。");
+  await loginAs(page, "superadmin");
+  await gotoApp(page, "admin/processes/pdf-review/form?versionId=pdf-v2");
+
+  await expect(page.getByLabel("字段标题").first()).toHaveValue("标题");
+  await expect(page.getByText("选项设置", { exact: true })).toHaveCount(0);
+});
+
+test("初始表单设计器只在真实修改后显示未保存状态", async ({ page }) => {
+  test.skip(!isMockTarget, "该用例使用本地演示流程验证设计器初始状态。");
+  await loginAs(page, "superadmin");
+  await gotoApp(page, "admin/processes/pdf-review/form?versionId=pdf-v2");
+
+  await expect(page.getByText("有未保存修改", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/版本已保存 ·/)).toBeVisible();
+
+  await page.getByLabel("字段标题").first().fill("标题（测试修改）");
+  await expect(page.getByText("有未保存修改", { exact: true })).toBeVisible();
+});
+
+test("非选择控件保存后再次进入不显示选项", async ({ page }) => {
+  test.skip(!isMockTarget, "该用例使用本地演示流程验证字段保存和重新读取。");
+  await loginAs(page, "superadmin");
+  await gotoApp(page, "admin/processes/pdf-review/form?versionId=pdf-v2");
+
+  const controls = ["文本框", "富文本编辑框", "附件上传", "明细表格"];
+  for (const control of controls) {
+    await page.locator(".fd-component-item").filter({ hasText: control }).click();
+  }
+  const saveButton = page.getByRole("button", { name: /保存/ });
+  await expect(saveButton).toBeEnabled();
+  await saveButton.click();
+  await expect(page.getByText(/版本已保存 ·/)).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator(".page-identity h4")).toHaveText("初始表单设计");
+
+  for (const label of controls.map((control) => `新建${control}`)) {
+    const fieldCard = page.locator(".fd-field-card").filter({
+      has: page.locator(`input[aria-label="字段标题"][value="${label}"]`),
+    });
+    await fieldCard.click();
+    await expect(fieldCard.getByText("选项", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("选项设置", { exact: true })).toHaveCount(0);
+  }
+});
+
+test("流程设计器只在真实修改后显示未保存状态", async ({ page }) => {
+  test.skip(!isMockTarget, "该用例使用本地演示流程验证设计器初始状态。");
+  await loginAs(page, "superadmin");
+  await gotoApp(page, "admin/processes/pdf-review/flow?versionId=pdf-v2");
+
+  await expect(page.getByText("有未保存修改", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/版本已保存/)).toBeVisible();
+
+  await page.getByText("流程属性", { exact: true }).click();
+  await page.getByLabel("流程名称").fill("PDF 文件审核（测试修改）");
+  await expect(page.getByText("有未保存修改", { exact: true })).toBeVisible();
+});

@@ -574,8 +574,7 @@ const userCreateHandler = http.post(`${API_ROOT}/users`, async ({ request }) => 
     const status = parsed.status === undefined ? "启用" : parsed.status;
     const errors: ValidationProblemField[] = [];
     if (!account) errors.push(issue("account", "REQUIRED", "请输入登录账号。"));
-    if (!email) errors.push(issue("email", "REQUIRED", "请输入邮箱。"));
-    else if (!EMAIL_PATTERN.test(email)) errors.push(issue("email", "INVALID_EMAIL", "邮箱格式不正确。"));
+    if (email && !EMAIL_PATTERN.test(email)) errors.push(issue("email", "INVALID_EMAIL", "邮箱格式不正确。"));
     if (!AUTHENTICATION_MODES.has(authenticationMode as AuthenticationMode)) errors.push(issue("authenticationMode", "INVALID_AUTHENTICATION_MODE", "登录方式无效。"));
     if (authenticationMode === "password" && !password) errors.push(issue("password", "REQUIRED", "密码登录用户必须设置初始密码。"));
     if (authenticationMode === "domain" && password !== undefined) errors.push(issue("password", "PASSWORD_NOT_ALLOWED", "域登录用户不设置本地密码。"));
@@ -644,8 +643,7 @@ const userUpdateHandler = http.patch(`${API_ROOT}/users/:userId`, async ({ reque
   const newPassword = typeof parsed.newPassword === "string" ? parsed.newPassword : undefined;
   const status = parsed.status === undefined ? current.status : parsed.status;
   if (!account) errors.push(issue("account", "REQUIRED", "请输入登录账号。"));
-  if (!email) errors.push(issue("email", "REQUIRED", "请输入邮箱。"));
-  else if (!EMAIL_PATTERN.test(email)) errors.push(issue("email", "INVALID_EMAIL", "邮箱格式不正确。"));
+  if (email && !EMAIL_PATTERN.test(email)) errors.push(issue("email", "INVALID_EMAIL", "邮箱格式不正确。"));
   if (!name) errors.push(issue("name", "REQUIRED", "请输入员工姓名。"));
   if (roleReferences === undefined) errors.push(issue("roles", "INVALID_TYPE", "角色必须是字符串数组。"));
   if (!AUTHENTICATION_MODES.has(authenticationMode as AuthenticationMode)) errors.push(issue("authenticationMode", "INVALID_AUTHENTICATION_MODE", "登录方式无效。"));

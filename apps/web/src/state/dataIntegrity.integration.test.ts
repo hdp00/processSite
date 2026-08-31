@@ -30,6 +30,15 @@ beforeEach(() => {
 });
 
 describe("演示领域数据完整性", () => {
+  it("远端返回二级部门叶子标识时恢复完整级联路径", () => {
+    const departments = organizationModule.useOrganizationStore.getState().departments;
+
+    expect(organizationModule.departmentCascaderValue(["rd-software"], departments))
+      .toEqual(["rd", "rd-software"]);
+    expect(organizationModule.departmentCascaderValue(["quality"], departments))
+      .toEqual(["quality"]);
+  });
+
   it("定义、版本、实例、待办和用户之间不存在悬空引用或重复标识", () => {
     const { users, workflowGroups } = identityModule.useIdentityStore.getState();
     const definitions = definitionModule.useProcessDefinitionStore.getState().definitions;

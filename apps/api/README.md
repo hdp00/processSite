@@ -54,6 +54,8 @@ Copy-Item apps/api/config/appsettings.Development.local.example.json apps/api/co
 
 Development API、数据库工具和本地调试共用该文件，不要求逐项设置环境变量。LDAP 和 SMTP 不参与当前调试时可以保留示例值并让 SMTP 维持禁用；环境变量和命令行参数仍可作为临时覆盖。真实密码不得写入示例文件或提交 Git。
 
+数据库结构版本和内置数据版本由后端代码统一维护，不属于环境配置，无需在本地或生产 JSON 中填写。`db:init`、`db:seed`、`db:verify` 和就绪检查始终使用当前代码要求的版本，避免配置与程序不一致。
+
 示例连接字符串只面向 `127.0.0.1` 本机调试，默认使用 `Encrypt=false`，避免本机 SQL Server 没有可用 TLS 凭据时无法建立连接。连接远程数据库或部署时必须使用 `Encrypt=true;TrustServerCertificate=false` 和与服务器名称匹配的可信证书；不要把本地例外复制到生产配置。
 
 数据库需要先在 SQL Server 中创建好，并设置兼容级别不低于 130；工具不会创建或删除数据库。

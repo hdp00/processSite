@@ -11,16 +11,12 @@ internal static class SqlServerTestConfiguration
     public const string ConnectionStringOverrideVariable =
         "FLOWPILOT_SQLSERVER_TEST_CONNECTION_STRING";
 
-    public const string RequiredSchemaVersionOverrideVariable =
-        "FLOWPILOT_SQLSERVER_TEST_REQUIRED_SCHEMA_VERSION";
-
     public const string ExpectedCollationOverrideVariable =
         "FLOWPILOT_SQLSERVER_TEST_EXPECTED_COLLATION";
 
     private static readonly IReadOnlyList<EnvironmentOverride> DeclaredEnvironmentOverrides =
     [
         new(ConnectionStringOverrideVariable, "ConnectionStrings:FlowPilot"),
-        new(RequiredSchemaVersionOverrideVariable, "FlowPilot:Database:RequiredSchemaVersion"),
         new(ExpectedCollationOverrideVariable, "FlowPilot:Database:ExpectedCollation"),
     ];
 

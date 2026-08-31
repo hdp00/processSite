@@ -376,8 +376,8 @@ paths:
     patch:
       tags: [Users]
       operationId: updateUser
-      summary: 修改用户资料、登录方式、部门、职务和角色
-      description: 超级管理员账号不可修改。账号状态由专用命令修改；切换为密码登录时必须在同一请求中设置新密码，切换为域登录时清除本地密码散列并使现存会话失效。
+      summary: 修改用户账号、资料、登录方式、部门、职务和角色
+      description: 超级管理员账号不可修改。普通用户登录账号变化后注销其现存会话；账号状态由专用命令修改；切换为密码登录时必须在同一请求中设置新密码，切换为域登录时清除本地密码散列并使现存会话失效。
       parameters:
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
@@ -3504,7 +3504,7 @@ components:
     CreateDomainUserRequest:
       type: object
       additionalProperties: false
-      required: [loginName, name, email, roleIds, authenticationMode, status]
+      required: [loginName, name, roleIds, authenticationMode, status]
       properties:
         loginName:
           type: string
@@ -3515,8 +3515,13 @@ components:
           minLength: 1
           maxLength: 100
         email:
-          type: string
-          format: email
+          description: 可为空字符串；非空时必须是有效邮箱。
+          anyOf:
+            - type: string
+              format: email
+              maxLength: 320
+            - type: string
+              const: ""
         departmentId:
           type: [string, "null"]
           format: uuid
@@ -3538,7 +3543,7 @@ components:
     CreatePasswordUserRequest:
       type: object
       additionalProperties: false
-      required: [loginName, name, email, roleIds, authenticationMode, initialPassword, status]
+      required: [loginName, name, roleIds, authenticationMode, initialPassword, status]
       properties:
         loginName:
           type: string
@@ -3549,8 +3554,13 @@ components:
           minLength: 1
           maxLength: 100
         email:
-          type: string
-          format: email
+          description: 可为空字符串；非空时必须是有效邮箱。
+          anyOf:
+            - type: string
+              format: email
+              maxLength: 320
+            - type: string
+              const: ""
         departmentId:
           type: [string, "null"]
           format: uuid
@@ -3575,7 +3585,7 @@ components:
         status:
           $ref: "#/components/schemas/EnabledStatus"
     CreateUserRequest:
-      description: 部门、职务和角色均可为空。password 模式必须提交 initialPassword，domain 模式不得提交该字段。
+      description: 邮箱、部门、职务和角色均可为空。password 模式必须提交 initialPassword，domain 模式不得提交该字段。
       oneOf:
         - $ref: "#/components/schemas/CreateDomainUserRequest"
         - $ref: "#/components/schemas/CreatePasswordUserRequest"
@@ -3590,13 +3600,22 @@ components:
       minProperties: 1
       description: 后端结合用户当前状态校验登录方式变化；只有从 domain 切换到 password 时要求 newPassword，保持现有 password 模式不要求重复设置密码。
       properties:
+        loginName:
+          type: string
+          minLength: 1
+          maxLength: 100
         name:
           type: string
           minLength: 1
           maxLength: 100
         email:
-          type: string
-          format: email
+          description: 可提交空字符串以清空邮箱；非空时必须是有效邮箱。
+          anyOf:
+            - type: string
+              format: email
+              maxLength: 320
+            - type: string
+              const: ""
         departmentId:
           type: [string, "null"]
           format: uuid

@@ -194,18 +194,17 @@ public sealed class ProductionStartupConfigurationValidatorTests
             "ConnectionStrings:FlowPilot");
     }
 
-    [Theory]
-    [InlineData("FlowPilot:Database:RequiredSchemaVersion", ProductionConfigurationFailure.MissingRequiredSchemaVersion)]
-    [InlineData("FlowPilot:Database:RequiredBuiltinSeedVersion", ProductionConfigurationFailure.MissingRequiredBuiltinSeedVersion)]
-    [InlineData("FlowPilot:Database:ExpectedCollation", ProductionConfigurationFailure.MissingExpectedCollation)]
-    public void Validate_RejectsMissingDatabaseRequirement(
-        string configurationKey,
-        ProductionConfigurationFailure failure)
+    [Fact]
+    public void Validate_RejectsMissingExpectedCollation()
     {
         var configuration = CreateValidConfiguration();
+        const string configurationKey = "FlowPilot:Database:ExpectedCollation";
         configuration[configurationKey] = " ";
 
-        AssertFailure(configuration, failure, configurationKey);
+        AssertFailure(
+            configuration,
+            ProductionConfigurationFailure.MissingExpectedCollation,
+            configurationKey);
     }
 
     [Theory]
@@ -250,8 +249,6 @@ public sealed class ProductionStartupConfigurationValidatorTests
         configuration["urls"] = "http://127.0.0.1:5100";
         configuration["FlowPilot:Http:AllowedHosts"] = "flowpilot.internal.example";
         configuration["ConnectionStrings:FlowPilot"] = SensitiveConnectionString;
-        configuration["FlowPilot:Database:RequiredSchemaVersion"] = "202608260001";
-        configuration["FlowPilot:Database:RequiredBuiltinSeedVersion"] = "202608260001";
         configuration["FlowPilot:Database:ExpectedCollation"] = "Chinese_PRC_100_CI_AS_SC";
 
         return configuration;

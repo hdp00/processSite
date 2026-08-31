@@ -59,6 +59,7 @@ describe("设计器旧数据归一化", () => {
       required: false,
       queryable: false,
       inputStage: "reviewer",
+      options: [{ id: "legacy-option", label: "不应保留" }],
     });
     const source = [legacyTitle, field({ id: "body", type: "text", label: "正文" })];
 
@@ -76,12 +77,54 @@ describe("设计器旧数据归一化", () => {
       taskVisible: true,
       exportVisible: true,
       inputStage: "initiator",
+      options: undefined,
     });
     expect(source[0]).toBe(legacyTitle);
     expect(source[0]).toMatchObject({ type: "attachment", required: false, inputStage: "reviewer" });
 
     const inserted = ensureProcessTitleField(undefined);
     expect(inserted).toEqual([createProcessTitleField()]);
+  });
+
+  it("只为选择类字段和选择类表格列保留选项", () => {
+    const pollutedOptions = [{ id: "unexpected", label: "不应保留" }];
+    window.localStorage.setItem(formKey("polluted-options"), JSON.stringify({
+      fields: [
+        createProcessTitleField(),
+        field({ id: "plain", type: "text", label: "文本", options: pollutedOptions, attachment: { maxSizeMb: 10 }, columns: [] }),
+        field({ id: "rich", type: "richtext", label: "富文本", options: pollutedOptions }),
+        field({ id: "file", type: "attachment", label: "附件", options: pollutedOptions, attachment: { maxSizeMb: 20 } }),
+        field({
+          id: "details",
+          type: "table",
+          label: "明细",
+          options: pollutedOptions,
+          attachment: { maxSizeMb: 30 },
+          columns: [
+            { id: "note", label: "说明", type: "text", options: pollutedOptions },
+            { id: "result", label: "结果", type: "select", options: [{ id: "passed", label: "通过" }] },
+          ],
+        }),
+        field({ id: "select", type: "select", label: "下拉", options: [{ id: "one", label: "选项一" }] }),
+        field({ id: "cascade", type: "cascader", label: "级联", options: [{ id: "root", label: "一级" }] }),
+        field({ id: "radio", type: "radio", label: "单选", options: [{ id: "yes", label: "是" }] }),
+        field({ id: "checkbox", type: "checkbox", label: "复选", options: [{ id: "checked", label: "勾选" }] }),
+      ],
+    }));
+
+    const fields = readFormDesignerSnapshot("polluted-options")!.fields;
+    const byId = (id: string) => fields.find((item) => item.id === id)!;
+
+    ["title", "plain", "rich", "file", "details"].forEach((id) => {
+      expect(byId(id).options, id).toBeUndefined();
+    });
+    expect(byId("plain")).toMatchObject({ attachment: undefined, columns: undefined });
+    expect(byId("details").attachment).toBeUndefined();
+    expect(byId("details").columns?.[0].options).toBeUndefined();
+    expect(byId("details").columns?.[1].options).toHaveLength(1);
+    ["select", "cascade", "radio", "checkbox"].forEach((id) => {
+      expect(byId(id).options, id).toHaveLength(1);
+    });
   });
 
   it("maps legacy reviewEditable flags while preserving explicit modern permissions", () => {
