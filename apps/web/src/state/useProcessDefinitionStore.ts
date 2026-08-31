@@ -155,7 +155,10 @@ const validateSnapshot = (type: DefinitionType, basic: ProcessBasicConfig, snaps
 
 const buildVersion = (id: string, label: string, basic: ProcessBasicConfig, snapshot: CompleteDesignerSnapshot, options: Partial<ProcessVersion> = {}): ProcessVersion => {
   const createdAt = options.createdAt ?? nowText();
+  const updatedAt = options.updatedAt ?? createdAt;
   const normalizedSnapshot = cloneCompleteDesignerSnapshot(snapshot);
+  normalizedSnapshot.form.savedAt ??= updatedAt;
+  normalizedSnapshot.flow.savedAt ??= updatedAt;
   const formFieldCount = normalizedSnapshot.form.fields.length;
   const nodeCount = basic.type === "free" ? 0 : normalizedSnapshot.flow.nodes.length;
   return {
@@ -164,7 +167,7 @@ const buildVersion = (id: string, label: string, basic: ProcessBasicConfig, snap
     basedOn: options.basedOn,
     createdAt,
     createdBy: options.createdBy ?? currentActorName(),
-    updatedAt: options.updatedAt ?? createdAt,
+    updatedAt,
     updatedBy: options.updatedBy ?? options.createdBy ?? currentActorName(),
     firstPublishedAt: options.firstPublishedAt,
     firstPublishedBy: options.firstPublishedBy,
@@ -546,7 +549,7 @@ export const useProcessDefinitionStore = create<ProcessDefinitionState>()(
     }),
     {
       name: "flowpilot-process-definitions-v1",
-      version: 17,
+      version: 18,
       migrate: (persisted) => {
         const legacyState = persisted as { definitions?: Array<Record<string, unknown>> };
         if (!legacyState.definitions) return { definitions: initialDefinitions };

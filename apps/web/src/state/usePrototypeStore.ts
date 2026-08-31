@@ -46,11 +46,14 @@ export const SUPER_ADMIN_PERSONA_ID: PersonaId = "superadmin";
 export const isSuperAdminPersona = (personaId: PersonaId) => personaId === SUPER_ADMIN_PERSONA_ID;
 
 export interface FreeFlowInitialChanges {
-  title: string;
-  category: string;
-  priority: ProcessInstance["priority"];
-  description: string;
-  initialContent: string;
+  formValues?: Record<string, unknown>;
+  fieldLabels?: Record<string, string>;
+  /** 兼容旧 Mock 演示数据；正式运行统一使用 formValues。 */
+  title?: string;
+  category?: string;
+  priority?: ProcessInstance["priority"];
+  description?: string;
+  initialContent?: string;
 }
 
 export interface CreateProcessInstanceInput {
@@ -107,6 +110,8 @@ interface PrototypeState {
 }
 
 const nowText = nowDomainTimestamp;
+const isEmptyFormValue = (value: unknown) =>
+  value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
 
 const normalizeTemplateVersion = (value: string) => {
   const matched = value.match(/^v(\d+)/i);
@@ -1167,37 +1172,54 @@ export const usePrototypeStore = create<PrototypeState>()(
                 instance.status !== "进行中" ||
                 !canEditProcessInstanceSubmission(instance, persona, isSuperAdminPersona(state.personaId))
               ) return instance;
-              const originalInitialContent = instance.freeTimeline?.find((entry) => entry.type === "created")?.content ?? "";
-              const fieldChanges = [
-                instance.title !== changes.title ? { field: "标题", before: instance.title, after: changes.title } : null,
-                instance.category !== changes.category ? { field: "事项分类", before: instance.category ?? "—", after: changes.category } : null,
-                instance.priority !== changes.priority ? { field: "优先级", before: instance.priority, after: changes.priority } : null,
-                instance.description !== changes.description ? { field: "事项摘要", before: instance.description, after: changes.description } : null,
-                originalInitialContent !== changes.initialContent ? { field: "初始说明", before: "原富文本内容", after: "新富文本内容" } : null,
+              const previousValues = instance.formValues ?? {};
+              const nextFormValues = changes.formValues ?? {
+                ...previousValues,
+                [PROCESS_TITLE_FIELD_ID]: changes.title ?? instance.title,
+              };
+              const changedFieldIds = [...new Set([...Object.keys(previousValues), ...Object.keys(nextFormValues)])]
+                .filter((fieldId) => JSON.stringify(previousValues[fieldId]) !== JSON.stringify(nextFormValues[fieldId]));
+              const fieldChanges = changedFieldIds.map((fieldId) => ({
+                field: changes.fieldLabels?.[fieldId] ?? (fieldId === PROCESS_TITLE_FIELD_ID ? "标题" : fieldId),
+                before: !changes.formValues && fieldId === PROCESS_TITLE_FIELD_ID
+                  ? instance.title
+                  : isEmptyFormValue(previousValues[fieldId]) ? "—" : "原内容",
+                after: !changes.formValues && fieldId === PROCESS_TITLE_FIELD_ID
+                  ? String(nextFormValues[fieldId] ?? "—")
+                  : isEmptyFormValue(nextFormValues[fieldId]) ? "—" : "新内容",
+              }));
+              const legacyChanges = changes.formValues ? [] : [
+                instance.category !== changes.category ? { field: "事项分类", before: instance.category ?? "—", after: changes.category ?? "—" } : null,
+                instance.priority !== changes.priority ? { field: "优先级", before: instance.priority, after: changes.priority ?? instance.priority } : null,
+                instance.description !== changes.description ? { field: "事项摘要", before: instance.description, after: changes.description ?? "—" } : null,
+                (instance.freeTimeline?.find((entry) => entry.type === "created")?.content ?? "") !== changes.initialContent
+                  ? { field: "初始说明", before: "原富文本内容", after: "新富文本内容" }
+                  : null,
               ].filter((change): change is { field: string; before: string; after: string } => Boolean(change));
+              fieldChanges.push(...legacyChanges);
               if (!fieldChanges.length) return instance;
+              const nextTitle = String(nextFormValues[PROCESS_TITLE_FIELD_ID] ?? instance.title);
+              const originalInitialContent = instance.freeTimeline?.find((entry) => entry.type === "created")?.content ?? "";
               return {
                 ...instance,
-                title: changes.title,
-                category: changes.category,
-                documentType: changes.category,
-                priority: changes.priority,
-                description: changes.description,
-                formValues: { ...(instance.formValues ?? {}), [PROCESS_TITLE_FIELD_ID]: changes.title },
+                title: nextTitle,
+                category: changes.category ?? instance.category,
+                documentType: changes.category ?? instance.documentType,
+                priority: changes.priority ?? instance.priority,
+                description: changes.description ?? instance.description,
+                formValues: nextFormValues,
                 updatedAt: actionAt,
                 freeTimeline: [
-                  ...(instance.freeTimeline ?? []).map((entry) =>
-                    entry.type === "created"
-                      ? {
-                          ...entry,
-                          content: changes.initialContent,
-                          editedAt: actionAt,
-                          revisions: originalInitialContent !== changes.initialContent
-                            ? [...(entry.revisions ?? []), { content: originalInitialContent, editedAt: actionAt }]
-                            : entry.revisions,
-                        }
-                      : entry,
-                  ),
+                  ...(instance.freeTimeline ?? []).map((entry) => !changes.formValues && entry.type === "created"
+                    ? {
+                        ...entry,
+                        content: changes.initialContent ?? entry.content,
+                        editedAt: actionAt,
+                        revisions: changes.initialContent !== undefined && originalInitialContent !== changes.initialContent
+                          ? [...(entry.revisions ?? []), { content: originalInitialContent, editedAt: actionAt }]
+                          : entry.revisions,
+                      }
+                    : entry),
                   freeEntry("form-edited", persona.name, {
                     content: `修改了${fieldChanges.map((change) => change.field).join("、") || "初始表单"}`,
                     fieldChanges,

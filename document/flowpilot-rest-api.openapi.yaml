@@ -2110,7 +2110,7 @@ paths:
       tags: [WorkflowTasks]
       operationId: listMyWorkflowTasks
       summary: 查询任务中心中的我的待办或可代办任务
-      description: 按流程实例分页，每项返回该实例下当前视图可见的任务数组与实例摘要；tasks 中各任务通过 taskType 区分审批、自由协作和待重新提交，后两类没有审批节点。待办不按创建日期截断。
+      description: 按流程实例分页，每项返回该实例下当前视图可见的任务数组与实例摘要；categories 返回忽略 definitionId 条件后的各流程完整数量汇总。tasks 中各任务通过 taskType 区分审批、自由协作和待重新提交，后两类没有审批节点。待办不按创建日期截断。
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
@@ -4570,6 +4570,9 @@ components:
       additionalProperties: false
       required: [nodes, edges, meta]
       properties:
+        savedAt:
+          type: string
+          format: date-time
         nodes:
           type: array
           items:
@@ -5206,7 +5209,7 @@ components:
             $ref: "#/components/schemas/JsonValue"
     ProcessInstancePage:
       type: object
-      required: [items, meta]
+      required: [items, meta, categories]
       properties:
         items:
           type: array
@@ -5214,6 +5217,25 @@ components:
             $ref: "#/components/schemas/ProcessInstanceSummaryDto"
         meta:
           $ref: "#/components/schemas/PageMeta"
+        categories:
+          type: array
+          description: 忽略 definitionId 条件、保留其余查询条件后的各流程完整数量汇总
+          items:
+            $ref: "#/components/schemas/TaskCenterFlowCategoryDto"
+    TaskCenterFlowCategoryDto:
+      type: object
+      additionalProperties: false
+      required: [definitionId, workflowType, count]
+      properties:
+        definitionId:
+          type: string
+          format: uuid
+        workflowType:
+          $ref: "#/components/schemas/ProcessDefinitionType"
+        count:
+          type: integer
+          format: int64
+          minimum: 1
     ReviewProgressDto:
       type: object
       required: [nodeId, nodeName, handlingMode, status, round]
@@ -5542,7 +5564,7 @@ components:
           $ref: "#/components/schemas/ProcessInstanceSummaryDto"
     TaskCenterItemPage:
       type: object
-      required: [items, meta]
+      required: [items, meta, categories]
       properties:
         items:
           type: array
@@ -5550,6 +5572,11 @@ components:
             $ref: "#/components/schemas/TaskCenterItemDto"
         meta:
           $ref: "#/components/schemas/PageMeta"
+        categories:
+          type: array
+          description: 忽略 definitionId 条件、保留当前任务视图和搜索条件后的各流程完整数量汇总
+          items:
+            $ref: "#/components/schemas/TaskCenterFlowCategoryDto"
     BaseFieldRevisions:
       type: object
       description: 仅提交本次实际修改字段的当前版本，避免无关并行分支产生假冲突

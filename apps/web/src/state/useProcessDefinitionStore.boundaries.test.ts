@@ -384,7 +384,7 @@ describe("发布、停用与删除边界", () => {
   });
 });
 
-describe("流程定义 v17 旧数据迁移", () => {
+describe("流程定义 v18 旧数据迁移", () => {
   it("缺少 definitions 的旧状态回退为完整内置定义", async () => {
     storage.setItem("flowpilot-process-definitions-v1", JSON.stringify({ state: {}, version: 0 }));
     await definitionModule.useProcessDefinitionStore.persist.rehydrate();
@@ -403,6 +403,8 @@ describe("流程定义 v17 旧数据迁移", () => {
     legacy.versions = legacy.versions.map((version) => version.id === "pdf-v3"
       ? { ...version, validation: { status: "未通过", checkedAt: "过期校验时间", issues: ["过期校验结果"] } }
       : version);
+    const legacyVersion = legacy.versions.find((version) => version.id === "pdf-v3")!;
+    delete legacyVersion.snapshot.flow.savedAt;
     storage.setItem("flowpilot-process-definitions-v1", JSON.stringify({ state: { definitions: [legacy] }, version: 16 }));
 
     await definitionModule.useProcessDefinitionStore.persist.rehydrate();
@@ -412,6 +414,7 @@ describe("流程定义 v17 旧数据迁移", () => {
     expect(migrated.publishedVersionId).toBeUndefined();
     expect(version.validation).toMatchObject({ status: "通过", issues: [] });
     expect(version.validation.checkedAt).not.toBe("过期校验时间");
+    expect(version.snapshot.flow.savedAt).toBe(version.updatedAt);
     expect(definitionModule.getVersionStatus(migrated, version.id)).toBe("可发布");
   });
 

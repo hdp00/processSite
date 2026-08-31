@@ -989,6 +989,7 @@ export type FlowEdgeDto = zod.input<typeof FlowEdgeDto>;
 export type FlowEdgeDtoOutput = zod.output<typeof FlowEdgeDto>;
 
 export const FlowDesignerSnapshotDto = zod.strictObject({
+  "savedAt": zod.iso.datetime({"offset":true}).optional(),
   "nodes": zod.array(FlowNodeDto),
   "edges": zod.array(FlowEdgeDto),
   "meta": zod.strictObject({
@@ -1399,9 +1400,22 @@ export const ProcessInstanceSummaryDto = zod.strictObject({
 export type ProcessInstanceSummaryDto = zod.input<typeof ProcessInstanceSummaryDto>;
 export type ProcessInstanceSummaryDtoOutput = zod.output<typeof ProcessInstanceSummaryDto>;
 
+
+
+
+export const TaskCenterFlowCategoryDto = zod.strictObject({
+  "definitionId": zod.uuid(),
+  "workflowType": ProcessDefinitionType,
+  "count": zod.int().min(1)
+});
+
+export type TaskCenterFlowCategoryDto = zod.input<typeof TaskCenterFlowCategoryDto>;
+export type TaskCenterFlowCategoryDtoOutput = zod.output<typeof TaskCenterFlowCategoryDto>;
+
 export const ProcessInstancePage = zod.strictObject({
   "items": zod.array(ProcessInstanceSummaryDto),
-  "meta": PageMeta
+  "meta": PageMeta,
+  "categories": zod.array(TaskCenterFlowCategoryDto).describe('忽略 definitionId 条件、保留其余查询条件后的各流程完整数量汇总')
 });
 
 export type ProcessInstancePage = zod.input<typeof ProcessInstancePage>;
@@ -1660,7 +1674,8 @@ export type WorkflowTaskDetailDtoOutput = zod.output<typeof WorkflowTaskDetailDt
 
 export const TaskCenterItemPage = zod.strictObject({
   "items": zod.array(TaskCenterItemDto),
-  "meta": PageMeta
+  "meta": PageMeta,
+  "categories": zod.array(TaskCenterFlowCategoryDto).describe('忽略 definitionId 条件、保留当前任务视图和搜索条件后的各流程完整数量汇总')
 });
 
 export type TaskCenterItemPage = zod.input<typeof TaskCenterItemPage>;
@@ -3716,7 +3731,7 @@ export const CloseProcessInstance428Response = ProblemDetails
 
 
 /**
- * 按流程实例分页，每项返回该实例下当前视图可见的任务数组与实例摘要；tasks 中各任务通过 taskType 区分审批、自由协作和待重新提交，后两类没有审批节点。待办不按创建日期截断。
+ * 按流程实例分页，每项返回该实例下当前视图可见的任务数组与实例摘要；categories 返回忽略 definitionId 条件后的各流程完整数量汇总。tasks 中各任务通过 taskType 区分审批、自由协作和待重新提交，后两类没有审批节点。待办不按创建日期截断。
  * @summary 查询任务中心中的我的待办或可代办任务
  */
 export const listMyWorkflowTasksQueryPageDefault = 1;

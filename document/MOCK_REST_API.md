@@ -89,8 +89,8 @@ try {
 | 流程权限组 | `/workflow-permission-groups` | CRUD、有效成员分页、变更影响预览 |
 | 流程定义与版本 | `/process-definitions`、`/process-definitions/imports` | 新建/复制/原子导入、版本、分区设计器保存、校验、发布、取消发布、删除；正式契约另含定义 JSON 导出 |
 | 发起配置 | `/me/launchable-process-definitions`、`/process-definitions/{id}/launch-config` | 数据范围裁剪、锁定发布版本、候选人员解析 |
-| 流程实例 | `/process-instances` | 分页查询、创建、首审前修改、重新提交、关闭、复制新建 |
-| 任务中心 | `/me/workflow-tasks`、`/workflow-tasks/{id}` | 正式列表和当前 Mock 均按实例分页并使用 `{ tasks, instance }`，`taskType` 区分审批、自由协作受理和待重新提交；客户端仍兼容旧的单任务包装。审批/确认/驳回、重复字段修改只属于审批任务 |
+| 流程实例 | `/process-instances` | 分页查询、创建、首审前修改、重新提交、关闭、复制新建；分页响应同时按流程返回忽略 `definitionId` 后的完整数量汇总 |
+| 任务中心 | `/me/workflow-tasks`、`/workflow-tasks/{id}` | 正式列表和当前 Mock 均按实例分页并使用 `{ tasks, instance }`，分页响应同时按流程返回忽略 `definitionId` 后的完整数量汇总；`taskType` 区分审批、自由协作受理和待重新提交，客户端仍兼容旧的单任务包装。审批/确认/驳回、重复字段修改只属于审批任务 |
 | 自由协作 | `/process-instances/{id}/free-collaboration/*` | 回复及回复附件、变更受理人、编辑、关闭、重新打开 |
 | 附件 | `/attachments`、`/process-instances/{id}/fields/{fieldId}/attachment` | 当前 Mock 的 multipart、大小/类型校验、权限下载和旧单文件替换兼容路由仍可能使用 `temporary`；正式契约统一采用 `staged/active/cleanup-pending`、先暂存后引用并支持 Range/507，尚待代码迁移 |
 | 邮件 Outbox | `/email-outbox` | 收件人解析、去重、发送结果、失败重试演示 |
@@ -108,6 +108,8 @@ try {
 - 审批任务采用首个成功提交生效；确认节点拒绝驳回；重复修改只更新节点授权字段，不改变原审核结果。
 - Handler 从当前会话解析操作人，不接受请求体伪造操作人，并重新检查页面权限、动作权限和流程数据范围。
 - 流程定义创建、基本信息和流程图保存要求 `config-definition:编辑`，表单保存要求 `config-form:编辑`，重新校验要求 `config-definition:发布`；Mock 与正式契约保持一致。
+- 初始表单和流程图快照分别保存自己的 `savedAt`。Mock 在对应分区保存成功时写入服务端语义的当前时间，页面统一显示到分钟；旧流程图快照缺少时间时兼容使用版本更新时间展示，下一次保存后补齐独立时间。
+- 自由协作回复区不再提供独立文件附件上传，当前客户端只提交富文本正文和可选的新受理人；Mock 继续兼容读取历史回复附件及旧请求中的 `attachmentIds`。
 - 流程权限组用途统一为“发起、审批/受理、关闭”。流程版本分别保存发起组、自由流程受理组和关闭组标识；关闭命令按实例锁定版本的关闭组当前有效成员重新鉴权，不从发起或受理资格推导。
 - 用户、角色、部门/职务和流程权限组删除分别要求 `org-user:删除`、`org-role:删除`、`org-department:删除`、`org-group:删除` 和最新 `If-Match`。Mock 在删除用户前检查角色、流程权限组、全部流程版本的可见人/通知收件人、实例、任务和附件，在删除角色前检查成员、流程权限组和全部流程版本引用；部门检查成员和下级部门，职务检查使用用户，流程权限组检查全部流程版本和节点引用。存在引用返回对应的 `409` 稳定错误，编辑权限不能替代删除权限。
 - Mock 与正式契约均允许用户的部门、职务和角色为空，账号启用状态不再附加最少角色限制；超级管理员邮箱、部门和职务为空。表单设计器只保留实际使用的“编辑”权限，实例监控和审计只保留“查看”权限；读取旧权限存储时清理已删除的权限码。

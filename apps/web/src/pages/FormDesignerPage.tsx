@@ -1140,7 +1140,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
         <Space wrap>
           <div className="fd-save-status">
             <CheckCircleFilled />
-            <span>{hasUnsavedChanges ? "有未保存修改" : `版本已保存 · ${savedAt}`}</span>
+            <span>{hasUnsavedChanges ? "有未保存修改" : `版本已保存 · ${formatDisplayDateTime(savedAt)}`}</span>
           </div>
           <ProcessWizardPreviousButton step="基本信息" onClick={goPrevious} />
           <Space.Compact>

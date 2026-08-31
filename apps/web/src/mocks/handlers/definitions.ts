@@ -530,7 +530,10 @@ export const definitionHandlers = [
         return apiProblem(request, 409, "VERSION_SAVE_FAILED", "保存失败", "流程基本信息没有保存。 ");
       }
     }
-    if (!store.updateVersionFlowSnapshot(definitionId, versionId, body.flow)) {
+    if (!store.updateVersionFlowSnapshot(definitionId, versionId, {
+      ...body.flow,
+      savedAt: new Date().toISOString(),
+    })) {
       return apiProblem(request, 409, "VERSION_SAVE_FAILED", "保存失败", "流程图配置没有保存。 ");
     }
     const updated = versionById(definitionId, versionId)!;

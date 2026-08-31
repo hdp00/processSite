@@ -2,6 +2,7 @@ import { http } from "msw";
 import { MOCK_API_BASE_URL } from "../apiBase";
 import type {
   ProcessInstanceDetail,
+  TaskCenterFlowCategory,
   WorkflowDecisionResult,
   WorkflowTaskListItem,
 } from "../../api/contracts";
@@ -107,7 +108,7 @@ const parseDateValue = (value: string) => {
   return Number.isFinite(timestamp) ? timestamp : undefined;
 };
 
-const filterInstances = (request: Request, actorId: string) => {
+const filterInstances = (request: Request, actorId: string, ignoreDefinition = false) => {
   const url = new URL(request.url);
   const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
   const definitionId = url.searchParams.get("definitionId");
@@ -120,7 +121,7 @@ const filterInstances = (request: Request, actorId: string) => {
   return usePrototypeStore.getState().instances
     .filter((item) => canUserViewInstance(actorId, item))
     .filter((item) => !q || `${item.code}${item.title}${item.documentCode}${item.initiator}`.toLowerCase().includes(q))
-    .filter((item) => !definitionId || item.definitionId === definitionId)
+    .filter((item) => ignoreDefinition || !definitionId || item.definitionId === definitionId)
     .filter((item) => !status || item.status === status)
     .filter((item) => !initiatorId || item.initiatorId === initiatorId)
     .filter((item) => {
@@ -129,6 +130,19 @@ const filterInstances = (request: Request, actorId: string) => {
       return (!Number.isFinite(fromTime) || time >= Number(fromTime)) && (!Number.isFinite(toTime) || time <= Number(toTime));
     })
     .sort((left, right) => compareDomainTimestamps(right.createdAt, left.createdAt));
+};
+
+const summarizeFlowCategories = (instances: ProcessInstance[]): TaskCenterFlowCategory[] => {
+  const categories = new Map<string, TaskCenterFlowCategory>();
+  instances.forEach((instance) => {
+    const current = categories.get(instance.definitionId);
+    categories.set(instance.definitionId, {
+      definitionId: instance.definitionId,
+      workflowType: instance.workflowType,
+      count: (current?.count ?? 0) + 1,
+    });
+  });
+  return Array.from(categories.values()).sort((left, right) => right.count - left.count);
 };
 
 const ensureSessionActor = (request: Request, actorId: string) =>
@@ -184,7 +198,9 @@ export const instanceTaskHandlers = [
     if (auth.response) return auth.response;
     const pagination = pageQuery(request);
     if ("response" in pagination) return pagination.response;
-    return apiOk(request, paginate(filterInstances(request, auth.actor.id), pagination.number, pagination.size));
+    const page = paginate(filterInstances(request, auth.actor.id), pagination.number, pagination.size);
+    const categories = summarizeFlowCategories(filterInstances(request, auth.actor.id, true));
+    return apiOk(request, { ...page, categories });
   }),
 
   http.post(`${API}/process-instances`, async ({ request }) => {
@@ -378,10 +394,9 @@ export const instanceTaskHandlers = [
       .filter((entry): entry is { task: WorkflowTask; instance: ProcessInstance } => Boolean(entry.instance))
       .filter(({ task, instance }) => canUserViewInstance(auth.actor.id, instance) && (actorCanHandleTask(auth.actor.id, task) || task.completedById === auth.actor.id))
       .filter(({ task }) => view === "all" || (view === "completed" ? task.status === "已完成" : task.status === "待处理"))
-      .filter(({ task }) => !definitionId || task.definitionId === definitionId)
       .filter(({ task, instance }) => !q || `${instance.code}${instance.title}${instance.initiator}${task.nodeName}`.toLowerCase().includes(q))
       .sort((left, right) => compareDomainTimestamps(right.task.createdAt, left.task.createdAt));
-    const items = Array.from(visibleTasks.reduce((byInstance, { task, instance }) => {
+    const createItems = (entries: typeof visibleTasks) => Array.from(entries.reduce((byInstance, { task, instance }) => {
       const current = byInstance.get(instance.id);
       if (current) current.tasks.push(taskWithActions(task, instance, auth.actor.id));
       else byInstance.set(instance.id, {
@@ -390,7 +405,9 @@ export const instanceTaskHandlers = [
       });
       return byInstance;
     }, new Map<string, WorkflowTaskListItem>()).values());
-    return apiOk(request, paginate(items, pagination.number, pagination.size));
+    const items = createItems(visibleTasks.filter(({ task }) => !definitionId || task.definitionId === definitionId));
+    const categories = summarizeFlowCategories(createItems(visibleTasks).map((item) => item.instance));
+    return apiOk(request, { ...paginate(items, pagination.number, pagination.size), categories });
   }),
 
   http.get(`${API}/workflow-tasks/:taskId`, async ({ request, params }) => {

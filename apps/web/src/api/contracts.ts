@@ -31,6 +31,13 @@ export interface PageInfo {
 export interface PageResult<T> {
   items: T[];
   page: PageInfo;
+  categories?: TaskCenterFlowCategory[];
+}
+
+export interface TaskCenterFlowCategory {
+  definitionId: string;
+  workflowType: ProcessInstance["workflowType"];
+  count: number;
 }
 
 export interface ValidationProblemField {

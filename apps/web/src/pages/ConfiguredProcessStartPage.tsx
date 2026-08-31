@@ -36,7 +36,7 @@ import { AppBackButton } from "../components/AppBackButton";
 import { ExcelPdfPreviewModal } from "../components/ExcelPdfPreviewModal";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
-import type { AttachmentRecord } from "../api/contracts";
+import type { AttachmentRecord, DirectoryUser } from "../api/contracts";
 import type { ProcessInstance } from "../data/types";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { cacheProcessRuntime } from "../api/entityCache";
@@ -65,6 +65,8 @@ interface ConfiguredProcessStartPageProps {
   version: ProcessVersion;
   copySource?: ProcessInstance;
   copySourceVersion?: ProcessVersion;
+  assigneeCandidatesByNode?: Record<string, DirectoryUser[]>;
+  firstAssigneeCandidates?: DirectoryUser[];
 }
 
 const createRow = (columns: StoredDesignerTableColumn[]): DynamicRow => ({
@@ -158,7 +160,7 @@ function ConfiguredTableInput({
   );
 }
 
-function DynamicFieldControl({
+export function DynamicFieldControl({
   field,
   value,
   onChange,
@@ -236,7 +238,14 @@ function DynamicFieldControl({
   return <Input value={typeof value === "string" ? value : ""} placeholder={field.placeholder} maxLength={500} onChange={(event) => onChange?.(event.target.value)} />;
 }
 
-export function ConfiguredProcessStartPage({ definition, version, copySource, copySourceVersion }: ConfiguredProcessStartPageProps) {
+export function ConfiguredProcessStartPage({
+  definition,
+  version,
+  copySource,
+  copySourceVersion,
+  assigneeCandidatesByNode,
+  firstAssigneeCandidates,
+}: ConfiguredProcessStartPageProps) {
   const navigate = useNavigate();
   const identityUsers = useIdentityStore((state) => state.users);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
@@ -264,11 +273,13 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
     }).join("、");
     return `阶段${index + 1}${stage.length > 1 ? "（并行）" : ""}：${nodeText}`;
   }), [approvalStages]);
-  const peopleOptions = (groupIds: string[]) => {
+  const peopleOptions = (groupIds: string[], candidates?: DirectoryUser[]) => {
     const memberIds = new Set(groupIds.flatMap(effectiveGroupMemberIds));
-    return identityUsers
-      .filter((user) => memberIds.has(user.id))
-      .map((user) => ({ value: user.id, label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}` }));
+    const users = candidates ?? identityUsers.filter((user) => memberIds.has(user.id));
+    return users.map((user) => ({
+      value: user.id,
+      label: [user.name, user.departmentPath, user.jobTitle].filter(Boolean).join(" · "),
+    }));
   };
   const [form] = Form.useForm<DynamicFormValues>();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -562,7 +573,15 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
                       </div>
                       {node.data?.specifyAssignee && (
                         <Form.Item name={`reviewer-${node.id}`} rules={[{ required: true, message: `请选择${node.data.label}默认责任人` }]}>
-                          <Select showSearch optionFilterProp="label" placeholder="搜索符合权限组的人员" options={peopleOptions(node.data?.permissionGroup ? [node.data.permissionGroup] : [])} />
+                          <Select
+                            showSearch
+                            optionFilterProp="label"
+                            placeholder="搜索符合权限组的人员"
+                            options={peopleOptions(
+                              node.data?.permissionGroup ? [node.data.permissionGroup] : [],
+                              assigneeCandidatesByNode?.[node.id],
+                            )}
+                          />
                         </Form.Item>
                       )}
                       <span className="start-permission-name"><TeamOutlined /> {node.data?.permissionGroup ? resolveWorkflowGroupLabel(workflowGroups, node.data.permissionGroup) : "尚未配置流程权限组"}</span>
@@ -574,7 +593,12 @@ export function ConfiguredProcessStartPage({ definition, version, copySource, co
               <Card className="approval-card start-reviewer-card" title="首位受理人" extra={<TeamOutlined />}>
                 <Alert type="info" showIcon title="受理后可继续选择下一位受理人" description={`候选人来自：${assigneeGroupLabels.join("、") || "尚未配置受理流程权限组"}`} />
                 <Form.Item name="firstAssignee" label="选择受理人" rules={[{ required: true, message: "请选择首位受理人" }]}>
-                  <Select showSearch optionFilterProp="label" placeholder="搜索并选择首位受理人" options={peopleOptions(version.basic.assigneeGroups ?? [])} />
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder="搜索并选择首位受理人"
+                    options={peopleOptions(version.basic.assigneeGroups ?? [], firstAssigneeCandidates)}
+                  />
                 </Form.Item>
               </Card>
             )}

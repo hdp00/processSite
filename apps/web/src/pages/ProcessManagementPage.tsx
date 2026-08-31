@@ -17,6 +17,7 @@ import { isBrowserMockMode } from "../utils/runtimeMode";
 
 interface CreateProcessValues { name: string; type: DefinitionType; description?: string }
 interface ImportPreviewState extends ProcessDefinitionImportPreview { fileName: string; document: unknown }
+interface DefinitionFilters { keyword: string; status?: DefinitionStatus; type?: DefinitionType }
 
 const typeMeta: Record<DefinitionType, { label: string; icon: React.ReactNode; className: string }> = {
   approval: { label: "固定审批", icon: <BranchesOutlined />, className: "is-approval" },
@@ -37,6 +38,7 @@ export function ProcessManagementPage() {
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<DefinitionStatus>();
   const [type, setType] = useState<DefinitionType>();
+  const [appliedFilters, setAppliedFilters] = useState<DefinitionFilters>({ keyword: "" });
   const [createOpen, setCreateOpen] = useState(false);
   const [createDirty, setCreateDirty] = useState(false);
   const [importPreview, setImportPreview] = useState<ImportPreviewState>();
@@ -55,7 +57,13 @@ export function ProcessManagementPage() {
     if (isBrowserMockMode) return;
     let cancelled = false;
     setRemoteLoading(true);
-    void flowPilotApi.definitions.list({ page, pageSize, q: keyword.trim() || undefined, status, type })
+    void flowPilotApi.definitions.list({
+      page,
+      pageSize,
+      q: appliedFilters.keyword.trim() || undefined,
+      status: appliedFilters.status,
+      type: appliedFilters.type,
+    })
       .then((result) => {
         if (!cancelled) {
           setRemoteDefinitions(result.items);
@@ -65,17 +73,32 @@ export function ProcessManagementPage() {
       .catch(() => { if (!cancelled) message.error("流程定义加载失败，请稍后重试"); })
       .finally(() => { if (!cancelled) setRemoteLoading(false); });
     return () => { cancelled = true; };
-  }, [keyword, page, pageSize, status, type]);
+  }, [appliedFilters, page, pageSize]);
 
   const filteredDefinitions = useMemo(() => {
     if (!isBrowserMockMode) return remoteDefinitions;
-    const normalized = keyword.trim().toLowerCase();
+    const normalized = appliedFilters.keyword.trim().toLowerCase();
     return definitions.filter((item) => {
       const published = getPublishedVersion(item);
       const matched = !normalized || `${item.name}${item.code}${published?.basic.instancePrefix ?? ""}${item.description}`.toLowerCase().includes(normalized);
-      return matched && (!status || definitionStatus(item) === status) && (!type || item.type === type);
+      return matched &&
+        (!appliedFilters.status || definitionStatus(item) === appliedFilters.status) &&
+        (!appliedFilters.type || item.type === appliedFilters.type);
     });
-  }, [definitions, keyword, remoteDefinitions, status, type]);
+  }, [appliedFilters, definitions, remoteDefinitions]);
+
+  const applyFilters = () => {
+    setPage(1);
+    setAppliedFilters({ keyword, status, type });
+  };
+
+  const resetFilters = () => {
+    setPage(1);
+    setKeyword("");
+    setStatus(undefined);
+    setType(undefined);
+    setAppliedFilters({ keyword: "" });
+  };
 
   const updateStatus = (record: ProcessDefinition) => {
     const stopping = !record.disabled;
@@ -208,7 +231,39 @@ export function ProcessManagementPage() {
         <div className="pa-overview-copy"><span className="pa-eyebrow"><FileTextOutlined /> 流程配置</span><Typography.Title level={3}>流程定义概览</Typography.Title><Typography.Text type="secondary">流程定义负责名称与员工侧入口；每个版本都是完整快照，最多一个版本处于发布状态。</Typography.Text></div>
         <div className="pa-overview-stats" aria-label="流程统计"><span><strong>{isBrowserMockMode ? definitions.length : remoteTotal}</strong><small>流程定义</small></span><span><strong>{filteredDefinitions.filter((item) => definitionStatus(item) === "已发布").length}</strong><small>{isBrowserMockMode ? "已发布" : "当前页已发布"}</small></span><span><strong>{filteredDefinitions.reduce((total, item) => total + (item.versionCount ?? item.versions.length), 0)}</strong><small>{isBrowserMockMode ? "正式版本" : "当前页版本"}</small></span></div>
       </Card>
-      <Card className="query-card pa-filter-card"><div className="pa-filter-row"><Input className="pa-keyword-input" prefix={<SearchOutlined />} allowClear value={keyword} onChange={(event) => { setPage(1); setKeyword(event.target.value); }} placeholder="搜索流程名称、编号或说明" /><Select<DefinitionType> className="pa-filter-select" allowClear value={type} onChange={(value) => { setPage(1); setType(value); }} placeholder="全部类型" options={Object.entries(typeMeta).map(([value, meta]) => ({ value: value as DefinitionType, label: meta.label }))} /><Select<DefinitionStatus> className="pa-filter-select" allowClear value={status} onChange={(value) => { setPage(1); setStatus(value); }} placeholder="全部状态" options={["未发布", "已发布", "已停用"].map((value) => ({ value: value as DefinitionStatus, label: value }))} /><Button icon={<ReloadOutlined />} onClick={() => { setPage(1); setKeyword(""); setStatus(undefined); setType(undefined); }}>重置</Button>{canEditDefinition && <Upload accept=".json" showUploadList={false} beforeUpload={(file) => { void readImportFile(file); return false; }}><Button icon={<UploadOutlined />}>导入</Button></Upload>}{canEditDefinition && <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建流程</Button>}</div></Card>
+      <Card className="query-card pa-filter-card">
+        <div className="pa-filter-row">
+          <Input
+            className="pa-keyword-input"
+            prefix={<SearchOutlined />}
+            allowClear
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+            onPressEnter={applyFilters}
+            placeholder="搜索流程名称、编号或说明"
+          />
+          <Select<DefinitionType>
+            className="pa-filter-select"
+            allowClear
+            value={type}
+            onChange={setType}
+            placeholder="全部类型"
+            options={Object.entries(typeMeta).map(([value, meta]) => ({ value: value as DefinitionType, label: meta.label }))}
+          />
+          <Select<DefinitionStatus>
+            className="pa-filter-select"
+            allowClear
+            value={status}
+            onChange={setStatus}
+            placeholder="全部状态"
+            options={["未发布", "已发布", "已停用"].map((value) => ({ value: value as DefinitionStatus, label: value }))}
+          />
+          <Button type="primary" icon={<SearchOutlined />} onClick={applyFilters}>查询</Button>
+          <Button icon={<ReloadOutlined />} onClick={resetFilters}>重置</Button>
+          {canEditDefinition && <Upload accept=".json" showUploadList={false} beforeUpload={(file) => { void readImportFile(file); return false; }}><Button icon={<UploadOutlined />}>导入</Button></Upload>}
+          {canEditDefinition && <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建流程</Button>}
+        </div>
+      </Card>
       <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}>
         <div className="table-result-head pa-table-head"><div><strong>流程定义</strong><Tag variant="filled">{isBrowserMockMode ? filteredDefinitions.length : remoteTotal} 条</Tag></div><Typography.Text type="secondary">进入版本记录可发布、取消发布、切换发布版本或从任意版本复制新建</Typography.Text></div>
         <Table<ProcessDefinition> loading={remoteLoading} rowKey="id" columns={columns} dataSource={filteredDefinitions} scroll={{ x: 1120 }} pagination={{ current: page, pageSize, total: isBrowserMockMode ? filteredDefinitions.length : remoteTotal, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录`, onChange: setPage }} />

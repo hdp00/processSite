@@ -50,6 +50,8 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
             rows.Add(ReadTaskRow(reader));
         }
 
+        var categories = await ReadCategoriesAsync(reader, cancellationToken).ConfigureAwait(false);
+
         await reader.CloseAsync().ConfigureAwait(false);
         var instances = await LoadInstanceSummariesAsync(
             connection,
@@ -65,7 +67,8 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
 
         return new PageDto<TaskCenterListItemDto>(
             items,
-            CreatePageMeta(query.Page, query.PageSize, total));
+            CreatePageMeta(query.Page, query.PageSize, total),
+            categories);
     }
 
     public async Task<PageDto<ProcessInstanceSummaryDto>> ListInstancesAsync(
@@ -89,6 +92,8 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
             rows.Add(ReadInstanceRow(reader));
         }
 
+        var categories = await ReadCategoriesAsync(reader, cancellationToken).ConfigureAwait(false);
+
         await reader.CloseAsync().ConfigureAwait(false);
         var instances = await LoadInstanceSummariesAsync(
             connection,
@@ -97,7 +102,8 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
 
         return new PageDto<ProcessInstanceSummaryDto>(
             rows.Select(row => instances[row.Id]).ToArray(),
-            CreatePageMeta(query.Page, query.PageSize, total));
+            CreatePageMeta(query.Page, query.PageSize, total),
+            categories);
     }
 
     private SqlCommand CreateTaskListCommand(
@@ -116,16 +122,11 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
             )
             """);
 
-        if (query.DefinitionId.HasValue)
-        {
-            taskFilters.AppendLine().Append("AND [i].[definition_id] = @definition_id");
-        }
-
         taskFilters.AppendLine().Append(BuildTaskVisibilityFilter(actor, query.View));
-        var pageFilters = new StringBuilder(taskFilters.ToString());
+        var categoryFilters = new StringBuilder(taskFilters.ToString());
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
-            pageFilters.AppendLine().Append(
+            categoryFilters.AppendLine().Append(
                 """
                 AND
                 (
@@ -136,6 +137,12 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
                     OR [t].[node_name_snapshot] LIKE @search ESCAPE N'\'
                 )
                 """);
+        }
+
+        var pageFilters = new StringBuilder(categoryFilters.ToString());
+        if (query.DefinitionId.HasValue)
+        {
+            pageFilters.AppendLine().Append("AND [i].[definition_id] = @definition_id");
         }
 
         const string commonTableExpression =
@@ -234,6 +241,7 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
             """;
 
         var pageFilterText = pageFilters.ToString();
+        var categoryFilterText = categoryFilters.ToString();
         var taskFilterText = taskFilters.ToString();
         var command = CreateCommand(connection);
         command.CommandText = string.Concat(
@@ -264,7 +272,14 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
             "\nAND [i].[id] IN (SELECT [page].[instance_id] FROM [#page_instances] AS [page])\n",
             "ORDER BY\n",
             "    (SELECT [page].[sort_at] FROM [#page_instances] AS [page] WHERE [page].[instance_id] = [i].[id]) DESC,\n",
-            "    [i].[id] DESC, [t].[activated_at] DESC, [t].[id] DESC;");
+            "    [i].[id] DESC, [t].[activated_at] DESC, [t].[id] DESC;\n",
+            commonTableExpression,
+            "\nSELECT [i].[definition_id], [d].[type], COUNT_BIG(DISTINCT [i].[id])\n",
+            source,
+            "\n",
+            categoryFilterText,
+            "\nGROUP BY [i].[definition_id], [d].[type]\n",
+            "ORDER BY COUNT_BIG(DISTINCT [i].[id]) DESC, [i].[definition_id];");
 
         AddCommonListParameters(command, actor.UserId, query.Page, query.PageSize, query.Search);
         if (query.DefinitionId.HasValue)
@@ -287,11 +302,6 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
         {
             filters.AppendLine().Append(
                 "AND [i].[created_at] >= @date_from AND [i].[created_at] < @date_to_exclusive");
-        }
-
-        if (query.DefinitionId.HasValue)
-        {
-            filters.AppendLine().Append("AND [i].[definition_id] = @definition_id");
         }
 
         if (!string.IsNullOrWhiteSpace(query.Status))
@@ -411,6 +421,12 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
                 """);
         }
 
+        var categoryFilterText = filters.ToString();
+        if (query.DefinitionId.HasValue)
+        {
+            filters.AppendLine().Append("AND [i].[definition_id] = @definition_id");
+        }
+
         const string commonTableExpression =
             """
             WITH [effective_groups] AS
@@ -495,7 +511,14 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
             "\n",
             filterText,
             "\nORDER BY [i].[created_at] DESC, [i].[id] DESC\n",
-            "OFFSET @offset ROWS FETCH NEXT @page_size ROWS ONLY;");
+            "OFFSET @offset ROWS FETCH NEXT @page_size ROWS ONLY;\n",
+            commonTableExpression,
+            "\nSELECT [i].[definition_id], [d].[type], COUNT_BIG(1)\n",
+            source,
+            "\n",
+            categoryFilterText,
+            "\nGROUP BY [i].[definition_id], [d].[type]\n",
+            "ORDER BY COUNT_BIG(1) DESC, [i].[definition_id];");
 
         AddCommonListParameters(command, actor.UserId, query.Page, query.PageSize, query.Search);
         AddUtcDateParameter(command, "@date_from", query.DateFrom);
@@ -977,6 +1000,23 @@ public sealed class SqlServerTaskCenterQueryService : ITaskCenterQueryService
         await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
             ? reader.GetInt64(0)
             : 0;
+
+    private static async Task<IReadOnlyList<TaskCenterFlowCategoryDto>> ReadCategoriesAsync(
+        SqlDataReader reader,
+        CancellationToken cancellationToken)
+    {
+        await reader.NextResultAsync(cancellationToken).ConfigureAwait(false);
+        var categories = new List<TaskCenterFlowCategoryDto>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            categories.Add(new TaskCenterFlowCategoryDto(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                reader.GetInt64(2)));
+        }
+
+        return categories;
+    }
 
     private static PageMetaDto CreatePageMeta(int page, int pageSize, long total)
     {

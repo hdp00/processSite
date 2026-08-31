@@ -15,7 +15,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Button, Space, Tooltip, message } from "antd";
 import DOMPurify from "dompurify";
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getRichMedia, richMediaIdFromSource, richMediaSource, saveRichMedia } from "../utils/richMediaRepository";
 import "./rich-text-editor.css";
 
@@ -127,8 +127,6 @@ export function RichTextEditor({
   minHeight = 150,
   disabled = false,
 }: RichTextEditorProps) {
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const videoInputRef = useRef<HTMLInputElement>(null);
   const objectUrlsRef = useRef<string[]>([]);
   const lastEmittedValueRef = useRef<string | undefined>(undefined);
   const [uploadingMedia, setUploadingMedia] = useState(false);
@@ -170,13 +168,11 @@ export function RichTextEditor({
 
   useEffect(() => () => objectUrlsRef.current.forEach(URL.revokeObjectURL), []);
 
-  const insertMedia = async (event: ChangeEvent<HTMLInputElement>, kind: "image" | "video") => {
-    const file = event.target.files?.[0];
-    if (!file || !editor) return;
+  const insertMedia = async (file: File, kind: "image" | "video") => {
+    if (!editor) return;
     const maxSize = kind === "image" ? 1.5 : 6;
     if (file.size > maxSize * 1024 * 1024) {
       message.warning(`原型中的${kind === "image" ? "图片" : "视频"}请控制在 ${maxSize} MB 以内`);
-      event.target.value = "";
       return;
     }
     setUploadingMedia(true);
@@ -193,8 +189,18 @@ export function RichTextEditor({
       message.error(error instanceof Error ? error.message : "富媒体文件保存失败");
     } finally {
       setUploadingMedia(false);
-      event.target.value = "";
     }
+  };
+
+  const selectMedia = (kind: "image" | "video") => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = kind === "image" ? "image/*" : "video/*";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (file) void insertMedia(file, kind);
+    };
+    input.click();
   };
 
   if (!editor) return null;
@@ -213,15 +219,13 @@ export function RichTextEditor({
               const url = window.prompt("请输入链接地址", editor.getAttributes("link").href ?? "https://");
               if (url) editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
             }} /></Tooltip>
-            <Tooltip title="上传图片"><Button type="text" size="small" loading={uploadingMedia} icon={<PictureOutlined />} onClick={() => imageInputRef.current?.click()} /></Tooltip>
-            <Tooltip title="上传视频"><Button type="text" size="small" loading={uploadingMedia} icon={<VideoCameraOutlined />} onClick={() => videoInputRef.current?.click()} /></Tooltip>
+            <Tooltip title="上传图片"><Button type="text" size="small" loading={uploadingMedia} icon={<PictureOutlined />} onClick={() => selectMedia("image")} /></Tooltip>
+            <Tooltip title="上传视频"><Button type="text" size="small" loading={uploadingMedia} icon={<VideoCameraOutlined />} onClick={() => selectMedia("video")} /></Tooltip>
           </Space>
           <span className="rich-editor__hint">Tiptap · 支持文字、图片、视频和链接</span>
         </div>
       )}
       <EditorContent editor={editor} className="rich-editor__content" />
-      <input ref={imageInputRef} hidden type="file" accept="image/*" onChange={(event) => insertMedia(event, "image")} />
-      <input ref={videoInputRef} hidden type="file" accept="video/*" onChange={(event) => insertMedia(event, "video")} />
     </div>
   );
 }

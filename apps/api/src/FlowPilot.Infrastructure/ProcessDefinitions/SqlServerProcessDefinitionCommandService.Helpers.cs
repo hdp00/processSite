@@ -74,6 +74,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService
             {
                 ["nodes"] = nodes,
                 ["edges"] = edges,
+                ["savedAt"] = JsonValue.Create(now),
                 ["meta"] = new JsonObject
                 {
                     ["rejectionHandling"] = "resubmit-or-close",

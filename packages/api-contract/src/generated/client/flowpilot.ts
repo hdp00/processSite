@@ -1060,6 +1060,7 @@ export type FlowDesignerSnapshotDtoMeta = {
 };
 
 export interface FlowDesignerSnapshotDto {
+  savedAt?: string;
   nodes: FlowNodeDto[];
   edges: FlowEdgeDto[];
   meta: FlowDesignerSnapshotDtoMeta;
@@ -1443,9 +1444,18 @@ export interface ProcessInstanceSummaryDto {
   listValues?: ProcessInstanceSummaryDtoListValues;
 }
 
+export interface TaskCenterFlowCategoryDto {
+  definitionId: string;
+  workflowType: ProcessDefinitionType;
+  /** @minimum 1 */
+  count: number;
+}
+
 export interface ProcessInstancePage {
   items: ProcessInstanceSummaryDto[];
   meta: PageMeta;
+  /** 忽略 definitionId 条件、保留其余查询条件后的各流程完整数量汇总 */
+  categories: TaskCenterFlowCategoryDto[];
 }
 
 export type ReviewProgressDtoStatus = typeof ReviewProgressDtoStatus[keyof typeof ReviewProgressDtoStatus];
@@ -1754,6 +1764,8 @@ export interface WorkflowTaskDetailDto {
 export interface TaskCenterItemPage {
   items: TaskCenterItemDto[];
   meta: PageMeta;
+  /** 忽略 definitionId 条件、保留当前任务视图和搜索条件后的各流程完整数量汇总 */
+  categories: TaskCenterFlowCategoryDto[];
 }
 
 /**
@@ -3959,7 +3971,7 @@ const closeProcessInstance = (
   }
 
 /**
- * 按流程实例分页，每项返回该实例下当前视图可见的任务数组与实例摘要；tasks 中各任务通过 taskType 区分审批、自由协作和待重新提交，后两类没有审批节点。待办不按创建日期截断。
+ * 按流程实例分页，每项返回该实例下当前视图可见的任务数组与实例摘要；categories 返回忽略 definitionId 条件后的各流程完整数量汇总。tasks 中各任务通过 taskType 区分审批、自由协作和待重新提交，后两类没有审批节点。待办不按创建日期截断。
  * @summary 查询任务中心中的我的待办或可代办任务
  */
 const listMyWorkflowTasks = (

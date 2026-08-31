@@ -31,6 +31,13 @@ export const normalizePageResult = <T>(value: unknown, map: (item: unknown) => T
   const totalElements = number(page.totalElements, number(page.total, value.items.length));
   return {
     items: value.items.map(map),
+    categories: Array.isArray(value.categories)
+      ? value.categories.filter(isRecord).map((category) => ({
+          definitionId: text(category.definitionId),
+          workflowType: category.workflowType === "free" ? "free" as const : "approval" as const,
+          count: number(category.count),
+        })).filter((category) => category.definitionId && category.count > 0)
+      : [],
     page: {
       number: pageNumber,
       size: pageSize,
@@ -454,6 +461,7 @@ const normalizeCompleteDesignerSnapshot = (value: unknown): CompleteDesignerSnap
       }];
     }),
     flow: {
+      savedAt: text(value.flow.savedAt) || undefined,
       nodes: value.flow.nodes.flatMap((node) => {
         const normalized = normalizeFlowNode(node);
         return normalized ? [normalized] : [];

@@ -260,7 +260,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
             actor,
             traceId,
             "save-flow-designer",
-            (state, catalog, _, _) =>
+            (state, catalog, now, _) =>
             {
                 if (!string.Equals(state.DefinitionType, "approval", StringComparison.Ordinal))
                 {
@@ -271,7 +271,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
                         "自由协作流程只需要配置初始表单和受理范围。")));
                 }
 
-                var flow = NormalizeFlow(request.Flow);
+                var flow = NormalizeFlow(request.Flow, now);
                 if (flow.Failure is not null)
                 {
                     return Task.FromResult(SavePreparation.Failed(flow.Failure));
@@ -1581,7 +1581,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
             normalizedSystemFields);
     }
 
-    private static NormalizedFlow NormalizeFlow(JsonObject source)
+    private static NormalizedFlow NormalizeFlow(JsonObject source, DateTimeOffset now)
     {
         var issues = new List<ProcessDefinitionInputIssueDto>();
         if (source["nodes"] is not JsonArray nodes || source["edges"] is not JsonArray edges)
@@ -1704,6 +1704,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
         {
             ["nodes"] = normalizedNodes,
             ["edges"] = normalizedEdges,
+            ["savedAt"] = JsonValue.Create(now),
             ["meta"] = new JsonObject { ["rejectionHandling"] = rejectionHandling },
         });
     }

@@ -12,7 +12,13 @@ public sealed record PageMetaDto(
 
 public sealed record PageDto<T>(
     IReadOnlyList<T> Items,
-    PageMetaDto Meta);
+    PageMetaDto Meta,
+    IReadOnlyList<TaskCenterFlowCategoryDto> Categories);
+
+public sealed record TaskCenterFlowCategoryDto(
+    Guid DefinitionId,
+    string WorkflowType,
+    long Count);
 
 public sealed record TaskCenterUserRefDto(
     Guid Id,

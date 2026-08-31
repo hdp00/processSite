@@ -1,11 +1,9 @@
 import {
-  DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
   HistoryOutlined,
   LockOutlined,
   MessageOutlined,
-  PaperClipOutlined,
   ReloadOutlined,
   SwapOutlined,
   UserOutlined,
@@ -17,16 +15,18 @@ import {
   Card,
   Descriptions,
   Divider,
+  Form,
   Input,
   Modal,
   Select,
   Space,
+  Table,
   Tag,
   Timeline,
   Tooltip,
   Typography,
-  Upload,
   message,
+  type UploadFile,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -34,10 +34,11 @@ import { AppBackButton } from "../components/AppBackButton";
 import { cacheProcessRuntime } from "../api/entityCache";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
-import type { AttachmentRecord } from "../api/contracts";
 import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
+import { RuntimeReadonlyChoice } from "../components/RuntimeReadonlyChoice";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
+import type { AttachmentRecord } from "../api/contracts";
 import type { FreeFlowEntry, ProcessInstance } from "../data/types";
 import { canUserTransferFreeFlow, isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
 import { effectiveGroupMemberIds, findIdentityUser, isUserInWorkflowGroup, useIdentityStore } from "../state/useIdentityStore";
@@ -45,11 +46,134 @@ import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserCloseInstance } from "../state/workflowAccess";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
+import { applyDesignerFieldVisibility, isDesignerFieldVisible, normalizeDesignerFormValues, type StoredDesignerField } from "../utils/designerStorage";
+import { designerChoiceOptionsToAntd, displayDesignerChoiceValue } from "../utils/designerOptions";
+import { resolveRuntimeAttachments } from "../utils/attachmentDisplay";
+import { DynamicFieldControl } from "./ConfiguredProcessStartPage";
 import "./free-flow.css";
 
 const { Text, Title } = Typography;
 const hasRichContent = (html: string) =>
   html.replace(/<[^>]+>/g, "").replaceAll("&nbsp;", " ").trim().length > 0 || /<(img|video)\b/i.test(html);
+
+const isEmptyValue = (value: unknown) =>
+  value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
+
+const displayFieldValue = (field: Pick<StoredDesignerField, "type" | "options">, value: unknown) => {
+  if (isEmptyValue(value)) return "—";
+  if (["select", "radio", "checkbox", "cascader"].includes(field.type)) {
+    return displayDesignerChoiceValue(field.options, value, { hierarchical: field.type === "cascader" }) || "—";
+  }
+  if (Array.isArray(value)) return value.join("、") || "—";
+  return String(value);
+};
+
+function InitialFormView({
+  fields,
+  instance,
+  onDownload,
+}: {
+  fields: StoredDesignerField[];
+  instance: ProcessInstance;
+  onDownload: (attachment: { id: string; name: string }) => void;
+}) {
+  const values = instance.formValues ?? {};
+  const visibleFields = fields.filter((field) => isDesignerFieldVisible(field, values));
+  const attachmentFields = fields.filter((field) => field.type === "attachment");
+
+  const renderValue = (field: StoredDesignerField) => {
+    const value = values[field.id];
+    if (field.type === "richtext") {
+      return isEmptyValue(value) ? <Typography.Text type="secondary">—</Typography.Text> : <RichTextContent html={String(value)} />;
+    }
+    if (field.type === "attachment") {
+      const attachments = resolveRuntimeAttachments({
+        fieldId: field.id,
+        value,
+        fallbackNames: instance.attachmentNames,
+        attachmentIdsByField: instance.attachmentIdsByField,
+        attachmentIds: instance.attachmentIds,
+        primaryField: field.id === attachmentFields[0]?.id,
+      });
+      return attachments.length ? <Space wrap>{attachments.map((attachment) => attachment.id
+        ? <Button key={attachment.id} size="small" icon={<DownloadOutlined />} onClick={() => onDownload({ id: attachment.id!, name: attachment.name })}>{attachment.name}</Button>
+        : <Tag key={`${field.id}-${attachment.sourceIndex}`}>{attachment.name}</Tag>)}</Space> : <Typography.Text type="secondary">—</Typography.Text>;
+    }
+    if (field.type === "table") {
+      const rows = Array.isArray(value) ? value as Array<Record<string, unknown>> : [];
+      if (!rows.length) return <Typography.Text type="secondary">—</Typography.Text>;
+      return <Table
+        bordered
+        size="small"
+        pagination={false}
+        rowKey={(row) => String(row.key ?? rows.indexOf(row))}
+        dataSource={rows}
+        scroll={{ x: 680 }}
+        columns={(field.columns ?? []).map((column) => ({
+          title: column.label,
+          dataIndex: column.id,
+          width: column.width ?? 150,
+          render: (cell: unknown) => column.type && column.type !== "text"
+            ? <RuntimeReadonlyChoice type={column.type} size="small" value={cell} options={designerChoiceOptionsToAntd(column.options)} />
+            : displayFieldValue({ type: "text", options: column.options }, cell),
+        }))}
+      />;
+    }
+    if (["select", "cascader", "radio", "checkbox"].includes(field.type)) {
+      return <RuntimeReadonlyChoice
+        type={field.type as "select" | "cascader" | "radio" | "checkbox"}
+        value={value}
+        options={designerChoiceOptionsToAntd(field.options)}
+      />;
+    }
+    const text = displayFieldValue(field, value);
+    return field.multiline
+      ? <Input.TextArea readOnly value={text === "—" ? "" : text} placeholder="未填写" autoSize={{ minRows: 3, maxRows: 10 }} />
+      : <Input readOnly value={text === "—" ? "" : text} placeholder="未填写" />;
+  };
+
+  return <Form className="runtime-process-form free-runtime-form" layout="vertical">
+    <div className="free-runtime-form__grid">
+      {visibleFields.map((field) => <Form.Item
+        key={field.id}
+        className={`runtime-form-item is-readonly${["richtext", "attachment", "table"].includes(field.type) ? " field-wide" : ""}`}
+        label={field.label}
+        extra={field.description || undefined}
+      >{renderValue(field)}</Form.Item>)}
+    </div>
+  </Form>;
+}
+
+const attachmentFilesForEdit = (instance: ProcessInstance, fields: StoredDesignerField[]) => {
+  const attachmentFields = fields.filter((field) => field.type === "attachment");
+  return Object.fromEntries(attachmentFields.map((field) => {
+    const attachments = resolveRuntimeAttachments({
+      fieldId: field.id,
+      value: instance.formValues?.[field.id],
+      fallbackNames: instance.attachmentNames,
+      attachmentIdsByField: instance.attachmentIdsByField,
+      attachmentIds: instance.attachmentIds,
+      primaryField: field.id === attachmentFields[0]?.id,
+    });
+    return [field.id, attachments.map((attachment): UploadFile<AttachmentRecord> => ({
+      uid: attachment.id ?? `${field.id}-${attachment.sourceIndex}`,
+      name: attachment.name,
+      status: "done",
+      response: attachment.id ? {
+        id: attachment.id,
+        name: attachment.name,
+        size: 0,
+        contentType: "application/octet-stream",
+        uploadedById: instance.initiatorId,
+        uploadedAt: instance.updatedAt,
+        instanceId: instance.id,
+        fieldId: field.id,
+        purpose: "form-field",
+        lifecycle: "active",
+      } : undefined,
+    }))];
+  }));
+};
 
 const entryMeta: Record<Exclude<FreeFlowEntry["type"], "reply">, { label: string; color: string }> = {
   created: { label: "创建事项", color: "blue" },
@@ -78,11 +202,8 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   useIdentityStore((state) => state.workflowGroups);
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === instance?.definitionId));
   const lockedVersion = definition?.versions.find((version) => version.id === instance?.versionId);
-  const hasConfiguredAttachmentField = Boolean(lockedVersion?.snapshot.form.fields.some((field) => field.type === "attachment"));
-  const showsInitialAttachments = Boolean(
-    hasConfiguredAttachmentField
-    && (instance?.attachmentNames?.length || (instance?.pdfName && !["无附件", "—"].includes(instance.pdfName))),
-  );
+  const configuredFields = (lockedVersion?.snapshot.form.fields ?? [])
+    .filter((field) => (field.inputStage ?? "initiator") !== "reviewer");
   const assigneeIds = new Set((lockedVersion?.basic.assigneeGroups ?? []).flatMap(effectiveGroupMemberIds));
   const userOptions = identityUsers.filter((user) => assigneeIds.has(user.id)).map((user) => ({
     value: user.id,
@@ -90,8 +211,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   }));
   const isSuperAdmin = isSuperAdminPersona(personaId);
   const [replyContent, setReplyContent] = useState("");
-  const [replyAttachments, setReplyAttachments] = useState<AttachmentRecord[]>([]);
-  const [replyUploading, setReplyUploading] = useState(false);
   const [nextAssignee, setNextAssignee] = useState<string>();
   const [editEntry, setEditEntry] = useState<FreeFlowEntry>();
   const [editContent, setEditContent] = useState("");
@@ -101,14 +220,11 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const [reopenReason, setReopenReason] = useState("");
   const [reopenAssignee, setReopenAssignee] = useState<string>();
   const [initialEditOpen, setInitialEditOpen] = useState(false);
+  const [initialFormDirty, setInitialFormDirty] = useState(false);
+  const [savingInitialForm, setSavingInitialForm] = useState(false);
+  const [initialForm] = Form.useForm<Record<string, unknown>>();
+  const watchedInitialValues = Form.useWatch([], initialForm) as Record<string, unknown> | undefined;
   const [resourceEtag, setResourceEtag] = useState<string>();
-  const [draftInitial, setDraftInitial] = useState({
-    title: instance?.title ?? "",
-    category: instance?.category ?? "",
-    priority: instance?.priority ?? ("普通" as const),
-    description: instance?.description ?? "",
-    initialContent: instance?.freeTimeline?.find((entry) => entry.type === "created")?.content ?? "",
-  });
 
   const participants = instance?.participants ?? [];
   const isOpen = instance?.status === "进行中";
@@ -127,24 +243,16 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   );
   const canTransfer = Boolean(instance && canUserTransferFreeFlow(instance, personaId));
   const initialEntry = instance?.freeTimeline?.find((entry) => entry.type === "created");
-  const initialFormDirty = Boolean(initialEditOpen && instance && (
-    draftInitial.title !== instance.title
-    || draftInitial.category !== instance.category
-    || draftInitial.priority !== instance.priority
-    || draftInitial.description !== instance.description
-    || draftInitial.initialContent !== (initialEntry?.content ?? "")
-  ));
   const hasReplyDraft = hasRichContent(replyContent);
   const collaborationActionLabel = nextAssignee
     ? hasReplyDraft ? "回复并变更" : "变更受理人"
     : canReply ? "发表回复" : "变更受理人";
-  const collaborationActionDisabled = replyUploading || (nextAssignee
+  const collaborationActionDisabled = nextAssignee
     ? !canTransfer
-    : !(canReply && hasReplyDraft));
+    : !(canReply && hasReplyDraft);
   const { guard } = useUnsavedChangesGuard({
     dirty: Boolean(
       hasRichContent(replyContent)
-      || replyAttachments.length > 0
       || nextAssignee
       || (editEntry && editContent !== editEntry.content)
       || closeReason.trim()
@@ -206,20 +314,17 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   };
 
   const submitCollaboration = async () => {
-    const attachmentIds = replyAttachments.map((attachment) => attachment.id);
     if (nextAssignee) {
       const assigneeName = findIdentityUser(nextAssignee)?.name ?? "所选人员";
       const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.transfer(
         instance.id,
         nextAssignee,
         hasReplyDraft ? replyContent : undefined,
-        hasReplyDraft ? attachmentIds : [],
         etag,
       ));
       if (!updated) return;
       if (hasReplyDraft) {
         setReplyContent("");
-        setReplyAttachments([]);
       }
       setNextAssignee(undefined);
       message.success(hasReplyDraft ? `回复已发表，受理人已变更为${assigneeName}` : `受理人已变更为${assigneeName}`);
@@ -229,42 +334,11 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.reply(
       instance.id,
       replyContent,
-      attachmentIds,
       etag,
     ));
     if (!updated) return;
     setReplyContent("");
-    setReplyAttachments([]);
     message.success("回复已发表，不改变当前受理人");
-  };
-
-  const uploadReplyAttachment = async (file: File) => {
-    if (replyAttachments.length >= 20) {
-      message.warning("每条回复最多添加 20 个附件");
-      return Upload.LIST_IGNORE;
-    }
-    setReplyUploading(true);
-    try {
-      const attachment = await flowPilotApi.attachments.upload(file, {
-        instanceId: instance.id,
-        purpose: "free-reply",
-      });
-      setReplyAttachments((current) => [...current, attachment]);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "附件上传失败，请稍后重试");
-    } finally {
-      setReplyUploading(false);
-    }
-    return Upload.LIST_IGNORE;
-  };
-
-  const removeReplyAttachment = async (attachment: AttachmentRecord) => {
-    try {
-      await flowPilotApi.attachments.remove(attachment.id);
-      setReplyAttachments((current) => current.filter((item) => item.id !== attachment.id));
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : "附件删除失败，请稍后重试");
-    }
   };
 
   const downloadAttachment = async (attachment: { id: string; name: string }) => {
@@ -278,6 +352,85 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (error) {
       message.error(error instanceof Error ? error.message : "附件下载失败，请稍后重试");
+    }
+  };
+
+  const renderInitialEditField = (field: StoredDesignerField) => {
+    const wide = ["richtext", "attachment", "table"].includes(field.type);
+    const rules = field.type === "table"
+      ? [{
+          validator: async (_: unknown, rows?: Array<Record<string, unknown>>) => {
+            if (field.required && !rows?.length) throw new Error(`请填写${field.label}`);
+            const missing = rows?.some((row) => (field.columns ?? [])
+              .some((column) => column.required && isEmptyValue(row[column.id])));
+            if (missing) throw new Error(`请完整填写${field.label}中的必填列`);
+          },
+        }]
+      : [{ required: field.required, message: `请填写${field.label}` }];
+    return <Form.Item
+      key={field.id}
+      className={wide ? "field-wide" : undefined}
+      name={field.id}
+      label={field.label}
+      extra={field.description || undefined}
+      rules={rules}
+    >
+      <DynamicFieldControl field={field} onRemoveUploadedAttachment={async () => true} />
+    </Form.Item>;
+  };
+
+  const saveInitialForm = async () => {
+    if (!lockedVersion) return;
+    if (!initialFormDirty) return message.warning("初始表单没有变化");
+    const uploadedRecords: AttachmentRecord[] = [];
+    setSavingInitialForm(true);
+    try {
+      const editedValues = await initialForm.validateFields();
+      const attachmentIdsByField: Record<string, string[]> = {};
+      const nextValues = { ...(instance.formValues ?? {}), ...editedValues };
+      for (const field of configuredFields.filter((item) => item.type === "attachment")) {
+        const files = Array.isArray(editedValues[field.id])
+          ? editedValues[field.id] as UploadFile<AttachmentRecord>[]
+          : [];
+        const records: AttachmentRecord[] = [];
+        for (const file of files) {
+          if (file.response?.id) {
+            records.push(file.response);
+            continue;
+          }
+          if (!file.originFileObj) throw new Error(`无法读取附件“${file.name}”，请重新选择文件`);
+          const record = await flowPilotApi.attachments.upload(file.originFileObj, {
+            instanceId: instance.id,
+            fieldId: field.id,
+          });
+          records.push(record);
+          uploadedRecords.push(record);
+        }
+        attachmentIdsByField[field.id] = records.map((record) => record.id);
+        nextValues[field.id] = records.map((record) => ({
+          id: record.id,
+          name: record.name,
+          size: record.size,
+          contentType: record.contentType,
+        }));
+      }
+      const formValues = applyDesignerFieldVisibility(
+        lockedVersion.snapshot.form.fields,
+        normalizeDesignerFormValues(lockedVersion.snapshot.form.fields, nextValues),
+      );
+      const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.updateSubmission(instance.id, {
+        formValues,
+        attachmentIdsByField,
+      }, etag));
+      if (!updated) throw new Error("初始表单保存失败");
+      setInitialEditOpen(false);
+      setInitialFormDirty(false);
+      message.success("初始表单已按当前流程版本保存，修改记录已写入时间线");
+    } catch (error) {
+      await Promise.allSettled(uploadedRecords.map((record) => flowPilotApi.attachments.remove(record.id)));
+      if (error instanceof Error && error.message !== "初始表单保存失败") message.error(error.message);
+    } finally {
+      setSavingInitialForm(false);
     }
   };
 
@@ -333,13 +486,11 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
         </div>
         <Space wrap>
           {canEditInitial && <Button icon={<EditOutlined />} onClick={() => {
-            setDraftInitial({
-              title: instance.title,
-              category: instance.category ?? "",
-              priority: instance.priority,
-              description: instance.description,
-              initialContent: initialEntry?.content ?? "",
+            initialForm.setFieldsValue({
+              ...(instance.formValues ?? {}),
+              ...attachmentFilesForEdit(instance, configuredFields),
             });
+            setInitialFormDirty(false);
             setInitialEditOpen(true);
           }}>编辑初始表单</Button>}
           {canClose && <Button danger icon={<LockOutlined />} onClick={() => setCloseOpen(true)}>关闭事项</Button>}
@@ -350,19 +501,9 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
       <div className="free-flow-layout">
         <main className="free-flow-main">
           <Card className="free-initial-card" title="初始表单" extra={initialEntry?.editedAt ? <Tag color="gold">已编辑 · {formatDisplayDateTime(initialEntry.editedAt)}</Tag> : null}>
-            <Descriptions column={2} size="small">
-              <Descriptions.Item label="事项分类">{instance.category}</Descriptions.Item>
-              <Descriptions.Item label="优先级"><Tag color={instance.priority === "紧急" ? "red" : "default"}>{instance.priority}</Tag></Descriptions.Item>
-              <Descriptions.Item label="发起人" span={showsInitialAttachments ? 1 : 2}>{instance.initiator}</Descriptions.Item>
-              {showsInitialAttachments ? (
-                <Descriptions.Item label="附件">
-                  {instance.attachmentNames?.length ? instance.attachmentNames.join("、") : instance.pdfName}
-                </Descriptions.Item>
-              ) : null}
-              <Descriptions.Item label="事项摘要" span={2}>{instance.description}</Descriptions.Item>
-            </Descriptions>
-            <Divider />
-            <RichTextContent html={initialEntry?.content ?? ""} />
+            {configuredFields.length
+              ? <InitialFormView fields={configuredFields} instance={instance} onDownload={(attachment) => void downloadAttachment(attachment)} />
+              : <Alert type="warning" showIcon title="该实例锁定的流程版本没有初始表单字段" />}
           </Card>
 
           <div className="free-timeline-heading"><HistoryOutlined /><strong>协作时间线</strong><Tag>{timeline.length} 条记录</Tag></div>
@@ -404,33 +545,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
             canReply || canTransfer ? (
               <Card className="free-compose-card" title={<Space><MessageOutlined />协作处理</Space>}>
                 {canReply && <RichTextEditor value={replyContent} onChange={setReplyContent} placeholder="补充协作信息…" minHeight={180} />}
-                {canReply && (
-                  <div>
-                    <Upload
-                      multiple
-                      showUploadList={false}
-                      beforeUpload={uploadReplyAttachment}
-                      disabled={replyUploading || replyAttachments.length >= 20}
-                    >
-                      <Button icon={<PaperClipOutlined />} loading={replyUploading}>添加回复附件</Button>
-                    </Upload>
-                    {replyAttachments.length ? (
-                      <Space wrap size={[8, 8]} style={{ marginTop: 10 }}>
-                        {replyAttachments.map((attachment) => (
-                          <Tag
-                            key={attachment.id}
-                            closable={!replyUploading}
-                            closeIcon={<DeleteOutlined />}
-                            onClose={(event) => {
-                              event.preventDefault();
-                              void removeReplyAttachment(attachment);
-                            }}
-                          >{attachment.name}</Tag>
-                        ))}
-                      </Space>
-                    ) : null}
-                  </div>
-                )}
                 <div className="free-compose-actions">
                   <Text type="secondary">发表回复不会改变当前受理人；发起或受理权限组成员可直接变更受理人。</Text>
                   <Space wrap>
@@ -476,28 +590,28 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
         message.success("回复已更新，仅保留最新内容");
       }}><RichTextEditor value={editContent} onChange={setEditContent} minHeight={260} /></Modal>
 
-      <Modal title="编辑初始表单" width={800} open={initialEditOpen} okText="保存修改" onCancel={() => setInitialEditOpen(false)} onOk={async () => {
-        if (!draftInitial.title.trim() || !hasRichContent(draftInitial.initialContent)) return message.warning("请填写标题和初始说明");
-        if (!initialFormDirty) return message.warning("初始表单没有变化");
-        const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.updateSubmission(instance.id, {
-          ...draftInitial,
-          formValues: instance.formValues,
-          attachmentIdsByField: instance.attachmentIdsByField,
-        }, etag));
-        if (!updated) return;
-        setInitialEditOpen(false);
-        message.success("初始表单已更新，修改记录已写入时间线");
-      }}>
-        <Alert type="info" showIcon title="进行中允许发起人修改，关闭后自动锁定" description="字段变化和修改时间会保留在流程记录中。" />
-        <div className="free-modal-form">
-          <label><span>事项标题</span><Input value={draftInitial.title} onChange={(event) => setDraftInitial((current) => ({ ...current, title: event.target.value }))} /></label>
-          <div className="free-modal-grid">
-            <label><span>事项分类</span><Select value={draftInitial.category} onChange={(category) => setDraftInitial((current) => ({ ...current, category }))} options={["生产异常", "质量问题", "设计问题", "测试记录", "一般协作"].map((value) => ({ value }))} /></label>
-            <label><span>优先级</span><Select value={draftInitial.priority} onChange={(priority) => setDraftInitial((current) => ({ ...current, priority }))} options={["普通", "紧急"].map((value) => ({ value }))} /></label>
+      <Modal
+        title="编辑初始表单"
+        width={900}
+        open={initialEditOpen}
+        okText="保存修改"
+        confirmLoading={savingInitialForm}
+        onCancel={() => { setInitialEditOpen(false); setInitialFormDirty(false); }}
+        onOk={() => void saveInitialForm()}
+      >
+        <Alert type="info" showIcon title="按该实例锁定的流程版本编辑" description="字段、顺序、选项和必填规则均来自发起时使用的版本；字段变化和修改时间会保留在流程记录中。" />
+        <Form
+          form={initialForm}
+          className="free-initial-edit-form"
+          layout="vertical"
+          onValuesChange={() => setInitialFormDirty(true)}
+        >
+          <div className="free-runtime-form__grid">
+            {configuredFields
+              .filter((field) => isDesignerFieldVisible(field, watchedInitialValues ?? instance.formValues ?? {}))
+              .map(renderInitialEditField)}
           </div>
-          <label><span>事项摘要</span><Input.TextArea value={draftInitial.description} onChange={(event) => setDraftInitial((current) => ({ ...current, description: event.target.value }))} /></label>
-          <label><span>初始说明</span><RichTextEditor value={draftInitial.initialContent} onChange={(initialContent) => setDraftInitial((current) => ({ ...current, initialContent }))} minHeight={220} /></label>
-        </div>
+        </Form>
       </Modal>
 
       <Modal title="关闭事项" open={closeOpen} okText="确认关闭" okButtonProps={{ danger: true }} onCancel={() => setCloseOpen(false)} onOk={async () => {

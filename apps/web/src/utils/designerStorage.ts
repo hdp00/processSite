@@ -327,6 +327,7 @@ export interface StoredFlowEdgeSnapshot {
 export interface StoredFlowDesignerSnapshot {
   nodes: StoredFlowNodeSnapshot[];
   edges: StoredFlowEdgeSnapshot[];
+  savedAt?: string;
   meta?: {
     rejectionHandling?: "resubmit-or-close" | "resubmit-only" | "auto-close";
   };

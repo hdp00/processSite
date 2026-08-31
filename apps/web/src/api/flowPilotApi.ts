@@ -214,7 +214,11 @@ const taskPageRequest = async (query: object): Promise<PageResult<WorkflowTaskLi
     query,
   });
   const page = normalizePageResult(raw, (item) => item);
-  return { items: await Promise.all(page.items.map(normalizeTaskListItem)), page: page.page };
+  return {
+    items: await Promise.all(page.items.map(normalizeTaskListItem)),
+    page: page.page,
+    categories: page.categories,
+  };
 };
 
 const remoteStatus = (status: "启用" | "停用") => status === "启用" ? "enabled" : "disabled";
@@ -426,6 +430,7 @@ const remoteFormDesignerInput = (input: Pick<CompleteDesignerSnapshot, "form" | 
 });
 
 const remoteFlowDesignerSnapshot = (flow: StoredFlowDesignerSnapshot) => ({
+  ...(flow.savedAt !== undefined ? { savedAt: flow.savedAt } : {}),
   nodes: flow.nodes.map((node) => {
     const data = node.data;
     const activationCondition = remoteDesignerCondition(data?.activationCondition);
@@ -789,7 +794,7 @@ export const flowPilotApi = {
     decide: async (taskId: string, input: { action: "pass" | "confirm" | "reject"; comment?: string; fieldValues?: Record<string, unknown>; attachmentIdsByField?: Record<string, string[]> }, ifMatch?: string) => {
       const task = usePrototypeStore.getState().tasks.find((item) => item.id === taskId);
       const instance = usePrototypeStore.getState().instances.find((item) => item.id === task?.instanceId);
-      const fieldIds = task?.editableFieldIds?.length ? task.editableFieldIds : Object.keys(input.fieldValues ?? {});
+      const fieldIds = task?.editableFieldIds ?? [];
       const canEditField = (fieldId: string) => fieldIds.includes(fieldId) || fieldIds.some((id) => id.startsWith(`${fieldId}.`));
       const fieldValues = Object.fromEntries(Object.entries(input.fieldValues ?? {}).filter(([fieldId]) => canEditField(fieldId)));
       const attachmentIdsByField = Object.fromEntries(Object.entries(input.attachmentIdsByField ?? {}).filter(([fieldId]) => fieldIds.includes(fieldId)));
@@ -812,7 +817,7 @@ export const flowPilotApi = {
     reviseFields: async (taskId: string, fieldValues: Record<string, unknown>, comment?: string, ifMatch?: string, attachmentIdsByField?: Record<string, string[]>) => {
       const task = usePrototypeStore.getState().tasks.find((item) => item.id === taskId);
       const instance = usePrototypeStore.getState().instances.find((item) => item.id === task?.instanceId);
-      const allowedIds = task?.editableFieldIds?.length ? task.editableFieldIds : Object.keys(fieldValues);
+      const allowedIds = task?.editableFieldIds ?? [];
       const canEditField = (fieldId: string) => allowedIds.includes(fieldId) || allowedIds.some((id) => id.startsWith(`${fieldId}.`));
       const allowedValues = Object.fromEntries(Object.entries(fieldValues).filter(([fieldId]) => canEditField(fieldId)));
       const allowedAttachmentIds = Object.fromEntries(Object.entries(attachmentIdsByField ?? {}).filter(([fieldId]) => allowedIds.includes(fieldId)));
@@ -851,14 +856,14 @@ export const flowPilotApi = {
       });
       return normalizeInstanceDetail(result).instance;
     },
-    reply: async (instanceId: string, content: string, attachmentIds: string[] = [], ifMatch?: string) => {
-      const result = await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies`, { method: "POST", body: { content, attachmentIds }, ifMatch, ...mutation() });
+    reply: async (instanceId: string, content: string, ifMatch?: string) => {
+      const result = await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies`, { method: "POST", body: { content }, ifMatch, ...mutation() });
       return remoteMode
         ? normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`)).instance
         : normalizeProcessInstance(result);
     },
-    transfer: (instanceId: string, nextAssigneeId: string, content?: string, attachmentIds: string[] = [], ifMatch?: string) =>
-      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/transfers`, { method: "POST", body: { nextAssigneeId, content, attachmentIds }, ifMatch, ...mutation() })
+    transfer: (instanceId: string, nextAssigneeId: string, content?: string, ifMatch?: string) =>
+      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/transfers`, { method: "POST", body: { nextAssigneeId, content }, ifMatch, ...mutation() })
         .then((value) => normalizeInstanceDetail(value).instance),
     editReply: async (instanceId: string, entryId: string, content: string, ifMatch?: string) => {
       const result = await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies/${encodeURIComponent(entryId)}`, { method: "PATCH", body: { content }, ifMatch });
@@ -867,35 +872,15 @@ export const flowPilotApi = {
         : normalizeProcessInstance(result);
     },
     updateSubmission: (instanceId: string, input: {
-      title: string;
-      category: string;
-      priority: "普通" | "紧急";
-      description: string;
-      initialContent: string;
-      formValues?: Record<string, unknown>;
+      formValues: Record<string, unknown>;
       attachmentIdsByField?: Record<string, string[]>;
     }, ifMatch?: string) =>
       apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/initial-form`, {
         method: "PATCH",
-        body: remoteMode
-          ? {
-              formValues: {
-                ...(input.formValues ?? {}),
-                title: input.title,
-                category: input.category,
-                priority: input.priority,
-                description: input.description,
-                initialContent: input.initialContent,
-              },
-              attachmentIdsByField: input.attachmentIdsByField ?? {},
-            }
-          : {
-              title: input.title,
-              category: input.category,
-              priority: input.priority,
-              description: input.description,
-              initialContent: input.initialContent,
-            },
+        body: {
+          formValues: input.formValues,
+          attachmentIdsByField: input.attachmentIdsByField ?? {},
+        },
         ifMatch,
       })
         .then((value) => normalizeInstanceDetail(value).instance),

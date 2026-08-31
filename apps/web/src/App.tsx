@@ -5,6 +5,8 @@ import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Navigate, Route, RouterProvider, createBrowserRouter, createRoutesFromElements, useLocation, useParams } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { AppBackButton } from "./components/AppBackButton";
+import { ProcessLaunchConfigProvider } from "./components/ProcessLaunchConfigContext";
+import type { ProcessLaunchConfig } from "./api/contracts";
 import { LoginPage } from "./pages/LoginPage";
 import { canPersonaAccessLaunch, canPersonaLaunchDefinition, hasPersonaPermission } from "./state/rolePermissions";
 import { getPublishedVersion, useProcessDefinitionStore } from "./state/useProcessDefinitionStore";
@@ -12,7 +14,6 @@ import { usePrototypeStore } from "./state/usePrototypeStore";
 import { canUserViewInstance } from "./state/workflowAccess";
 import { flowPilotApi } from "./api/flowPilotApi";
 import { cacheProcessDefinition, cacheProcessRuntime, cacheProcessVersion } from "./api/entityCache";
-import { useIdentityStore } from "./state/useIdentityStore";
 
 const FlowDesignerPage = lazy(() => import("./pages/FlowDesignerPage").then((module) => ({ default: module.FlowDesignerPage })));
 const FreeFlowDetailPage = lazy(() => import("./pages/FreeFlowDetailPage").then((module) => ({ default: module.FreeFlowDetailPage })));
@@ -109,40 +110,22 @@ function ProcessDefinitionLoader({ children }: { children: ReactNode }) {
 function LaunchDefinitionLoader({ children }: { children: ReactNode }) {
   const { definitionId } = useParams<{ definitionId?: string }>();
   const location = useLocation();
-  const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const copySourceId = new URLSearchParams(location.search).get("copyFrom");
   const copySource = usePrototypeStore((state) => state.instances.find((item) => item.id === copySourceId));
-  const copySourceVersionLoaded = Boolean(
-    copySource && definition?.versions.some((version) => version.id === copySource.versionId),
-  );
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [launchConfig, setLaunchConfig] = useState<ProcessLaunchConfig>();
   useEffect(() => {
-    const needsLaunchConfig = !definition?.versions.length;
-    const needsCopySource = Boolean(copySourceId && (!copySource || !copySourceVersionLoaded));
-    if (import.meta.env.VITE_API_MODE !== "remote" || !definitionId || (!needsLaunchConfig && !needsCopySource)) return;
+    if (import.meta.env.VITE_API_MODE !== "remote" || !definitionId) return;
     let cancelled = false;
     setLoading(true);
     setFailed(false);
     void (async () => {
-      if (needsLaunchConfig) {
-        const resource = await flowPilotApi.definitions.launchConfig(definitionId);
-        if (cancelled) return;
-        cacheProcessDefinition(resource.data.definition);
-        const candidates = [
-          ...resource.data.firstAssigneeCandidates,
-          ...Object.values(resource.data.assigneeCandidatesByNode).flat(),
-        ];
-        useIdentityStore.getState().setUsers((users) => {
-          const byId = new Map(users.map((user) => [user.id, user]));
-          candidates.forEach((user) => {
-            const current = byId.get(user.id);
-            byId.set(user.id, { ...current, ...user, password: current?.password ?? "" });
-          });
-          return [...byId.values()];
-        });
-      }
-      if (copySourceId && (!copySource || !copySourceVersionLoaded)) {
+      const resource = await flowPilotApi.definitions.launchConfig(definitionId);
+      if (cancelled) return;
+      cacheProcessDefinition(resource.data.definition);
+      setLaunchConfig(resource.data);
+      if (copySourceId) {
         const detail = copySource ? { instance: copySource, tasks: undefined } : await flowPilotApi.instances.get(copySourceId);
         if (cancelled) return;
         cacheProcessRuntime(detail.instance, detail.tasks);
@@ -157,9 +140,12 @@ function LaunchDefinitionLoader({ children }: { children: ReactNode }) {
     })().catch(() => { if (!cancelled) setFailed(true); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [copySourceId, definitionId]);
-  if (loading) return <Spin fullscreen description="正在加载发起配置…" />;
+  const activeLaunchConfig = launchConfig?.definition.id === definitionId ? launchConfig : undefined;
   if (failed) return <Result status="403" title="流程当前不可发起" subTitle="流程可能已停用、取消发布或当前身份不在发起权限组中。" />;
-  return children;
+  if (import.meta.env.VITE_API_MODE === "remote" && (loading || !activeLaunchConfig)) {
+    return <Spin fullscreen description="正在加载发起配置…" />;
+  }
+  return <ProcessLaunchConfigProvider value={activeLaunchConfig}>{children}</ProcessLaunchConfigProvider>;
 }
 
 function ProcessDetailRoute() {

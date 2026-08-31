@@ -41,6 +41,7 @@ import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { isProcessInstanceResubmissionTodo } from "../utils/processInstanceAccess";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import { flowPilotApi } from "../api/flowPilotApi";
+import type { TaskCenterFlowCategory } from "../api/contracts";
 import { cacheProcessDefinition } from "../api/entityCache";
 import { isBrowserMockMode } from "../utils/runtimeMode";
 
@@ -65,6 +66,7 @@ export function TaskCenterPage() {
   const [remoteInstances, setRemoteInstances] = useState<ProcessInstance[]>([]);
   const [remoteTasks, setRemoteTasks] = useState<WorkflowTask[]>([]);
   const [remoteTotal, setRemoteTotal] = useState(0);
+  const [remoteFlowCategories, setRemoteFlowCategories] = useState<TaskCenterFlowCategory[]>([]);
   const [remoteTabTotals, setRemoteTabTotals] = useState<Record<TaskCenterTab, number>>({ mine: 0, substitute: 0, initiated: 0 });
   const [remoteLoading, setRemoteLoading] = useState(false);
 
@@ -100,18 +102,20 @@ export function TaskCenterPage() {
     const definitionId = selectedTemplate === ALL_FLOWS ? undefined : selectedTemplate;
     const request = tab === "initiated"
       ? flowPilotApi.instances.list({ page, pageSize, q: keyword.trim() || undefined, definitionId, initiatorId: personaId, activeOnly: true })
-        .then((result) => ({ instances: result.items, tasks: [] as WorkflowTask[], total: result.page.totalElements }))
+        .then((result) => ({ instances: result.items, tasks: [] as WorkflowTask[], total: result.page.totalElements, categories: result.categories ?? [] }))
       : flowPilotApi.tasks.listMine({ page, pageSize, q: keyword.trim() || undefined, definitionId, view: tab === "mine" ? "pending" : "substitutable" })
-        .then((result) => ({ instances: result.items.map((item) => item.instance), tasks: result.items.flatMap((item) => item.tasks), total: result.page.totalElements }));
+        .then((result) => ({ instances: result.items.map((item) => item.instance), tasks: result.items.flatMap((item) => item.tasks), total: result.page.totalElements, categories: result.categories ?? [] }));
     void request.then((result) => {
       if (cancelled) return;
       setRemoteInstances(result.instances);
       setRemoteTasks(result.tasks);
       setRemoteTotal(result.total);
+      setRemoteFlowCategories(result.categories);
     }).catch(() => {
       if (!cancelled) {
         setRemoteInstances([]);
         setRemoteTasks([]);
+        setRemoteFlowCategories([]);
       }
     }).finally(() => {
       if (!cancelled) setRemoteLoading(false);
@@ -165,6 +169,15 @@ export function TaskCenterPage() {
     ? tab === "mine" ? myTasks : tab === "substitute" ? substituteTasks : initiatedInstances
     : remoteInstances;
   const flowCategories = useMemo(() => {
+    if (!isBrowserMockMode) {
+      return remoteFlowCategories.map((category) => ({
+        template: category.definitionId,
+        count: category.count,
+        label: definitions.find((definition) => definition.id === category.definitionId)?.name ?? category.definitionId,
+        workflowType: category.workflowType,
+      }));
+    }
+
     const counts = new Map<string, number>();
     source.forEach((item) => item.definitionId && counts.set(item.definitionId, (counts.get(item.definitionId) ?? 0) + 1));
     return Array.from(counts, ([definitionId, count]) => ({
@@ -173,7 +186,8 @@ export function TaskCenterPage() {
       label: definitions.find((definition) => definition.id === definitionId)?.name ?? definitionId,
       workflowType: source.find((item) => item.definitionId === definitionId)?.workflowType,
     })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"));
-  }, [definitions, source]);
+  }, [definitions, remoteFlowCategories, source]);
+  const remoteCategoryTotal = remoteFlowCategories.reduce((total, category) => total + category.count, 0);
   const activeTemplate = selectedTemplate !== ALL_FLOWS
     && (!isBrowserMockMode || flowCategories.some((category) => category.template === selectedTemplate))
       ? selectedTemplate
@@ -413,7 +427,7 @@ export function TaskCenterPage() {
       <div className="task-center-layout">
         <Card className="task-flow-sidebar" styles={{ body: { padding: 0 } }}>
           <div className="task-flow-sidebar__head">
-            <span><AppstoreOutlined /> {isBrowserMockMode ? "流程分类" : "本页流程"}</span>
+            <span><AppstoreOutlined /> 流程分类</span>
           </div>
           {flowCategories.length > 8 && (
             <div className="task-flow-search">
@@ -435,7 +449,7 @@ export function TaskCenterPage() {
             >
               <span className="task-flow-item__icon"><AppstoreOutlined /></span>
               <span className="task-flow-item__copy"><strong>{tab === "initiated" ? "全部发起" : "全部待办"}</strong><small>{tab === "initiated" ? "本人发起且未完成" : "所有流程"}</small></span>
-              <span className="task-flow-item__count">{isBrowserMockMode ? source.length : remoteTotal}</span>
+              <span className="task-flow-item__count">{isBrowserMockMode ? source.length : remoteCategoryTotal}</span>
             </button>
             {visibleFlowCategories.map((category) => (
               <button
@@ -448,7 +462,7 @@ export function TaskCenterPage() {
                   {category.workflowType === "free" ? <MessageOutlined /> : <FileTextOutlined />}
                 </span>
                 <span className="task-flow-item__copy"><strong>{category.label}</strong><small>{category.workflowType === "free" ? "自由协作" : "固定审批"}</small></span>
-                <span className="task-flow-item__count">{isBrowserMockMode ? category.count : `本页 ${category.count}`}</span>
+                <span className="task-flow-item__count">{category.count}</span>
               </button>
             ))}
           </nav>

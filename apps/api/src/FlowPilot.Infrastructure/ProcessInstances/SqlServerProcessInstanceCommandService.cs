@@ -185,12 +185,18 @@ public sealed partial class SqlServerProcessInstanceCommandService(
                 now);
 
             _dbContext.WorkflowInstances.Add(instance);
+            // These runtime tables use database foreign keys but intentionally have no EF navigation
+            // properties. Persist each parent level before adding its dependent rows.
+            await _dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
             foreach (var task in runtime.Value!.Tasks)
             {
                 task.InstanceId = instanceId;
             }
 
             _dbContext.WorkflowTasks.AddRange(runtime.Value.Tasks);
+            await _dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
             AddRuntimeFacts(instance, runtime.Value, actor, request.CopySourceInstanceId, traceId, now);
             await AddFieldProjectionsAsync(instance, form.Values!, cancellationToken).ConfigureAwait(false);
             AddAttachmentReferences(instanceId, attachments.Value!, actor.EffectiveUserId, now);

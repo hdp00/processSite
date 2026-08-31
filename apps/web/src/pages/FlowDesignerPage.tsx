@@ -426,8 +426,6 @@ const createGenericDraft = (starterGroups: string[]): Pick<StoredDraft, "nodes" 
   ],
 });
 
-const formatTime = () => formatDisplayDateTime(new Date().toISOString());
-
 const flowDraftFingerprint = (
   nodes: DesignerNode[],
   edges: DesignerEdge[],
@@ -866,7 +864,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     let cancelled = false;
     void flowPilotApi.definitions.versionResource(definitionId, versionId).then((resource) => {
       if (cancelled) return;
-      cacheProcessVersion(definitionId, resource.data);
+      if (import.meta.env.VITE_API_MODE === "remote") cacheProcessVersion(definitionId, resource.data);
       setVersionEtag(resource.etag);
     }).catch((error) => {
       if (!cancelled) message.error(error instanceof Error ? error.message : "流程版本加载失败");
@@ -875,18 +873,29 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
   }, [definitionId, versionId]);
 
   const saveVersion = async () => {
-    const nextMeta = { ...meta, lastSavedAt: formatTime() };
-    const nextSavedFingerprint = flowDraftFingerprint(nodes, edges, nextMeta);
-    setMeta(nextMeta);
+    const requestedSavedAt = new Date().toISOString();
+    const nextSavedFingerprint = flowDraftFingerprint(nodes, edges, meta);
     const startGroups = nodes.find((node) => node.data.kind === "start")?.data.permissionGroups ?? starterGroups;
     try {
       if (!versionEtag) throw new Error("流程版本尚未加载完成，请稍后重试");
       const saved = await flowPilotApi.definitions.saveFlowDesignerResource(definitionId, versionId, {
-        basicPatch: { name: nextMeta.name, starterGroups: startGroups },
-        flow: { nodes, edges, meta: { rejectionHandling: nextMeta.rejectionHandling } } as StoredFlowDesignerSnapshot,
+        basicPatch: { name: meta.name, starterGroups: startGroups },
+        flow: {
+          nodes,
+          edges,
+          savedAt: requestedSavedAt,
+          meta: { rejectionHandling: meta.rejectionHandling },
+        } as StoredFlowDesignerSnapshot,
       }, versionEtag);
-      cacheProcessVersion(definitionId, saved.data.version);
+      if (import.meta.env.VITE_API_MODE === "remote") cacheProcessVersion(definitionId, saved.data.version);
       setVersionEtag(saved.etag);
+      setMeta((current) => ({
+        ...current,
+        lastSavedAt: formatDisplayDateTime(
+          saved.data.version.snapshot.flow.savedAt ?? saved.data.version.updatedAt ?? requestedSavedAt,
+          "尚未保存",
+        ),
+      }));
       savedFingerprint.current = nextSavedFingerprint;
       setAutoSaved(currentFingerprint.current === nextSavedFingerprint);
       message.success("版本已保存，并已自动更新校验结果");
@@ -940,9 +949,13 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
           </div>
         </div>
         <div className="flow-designer-toolbar__actions">
-          <span className={`flow-designer-save-state ${autoSaved ? "is-saved" : ""}`}>
+          <span className={`flow-designer-save-state ${autoSaved && meta.lastSavedAt !== "尚未保存" ? "is-saved" : ""}`}>
             <span className="flow-designer-save-state__dot" />
-            {autoSaved ? `版本已保存 · ${meta.lastSavedAt}` : "有未保存修改"}
+            {!autoSaved
+              ? "有未保存修改"
+              : meta.lastSavedAt === "尚未保存"
+                ? "尚未保存"
+                : `版本已保存 · ${formatDisplayDateTime(meta.lastSavedAt)}`}
           </span>
           <ProcessWizardPreviousButton step="初始表单" onClick={goPrevious} />
           <Space.Compact>
@@ -956,7 +969,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
           <Button icon={<ApartmentOutlined />} onClick={autoLayout}>
             自动布局
           </Button>
-          <Button icon={<SaveOutlined />} onClick={saveVersion}>
+          <Button icon={<SaveOutlined />} disabled={!versionEtag} onClick={saveVersion}>
             保存
           </Button>
           <Button icon={<SafetyCertificateOutlined />} onClick={() => setValidationOpen(true)}>
@@ -1571,6 +1584,10 @@ export const FlowDesignerPage = () => {
       version: version?.version ?? genericInitialMeta.version,
       basedOn: version?.basedOn ?? "全新流程",
       status: definition && version ? getVersionStatus(definition, version.id) : "校验未通过",
+      lastSavedAt: formatDisplayDateTime(
+        version?.snapshot.flow.savedAt ?? version?.updatedAt,
+        "尚未保存",
+      ),
     }),
     [definition, version],
   );

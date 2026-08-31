@@ -1,6 +1,7 @@
 import { Alert } from "antd";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
+import { useProcessLaunchConfig } from "../components/ProcessLaunchConfigContext";
 import { canPersonaLaunchDefinition, hasPersonaPermission } from "../state/rolePermissions";
 import { resolveLockedProcessVersion } from "../state/processVersionResolver";
 import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
@@ -17,12 +18,17 @@ export function ProcessStartPage() {
   const location = useLocation();
   const { definitionId } = useParams<{ definitionId?: string }>();
   const resolvedDefinitionId = resolveDefinitionId(definitionId, location.pathname);
-  const definition = useProcessDefinitionStore((state) =>
+  const launchConfig = useProcessLaunchConfig();
+  const cachedDefinition = useProcessDefinitionStore((state) =>
     state.definitions.find((candidate) => candidate.id === resolvedDefinitionId),
   );
+  const definition = cachedDefinition
+    ?? (launchConfig?.definition.id === resolvedDefinitionId ? launchConfig.definition : undefined);
   const personaId = usePrototypeStore((state) => state.personaId);
   const instances = usePrototypeStore((state) => state.instances);
-  const effectiveVersion = getPublishedVersion(definition);
+  const effectiveVersion = launchConfig?.definition.id === resolvedDefinitionId
+    ? launchConfig.version
+    : getPublishedVersion(definition);
   const copySourceId = new URLSearchParams(location.search).get("copyFrom");
   const copyCandidate = copySourceId ? instances.find((instance) => instance.id === copySourceId) : undefined;
   const copySourceVersion = copyCandidate ? resolveLockedProcessVersion(definition, copyCandidate) : undefined;
@@ -71,5 +77,7 @@ export function ProcessStartPage() {
     version={effectiveVersion}
     copySource={canCopySource ? copyCandidate : undefined}
     copySourceVersion={canCopySource ? copySourceVersion : undefined}
+    assigneeCandidatesByNode={launchConfig?.assigneeCandidatesByNode}
+    firstAssigneeCandidates={launchConfig?.firstAssigneeCandidates}
   />;
 }

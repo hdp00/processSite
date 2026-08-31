@@ -71,6 +71,10 @@ describe("formal REST response adapters", () => {
       },
       snapshot: {
         ...source.snapshot,
+        flow: {
+          ...source.snapshot.flow,
+          savedAt: "2026-08-31T06:03:13.090323+00:00",
+        },
         form: {
           ...source.snapshot.form,
           fields: [
@@ -93,6 +97,7 @@ describe("formal REST response adapters", () => {
     });
     expect(version.formFieldCount).toBe(source.snapshot.form.fields.length);
     expect(version.nodeCount).toBe(source.snapshot.flow.nodes.length);
+    expect(version.snapshot.flow.savedAt).toBe("2026-08-31T06:03:13.090323+00:00");
     expect(version.snapshot.form.fields.find((field) => field.id === "remote-text")?.options).toBeUndefined();
     expect(version.snapshot.form.fields.find((field) => field.id === "remote-file")?.options).toBeUndefined();
     expect(version.snapshot.form.fields.find((field) => field.id === "remote-select")?.options).toHaveLength(1);

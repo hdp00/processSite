@@ -5,6 +5,7 @@ import { assignAttachmentsToFreeReply, getAttachmentRecords } from "../attachmen
 import { findIdentityUser } from "../../state/useIdentityStore";
 import { canUserTransferFreeFlow, isSuperAdminPersona, usePrototypeStore } from "../../state/usePrototypeStore";
 import { canEditProcessInstanceSubmission } from "../../utils/processInstanceAccess";
+import { useProcessDefinitionStore } from "../../state/useProcessDefinitionStore";
 import { dispatchWorkflowEmailNotifications } from "./attachmentsNotifications";
 import {
   apiOk,
@@ -154,11 +155,19 @@ export const freeFlowHandlers = [
     }
     const conflict = checkIfMatch(request, found.instance, true);
     if (conflict) return conflict;
-    const body = await parseJsonBody<{ title?: string; category?: string; priority?: "普通" | "紧急"; description?: string; initialContent?: string }>(request);
+    const body = await parseJsonBody<{ formValues?: Record<string, unknown>; attachmentIdsByField?: Record<string, string[]> }>(request);
     if (body instanceof Response) return body;
-    if (!body.title?.trim() || !body.category?.trim() || !body.description?.trim() || !body.initialContent?.trim()) return apiProblem(request, 422, "VALIDATION_FAILED", "初始表单不完整", "标题、分类、优先级、摘要和初始说明均为必填项。 ");
+    if (!body.formValues || typeof body.formValues.title !== "string" || !body.formValues.title.trim()) {
+      return apiProblem(request, 422, "VALIDATION_FAILED", "初始表单不完整", "请填写流程标题和当前版本要求的必填字段。 ");
+    }
+    const lockedVersion = useProcessDefinitionStore.getState().definitions
+      .find((definition) => definition.id === found.instance.definitionId)
+      ?.versions.find((version) => version.id === found.instance.versionId);
+    const fieldLabels = Object.fromEntries((lockedVersion?.snapshot.form.fields ?? [])
+      .map((field) => [field.id, field.label]));
     usePrototypeStore.getState().updateFreeFlowInitial(found.instance.id, {
-      title: body.title.trim(), category: body.category.trim(), priority: body.priority === "紧急" ? "紧急" : "普通", description: body.description.trim(), initialContent: body.initialContent,
+      formValues: body.formValues,
+      fieldLabels,
     });
     const updated = instanceById(found.instance.id);
     if (!changed(found.instance, updated)) return apiProblem(request, 403, "UPDATE_SUBMISSION_FORBIDDEN", "不能修改初始表单", "只有流程创建人或超级管理员可以修改进行中事项的初始表单。 ");

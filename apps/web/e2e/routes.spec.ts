@@ -67,13 +67,21 @@ test("固定标题字段不显示选项设置", async ({ page }) => {
   await expect(page.getByText("选项设置", { exact: true })).toHaveCount(0);
 });
 
+test("流程定义概览提供明确的查询操作", async ({ page }) => {
+  test.skip(!isMockTarget, "该用例使用本地演示流程验证查询栏。");
+  await loginAs(page, "superadmin");
+  await gotoApp(page, "admin/processes");
+
+  await expect(page.getByRole("button", { name: "查询" })).toBeVisible();
+});
+
 test("初始表单设计器只在真实修改后显示未保存状态", async ({ page }) => {
   test.skip(!isMockTarget, "该用例使用本地演示流程验证设计器初始状态。");
   await loginAs(page, "superadmin");
   await gotoApp(page, "admin/processes/pdf-review/form?versionId=pdf-v2");
 
   await expect(page.getByText("有未保存修改", { exact: true })).toHaveCount(0);
-  await expect(page.getByText(/版本已保存 ·/)).toBeVisible();
+  await expect(page.locator(".fd-save-status")).toHaveText(/版本已保存 · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
 
   await page.getByLabel("字段标题").first().fill("标题（测试修改）");
   await expect(page.getByText("有未保存修改", { exact: true })).toBeVisible();
@@ -112,9 +120,22 @@ test("流程设计器只在真实修改后显示未保存状态", async ({ page 
   await gotoApp(page, "admin/processes/pdf-review/flow?versionId=pdf-v2");
 
   await expect(page.getByText("有未保存修改", { exact: true })).toHaveCount(0);
-  await expect(page.getByText(/版本已保存/)).toBeVisible();
+  await expect(page.locator(".flow-designer-save-state")).toHaveText(/版本已保存 · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  await expect(page.getByText("版本已保存 · 尚未保存", { exact: true })).toHaveCount(0);
 
   await page.getByText("流程属性", { exact: true }).click();
   await page.getByLabel("流程名称").fill("PDF 文件审核（测试修改）");
   await expect(page.getByText("有未保存修改", { exact: true })).toBeVisible();
+
+  const saveButton = page.getByRole("button", { name: /保存/ });
+  await expect(saveButton).toBeEnabled();
+  await saveButton.click();
+  await expect(page.getByText("版本已保存，并已自动更新校验结果", { exact: true })).toBeVisible();
+  await expect(page.locator(".flow-designer-save-state")).toHaveText(/版本已保存 · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+
+  await page.reload();
+  await expect(page.locator(".page-identity h4")).toHaveText("可视化流程设计");
+  await expect(page.getByText("有未保存修改", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".flow-designer-save-state")).toHaveText(/版本已保存 · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  await expect(page.getByText("版本已保存 · 尚未保存", { exact: true })).toHaveCount(0);
 });

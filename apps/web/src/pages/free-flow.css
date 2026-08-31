@@ -9,6 +9,14 @@
 .free-flow-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
 .free-flow-main, .free-flow-side { display: flex; flex-direction: column; gap: 16px; }
 .free-initial-card { border-top: 3px solid #3157d5; }
+.free-runtime-form .ant-form-item { margin-bottom: 18px; }
+.free-runtime-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
+.free-runtime-form__grid .field-wide { grid-column: 1 / -1; }
+.free-form-multiline { white-space: pre-wrap; }
+.free-initial-edit-form { margin-top: 18px; }
+.free-initial-edit-form .ant-select,
+.free-initial-edit-form .ant-cascader { width: 100%; }
+.free-initial-edit-form .configured-table-field { display: grid; gap: 10px; }
 .free-timeline-heading { display: flex; align-items: center; gap: 8px; margin: 4px 4px 0; color: #344057; }
 .free-timeline { padding: 4px 8px 0 10px; }
 .free-timeline .ant-timeline-item { padding-bottom: 18px; }
