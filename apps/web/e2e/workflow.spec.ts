@@ -73,6 +73,44 @@ test("发起自由协作事项并在刷新后保留数据", async ({ page }) => 
   await expect(page.getByRole("row", { name: new RegExp(title) })).toBeVisible();
 });
 
+test("自由协作发起、详情和编辑始终使用锁定版本的完整初始表单", async ({ page }) => {
+  test.skip(!isMockTarget, "确定性演示流程只适用于本地 Mock API。");
+  test.setTimeout(60_000);
+  const title = "E2E 自由协作表单一致性";
+  await loginAs(page, "wangmin");
+  await gotoApp(page, "launch");
+  await page.getByRole("button", { name: "发起异常协作事项" }).click();
+
+  const launchForm = page.locator(".start-form-grid");
+  const lockedFieldLabels = ["标题", "历史字段 2", "历史字段 3", "历史字段 4", "历史字段 5"];
+  for (const label of lockedFieldLabels) await expect(launchForm.getByText(label, { exact: true })).toBeVisible();
+  await launchForm.getByRole("textbox").first().fill(title);
+
+  const assignee = page.locator(".start-reviewer-card").getByRole("combobox");
+  await assignee.fill("张伟");
+  await page.locator(".ant-select-dropdown:visible").getByText("张伟 · 研发 / 软件 · 员工", { exact: true }).click();
+  await page.getByRole("button", { name: /提交$/ }).click();
+  await page.getByRole("dialog", { name: "确认提交" }).getByRole("button", { name: "确认提交" }).click();
+
+  await gotoApp(page, "tasks");
+  await page.getByText("我的发起", { exact: false }).click();
+  await page.getByPlaceholder("搜索编号、标题或发起人").fill(title);
+  const row = page.getByRole("row", { name: new RegExp(title) });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: new RegExp(`查看流程：${title}$`) }).click();
+
+  const initialCard = page.locator(".free-initial-card");
+  for (const label of lockedFieldLabels) await expect(initialCard.getByText(label, { exact: true })).toBeVisible();
+  await expect(initialCard.getByText("问题描述", { exact: true })).toHaveCount(0);
+  await expect(initialCard.getByText("优先级", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "编辑初始表单" }).click();
+  const editDialog = page.getByRole("dialog", { name: "编辑初始表单" });
+  await expect(editDialog).toBeVisible();
+  for (const label of lockedFieldLabels) await expect(editDialog.getByText(label, { exact: true })).toBeVisible();
+  await editDialog.getByRole("button", { name: /取\s*消/ }).click();
+});
+
 test("审核人必须填写驳回意见并可完成驳回", async ({ page }) => {
   test.skip(!isMockTarget, "确定性演示待办只适用于本地 Mock API。");
   const title = "MTR-320 步进电机装配作业指导书";

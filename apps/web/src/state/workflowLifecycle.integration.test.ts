@@ -33,6 +33,7 @@ let definitionModule: typeof import("./useProcessDefinitionStore");
 let prototypeModule: typeof import("./usePrototypeStore");
 let identityModule: typeof import("./useIdentityStore");
 let transferModule: typeof import("../utils/processDefinitionTransfer");
+let designerStorageModule: typeof import("../utils/designerStorage");
 
 const setActor = (personaId: string) => {
   prototypeModule.usePrototypeStore.setState({ personaId, authenticated: true });
@@ -52,6 +53,7 @@ beforeAll(async () => {
   prototypeModule = await import("./usePrototypeStore");
   identityModule = await import("./useIdentityStore");
   transferModule = await import("../utils/processDefinitionTransfer");
+  designerStorageModule = await import("../utils/designerStorage");
 });
 
 beforeEach(() => {
@@ -152,6 +154,228 @@ describe("流程定义完整生命周期", () => {
     expect(switched.name).toBe("固件发布单新版");
     expect(definitionModule.getVersionStatus(switched, firstVersion.id)).toBe("可发布");
     expect(definitionModule.getVersionStatus(switched, secondVersionId)).toBe("已发布");
+  });
+
+  it("所有表单和流程设置在保存、发布、复制与实例锁定后保持完整", () => {
+    const store = definitionModule.useProcessDefinitionStore.getState();
+    const definition = definitionById("pdf-review")!;
+    const source = definitionModule.getPublishedVersion(definition)!;
+    const versionId = store.createVersion(definition.id, source.id)!;
+    const form = structuredClone(source.snapshot.form);
+    form.fields = [
+      form.fields[0],
+      {
+        id: "summary",
+        type: "text",
+        label: "详细说明",
+        description: "支持多行内容",
+        placeholder: "请输入详细说明",
+        multiline: true,
+        required: true,
+        defaultValue: "默认说明",
+        listVisible: true,
+        taskVisible: true,
+        queryable: true,
+        exportVisible: true,
+        inputStage: "both",
+      },
+      {
+        id: "priority",
+        type: "select",
+        label: "优先级",
+        options: [
+          { id: "priority-normal", label: "普通" },
+          { id: "priority-high", label: "紧急" },
+        ],
+        defaultValue: "priority-normal",
+        inputStage: "initiator",
+      },
+      {
+        id: "product",
+        type: "cascader",
+        label: "产品分类",
+        options: [{
+          id: "motor",
+          label: "电机",
+          children: [{ id: "stepper", label: "步进电机" }],
+        }],
+        defaultValue: ["motor", "stepper"],
+        inputStage: "initiator",
+      },
+      {
+        id: "result",
+        type: "radio",
+        label: "预检结果",
+        options: [{ id: "pass", label: "通过" }, { id: "fail", label: "不通过" }],
+        defaultValue: "pass",
+        inputStage: "initiator",
+      },
+      {
+        id: "departments",
+        type: "checkbox",
+        label: "会签部门",
+        options: [{ id: "rd", label: "研发" }, { id: "qa", label: "质量" }],
+        defaultValue: ["rd", "qa"],
+        inputStage: "initiator",
+      },
+      {
+        id: "conditional-note",
+        type: "text",
+        label: "紧急说明",
+        inputStage: "initiator",
+        displayCondition: {
+          mode: "all",
+          rules: [{ id: "show-on-high", fieldId: "priority", operator: "eq", value: "priority-high" }],
+        },
+      },
+      {
+        id: "rich-content",
+        type: "richtext",
+        label: "富文本内容",
+        description: "允许文字和媒体",
+        defaultValue: "<p>默认内容</p>",
+        inputStage: "initiator",
+      },
+      {
+        id: "evidence",
+        type: "attachment",
+        label: "受控附件",
+        required: true,
+        inputStage: "initiator",
+        attachment: {
+          maxSizeMb: 25,
+          maxCount: 1,
+          inlinePdf: true,
+          allowedExtensions: ["pdf", "xlsx"],
+          excelToPdf: true,
+          maxPreviewPages: 12,
+        },
+      },
+      {
+        id: "items",
+        type: "table",
+        label: "明细表",
+        inputStage: "initiator",
+        columns: [
+          { id: "name", label: "名称", type: "text", required: true, width: 180, align: "left" },
+          {
+            id: "category",
+            label: "类别",
+            type: "select",
+            defaultValue: "a",
+            width: 130,
+            align: "center",
+            options: [{ id: "a", label: "A 类" }, { id: "b", label: "B 类" }],
+          },
+          {
+            id: "decision",
+            label: "结论",
+            type: "radio",
+            options: [{ id: "yes", label: "是" }, { id: "no", label: "否" }],
+          },
+          {
+            id: "tags",
+            label: "标签",
+            type: "checkbox",
+            options: [{ id: "safe", label: "安全" }, { id: "urgent", label: "加急" }],
+          },
+        ],
+      },
+      {
+        id: "review-note",
+        type: "text",
+        label: "审核补充",
+        inputStage: "reviewer",
+        reviewEditable: true,
+      },
+    ];
+    form.savedAt = "2026-08-31 12:30";
+
+    const flow = structuredClone(source.snapshot.flow);
+    const approvalNodes = flow.nodes.filter((node) => node.data?.kind === "approval");
+    approvalNodes[0].data = {
+      ...approvalNodes[0].data,
+      description: "研发审批并补充审核字段",
+      specifyAssignee: true,
+      editableFields: ["review-note"],
+      handlingMode: "approval",
+      allowRepeatedEditing: true,
+      activationCondition: {
+        mode: "all",
+        rules: [{ id: "activate-on-high", fieldId: "priority", operator: "eq", value: "priority-high" }],
+      },
+      emailNotification: {
+        enabled: true,
+        notifyReviewers: true,
+        notifyInitiator: false,
+        extraUserIds: ["lina"],
+      },
+    };
+    approvalNodes[1].data = {
+      ...approvalNodes[1].data,
+      specifyAssignee: false,
+      editableFields: [],
+      handlingMode: "confirmation",
+      allowRepeatedEditing: false,
+    };
+    const startNode = flow.nodes.find((node) => node.data?.kind === "start")!;
+    startNode.position = { x: 100, y: 80 };
+    const endNode = flow.nodes.find((node) => node.data?.kind === "end")!;
+    endNode.data = {
+      ...endNode.data,
+      description: "完成并通知发起人",
+      emailNotification: {
+        enabled: true,
+        notifyReviewers: false,
+        notifyInitiator: true,
+        extraUserIds: ["zhangwei"],
+      },
+    };
+    flow.savedAt = "2026-08-31 12:35";
+    flow.meta = { rejectionHandling: "resubmit-only" };
+
+    const systemFields = source.snapshot.systemFields.map((field, index) => ({
+      ...field,
+      taskVisible: index % 2 === 0,
+      processListVisible: index % 3 === 0,
+      exportVisible: index % 4 === 0,
+    }));
+    const completeSnapshot = designerStorageModule.cloneCompleteDesignerSnapshot({ form, flow, systemFields });
+
+    expect(store.updateVersionFormSnapshot(definition.id, versionId, form, systemFields)).toBe(true);
+    expect(store.updateVersionFlowSnapshot(definition.id, versionId, flow)).toBe(true);
+    expect(definitionById(definition.id)?.versions.find((version) => version.id === versionId)?.validation).toMatchObject({ status: "通过", issues: [] });
+    expect(store.publishVersion(definition.id, versionId, "覆盖全部设计器配置")).toBe(true);
+
+    const published = definitionById(definition.id)!.versions.find((version) => version.id === versionId)!;
+    expect(published.snapshot).toEqual(completeSnapshot);
+    const copiedVersionId = store.createVersion(definition.id, versionId)!;
+    expect(definitionById(definition.id)?.versions.find((version) => version.id === copiedVersionId)?.snapshot).toEqual(completeSnapshot);
+
+    setActor("wangmin");
+    const formValues = {
+      title: "全部配置运行时验证",
+      summary: "逐项检查",
+      priority: "priority-high",
+      product: ["motor", "stepper"],
+      result: "pass",
+      departments: ["rd", "qa"],
+      "conditional-note": "当天处理",
+      "rich-content": "<p>包含<strong>格式</strong></p>",
+      evidence: [{ id: "evidence-1", name: "受控附件.pdf" }],
+      items: [{ key: "row-1", name: "物料", category: "a", decision: "yes", tags: ["safe"] }],
+      "review-note": "",
+    };
+    const instanceId = prototypeModule.usePrototypeStore.getState().createProcessInstance({
+      definitionId: definition.id,
+      formValues,
+      assigneeByNode: { [approvalNodes[0].id]: "zhangwei" },
+    })!;
+    const instance = instanceById(instanceId)!;
+    expect(instance.versionId).toBe(versionId);
+    expect(instance.formValues).toEqual(formValues);
+    expect(prototypeModule.usePrototypeStore.getState().tasks.filter((task) => task.instanceId === instanceId)).toHaveLength(3);
+    expect(prototypeModule.usePrototypeStore.getState().tasks.find((task) => task.instanceId === instanceId && task.nodeId === approvalNodes[1].id)?.action).toBeUndefined();
   });
 
   it("复制新流程使用完整独立快照，不会直接发布", () => {

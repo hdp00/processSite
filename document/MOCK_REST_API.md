@@ -24,7 +24,7 @@ pnpm dev
 生成可部署的 HTTP 演示包：
 
 ```bash
-pnpm build:debug
+pnpm build:web_mock
 ```
 
 debug 构建固定使用 `/flowpilot/mock-api/v1`，请求只在当前页面内处理，不发送到 IIS。PDF、附件和富媒体正文继续保存在当前浏览器的 IndexedDB 中。

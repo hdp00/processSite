@@ -35,6 +35,7 @@ import { cacheProcessRuntime } from "../api/entityCache";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { RichTextContent, RichTextEditor } from "../components/RichTextEditor";
+import { ExcelPdfPreviewModal } from "../components/ExcelPdfPreviewModal";
 import { RuntimeReadonlyChoice } from "../components/RuntimeReadonlyChoice";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
@@ -45,6 +46,8 @@ import { effectiveGroupMemberIds, findIdentityUser, isUserInWorkflowGroup, useId
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserCloseInstance } from "../state/workflowAccess";
 import { formatDisplayDateTime } from "../utils/domainTime";
+import { convertXlsxToPdf, type ExcelPdfConversionResult } from "../utils/excelToPdf";
+import { cleanupTemporaryAttachments } from "../utils/attachmentLifecycle";
 import { canEditProcessInstanceSubmission } from "../utils/processInstanceAccess";
 import { applyDesignerFieldVisibility, isDesignerFieldVisible, normalizeDesignerFormValues, type StoredDesignerField } from "../utils/designerStorage";
 import { designerChoiceOptionsToAntd, displayDesignerChoiceValue } from "../utils/designerOptions";
@@ -222,6 +225,14 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const [initialEditOpen, setInitialEditOpen] = useState(false);
   const [initialFormDirty, setInitialFormDirty] = useState(false);
   const [savingInitialForm, setSavingInitialForm] = useState(false);
+  const [excelDialog, setExcelDialog] = useState<{
+    field: StoredDesignerField;
+    sourceName: string;
+    result?: ExcelPdfConversionResult;
+    error?: string;
+    converting: boolean;
+  }>();
+  const [confirmingExcelUpload, setConfirmingExcelUpload] = useState(false);
   const [initialForm] = Form.useForm<Record<string, unknown>>();
   const watchedInitialValues = Form.useWatch([], initialForm) as Record<string, unknown> | undefined;
   const [resourceEtag, setResourceEtag] = useState<string>();
@@ -355,6 +366,78 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     }
   };
 
+  const beginExcelConversion = async (field: StoredDesignerField, file: File) => {
+    setExcelDialog({ field, sourceName: file.name, converting: true });
+    try {
+      const result = await convertXlsxToPdf(file, field.attachment?.maxPreviewPages ?? 1);
+      setExcelDialog({ field, sourceName: file.name, result, converting: false });
+    } catch (error) {
+      setExcelDialog({
+        field,
+        sourceName: file.name,
+        error: error instanceof Error ? error.message : "Excel 转 PDF 失败",
+        converting: false,
+      });
+    }
+  };
+
+  const confirmExcelUpload = async () => {
+    if (!excelDialog?.result) return;
+    const maxSizeMb = excelDialog.field.attachment?.maxSizeMb ?? 100;
+    if (excelDialog.result.file.size > maxSizeMb * 1024 * 1024) {
+      message.error(`生成的 PDF 超过 ${maxSizeMb} MB 限制，请减少工作表内容或最大页数`);
+      return;
+    }
+    setConfirmingExcelUpload(true);
+    try {
+      const record = await flowPilotApi.attachments.upload(excelDialog.result.file, {
+        instanceId: instance.id,
+        fieldId: excelDialog.field.id,
+      });
+      const current = initialForm.getFieldValue(excelDialog.field.id) as UploadFile<AttachmentRecord>[] | undefined;
+      initialForm.setFieldValue(excelDialog.field.id, [{
+        uid: record.id,
+        name: record.name,
+        size: record.size,
+        type: record.contentType,
+        status: "done",
+        response: record,
+      } satisfies UploadFile<AttachmentRecord>]);
+      setInitialFormDirty(true);
+      setExcelDialog(undefined);
+      await cleanupTemporaryAttachments(current, (id) => flowPilotApi.attachments.remove(id));
+      message.success("PDF 已确认并暂存，保存初始表单后正式生效");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "PDF 上传失败，请稍后重试");
+    } finally {
+      setConfirmingExcelUpload(false);
+    }
+  };
+
+  const removeInitialAttachment = async (file: UploadFile<AttachmentRecord>) => {
+    if (file.response?.lifecycle !== "temporary") return true;
+    try {
+      await flowPilotApi.attachments.remove(file.response.id);
+      return true;
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "暂存附件删除失败");
+      return false;
+    }
+  };
+
+  const discardInitialFormChanges = async () => {
+    const attachmentFiles = configuredFields
+      .filter((field) => field.type === "attachment")
+      .flatMap((field) => {
+        const files = initialForm.getFieldValue(field.id) as UploadFile<AttachmentRecord>[] | undefined;
+        return files ?? [];
+      });
+    setInitialEditOpen(false);
+    setInitialFormDirty(false);
+    setExcelDialog(undefined);
+    await cleanupTemporaryAttachments(attachmentFiles, (id) => flowPilotApi.attachments.remove(id));
+  };
+
   const renderInitialEditField = (field: StoredDesignerField) => {
     const wide = ["richtext", "attachment", "table"].includes(field.type);
     const rules = field.type === "table"
@@ -375,7 +458,12 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
       extra={field.description || undefined}
       rules={rules}
     >
-      <DynamicFieldControl field={field} onRemoveUploadedAttachment={async () => true} />
+      <DynamicFieldControl
+        field={field}
+        convertingExcel={excelDialog?.field.id === field.id && excelDialog.converting}
+        onConvertExcel={(targetField, file) => void beginExcelConversion(targetField, file)}
+        onRemoveUploadedAttachment={removeInitialAttachment}
+      />
     </Form.Item>;
   };
 
@@ -596,7 +684,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
         open={initialEditOpen}
         okText="保存修改"
         confirmLoading={savingInitialForm}
-        onCancel={() => { setInitialEditOpen(false); setInitialFormDirty(false); }}
+        onCancel={() => void discardInitialFormChanges()}
         onOk={() => void saveInitialForm()}
       >
         <Alert type="info" showIcon title="按该实例锁定的流程版本编辑" description="字段、顺序、选项和必填规则均来自发起时使用的版本；字段变化和修改时间会保留在流程记录中。" />
@@ -613,6 +701,16 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
           </div>
         </Form>
       </Modal>
+
+      <ExcelPdfPreviewModal
+        sourceName={excelDialog?.sourceName}
+        result={excelDialog?.result}
+        converting={Boolean(excelDialog?.converting)}
+        confirming={confirmingExcelUpload}
+        error={excelDialog?.error}
+        onCancel={() => setExcelDialog(undefined)}
+        onConfirm={() => void confirmExcelUpload()}
+      />
 
       <Modal title="关闭事项" open={closeOpen} okText="确认关闭" okButtonProps={{ danger: true }} onCancel={() => setCloseOpen(false)} onOk={async () => {
         if (!closeReason.trim()) return message.warning("请填写关闭理由");

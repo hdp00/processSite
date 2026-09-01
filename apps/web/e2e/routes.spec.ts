@@ -75,6 +75,23 @@ test("流程定义概览提供明确的查询操作", async ({ page }) => {
   await expect(page.getByRole("button", { name: "查询" })).toBeVisible();
 });
 
+test("任务中心切换到没有任务的范围时不显示流程内部 ID", async ({ page }) => {
+  test.skip(!isMockTarget, "该用例使用本地演示任务验证空分类切换。");
+  await loginAs(page, "superadmin");
+  await gotoApp(page, "tasks");
+
+  const flowSidebar = page.locator(".task-flow-sidebar");
+  const flow = flowSidebar.locator("button.task-flow-item").filter({ hasText: "PDF 文件审核" });
+  await expect(flow).toBeVisible();
+  await flow.click();
+  await expect(page.locator(".task-list-context strong")).toHaveText("PDF 文件审核");
+
+  await page.locator(".task-tabs").getByText("可代办", { exact: false }).click();
+
+  await expect(page.locator(".task-list-context strong")).toHaveText("全部待办");
+  await expect(page.locator(".task-list-context")).not.toContainText(/[0-9a-f]{8}-[0-9a-f-]{27,}/i);
+});
+
 test("初始表单设计器只在真实修改后显示未保存状态", async ({ page }) => {
   test.skip(!isMockTarget, "该用例使用本地演示流程验证设计器初始状态。");
   await loginAs(page, "superadmin");

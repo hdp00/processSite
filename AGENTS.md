@@ -47,7 +47,7 @@ pnpm backend:check
 pnpm test
 pnpm test:coverage
 pnpm test:coverage:all
-pnpm build:debug
+pnpm build:web_mock
 pnpm test:e2e
 pnpm test:e2e:edge
 pnpm test:visual
@@ -60,7 +60,7 @@ pnpm build
 - 开发服务器默认监听 `http://127.0.0.1:5173`。
 - `pnpm dev:api` 运行 ASP.NET Core API；`pnpm build:api` 执行 Release 构建，`pnpm test:api` 运行 .NET 解决方案测试，`pnpm publish:api` 生成本地发布暂存产物。
 - `pnpm test` 先构建 OpenAPI 合同包，再运行 .NET 测试与前端 Vitest；`pnpm test:coverage` 执行前端核心领域覆盖率门禁，`pnpm test:coverage:all` 生成前端全源码覆盖率报告。
-- `pnpm test:e2e` 运行 Chromium 全量端到端测试；`pnpm test:e2e:edge` 运行 Microsoft Edge 的 `@smoke` 用例；`pnpm test:visual` 运行 Chromium 视觉回归，`pnpm test:update-snapshots` 仅在人工确认视觉变更后更新基线。
+- `pnpm test:e2e` 运行 Chromium 全量端到端测试；`pnpm test:e2e:edge` 运行 Microsoft Edge 的 `@smoke` 用例；`pnpm test:visual` 运行 Chromium 视觉回归，`pnpm test:update-snapshots` 仅在人工确认视觉变更后更新基线。根目录 `pnpm test:all` 先通过 `backend:check` 执行契约检查、后端构建、单元测试、HTTP/API 测试和必须执行的 SQL Server 集成测试，再运行前端完整门禁。
 - E2E 默认构建 debug 包并启动本地 preview mock 服务。要测试已部署服务，设置 `FLOWPILOT_TEST_TARGET=remote` 和 `FLOWPILOT_TEST_BASE_URL`；必要时用 `FLOWPILOT_TEST_PORT` 指定本地 preview 端口。
 - 前端日常修改至少运行 `pnpm typecheck` 和受影响测试；后端修改至少运行 `pnpm build:api` 和 `pnpm test:api`。涉及路由、构建配置、依赖、API 契约、mock 或交付前修改时运行 `pnpm test:all`。仓库未配置 lint 脚本，不要声称运行了 lint 或不存在的检查。
 

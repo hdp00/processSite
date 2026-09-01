@@ -44,6 +44,7 @@ import { flowPilotApi } from "../api/flowPilotApi";
 import type { TaskCenterFlowCategory } from "../api/contracts";
 import { cacheProcessDefinition } from "../api/entityCache";
 import { isBrowserMockMode } from "../utils/runtimeMode";
+import { resolveTaskCenterFlowLabel, taskCenterFlowSelectionUnavailable } from "../utils/taskCenterFlowLabel";
 
 const ALL_FLOWS = "__all__";
 const TASK_FLOW_STORAGE_PREFIX = "flowpilot-task-center-flow-v1";
@@ -60,6 +61,8 @@ export function TaskCenterPage() {
   const [selectedTemplate, setSelectedTemplate] = useState(() =>
     window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
   );
+  const [selectedTemplateLabel, setSelectedTemplateLabel] = useState<string>();
+  const [selectedTemplateSuspended, setSelectedTemplateSuspended] = useState(false);
   const isSuperAdmin = sessionSuperAdmin || isSuperAdminPersona(personaId);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -74,9 +77,16 @@ export function TaskCenterPage() {
     setSelectedTemplate(
       window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
     );
+    setSelectedTemplateLabel(undefined);
+    setSelectedTemplateSuspended(false);
     setFlowKeyword("");
     setPage(1);
   }, [personaId]);
+
+  useEffect(() => {
+    setSelectedTemplateSuspended(false);
+    setPage(1);
+  }, [tab]);
 
   useEffect(() => {
     if (isBrowserMockMode) return;
@@ -99,7 +109,9 @@ export function TaskCenterPage() {
     if (isBrowserMockMode) return;
     let cancelled = false;
     setRemoteLoading(true);
-    const definitionId = selectedTemplate === ALL_FLOWS ? undefined : selectedTemplate;
+    const definitionId = selectedTemplate === ALL_FLOWS || selectedTemplateSuspended
+      ? undefined
+      : selectedTemplate;
     const request = tab === "initiated"
       ? flowPilotApi.instances.list({ page, pageSize, q: keyword.trim() || undefined, definitionId, initiatorId: personaId, activeOnly: true })
         .then((result) => ({ instances: result.items, tasks: [] as WorkflowTask[], total: result.page.totalElements, categories: result.categories ?? [] }))
@@ -111,6 +123,9 @@ export function TaskCenterPage() {
       setRemoteTasks(result.tasks);
       setRemoteTotal(result.total);
       setRemoteFlowCategories(result.categories);
+      if (!selectedTemplateSuspended && taskCenterFlowSelectionUnavailable(definitionId, result.categories)) {
+        setSelectedTemplateSuspended(true);
+      }
     }).catch(() => {
       if (!cancelled) {
         setRemoteInstances([]);
@@ -121,7 +136,7 @@ export function TaskCenterPage() {
       if (!cancelled) setRemoteLoading(false);
     });
     return () => { cancelled = true; };
-  }, [keyword, page, pageSize, personaId, selectedTemplate, tab]);
+  }, [keyword, page, pageSize, personaId, selectedTemplate, selectedTemplateSuspended, tab]);
 
   const runtimeInstances = isBrowserMockMode ? instances : remoteInstances;
   const runtimeTasks = isBrowserMockMode ? tasks : remoteTasks;
@@ -173,7 +188,11 @@ export function TaskCenterPage() {
       return remoteFlowCategories.map((category) => ({
         template: category.definitionId,
         count: category.count,
-        label: definitions.find((definition) => definition.id === category.definitionId)?.name ?? category.definitionId,
+        label: resolveTaskCenterFlowLabel(category.definitionId, {
+          definitions,
+          instances: source,
+          rememberedLabel: category.definitionId === selectedTemplate ? selectedTemplateLabel : undefined,
+        }),
         workflowType: category.workflowType,
       }));
     }
@@ -183,13 +202,18 @@ export function TaskCenterPage() {
     return Array.from(counts, ([definitionId, count]) => ({
       template: definitionId,
       count,
-      label: definitions.find((definition) => definition.id === definitionId)?.name ?? definitionId,
+      label: resolveTaskCenterFlowLabel(definitionId, {
+        definitions,
+        instances: source,
+        rememberedLabel: definitionId === selectedTemplate ? selectedTemplateLabel : undefined,
+      }),
       workflowType: source.find((item) => item.definitionId === definitionId)?.workflowType,
     })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"));
-  }, [definitions, remoteFlowCategories, source]);
+  }, [definitions, remoteFlowCategories, selectedTemplate, selectedTemplateLabel, source]);
   const remoteCategoryTotal = remoteFlowCategories.reduce((total, category) => total + category.count, 0);
   const activeTemplate = selectedTemplate !== ALL_FLOWS
-    && (!isBrowserMockMode || flowCategories.some((category) => category.template === selectedTemplate))
+    && !selectedTemplateSuspended
+    && flowCategories.some((category) => category.template === selectedTemplate)
       ? selectedTemplate
       : undefined;
   const visibleFlowCategories = flowCategories.filter((category) =>
@@ -206,10 +230,17 @@ export function TaskCenterPage() {
     return () => { cancelled = true; };
   }, [selectedDefinition, selectedVersion]);
   const activeCategoryLabel = activeTemplate
-    ? flowCategories.find((category) => category.template === activeTemplate)?.label ?? activeTemplate
+    ? resolveTaskCenterFlowLabel(activeTemplate, {
+        categories: flowCategories,
+        definitions,
+        instances: source,
+        rememberedLabel: selectedTemplateLabel,
+      })
     : tab === "initiated" ? "全部发起" : "全部待办";
-  const selectFlow = (template: string) => {
+  const selectFlow = (template: string, label?: string) => {
     setSelectedTemplate(template);
+    setSelectedTemplateLabel(template === ALL_FLOWS ? undefined : label);
+    setSelectedTemplateSuspended(false);
     setPage(1);
     window.localStorage.setItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`, template);
   };
@@ -456,7 +487,7 @@ export function TaskCenterPage() {
                 type="button"
                 key={category.template}
                 className={activeTemplate === category.template ? "task-flow-item is-active" : "task-flow-item"}
-                onClick={() => selectFlow(category.template)}
+                onClick={() => selectFlow(category.template, category.label)}
               >
                 <span className="task-flow-item__icon">
                   {category.workflowType === "free" ? <MessageOutlined /> : <FileTextOutlined />}

@@ -161,7 +161,7 @@ Invoke-WebRequest http://127.0.0.1:3000/api/flowpilot/v1/health/ready
 - `/flowpilot` 保留查询参数重定向到 `/flowpilot/`
 - SPA 回退只处理前端路由，不接管 `/api/flowpilot/*` 或 `/flowpilot/mock-api/*`
 
-生产前端只使用 `/api/flowpilot/v1`。`pnpm build:debug` 是单浏览器演示包，不接入真实数据库或多人环境。
+生产前端只使用 `/api/flowpilot/v1`。从仓库根目录运行 `pnpm build:web_mock` 可生成单浏览器演示包；它不接入真实数据库或多人环境。
 
 ## 10. IIS/ARR 反向代理
 

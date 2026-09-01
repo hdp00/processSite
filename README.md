@@ -29,7 +29,7 @@ pnpm dev
 pnpm build
 
 # HTTP 演示包：使用页面内 Mock，不注册 Service Worker
-pnpm build:debug
+pnpm build:web_mock
 ```
 
 ## 正式后端
@@ -73,4 +73,4 @@ pnpm test:e2e:edge
 pnpm test:all
 ```
 
-`pnpm test` 现在同时运行 .NET 解决方案测试和前端 Vitest；数据库集成测试还需在真实 SQL Server 2016 SP2/兼容级别 130 最低基线以及实际部署版本上运行。现有 Mock/前端测试不能代替正式后端的事务、LDAP、SMTP、磁盘附件或 Windows Service 验收。
+`pnpm test` 同时运行 .NET 后端测试和前端 Vitest。`pnpm test:all` 是整个仓库的完整门禁：先执行 OpenAPI 契约检查、后端 Release 构建、后端单元测试、HTTP/API 测试和必须通过的真实 SQL Server 集成测试，再执行前端类型检查、覆盖率、双构建、Chromium 全量 E2E 和 Edge 冒烟测试。数据库集成测试仍需在 SQL Server 2016 SP2/兼容级别 130 最低基线以及实际部署版本上复验；本地自动化不能代替 LDAP、SMTP、IIS、磁盘附件或 Windows Service 的部署环境验收。
