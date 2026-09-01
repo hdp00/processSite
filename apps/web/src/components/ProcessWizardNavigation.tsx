@@ -1,7 +1,7 @@
 import { ArrowLeftOutlined, ArrowRightOutlined } from "@ant-design/icons";
 import { Button, type ButtonProps } from "antd";
 
-type ProcessWizardNavigationButtonProps = Omit<ButtonProps, "children" | "icon" | "iconPosition"> & {
+type ProcessWizardNavigationButtonProps = Omit<ButtonProps, "children" | "icon" | "iconPlacement"> & {
   step: string;
 };
 
@@ -27,7 +27,7 @@ export function ProcessWizardNextButton({
       {...buttonProps}
       type={type}
       icon={<ArrowRightOutlined />}
-      iconPosition="end"
+      iconPlacement="end"
     >
       下一步：{step}
     </Button>

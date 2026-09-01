@@ -107,6 +107,8 @@ export interface ProcessInstance {
   participantIds?: string[];
   /** 正式后端根据当前登录人及锁定版本权限组计算的变更受理人权限。 */
   canTransferFree?: boolean;
+  /** 后端根据动作权限和实例锁定版本关闭权限组计算。 */
+  canClose?: boolean;
   /** 正式后端根据锁定版本受理权限组计算的有效候选人。 */
   freeAssigneeCandidates?: Array<{
     id: string;

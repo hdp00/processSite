@@ -1,4 +1,4 @@
-import type { ApiEnvelope, ApiProblemDetails } from "./contracts";
+import type { ApiProblemDetails } from "./contracts";
 import { createClientUuid } from "../utils/clientId";
 
 type QueryValue = string | number | boolean | null | undefined | Array<string | number | boolean> | Record<string, unknown>;
@@ -24,8 +24,13 @@ export class ApiError extends Error {
   }
 }
 
-const API_TOKEN_KEY = "flowpilot-api-access-token";
 const DEFAULT_TIMEOUT_MS = 15_000;
+const pendingRequestControllers = new Set<AbortController>();
+
+export const abortPendingApiRequests = () => {
+  pendingRequestControllers.forEach((controller) => controller.abort());
+  pendingRequestControllers.clear();
+};
 
 const statusMessage = (status: number) => {
   if (status === 0 || status === 502 || status === 503) {
@@ -55,36 +60,7 @@ const toUserFacingApiMessage = (problem: ApiProblemDetails) => {
   return title || statusMessage(problem.status);
 };
 
-const apiBaseUrl = () => (
-  import.meta.env.VITE_API_BASE_URL
-  || (import.meta.env.VITE_API_MODE === "remote" ? "/api/flowpilot/v1" : "/api/v1")
-).replace(/\/$/, "");
-
-const storedMockSession = () => {
-  try {
-    const raw = window.localStorage.getItem("flowpilot-prototype-v5");
-    const parsed = raw ? JSON.parse(raw) as { state?: { authenticated?: boolean; personaId?: string; operatorUserId?: string; impersonation?: unknown } } : undefined;
-    return parsed?.state?.authenticated ? parsed.state : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-export const readApiAccessToken = () => {
-  const token = window.sessionStorage.getItem(API_TOKEN_KEY);
-  if (import.meta.env.VITE_API_MODE === "remote") return undefined;
-  const session = storedMockSession();
-  const personaId = session?.personaId;
-  if (session?.impersonation && session.operatorUserId) return `mock:${session.operatorUserId}`;
-  if (token?.startsWith("mock:") && personaId && token !== `mock:${personaId}`) return `mock:${personaId}`;
-  if (token) return token;
-  return personaId ? `mock:${personaId}` : undefined;
-};
-
-export const writeApiAccessToken = (token?: string) => {
-  if (token) window.sessionStorage.setItem(API_TOKEN_KEY, token);
-  else window.sessionStorage.removeItem(API_TOKEN_KEY);
-};
+const apiBaseUrl = () => (import.meta.env.VITE_API_BASE_URL || "/api/flowpilot/v1").replace(/\/$/, "");
 
 export const createIdempotencyKey = () =>
   `idempotency-${createClientUuid()}`;
@@ -167,14 +143,6 @@ export interface ApiResourceResult<T> {
   requestId: string;
 }
 
-const isApiEnvelope = <T>(value: unknown): value is ApiEnvelope<T> => {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<ApiEnvelope<T>>;
-  return "data" in candidate
-    && Boolean(candidate.meta)
-    && typeof candidate.meta?.requestId === "string";
-};
-
 async function performApiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<ApiResourceResult<T>> {
   const {
     body,
@@ -187,6 +155,7 @@ async function performApiRequest<T>(path: string, options: ApiRequestOptions = {
     ...requestInit
   } = options;
   const controller = new AbortController();
+  pendingRequestControllers.add(controller);
   const requestId = `request-${createClientUuid()}`;
   let timedOut = false;
   const timeout = window.setTimeout(() => {
@@ -199,8 +168,6 @@ async function performApiRequest<T>(path: string, options: ApiRequestOptions = {
   const headers = new Headers(customHeaders);
   headers.set("Accept", "application/json");
   headers.set("X-Request-Id", requestId);
-  const token = readApiAccessToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
   if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
   if (ifMatch) headers.set("If-Match", ifMatch);
 
@@ -227,24 +194,21 @@ async function performApiRequest<T>(path: string, options: ApiRequestOptions = {
       etag: response.headers.get("ETag") ?? undefined,
       requestId: response.headers.get("X-Request-Id") ?? requestId,
     };
-    const payload = await response.json() as T | ApiEnvelope<T>;
-    const envelope = isApiEnvelope<T>(payload) ? payload : undefined;
+    const payload = await response.json() as T;
     return {
-      // Debug Mock historically uses an envelope while the formal OpenAPI
-      // contract returns the response DTO directly. Supporting both here keeps
-      // transport compatibility out of page components.
-      data: envelope ? envelope.data : payload as T,
+      data: payload,
       etag: response.headers.get("ETag") ?? undefined,
-      requestId: envelope?.meta.requestId ?? response.headers.get("X-Request-Id") ?? requestId,
+      requestId: response.headers.get("X-Request-Id") ?? requestId,
     };
   } catch (error) {
     if (error instanceof ApiError) throw error;
     if (timedOut) {
       throw new ApiError(timeoutProblem(path, requestId));
     }
-    if (signal?.aborted) throw error;
+    if (controller.signal.aborted) throw error;
     throw new ApiError(connectionProblem(path, requestId));
   } finally {
+    pendingRequestControllers.delete(controller);
     window.clearTimeout(timeout);
     signal?.removeEventListener("abort", abortFromCaller);
   }
@@ -268,6 +232,7 @@ export async function apiDownload(path: string, options: ApiRequestOptions = {})
     ...requestInit
   } = options;
   const controller = new AbortController();
+  pendingRequestControllers.add(controller);
   const requestId = `request-${createClientUuid()}`;
   let timedOut = false;
   const timeout = window.setTimeout(() => {
@@ -279,8 +244,6 @@ export async function apiDownload(path: string, options: ApiRequestOptions = {})
 
   const headers = new Headers(customHeaders);
   headers.set("X-Request-Id", requestId);
-  const token = readApiAccessToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
   if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
   if (ifMatch) headers.set("If-Match", ifMatch);
 
@@ -306,9 +269,10 @@ export async function apiDownload(path: string, options: ApiRequestOptions = {})
   } catch (error) {
     if (error instanceof ApiError) throw error;
     if (timedOut) throw new ApiError(timeoutProblem(path, requestId));
-    if (signal?.aborted) throw error;
+    if (controller.signal.aborted) throw error;
     throw new ApiError(connectionProblem(path, requestId));
   } finally {
+    pendingRequestControllers.delete(controller);
     window.clearTimeout(timeout);
     signal?.removeEventListener("abort", abortFromCaller);
   }

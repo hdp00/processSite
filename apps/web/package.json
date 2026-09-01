@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:remote": "vite --mode remote",
+    "dev:remote": "vite",
     "preview": "vite preview",
     "build": "tsc -b && vite build --mode production",
     "build:debug": "tsc -b && vite build --mode debug",
@@ -14,10 +14,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:coverage:all": "vitest run --config vitest.all.config.ts --coverage",
-    "test:e2e": "playwright test --project=chromium",
-    "test:e2e:edge": "playwright test --project=edge",
-    "test:visual": "playwright test --project=chromium --grep @visual",
-    "test:update-snapshots": "playwright test --project=chromium --grep @visual --update-snapshots",
+    "build:e2e-api": "dotnet build ../api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug -m:1 /nodeReuse:false",
+    "test:e2e": "pnpm build:e2e-api && playwright test --project=chromium",
+    "test:e2e:edge": "pnpm build:e2e-api && playwright test --project=edge",
     "test:all": "pnpm typecheck && pnpm test:coverage && pnpm test:coverage:all && pnpm build && pnpm build:debug && pnpm test:e2e && pnpm test:e2e:edge"
   },
   "dependencies": {
@@ -44,7 +43,6 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
-    "@mswjs/interceptors": "0.41.9",
     "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
@@ -54,9 +52,7 @@
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
     "@vitest/coverage-v8": "^4.1.10",
-    "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.1",
-    "msw": "^2.15.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
     "vitest": "^4.1.10"

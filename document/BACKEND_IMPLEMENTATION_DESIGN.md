@@ -160,6 +160,8 @@ SQL Server 连接字符串必须显式给出加密、证书信任、连接建立
 
 上传采用流式 `multipart/form-data` 写入 `{部署根目录}\Data\Attachments\{yyyy}\.incoming\{attachmentIdN}.part`，同时计算大小和 SHA-256，不把整文件加载到托管内存。先创建 `uploading` 元数据；完整写入并校验后进入 `staged`。业务命令在数据库事务内建立引用并将状态改为 `active`，但 `storage_key` 继续指向当前实际存在的 `.incoming` 文件。事务提交后 worker 再执行同卷原子移动，移动成功后用短事务把 `storage_key` 改为正式对象键；在此之前下载仍按当前键读取。移动或键更新中断时，恢复逻辑必须同时检查临时键和目标键并用大小/SHA-256 核对，不能把已有业务引用的附件当成普通暂存文件清理。可恢复移动错误保留 `active` 和 `last_error` 并重试，`failed` 只用于未建立业务引用的上传/校验失败。根目录 `Temp` 只用于非附件临时工作，不进入附件状态机。
 
+富文本图片和视频使用同一上传接口并指定 `purpose=rich-text-media`，不附带流程或字段范围。服务端根据文件签名确认 `image/*` 或 `video/*` 后直接转为受认证的 `active` 媒体附件；HTML 只保存 `data-attachment-id` 和同源 `/api/flowpilot/v1/attachments/{id}/content?disposition=inline` 地址，前端净化时删除 Base64、Blob URL、外部地址和无效标识。该内部站点的富文本媒体使用不可预测 UUID 并要求登录后读取；当前不建立正文级引用表，媒体按长期资产保留，且不能通过暂存附件删除接口删除，避免浏览器刷新、换设备、暂存清理或上传人误删导致正文失效。若以后需要按正文删除孤儿媒体或把媒体权限进一步缩小到单个实例，应新增服务端引用表和清理任务，而不能退回浏览器存储。
+
 附件 GUID 统一格式化为小写 32 位 `attachmentIdN`，分片 `shard` 固定取其前两位；临时相对键为 `{yyyy}/.incoming/{attachmentIdN}.part`，正式相对键为 `{yyyy}/objects/{shard}/{attachmentIdN}`。年份按 `Asia/Shanghai` 的附件创建时间固化，所以 2026 年附件均位于 `Data\Attachments\2026`；分片算法由单一存储服务实现并保持向后兼容。数据库不保存绝对路径，任何用户文件名和扩展名不得参与物理路径拼接。删除采用先标记 `cleanup-pending`、后清理；替换新附件成功前不删除旧附件。内部完整状态为 `uploading | staged | active | cleanup-pending | failed | deleted`，普通业务 API 只暴露 `staged | active | cleanup-pending`。
 
 启动和就绪检查必须验证根目录为绝对路径、位于程序/IIS 静态目录之外、临时与正式目录同卷、服务账号权限和磁盘保留空间。IIS 应用池不得访问或静态映射附件目录。下载只能经过鉴权 API，并支持完整响应、单 Range、ETag、Content-Disposition 与安全 MIME。
@@ -209,7 +211,7 @@ Outbox 与每次发送尝试都保存到 SQL Server，包括事件、实例/任�
 ## 12. 健康、日志和部署
 
 - `/health/live`：匿名进程存活；不得依赖数据库。
-- `/health/ready`：匿名简化就绪；数据库不可用、结构不匹配或附件硬性条件失败返回 503。
+- `/api/flowpilot/v1/health/ready`：匿名简化就绪；数据库不可用、结构不匹配或附件硬性条件失败返回 503。
 - `/health/details`：需要运维权限，显示数据库、LDAP、SMTP、磁盘和后台任务的脱敏状态。
 - Serilog 输出 UTC、level、traceId、事件名和脱敏上下文的 JSON 文件，默认保留 30 天；不得记录密码、令牌、完整表单、附件正文或秘密。
 - 发布只新增不可变的 `App\releases\{releaseId}`，并在计划停机中统一切换 `App\current`；不得直接覆盖当前发布目录，也不触碰 Config、Secrets、Data、Logs、Temp、Backup。`release.json` 至少记录 releaseId、产品版本、构建时间、源代码提交、API 契约版本、所需数据库结构版本、允许兼容的结构版本范围、迁移校验和及文件校验信息。切换前校验发布清单与数据库结构，切换后执行健康检查和前后端回归；失败时仅在数据库仍兼容的前提下将 `current` 指回 `previous`。首次安装没有 `previous` 时不得创建无效联接；历史发布默认至少保留当前和上一个完整版本，清理只能删除未被任何联接引用且已通过清单校验的更旧目录。

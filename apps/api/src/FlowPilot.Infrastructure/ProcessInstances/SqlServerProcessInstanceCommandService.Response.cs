@@ -13,6 +13,7 @@ public sealed partial class SqlServerProcessInstanceCommandService
         RuntimeWorkflowDefinition definition,
         RuntimeWorkflowVersion version,
         ProcessInstanceActor actor,
+        bool canClose,
         JsonObject formValues,
         JsonObject fieldRevisions,
         RuntimeValue runtime,
@@ -78,6 +79,7 @@ public sealed partial class SqlServerProcessInstanceCommandService
             Participants = definition.Type == "free"
                 ? new[] { initiator, runtime.FirstAssignee }.Where(item => item is not null).DistinctBy(item => item!.Id).Select(item => item!).ToArray()
                 : [],
+            CanClose = canClose,
             CreatedAt = AsUtc(instance.CreatedAt),
             UpdatedAt = AsUtc(instance.UpdatedAt),
             ListValues = formValues.DeepClone().AsObject(),

@@ -10,6 +10,7 @@ import {
 } from "@ant-design/icons";
 import {
   Alert,
+  App,
   Avatar,
   Button,
   Card,
@@ -25,7 +26,6 @@ import {
   Timeline,
   Tooltip,
   Typography,
-  message,
   type UploadFile,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -193,6 +193,7 @@ interface FreeFlowDetailPageProps {
 }
 
 export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps) {
+  const { message } = App.useApp();
   const { id } = useParams();
   const navigate = useNavigate();
   const {

@@ -6,17 +6,12 @@ import {
   SafetyCertificateOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Button, Checkbox, Form, Input, message, Tag, Typography } from "antd";
+import { App, Button, Checkbox, Form, Input, Tag, Typography } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { hydrateRemoteProcessDefinitions } from "../api/remoteHydration";
-import {
-  readLastSuccessfulLoginUsername,
-  saveLastSuccessfulLoginUsername,
-} from "../utils/lastLoginUsername";
-import { isBrowserMockMode } from "../utils/runtimeMode";
 
 interface LoginValues {
   username: string;
@@ -25,26 +20,22 @@ interface LoginValues {
 }
 
 export function LoginPage() {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const [form] = Form.useForm<LoginValues>();
-  const debugMode = isBrowserMockMode;
-  const [initialUsername] = useState(() =>
-    debugMode ? "superadmin" : readLastSuccessfulLoginUsername());
+  const initialUsername = "";
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async (values: LoginValues) => {
     setSubmitting(true);
     try {
       await flowPilotApi.auth.login(values.username, values.password);
-      if (import.meta.env.VITE_API_MODE === "remote") {
-        try {
-          await hydrateRemoteProcessDefinitions();
-        } catch (error) {
-          await flowPilotApi.auth.logout({ clearCache: false }).catch(() => undefined);
-          throw error;
-        }
+      try {
+        await hydrateRemoteProcessDefinitions();
+      } catch (error) {
+        await flowPilotApi.auth.logout({ clearCache: false }).catch(() => undefined);
+        throw error;
       }
-      saveLastSuccessfulLoginUsername(values.username);
       message.success("登录成功");
       navigate("/tasks", { replace: true });
     } catch (error) {
@@ -100,16 +91,14 @@ export function LoginPage() {
             <Typography.Text type="secondary">欢迎回来</Typography.Text>
             <Typography.Title level={2}>登录流程中心</Typography.Title>
             <Typography.Paragraph type="secondary">
-              {debugMode ? "使用超级管理员进入演示环境" : "使用公司账号进入系统"}
+              使用公司账号进入系统
             </Typography.Paragraph>
           </div>
 
           <Form<LoginValues>
             form={form}
             layout="vertical"
-            initialValues={debugMode
-              ? { username: initialUsername, password: "1", remember: true }
-              : { username: initialUsername, password: "", remember: true }}
+            initialValues={{ username: initialUsername, password: "", remember: true }}
             onFinish={submit}
             requiredMark={false}
           >
@@ -123,14 +112,12 @@ export function LoginPage() {
                 prefix={<UserOutlined />}
                 placeholder="请输入账号"
                 autoComplete="username"
-                readOnly={debugMode}
               />
             </Form.Item>
             <Form.Item
               label="密码"
               name="password"
               rules={[{ required: true, message: "请输入密码" }]}
-              extra={debugMode ? "Debug 演示密码：1。登录后可在顶栏切换演示身份。" : undefined}
             >
               <Input.Password size="large" prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
             </Form.Item>
@@ -147,7 +134,7 @@ export function LoginPage() {
               htmlType="submit"
               loading={submitting}
               icon={<ArrowRightOutlined />}
-              iconPosition="end"
+              iconPlacement="end"
             >
               登录
             </Button>

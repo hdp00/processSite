@@ -21,6 +21,7 @@ import {
 } from "@ant-design/icons";
 import {
   Alert,
+  App,
   Button,
   Card,
   Cascader,
@@ -42,7 +43,6 @@ import {
   Tooltip,
   Typography,
   Upload,
-  message,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -150,6 +150,7 @@ const acquirePdfPreviewUrl = (attachmentId: string, fileName: string) => {
 type PendingAction = "pass" | "confirm" | "reject" | null;
 
 export function ProcessDetailPage() {
+  const { message } = App.useApp();
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -689,7 +690,7 @@ export function ProcessDetailPage() {
 
   const downloadAttachment = async (attachment: RuntimeAttachmentItem) => {
     if (!attachment.id) {
-      message.info("当前演示附件没有保存文件内容，仅保留了文件名");
+      message.error("附件记录缺少文件标识，无法下载，请联系管理员检查历史数据");
       return;
     }
     try {

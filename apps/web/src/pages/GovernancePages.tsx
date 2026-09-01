@@ -46,7 +46,6 @@ import {
   Tooltip,
   Tree,
   Typography,
-  message,
   type TableProps,
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -54,12 +53,9 @@ import { useBeforeUnload, useBlocker, useNavigate, useSearchParams } from "react
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import {
-  ROLE_PERMISSION_STORAGE_KEY,
-  defaultRolePermissionMap,
   hasPersonaPermission,
   normalizeRolePermissionList,
   notifyRolePermissionsChanged,
-  readStoredRolePermissions,
 } from "../state/rolePermissions";
 import { permissionCatalogPages } from "../data/permissionCatalog";
 import {
@@ -80,42 +76,26 @@ import {
 } from "../state/useOrganizationStore";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { readLocalAuditEvents } from "../utils/localAuditRepository";
-import { createDefaultDateRange, formatDateOnlyQuery, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
+import { createDefaultDateRange, formatDateOnlyQuery, normalizeDayRange } from "../utils/dateRange";
 import { compareDomainTimestamps, formatDisplayDateTime } from "../utils/domainTime";
-import { collectRuntimeAuditEvents } from "../utils/runtimeAudit";
-import { isBrowserMockMode } from "../utils/runtimeMode";
 import { auditActionLabel, auditDetailText, auditModuleLabel, auditResultLabel, auditSummaryText } from "../utils/auditDisplay";
-import { deriveAllWorkflowGroupStatistics } from "../state/workflowGroupStatistics";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { refreshRemoteWorkflowGroups } from "../api/remoteHydration";
 import type { AuditEvent, EffectiveWorkflowMember } from "../api/contracts";
+import type { ProcessInstance } from "../data/types";
 import "./governance-pages.css";
 
 type EnableStatus = "启用" | "停用";
 type JobTitle = string;
 
-const departmentByIndex = [
-  { value: ["rd", "rd-software"], path: "研发 / 软件" },
-  { value: ["rd", "rd-hardware"], path: "研发 / 硬件" },
-  { value: ["rd", "rd-test"], path: "研发 / 测试" },
-  { value: ["quality", "quality-system"], path: "质量 / 体系" },
-  { value: ["quality", "quality-iqc"], path: "质量 / 来料检验" },
-  { value: ["production", "production-line1"], path: "生产 / 一车间" },
-  { value: ["production", "production-line2"], path: "生产 / 二车间" },
-  { value: ["rd"], path: "研发" },
-  { value: ["quality"], path: "质量" },
-  { value: ["document"], path: "文控" },
-];
-
 type UserRecord = DomainUser;
 
 function useDirectoryUserCandidates(keyword: string, active: boolean, selectedIds: string[] = []) {
-  const mockUsers = useIdentityStore((state) => state.users);
+  const { message } = App.useApp();
   const [remoteUsers, setRemoteUsers] = useState<UserRecord[]>([]);
   const selectedKey = selectedIds.join(",");
   useEffect(() => {
-    if (isBrowserMockMode || !active) return;
+    if (!active) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void Promise.all([
@@ -137,7 +117,7 @@ function useDirectoryUserCandidates(keyword: string, active: boolean, selectedId
       window.clearTimeout(timer);
     };
   }, [active, keyword, selectedKey]);
-  return isBrowserMockMode ? mockUsers : remoteUsers;
+  return remoteUsers;
 }
 
 const authenticationModeLabel: Record<AuthenticationMode, string> = {
@@ -198,6 +178,7 @@ function useCloseEditorConfirmation() {
 }
 
 export function UserManagementPage() {
+  const { message } = App.useApp();
   const confirmEditorClose = useCloseEditorConfirmation();
   const users = useIdentityStore((state) => state.users);
   const setUsers = useIdentityStore((state) => state.setUsers);
@@ -289,7 +270,7 @@ export function UserManagementPage() {
           await flowPilotApi.directory.deleteUser(record.id, resource.etag ?? "*");
           setUsers((rows) => rows.filter((user) => user.id !== record.id));
           setRemoteRows((rows) => rows.filter((user) => user.id !== record.id));
-          if (!isBrowserMockMode) setRemoteTotal((total) => Math.max(0, total - 1));
+          setRemoteTotal((total) => Math.max(0, total - 1));
           message.success(`用户 ${record.name} 已删除`);
         } catch (error) {
           message.error(error instanceof Error ? error.message : "用户删除失败，请刷新后重试");
@@ -310,7 +291,6 @@ export function UserManagementPage() {
     .sort((a, b) => a.sort - b.sort);
 
   useEffect(() => {
-    if (isBrowserMockMode) return;
     let cancelled = false;
     setRemoteLoading(true);
     void flowPilotApi.directory.users({
@@ -339,17 +319,9 @@ export function UserManagementPage() {
     return () => { cancelled = true; };
   }, [filters, page, pageSize, positionFilterId, roleFilterId, setUsers]);
 
-  const filtered = useMemo(() => (isBrowserMockMode ? users : remoteRows).filter((user) => {
-    if (!isBrowserMockMode) return true;
-    const keyword = filters.keyword.trim().toLowerCase();
-    const matchesKeyword = !keyword || `${user.account}${user.name}${user.email}`.toLowerCase().includes(keyword);
-    const matchesDepartment = !filters.department.length || filters.department.every((value, index) => user.department[index] === value);
-    return matchesKeyword && matchesDepartment && (!filters.jobTitle || user.jobTitle === filters.jobTitle)
-      && (!filters.role || user.roles.includes(filters.role)) && (!filters.status || user.status === filters.status);
-  }), [filters, remoteRows, users]);
-  const pageRows = isBrowserMockMode ? filtered.slice((page - 1) * pageSize, page * pageSize) : filtered;
-  const resultTotal = isBrowserMockMode ? filtered.length : remoteTotal;
-  const summaryUsers = isBrowserMockMode ? users : remoteRows;
+  const pageRows = remoteRows;
+  const resultTotal = remoteTotal;
+  const summaryUsers = remoteRows;
 
   const openEditor = (user: UserRecord | "new") => {
     if (user !== "new" && user.builtIn) {
@@ -396,10 +368,10 @@ export function UserManagementPage() {
     <div className="page-stack gov-page">
       {userEditorGuard}
       <SummaryStrip items={[
-        { label: "用户总数", value: isBrowserMockMode ? users.length : remoteTotal, note: "按服务端分页加载" },
-        { label: "启用账号", value: summaryUsers.filter((item) => item.status === "启用").length, note: isBrowserMockMode ? "可正常登录" : "当前页", tone: "green" },
-        { label: "多角色用户", value: summaryUsers.filter((item) => item.roles.length > 1).length, note: isBrowserMockMode ? "权限取角色并集" : "当前页", tone: "blue" },
-        { label: "域登录账号", value: summaryUsers.filter((item) => item.authenticationMode === "domain").length, note: isBrowserMockMode ? "普通用户默认方式" : "当前页" },
+        { label: "用户总数", value: remoteTotal, note: "按服务端分页加载" },
+        { label: "启用账号", value: summaryUsers.filter((item) => item.status === "启用").length, note: "当前页", tone: "green" },
+        { label: "多角色用户", value: summaryUsers.filter((item) => item.roles.length > 1).length, note: "当前页", tone: "blue" },
+        { label: "域登录账号", value: summaryUsers.filter((item) => item.authenticationMode === "domain").length, note: "当前页" },
       ]} />
       <Card className="query-card gov-query-card">
         <div className="gov-filter-grid gov-filter-grid--users">
@@ -415,7 +387,7 @@ export function UserManagementPage() {
         <ResultHeader title="用户列表" count={resultTotal} extra={<><Typography.Text type="secondary">仅加载当前页数据</Typography.Text>{canEditUsers && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增用户</Button>}</>} />
         <Table<UserRecord> loading={remoteLoading} rowKey="id" columns={columns} dataSource={pageRows} scroll={{ x: 1420 }} pagination={{ current: page, pageSize, total: resultTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: (total) => `共 ${total} 名用户`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }} />
       </Card>
-      <Drawer width={600} open={drawerUser !== null} onClose={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })} title={drawerUser === "new" ? "新增用户" : "编辑用户"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
+      <Drawer size={600} open={drawerUser !== null} onClose={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })} title={drawerUser === "new" ? "新增用户" : "编辑用户"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "用户信息", () => { setEditorDirty(false); setDrawerUser(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
         <Alert
           className="gov-drawer-alert"
           type="info"
@@ -460,7 +432,7 @@ export function UserManagementPage() {
           >
             <Input maxLength={120} placeholder="name@company.com" />
           </Form.Item>
-          <Form.Item name="authenticationMode" label="登录方式" rules={[{ required: true, message: "请选择登录方式" }]} extra="域登录由正式后端连接公司域服务校验；浏览器 Mock 仍使用统一演示密码。"><Select options={[{ value: "domain", label: "域登录（默认）" }, { value: "password", label: "密码登录" }]} /></Form.Item>
+          <Form.Item name="authenticationMode" label="登录方式" rules={[{ required: true, message: "请选择登录方式" }]} extra="域登录由后端连接公司域服务校验；密码登录由后端安全保存密码摘要。"><Select options={[{ value: "domain", label: "域登录（默认）" }, { value: "password", label: "密码登录" }]} /></Form.Item>
           {drawerUser === "new" && selectedAuthenticationMode === "password" && <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 1, message: "密码至少 1 个字符" }]} extra="仅密码登录用户需要设置；正式后端使用 Node.js scrypt 保存版本化散列。"><Input.Password maxLength={64} /></Form.Item>}
           {drawerUser !== "new" && drawerUser?.authenticationMode === "domain" && selectedAuthenticationMode === "password" && <Form.Item name="newPassword" label="新密码" rules={[{ required: true, min: 1, message: "切换为密码登录时必须设置新密码" }]}><Input.Password maxLength={64} /></Form.Item>}
           <Form.Item name="department" label="所属部门" extra="可留空，也可选择一级或二级部门。"><Cascader changeOnSelect showSearch allowClear options={departmentOptions} placeholder="未设置" /></Form.Item>
@@ -480,6 +452,7 @@ export function UserManagementPage() {
 }
 
 export function DepartmentManagementPage() {
+  const { message } = App.useApp();
   const confirmEditorClose = useCloseEditorConfirmation();
   const personaId = usePrototypeStore((state) => state.personaId);
   const canEditOrganization = hasPersonaPermission(personaId, "org-department:编辑");
@@ -489,19 +462,8 @@ export function DepartmentManagementPage() {
   const setDepartments = useOrganizationStore((state) => state.setDepartments);
   const storedJobTitles = useOrganizationStore((state) => state.jobTitles);
   const setJobTitles = useOrganizationStore((state) => state.setJobTitles);
-  const identityUsers = useIdentityStore((state) => state.users);
-  const departments = useMemo(() => storedDepartments.map((department) => {
-    const users = isBrowserMockMode
-      ? identityUsers.filter((user) => user.department.includes(department.key)).length
-      : department.users;
-    return { ...department, users, referenced: users > 0 };
-  }), [identityUsers, storedDepartments]);
-  const jobTitles = useMemo(() => storedJobTitles.map((jobTitle) => ({
-    ...jobTitle,
-    users: isBrowserMockMode
-      ? identityUsers.filter((user) => user.jobTitle === jobTitle.name).length
-      : jobTitle.users,
-  })), [identityUsers, storedJobTitles]);
+  const departments = storedDepartments;
+  const jobTitles = storedJobTitles;
   const [selectedKey, setSelectedKey] = useState("rd");
   const [editor, setEditor] = useState<{ mode: "new-root" | "new-child" | "edit"; record?: DepartmentRecord } | null>(null);
   const [jobTitleEditor, setJobTitleEditor] = useState<JobTitleRecord | "new" | null>(null);
@@ -691,7 +653,7 @@ export function DepartmentManagementPage() {
           <Table<JobTitleRecord> rowKey="id" columns={jobTitleColumns} dataSource={[...jobTitles].sort((a, b) => a.sort - b.sort)} scroll={{ x: 850 }} pagination={false} />
         </Card>
       </>}
-      <Drawer width={520} open={section === "departments" && editor !== null} onClose={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })} title={editor?.mode === "edit" ? "编辑部门" : editor?.mode === "new-child" ? `在“${selected?.name ?? ""}”下新增二级部门` : "新增一级部门"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
+      <Drawer size={520} open={section === "departments" && editor !== null} onClose={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })} title={editor?.mode === "edit" ? "编辑部门" : editor?.mode === "new-child" ? `在“${selected?.name ?? ""}”下新增二级部门` : "新增一级部门"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "部门信息", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
         {editor?.mode === "new-child" && selected?.level === 2 ? <Alert type="error" showIcon title="二级部门不能继续添加下级" /> : null}
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
           try {
@@ -722,7 +684,7 @@ export function DepartmentManagementPage() {
           <Form.Item name="description" label="部门说明"><Input.TextArea rows={4} maxLength={200} showCount /></Form.Item>
         </Form>
       </Drawer>
-      <Drawer width={520} open={section === "jobTitles" && jobTitleEditor !== null} onClose={() => confirmEditorClose(editorDirty, "职务信息", () => { setEditorDirty(false); setJobTitleEditor(null); })} title={jobTitleEditor === "new" ? "新增职务" : "编辑职务"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "职务信息", () => { setEditorDirty(false); setJobTitleEditor(null); })}>取消</Button><Button type="primary" onClick={() => jobTitleForm.submit()}>保存</Button></Space>}>
+      <Drawer size={520} open={section === "jobTitles" && jobTitleEditor !== null} onClose={() => confirmEditorClose(editorDirty, "职务信息", () => { setEditorDirty(false); setJobTitleEditor(null); })} title={jobTitleEditor === "new" ? "新增职务" : "编辑职务"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "职务信息", () => { setEditorDirty(false); setJobTitleEditor(null); })}>取消</Button><Button type="primary" onClick={() => jobTitleForm.submit()}>保存</Button></Space>}>
         {jobTitleEditor !== "new" && jobTitleEditor?.users ? <Alert className="gov-drawer-alert" type="info" showIcon title={`当前有 ${jobTitleEditor.users} 名用户使用该职务`} description="可以修改名称、排序、状态和说明；名称修改后所有关联用户同步显示新名称，但该职务不能直接删除。" /> : null}
         <Form form={jobTitleForm} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
           try {
@@ -757,16 +719,15 @@ export function DepartmentManagementPage() {
 type RoleRecord = DomainRole;
 
 export function RoleManagementPage() {
+  const { message } = App.useApp();
   const confirmEditorClose = useCloseEditorConfirmation();
   const navigate = useNavigate();
   const storedRoles = useIdentityStore((state) => state.roles);
   const roles = useMemo(
-    () => isBrowserMockMode ? applyRolePermissionStats(storedRoles, readStoredRolePermissions()) : storedRoles,
+    () => storedRoles,
     [storedRoles],
   );
   const setRoles = useIdentityStore((state) => state.setRoles);
-  const identityUsers = useIdentityStore((state) => state.users);
-  const organizationJobTitles = useOrganizationStore((state) => state.jobTitles);
   const personaId = usePrototypeStore((state) => state.personaId);
   const canEditRoles = hasPersonaPermission(personaId, "org-role:编辑");
   const canGrantRoles = hasPersonaPermission(personaId, "org-role:授权");
@@ -840,7 +801,6 @@ export function RoleManagementPage() {
     });
   };
   const filtered = roles.filter((role) => `${role.name}${role.description}`.toLowerCase().includes(keyword.toLowerCase()));
-  const configuredRoleJobTitles = organizationJobTitles.filter((item) => item.status === "启用").sort((a, b) => a.sort - b.sort);
   const candidateUsers = useDirectoryUserCandidates(roleMemberKeyword, editor !== null, editingMemberIds);
   const roleMemberCandidates = candidateUsers.filter((user) => !user.builtIn).map((user) => ({
     id: user.id,
@@ -861,7 +821,7 @@ export function RoleManagementPage() {
     setEditor(record);
     setEditorEtag(undefined);
     setEditorDirty(false);
-    setEditingMemberIds(record === "new" ? [] : record.memberUserIds ?? identityUsers.filter((user) => record.members.includes(user.name)).map((user) => user.id));
+    setEditingMemberIds(record === "new" ? [] : record.memberUserIds ?? []);
     setRoleMemberKeyword("");
     setRoleMemberView("all");
     form.setFieldsValue(record === "new"
@@ -888,12 +848,9 @@ export function RoleManagementPage() {
         <div className="gov-toolbar"><Input allowClear prefix={<SearchOutlined />} placeholder="搜索角色名称或说明" value={keyword} onChange={(event) => setKeyword(event.target.value)} /><Space><Typography.Text type="secondary">共 {filtered.length} 个角色</Typography.Text>{canEditRoles && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增角色</Button>}</Space></div>
         <Table<RoleRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 940 }} pagination={{ pageSize: 10, showSizeChanger: false }} />
       </Card>
-      <Drawer width={620} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "角色信息", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增角色" : "编辑角色"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "角色信息", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
+      <Drawer size={620} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "角色信息", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增角色" : "编辑角色"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "角色信息", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存</Button></Space>}>
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
-          const selectedNames = candidateUsers.filter((user) => editingMemberIds.includes(user.id)).map((user) => user.name);
-          const patch = isBrowserMockMode
-            ? { name: values.name.trim(), description: values.description, status: values.status ? "启用" as const : "停用" as const, members: selectedNames }
-            : { name: values.name.trim(), description: values.description, status: values.status ? "启用" as const : "停用" as const, memberUserIds: editingMemberIds };
+          const patch = { name: values.name.trim(), description: values.description, status: values.status ? "启用" as const : "停用" as const, memberUserIds: editingMemberIds };
           try {
             if (editor === "new") cacheRole(await flowPilotApi.directory.createRole(patch));
             else if (editor) {
@@ -962,10 +919,10 @@ export function RoleManagementPage() {
           <Form.Item name="status" label="状态" valuePropName="checked"><Switch checkedChildren="启用" unCheckedChildren="停用" /></Form.Item>
         </Form>
       </Drawer>
-      <Drawer width={480} open={Boolean(memberRole)} onClose={() => setMemberRole(null)} title={`${memberRole?.name ?? ""} · 成员预览`}>
+      <Drawer size={480} open={Boolean(memberRole)} onClose={() => setMemberRole(null)} title={`${memberRole?.name ?? ""} · 成员预览`}>
         <Input allowClear prefix={<SearchOutlined />} placeholder="搜索成员" value={memberKeyword} onChange={(event) => setMemberKeyword(event.target.value)} />
-        <div className="gov-member-list">{(memberRole?.members ?? []).filter((name) => name.includes(memberKeyword)).map((name, index) => <div className="gov-member-row" key={name}><PersonChip name={name} detail={departmentByIndex[index % departmentByIndex.length].path} /><Tag>{configuredRoleJobTitles[index % Math.max(configuredRoleJobTitles.length, 1)]?.name ?? "未设置"}</Tag></div>)}</div>
-        <Typography.Text type="secondary">原型仅展示部分成员；正式列表采用服务端搜索与分页。</Typography.Text>
+        <div className="gov-member-list">{(memberRole?.members ?? []).filter((name) => name.includes(memberKeyword)).map((name) => <div className="gov-member-row" key={name}><PersonChip name={name} /></div>)}</div>
+        <Typography.Text type="secondary">成员名称来自后端角色数据。</Typography.Text>
       </Drawer>
     </div>
   );
@@ -976,7 +933,7 @@ const permissionRows = permissionCatalogPages;
 type RolePermissionMap = Record<string, string[]>;
 
 function readRolePermissionMap(): RolePermissionMap {
-  return readStoredRolePermissions();
+  return {};
 }
 
 function readStoredRoles(): RoleRecord[] {
@@ -1002,6 +959,7 @@ function permissionSetsEqual(left: Iterable<string>, right: Iterable<string>) {
 }
 
 export function PermissionManagementPage() {
+  const { message } = App.useApp();
   const setIdentityRoles = useIdentityStore((state) => state.setRoles);
   const identityRoles = useIdentityStore((state) => state.roles);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1114,9 +1072,7 @@ export function PermissionManagementPage() {
     setPermissionsByRole(nextPermissionMap);
     const rolesWithStats = applyRolePermissionStats(readStoredRoles(), nextPermissionMap);
     setIdentityRoles(rolesWithStats);
-    if (import.meta.env.VITE_API_MODE === "remote") {
-      await flowPilotApi.auth.me();
-    }
+    await flowPilotApi.auth.me();
     notifyRolePermissionsChanged();
     return nextPermissionMap;
   };
@@ -1179,29 +1135,14 @@ export function PermissionManagementPage() {
 
 type GroupPurpose = WorkflowGroupPurpose;
 type GroupRecord = WorkflowPermissionGroup;
-function effectiveMembers(group: Pick<GroupRecord, "directMembers" | "linkedRoles" | "directMemberUserIds" | "linkedRoleIds">) {
-  const users = useIdentityStore.getState().users;
-  return users
-    .filter((user) => !user.builtIn && user.status === "启用")
-    .filter((user) => group.directMemberUserIds?.includes(user.id)
-      || user.roleIds?.some((roleId) => group.linkedRoleIds?.includes(roleId)))
-    .map((user) => user.name);
-}
 
 export function WorkflowPermissionGroupsPage() {
+  const { message } = App.useApp();
   const confirmEditorClose = useCloseEditorConfirmation();
   const storedGroups = useIdentityStore((state) => state.workflowGroups);
   const setGroups = useIdentityStore((state) => state.setWorkflowGroups);
-  const definitions = useProcessDefinitionStore((state) => state.definitions);
-  const tasks = usePrototypeStore((state) => state.tasks);
-  const [remoteGroupsLoading, setRemoteGroupsLoading] = useState(!isBrowserMockMode);
-  const groups = useMemo(
-    () => isBrowserMockMode
-      ? deriveAllWorkflowGroupStatistics(storedGroups, definitions, tasks)
-      : remoteGroupsLoading ? [] : storedGroups,
-    [definitions, remoteGroupsLoading, storedGroups, tasks],
-  );
-  const identityUsers = useIdentityStore((state) => state.users);
+  const [remoteGroupsLoading, setRemoteGroupsLoading] = useState(true);
+  const groups = remoteGroupsLoading ? [] : storedGroups;
   const identityRoles = useIdentityStore((state) => state.roles);
   const personaId = usePrototypeStore((state) => state.personaId);
   const canEditGroups = hasPersonaPermission(personaId, "org-group:编辑");
@@ -1221,7 +1162,6 @@ export function WorkflowPermissionGroupsPage() {
   const [editorDirty, setEditorDirty] = useState(false);
   const [editorEtag, setEditorEtag] = useState<string>();
   useEffect(() => {
-    if (isBrowserMockMode) return;
     void refreshRemoteWorkflowGroups()
       .catch(() => message.error("流程权限组引用统计加载失败，请刷新后重试"))
       .finally(() => setRemoteGroupsLoading(false));
@@ -1270,10 +1210,6 @@ export function WorkflowPermissionGroupsPage() {
     });
   };
   const filtered = groups.filter((group) => `${group.name}${group.id}`.toLowerCase().includes(keyword.toLowerCase()) && (!process || group.processes.includes(process)) && (!status || group.status === status));
-  const directMembers = candidateUsers.filter((user) => directMemberUserIds.includes(user.id)).map((user) => user.name);
-  const linkedRoles = identityRoles.filter((role) => linkedRoleIds.includes(role.id)).map((role) => role.name);
-  const derived = effectiveMembers({ directMembers, linkedRoles, directMemberUserIds, linkedRoleIds });
-  const visibleDerived = derived.filter((name) => name.toLowerCase().includes(effectiveMemberKeyword.trim().toLowerCase()));
   const loadRemoteMemberPreview = (record: GroupRecord, page: number) => {
     setRemotePreviewLoading(true);
     void flowPilotApi.organization.groupEffectiveMembers(record.id, { page, pageSize: 50 })
@@ -1289,14 +1225,14 @@ export function WorkflowPermissionGroupsPage() {
     setRemotePreviewMembers([]);
     setRemotePreviewPage(1);
     setRemotePreviewTotal(record.effectiveMemberCount ?? 0);
-    if (!isBrowserMockMode) loadRemoteMemberPreview(record, 1);
+    loadRemoteMemberPreview(record, 1);
   };
   const openEditor = (record: GroupRecord | "new") => {
     setEditor(record);
     setEditorEtag(undefined);
     setEditorDirty(false);
     setEffectiveMemberKeyword("");
-    const memberIds = record === "new" ? [] : record.directMemberUserIds ?? identityUsers.filter((user) => record.directMembers.includes(user.name)).map((user) => user.id);
+    const memberIds = record === "new" ? [] : record.directMemberUserIds ?? [];
     const roleIds = record === "new" ? [] : record.linkedRoleIds ?? identityRoles.filter((role) => record.linkedRoles.includes(role.name)).map((role) => role.id);
     const values = record === "new"
       ? { name: "", purposes: ["审批/受理"] as GroupPurpose[], status: true, directMemberUserIds: [], linkedRoleIds: [] }
@@ -1313,7 +1249,7 @@ export function WorkflowPermissionGroupsPage() {
     { title: "已引用流程", dataIndex: "processes", width: 240, render: (values: string[]) => values.length ? <Space size={[4, 4]} wrap>{values.map((value) => <Tag key={value} variant="filled">{value}</Tag>)}</Space> : <Typography.Text type="secondary">暂未关联流程</Typography.Text> },
     { title: "允许用途", dataIndex: "purposes", width: 220, render: (values: GroupPurpose[]) => <Space size={[4, 4]} wrap>{values.map((value) => <Tag key={value} color={value === "发起" ? "cyan" : value === "审批/受理" ? "blue" : "volcano"}>{value}</Tag>)}</Space> },
     { title: "成员构成", key: "composition", width: 220, render: (_, record) => <div className="gov-composition"><span><UserOutlined /> 直接 {record.directMemberUserIds?.length ?? record.directMembers.length}</span><span><TeamOutlined /> 角色 {record.linkedRoleIds?.length ?? record.linkedRoles.length}</span></div> },
-    { title: "有效成员", key: "effective", width: 112, render: (_, record) => <Button className="gov-count-link" type="link" onClick={() => openMemberPreview(record)}>{isBrowserMockMode ? effectiveMembers(record).length : record.effectiveMemberCount ?? 0} 人</Button> },
+    { title: "有效成员", key: "effective", width: 112, render: (_, record) => <Button className="gov-count-link" type="link" onClick={() => openMemberPreview(record)}>{record.effectiveMemberCount ?? 0} 人</Button> },
     { title: "状态", dataIndex: "status", width: 118, align: "center", render: (value: EnableStatus) => <StatusTag status={value} /> },
     { title: "更新时间", dataIndex: "updatedAt", width: 150, render: (value: string) => formatDisplayDateTime(value) },
     { title: "操作", fixed: "right", width: 180, align: "center", render: (_, record) => <Space size={4}>{canEditGroups && <Tooltip title="编辑"><Button type="text" aria-label={`编辑权限组：${record.name}`} icon={<EditOutlined />} onClick={() => openEditor(record)} /></Tooltip>}<Tooltip title="有效成员预览"><Button type="text" aria-label={`预览有效成员：${record.name}`} icon={<EyeOutlined />} onClick={() => openMemberPreview(record)} /></Tooltip>{canEditGroups && <Tooltip title={record.status === "启用" ? "停用" : "启用"}><Popconfirm title={record.status === "启用" && record.openTasks ? `停用不影响已有 ${record.openTasks} 项待办，确认继续？` : "确认修改状态？"} onConfirm={() => void changeGroupStatus(record)}><Button type="text" aria-label={`${record.status === "启用" ? "停用" : "启用"}权限组：${record.name}`} icon={record.status === "启用" ? <StopOutlined /> : <CheckCircleOutlined />} /></Popconfirm></Tooltip>}{canDeleteGroups && <Tooltip title={record.referenced || record.processes.length ? "已被流程版本引用，不能删除" : "删除流程权限组"}><Button danger disabled={Boolean(record.referenced || record.processes.length)} type="text" aria-label={`删除权限组：${record.name}`} icon={<DeleteOutlined />} onClick={() => deleteGroup(record)} /></Tooltip>}</Space> },
@@ -1324,19 +1260,15 @@ export function WorkflowPermissionGroupsPage() {
       <Alert type="info" showIcon title="成员变化立即影响运行中的待办" description="直接成员和关联角色成员合并去重后形成有效成员。允许用途决定权限组可出现的设计位置，已引用流程由系统自动统计；停用权限组不影响已运行流程，引用后不可删除。" />
       <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--groups"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="权限组名称或编号" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>已引用流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={[...new Set(groups.flatMap((group) => group.processes))].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={["启用", "停用"].map((value) => ({ value }))} /></label><div className="gov-filter-actions"><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); }}>重置</Button></div></div></Card>
       <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程权限组" count={filtered.length} extra={canEditGroups ? <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增权限组</Button> : null} /><Table<GroupRecord> loading={remoteGroupsLoading} rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 个权限组` }} /></Card>
-      <Drawer width={720} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增流程权限组" : "编辑流程权限组"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存并立即生效</Button></Space>}>
+      <Drawer size={720} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增流程权限组" : "编辑流程权限组"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存并立即生效</Button></Space>}>
         {editor !== "new" && editor?.openTasks ? <Alert className="gov-drawer-alert" type="warning" showIcon title={`当前有 ${editor.openTasks} 项运行待办`} description="保存后，新增成员立即获得处理资格；被移除成员将立即失去尚未处理的待办资格。" /> : null}
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
           try {
             if (editor === "new") {
-              cacheGroup(await flowPilotApi.directory.createGroup(isBrowserMockMode
-                ? { name: values.name, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用" }
-                : { name: values.name, purposes: values.purposes, directMembers: [], linkedRoles: [], directMemberUserIds, linkedRoleIds, status: values.status ? "启用" : "停用" }));
+              cacheGroup(await flowPilotApi.directory.createGroup({ name: values.name, purposes: values.purposes, directMembers: [], linkedRoles: [], directMemberUserIds, linkedRoleIds, status: values.status ? "启用" : "停用" }));
             } else if (editor) {
               if (!editorEtag) throw new Error("流程权限组最新版本尚未加载完成");
-              cacheGroup(await flowPilotApi.directory.updateGroup(editor.id, isBrowserMockMode
-                ? { name: values.name, purposes: values.purposes, directMembers, linkedRoles, status: values.status ? "启用" : "停用" }
-                : { name: values.name, purposes: values.purposes, directMembers: [], linkedRoles: [], directMemberUserIds, linkedRoleIds, status: values.status ? "启用" : "停用" }, editorEtag));
+              cacheGroup(await flowPilotApi.directory.updateGroup(editor.id, { name: values.name, purposes: values.purposes, directMembers: [], linkedRoles: [], directMemberUserIds, linkedRoleIds, status: values.status ? "启用" : "停用" }, editorEtag));
             }
             message.success("流程权限组已保存，成员资格已立即更新");
           } catch {
@@ -1358,40 +1290,16 @@ export function WorkflowPermissionGroupsPage() {
               <Checkbox.Group className="gov-purpose-checkboxes" options={(["发起", "审批/受理", "关闭"] satisfies GroupPurpose[]).map((value) => ({ label: value, value }))} />
             </Form.Item>
           </div>
-          <div className="gov-group-editor-section"><div className="gov-section-title"><span><UserOutlined />直接成员</span><Tag>{directMemberUserIds.length} 人</Tag></div><Typography.Paragraph type="secondary">逐个加入的固定人员，不依赖其系统角色。正式模式按输入内容从服务端搜索。</Typography.Paragraph><Form.Item name="directMemberUserIds"><Select mode="multiple" showSearch filterOption={isBrowserMockMode} optionFilterProp="label" maxTagCount="responsive" onSearch={setEffectiveMemberKeyword} options={candidateUsers.filter((user) => !user.builtIn && user.status === "启用").map((user) => ({ value: user.id, label: `${user.name} · ${user.departmentPath}` }))} onChange={(values) => { setEditorDirty(true); setDirectMemberUserIds(values); }} /></Form.Item></div>
+          <div className="gov-group-editor-section"><div className="gov-section-title"><span><UserOutlined />直接成员</span><Tag>{directMemberUserIds.length} 人</Tag></div><Typography.Paragraph type="secondary">逐个加入的固定人员，不依赖其系统角色；输入关键字时由后端搜索。</Typography.Paragraph><Form.Item name="directMemberUserIds"><Select mode="multiple" showSearch filterOption={false} optionFilterProp="label" maxTagCount="responsive" onSearch={setEffectiveMemberKeyword} options={candidateUsers.filter((user) => !user.builtIn && user.status === "启用").map((user) => ({ value: user.id, label: `${user.name} · ${user.departmentPath}` }))} onChange={(values) => { setEditorDirty(true); setDirectMemberUserIds(values); }} /></Form.Item></div>
           <div className="gov-group-editor-section"><div className="gov-section-title"><span><TeamOutlined />关联角色</span><Tag>{linkedRoleIds.length} 个</Tag></div><Typography.Paragraph type="secondary">角色下的全部用户动态加入；角色成员变化会立即同步到本权限组。</Typography.Paragraph><Form.Item name="linkedRoleIds"><Select mode="multiple" showSearch optionFilterProp="label" options={identityRoles.filter((role) => !role.builtIn && role.status === "启用").map((role) => ({ value: role.id, label: role.name }))} onChange={(values) => { setEditorDirty(true); setLinkedRoleIds(values); }} /></Form.Item></div>
-          {isBrowserMockMode ? <div className="gov-effective-preview">
-            <div className="gov-effective-preview__head"><strong>有效成员预览</strong><Tag color="blue">去重后 {derived.length} 人</Tag></div>
-            <Input
-              allowClear
-              prefix={<SearchOutlined />}
-              placeholder="搜索有效成员全名"
-              value={effectiveMemberKeyword}
-              onChange={(event) => setEffectiveMemberKeyword(event.target.value)}
-            />
-            <div className="gov-effective-member-grid">
-              {visibleDerived.map((name) => {
-                const user = identityUsers.find((item) => item.name === name);
-                const direct = user ? directMemberUserIds.includes(user.id) : false;
-                const roles = identityRoles.filter((role) => linkedRoleIds.includes(role.id) && user?.roleIds?.includes(role.id)).map((role) => role.name);
-                return (
-                  <div className="gov-effective-member" key={name}>
-                    <div><strong>{name}</strong><Tag color="success" variant="filled">有效</Tag></div>
-                    <small>{[direct ? "直接加入" : "", roles.length ? `角色带入：${roles.join("、")}` : ""].filter(Boolean).join(" · ")}</small>
-                  </div>
-                );
-              })}
-              {visibleDerived.length === 0 && <div className="gov-effective-member-empty">没有符合条件的有效成员</div>}
-            </div>
-            <Typography.Text type="secondary">完整姓名与成员来源直接显示；成员较多时可搜索并在列表内滚动查看。</Typography.Text>
-          </div> : <Alert type="info" showIcon title="完整有效成员将在保存后由服务端计算" description="编辑时只提交直接成员和关联角色；保存后可从列表的有效成员数量进入服务端分页结果，避免用当前页用户缓存产生错误统计。" />}
+          <Alert type="info" showIcon title="完整有效成员将在保存后由服务端计算" description="编辑时只提交直接成员和关联角色；保存后可从列表的有效成员数量进入服务端分页结果，避免用当前页用户缓存产生错误统计。" />
         </Form>
       </Drawer>
-      <Drawer width={560} open={Boolean(preview)} onClose={() => setPreview(null)} title={`${preview?.name ?? ""} · 有效成员`}>
+      <Drawer size={560} open={Boolean(preview)} onClose={() => setPreview(null)} title={`${preview?.name ?? ""} · 有效成员`}>
         <Alert className="gov-drawer-alert" type="info" showIcon title="相同人员仅计一次" description="来源标签用于说明人员是被直接添加、通过角色加入，或同时来自两种方式。" />
-        <div className="gov-member-list">{preview && isBrowserMockMode ? effectiveMembers(preview).map((name) => { const user = identityUsers.find((item) => item.name === name); const direct = user ? preview.directMemberUserIds?.includes(user.id) ?? false : false; const roles = identityRoles.filter((role) => preview.linkedRoleIds?.includes(role.id) && user?.roleIds?.includes(role.id)).map((role) => role.name); return <div className="gov-member-row" key={name}><PersonChip name={name} detail={user?.departmentPath} /><Space size={[4, 4]} wrap>{direct ? <Tag color="cyan">直接加入</Tag> : null}{roles.map((role) => <Tag color="purple" key={role}>角色带入：{role}</Tag>)}</Space></div>; }) : remotePreviewMembers.map((member) => <div className="gov-member-row" key={member.id}><PersonChip name={member.name} detail={member.departmentPath || member.account} /><Space size={[4, 4]} wrap>{member.sources.map((source) => <Tag color={source === "direct" ? "cyan" : "purple"} key={source}>{source === "direct" ? "直接加入" : `角色带入：${source.slice(5)}`}</Tag>)}</Space></div>)}</div>
+        <div className="gov-member-list">{remotePreviewMembers.map((member) => <div className="gov-member-row" key={member.id}><PersonChip name={member.name} detail={member.departmentPath || member.account} /><Space size={[4, 4]} wrap>{member.sources.map((source) => <Tag color={source === "direct" ? "cyan" : "purple"} key={source}>{source === "direct" ? "直接加入" : `角色带入：${source.slice(5)}`}</Tag>)}</Space></div>)}</div>
         {remotePreviewLoading ? <Typography.Text type="secondary">正在加载有效成员…</Typography.Text> : null}
-        {!isBrowserMockMode && remotePreviewTotal > 50 ? <Pagination current={remotePreviewPage} pageSize={50} total={remotePreviewTotal} showSizeChanger={false} showTotal={(total) => `共 ${total} 人`} onChange={(nextPage) => { if (!preview) return; setRemotePreviewPage(nextPage); loadRemoteMemberPreview(preview, nextPage); }} /> : null}
+        {remotePreviewTotal > 50 ? <Pagination current={remotePreviewPage} pageSize={50} total={remotePreviewTotal} showSizeChanger={false} showTotal={(total) => `共 ${total} 人`} onChange={(nextPage) => { if (!preview) return; setRemotePreviewPage(nextPage); loadRemoteMemberPreview(preview, nextPage); }} /> : null}
       </Drawer>
     </div>
   );
@@ -1402,9 +1310,9 @@ interface MonitorRecord { id: string; code: string; title: string; process: stri
 const monitorStatuses: InstanceMonitorStatus[] = ["审核中", "驳回待处理", "已完成", "已关闭", "进行中"];
 
 export function InstanceMonitorPage() {
-  const instances = usePrototypeStore((state) => state.instances);
+  const { message } = App.useApp();
   const definitions = useProcessDefinitionStore((state) => state.definitions);
-  const [remoteInstances, setRemoteInstances] = useState<typeof instances>([]);
+  const [remoteInstances, setRemoteInstances] = useState<ProcessInstance[]>([]);
   const [remoteTotal, setRemoteTotal] = useState(0);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [monitorPage, setMonitorPage] = useState(1);
@@ -1416,7 +1324,6 @@ export function InstanceMonitorPage() {
   const [appliedFilters, setAppliedFilters] = useState(() => ({ keyword: "", process: undefined as string | undefined, status: undefined as InstanceMonitorStatus | undefined, dateRange: createDefaultDateRange() }));
   const [detail, setDetail] = useState<MonitorRecord | null>(null);
   useEffect(() => {
-    if (isBrowserMockMode) return;
     let cancelled = false;
     setRemoteLoading(true);
     const normalizedRange = normalizeDayRange(appliedFilters.dateRange);
@@ -1440,8 +1347,7 @@ export function InstanceMonitorPage() {
     });
     return () => { cancelled = true; };
   }, [appliedFilters, monitorPage, monitorPageSize]);
-  const sourceInstances = isBrowserMockMode ? instances : remoteInstances;
-  const monitorRows = useMemo(() => sourceInstances.map((instance): MonitorRecord => {
+  const monitorRows = useMemo(() => remoteInstances.map((instance): MonitorRecord => {
     const definition = definitions.find((item) => item.id === instance.definitionId);
     const version = definition?.versions.find((item) => item.id === instance.versionId);
     const assignee = instance.currentAssigneeId ? findIdentityUser(instance.currentAssigneeId)?.name : instance.currentAssignee;
@@ -1460,10 +1366,8 @@ export function InstanceMonitorPage() {
       createdAt: instance.createdAt,
       updatedAt: instance.updatedAt,
     };
-  }), [definitions, sourceInstances]);
-  const filtered = isBrowserMockMode
-    ? monitorRows.filter((row) => `${row.code}${row.title}${row.initiator}`.toLowerCase().includes(appliedFilters.keyword.toLowerCase()) && (!appliedFilters.process || definitions.find((item) => item.id === appliedFilters.process)?.name === row.process) && (!appliedFilters.status || row.status === appliedFilters.status) && isDateTimeInRange(row.createdAt, appliedFilters.dateRange))
-    : monitorRows;
+  }), [definitions, remoteInstances]);
+  const filtered = monitorRows;
   const columns: TableProps<MonitorRecord>["columns"] = [
     { title: "实例编号", dataIndex: "code", width: 170, fixed: "left", render: (value: string, record) => <Button className="gov-table-link" type="link" onClick={() => setDetail(record)}>{value}</Button> },
     { title: "标题", dataIndex: "title", width: 280, ellipsis: true },
@@ -1479,8 +1383,8 @@ export function InstanceMonitorPage() {
     <div className="page-stack gov-page">
       <Alert type="info" showIcon title="实例监控为只读页面" description="运维人员可以查询和查看流程、表单及流转信息，但不能强制关闭、改派、跳过节点或修改业务数据。" />
       <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--monitor"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="实例编号、标题或发起人" value={keyword} onChange={(event) => setKeyword(event.target.value)} onPressEnter={() => { setMonitorPage(1); setAppliedFilters({ keyword, process, status, dateRange }); }} /></label><label><span>流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={definitions.map((definition) => ({ value: definition.id, label: definition.name }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={monitorStatuses.map((value) => ({ value }))} /></label><label><span>发起时间</span><DatePicker.RangePicker allowClear={false} value={dateRange} onChange={(value) => { if (value?.[0] && value[1]) setDateRange(normalizeDayRange([value[0], value[1]])); }} /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => { setMonitorPage(1); setAppliedFilters({ keyword, process, status, dateRange }); }}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { const nextRange = createDefaultDateRange(); setKeyword(""); setProcess(undefined); setStatus(undefined); setDateRange(nextRange); setMonitorPage(1); setAppliedFilters({ keyword: "", process: undefined, status: undefined, dateRange: nextRange }); }}>重置</Button></div></div></Card>
-      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程实例" count={isBrowserMockMode ? filtered.length : remoteTotal} extra={<Typography.Text type="secondary"><LockOutlined /> 全部操作只读</Typography.Text>} /><Table<MonitorRecord> loading={remoteLoading} rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1510 }} pagination={{ current: monitorPage, pageSize: monitorPageSize, total: isBrowserMockMode ? filtered.length : remoteTotal, showSizeChanger: true, showTotal: (total) => `共 ${total} 条实例`, onChange: (nextPage, nextPageSize) => { setMonitorPage(nextPageSize === monitorPageSize ? nextPage : 1); setMonitorPageSize(nextPageSize); } }} /></Card>
-      <Drawer width={660} open={Boolean(detail)} onClose={() => setDetail(null)} title="流程实例详情（只读）">
+      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程实例" count={remoteTotal} extra={<Typography.Text type="secondary"><LockOutlined /> 全部操作只读</Typography.Text>} /><Table<MonitorRecord> loading={remoteLoading} rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1510 }} pagination={{ current: monitorPage, pageSize: monitorPageSize, total: remoteTotal, showSizeChanger: true, showTotal: (total) => `共 ${total} 条实例`, onChange: (nextPage, nextPageSize) => { setMonitorPage(nextPageSize === monitorPageSize ? nextPage : 1); setMonitorPageSize(nextPageSize); } }} /></Card>
+      <Drawer size={660} open={Boolean(detail)} onClose={() => setDetail(null)} title="流程实例详情（只读）">
         {detail ? <><div className="gov-detail-hero-row"><span className="gov-detail-icon"><FileSearchOutlined /></span><div><Typography.Title level={4}>{detail.title}</Typography.Title><Typography.Text type="secondary">{detail.code} · {detail.process} {detail.version}</Typography.Text></div><StatusPill status={detail.status} /></div><Descriptions bordered column={2} size="small" items={[{ key: "initiator", label: "发起人", children: `${detail.initiator}（${detail.department}）` }, { key: "created", label: "发起时间", children: formatDisplayDateTime(detail.createdAt) }, { key: "node", label: "当前节点", children: detail.node || "—" }, { key: "updated", label: "更新时间", children: formatDisplayDateTime(detail.updatedAt) }]} /><div className="gov-detail-section"><div className="gov-section-title">流转概览</div><Timeline items={[{ color: "green", content: <><strong>{detail.initiator} 发起流程</strong><small>{formatDisplayDateTime(detail.createdAt)}</small></> }, { color: "blue", content: <><strong>进入 {detail.node || "结束"}</strong><small>{formatDisplayDateTime(detail.updatedAt)}</small></> }, { color: "gray", content: <Typography.Text type="secondary">后续流转记录将在这里按时间显示</Typography.Text> }]} /></div><Alert type="warning" showIcon title="只读限制" description="本页没有关闭、变更受理人、跳过节点或修改表单的入口。" /></> : null}
       </Drawer>
     </div>
@@ -1491,9 +1395,7 @@ type AuditResult = "成功" | "失败";
 interface AuditRecord { id: string; operator: string; department: string; module: string; summary: string; action: string; result: AuditResult; time: string; detail: string; }
 
 export function AuditLogPage() {
-  const instances = usePrototypeStore((state) => state.instances);
-  const tasks = usePrototypeStore((state) => state.tasks);
-  const debugMode = isBrowserMockMode;
+  const { message } = App.useApp();
   const [remoteAuditEvents, setRemoteAuditEvents] = useState<AuditEvent[]>([]);
   const [remoteAuditTotal, setRemoteAuditTotal] = useState(0);
   const [remoteAuditLoading, setRemoteAuditLoading] = useState(false);
@@ -1506,7 +1408,6 @@ export function AuditLogPage() {
   const [appliedFilters, setAppliedFilters] = useState(() => ({ keyword: "", module: undefined as string | undefined, result: undefined as AuditResult | undefined, dateRange: createDefaultDateRange() }));
   const [detail, setDetail] = useState<AuditRecord | null>(null);
   useEffect(() => {
-    if (debugMode) return;
     let cancelled = false;
     setRemoteAuditLoading(true);
     const normalizedRange = normalizeDayRange(appliedFilters.dateRange);
@@ -1539,12 +1440,10 @@ export function AuditLogPage() {
       if (!cancelled) setRemoteAuditLoading(false);
     });
     return () => { cancelled = true; };
-  }, [appliedFilters, auditPage, auditPageSize, debugMode]);
+  }, [appliedFilters, auditPage, auditPageSize]);
   const auditRows = useMemo(() => {
     const eventsById = new Map(
-      (debugMode
-        ? [...readLocalAuditEvents(), ...collectRuntimeAuditEvents(instances, tasks)]
-        : remoteAuditEvents).map((event) => [event.id, event]),
+      remoteAuditEvents.map((event) => [event.id, event]),
     );
     return Array.from(eventsById.values()).map((event): AuditRecord => {
       const actor = event.actorId ? findIdentityUser(event.actorId) : undefined;
@@ -1562,10 +1461,8 @@ export function AuditLogPage() {
         detail: auditDetailText(event),
       };
     }).sort((left, right) => compareDomainTimestamps(right.time, left.time));
-  }, [debugMode, instances, remoteAuditEvents, tasks]);
-  const filtered = debugMode
-    ? auditRows.filter((row) => `${row.operator}${row.summary}${row.action}${row.module}`.toLowerCase().includes(appliedFilters.keyword.toLowerCase()) && (!appliedFilters.module || row.module === appliedFilters.module) && (!appliedFilters.result || row.result === appliedFilters.result) && isDateTimeInRange(row.time, appliedFilters.dateRange))
-    : auditRows;
+  }, [remoteAuditEvents]);
+  const filtered = auditRows;
   const columns: TableProps<AuditRecord>["columns"] = [
     { title: "时间", dataIndex: "time", width: 170, fixed: "left", render: (value: string) => formatDisplayDateTime(value) },
     { title: "操作人", dataIndex: "operator", width: 145, render: (value: string, record) => <div className="gov-primary-cell"><strong>{value}</strong><small>{record.department}</small></div> },
@@ -1578,8 +1475,8 @@ export function AuditLogPage() {
   return (
     <div className="page-stack gov-page">
       <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--audit"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="操作人或操作内容" value={keyword} onChange={(event) => setKeyword(event.target.value)} onPressEnter={() => { setAuditPage(1); setAppliedFilters({ keyword, module, result, dateRange }); }} /></label><label><span>模块</span><Select allowClear placeholder="全部模块" value={module} onChange={setModule} options={["登录认证", "流程配置", "流程实例", "审批任务", "用户与权限"].map((value) => ({ value }))} /></label><label><span>结果</span><Select allowClear placeholder="全部结果" value={result} onChange={setResult} options={["成功", "失败"].map((value) => ({ value }))} /></label><label><span>操作时间</span><DatePicker.RangePicker allowClear={false} showTime={{ format: "HH:mm" }} format="YYYY-MM-DD HH:mm" value={dateRange} onChange={(value) => { if (value?.[0] && value[1]) setDateRange([value[0], value[1]]); }} /></label><div className="gov-filter-actions"><Button type="primary" icon={<SearchOutlined />} onClick={() => { setAuditPage(1); setAppliedFilters({ keyword, module, result, dateRange }); }}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => { const nextRange = createDefaultDateRange(); setKeyword(""); setModule(undefined); setResult(undefined); setDateRange(nextRange); setAuditPage(1); setAppliedFilters({ keyword: "", module: undefined, result: undefined, dateRange: nextRange }); }}>重置</Button></div></div></Card>
-      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="操作审计" count={debugMode ? filtered.length : remoteAuditTotal} extra={<Typography.Text type="secondary">审计记录只读且不可删除</Typography.Text>} /><Table<AuditRecord> loading={remoteAuditLoading} rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1080 }} pagination={{ current: auditPage, pageSize: auditPageSize, total: debugMode ? filtered.length : remoteAuditTotal, showSizeChanger: true, showTotal: (total) => `共 ${total} 条日志`, onChange: (nextPage, nextPageSize) => { setAuditPage(nextPageSize === auditPageSize ? nextPage : 1); setAuditPageSize(nextPageSize); } }} /></Card>
-      <Drawer width={680} open={Boolean(detail)} onClose={() => setDetail(null)} title="审计详情">
+      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="操作审计" count={remoteAuditTotal} extra={<Typography.Text type="secondary">审计记录只读且不可删除</Typography.Text>} /><Table<AuditRecord> loading={remoteAuditLoading} rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1080 }} pagination={{ current: auditPage, pageSize: auditPageSize, total: remoteAuditTotal, showSizeChanger: true, showTotal: (total) => `共 ${total} 条日志`, onChange: (nextPage, nextPageSize) => { setAuditPage(nextPageSize === auditPageSize ? nextPage : 1); setAuditPageSize(nextPageSize); } }} /></Card>
+      <Drawer size={680} open={Boolean(detail)} onClose={() => setDetail(null)} title="审计详情">
         {detail ? <><div className="gov-audit-detail-head"><span className={`gov-audit-result is-${detail.result === "成功" ? "success" : "error"}`}>{detail.result === "成功" ? <CheckCircleOutlined /> : <StopOutlined />}</span><div><Typography.Title level={4}>{detail.action}</Typography.Title><Typography.Text type="secondary">{formatDisplayDateTime(detail.time)}</Typography.Text></div><StatusPill status={detail.result} /></div><Descriptions bordered column={2} size="small" items={[{ key: "operator", label: "操作人", children: `${detail.operator}（${detail.department}）` }, { key: "module", label: "所属模块", children: detail.module }, { key: "summary", label: "操作内容", span: 2, children: detail.summary }]} /><Alert className="gov-audit-summary" type="info" showIcon title="操作摘要" description={detail.detail} /></> : null}
       </Drawer>
     </div>

@@ -20,7 +20,7 @@ import type { DesignerChoiceOption } from "../utils/designerOptions";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { useIdentityStore } from "../state/useIdentityStore";
 import { useOrganizationStore } from "../state/useOrganizationStore";
-import { apiDownload, apiRequest, apiResource, createIdempotencyKey, writeApiAccessToken } from "./client";
+import { abortPendingApiRequests, apiDownload, apiRequest, apiResource, createIdempotencyKey } from "./client";
 import type { ApiResourceResult } from "./client";
 import {
   normalizeAttachmentRecord,
@@ -51,7 +51,6 @@ import type {
   EmailOutboxItem,
   EffectiveWorkflowMember,
   ImpactPreview,
-  MockApiSettings,
   PageResult,
   PermissionCatalogItem,
   PositionRecord,
@@ -91,7 +90,6 @@ export interface WorkflowTaskQuery extends PageQuery {
 }
 
 const mutation = () => ({ idempotencyKey: createIdempotencyKey() });
-const remoteMode = import.meta.env.VITE_API_MODE === "remote";
 
 export const clearRemoteApplicationCache = () => {
   useIdentityStore.setState({ users: [], roles: [], workflowGroups: [] });
@@ -498,21 +496,7 @@ const remotePositionInput = (input: Partial<PositionRecord> & { name?: string })
   ...(input.description !== undefined ? { description: input.description } : {}),
 });
 
-interface MockSystemApi {
-  getMockSettings: () => Promise<MockApiSettings>;
-  updateMockSettings: (settings: Partial<MockApiSettings>) => Promise<MockApiSettings>;
-  resetDemo: () => Promise<{ reset: true }>;
-}
-
-const mockSystemApi = (import.meta.env.VITE_API_MODE === "remote" ? {} : {
-  getMockSettings: () => apiRequest<MockApiSettings>("/mock/settings"),
-  updateMockSettings: (settings: Partial<MockApiSettings>) =>
-    apiRequest<MockApiSettings>("/mock/settings", { method: "PATCH", body: settings }),
-  resetDemo: () => apiRequest<{ reset: true }>("/mock/reset", { method: "POST", ...mutation() }),
-}) as MockSystemApi;
-
 const applySession = (session: AuthSession) => {
-  writeApiAccessToken(remoteMode ? undefined : session.accessToken ?? readCurrentToken());
   const sessionUsers = [session.operatorUser, session.user].filter((user): user is DirectoryUser => Boolean(user));
   useIdentityStore.getState().setUsers((users) => {
     const byId = new Map(users.map((user) => [user.id, user]));
@@ -526,18 +510,13 @@ const applySession = (session: AuthSession) => {
   return session;
 };
 
-const readCurrentToken = () => window.sessionStorage.getItem("flowpilot-api-access-token") ?? undefined;
-
 export const flowPilotApi = {
   system: {
     health: () => apiRequest<ApiHealth>("/health"),
-    ...mockSystemApi,
   },
   auth: {
     login: async (account: string, password: string) => {
-      const body = import.meta.env.VITE_API_MODE === "remote"
-        ? { loginName: account, password }
-        : { account, password };
+      const body = { loginName: account, password };
       const session = normalizeAuthSession(await apiRequest<unknown>("/auth/login", { method: "POST", body, ...mutation() }));
       return applySession(session);
     },
@@ -561,35 +540,32 @@ export const flowPilotApi = {
       normalizeAuthSession(await apiRequest<unknown>("/auth/impersonation", { method: "DELETE", ...mutation() })),
     ),
     logout: async (options: { clearCache?: boolean } = {}) => {
-      try {
-        await apiRequest<void>("/auth/logout", { method: "POST", ...mutation() });
-      } finally {
-        writeApiAccessToken();
-        if (remoteMode && options.clearCache !== false) clearRemoteApplicationCache();
-        usePrototypeStore.getState().logout();
-      }
+      abortPendingApiRequests();
+      if (options.clearCache !== false) clearRemoteApplicationCache();
+      usePrototypeStore.getState().logout();
+      await apiRequest<void>("/auth/logout", { method: "POST", ...mutation() });
     },
   },
   directory: {
     users: (query: PageQuery & { status?: "启用" | "停用"; hasEmail?: boolean; departmentId?: string; positionId?: string; roleId?: string; authenticationMode?: string } = {}) =>
       pageRequest("/users", {
         ...query,
-        status: query.status && remoteMode ? remoteStatus(query.status) : query.status,
+        status: query.status ? remoteStatus(query.status) : undefined,
       }, normalizeDirectoryUser),
     user: async (userId: string) => normalizeDirectoryUser(await apiRequest<unknown>(`/users/${encodeURIComponent(userId)}`)),
     userResource: (userId: string) => mappedResource(apiResource<unknown>(`/users/${encodeURIComponent(userId)}`), normalizeDirectoryUser),
     createUser: async (input: Omit<DomainUser, "id" | "lastLogin" | "password"> & { password?: string }) =>
-      normalizeDirectoryUser(await apiRequest<unknown>("/users", { method: "POST", body: remoteMode ? remoteUserInput(input) : input, ...mutation() })),
+      normalizeDirectoryUser(await apiRequest<unknown>("/users", { method: "POST", body: remoteUserInput(input), ...mutation() })),
     updateUser: async (userId: string, patch: Partial<DomainUser> & { newPassword?: string }, ifMatch?: string) =>
-      normalizeDirectoryUser(await apiRequest<unknown>(`/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: remoteMode ? remoteUserInput(patch) : patch, ifMatch })),
+      normalizeDirectoryUser(await apiRequest<unknown>(`/users/${encodeURIComponent(userId)}`, { method: "PATCH", body: remoteUserInput(patch), ifMatch })),
     updateUserStatus: (userId: string, status: "启用" | "停用", ifMatch: string) =>
-      apiRequest<unknown>(`/users/${encodeURIComponent(userId)}/status`, { method: "PUT", body: { status: remoteMode ? remoteStatus(status) : status }, ifMatch }).then(normalizeDirectoryUser),
+      apiRequest<unknown>(`/users/${encodeURIComponent(userId)}/status`, { method: "PUT", body: { status: remoteStatus(status) }, ifMatch }).then(normalizeDirectoryUser),
     deleteUser: (userId: string, ifMatch: string) =>
       apiRequest<void>(`/users/${encodeURIComponent(userId)}`, { method: "DELETE", ifMatch }),
     resetPassword: async (userId: string, newPassword = "", ifMatch?: string) => {
       const result = await apiRequest<unknown>(`/users/${encodeURIComponent(userId)}/reset-password`, {
         method: "POST",
-        body: remoteMode ? { newPassword } : undefined,
+        body: { newPassword },
         ifMatch,
         ...mutation(),
       });
@@ -600,34 +576,34 @@ export const flowPilotApi = {
     roles: (query: PageQuery = {}) => pageRequest("/roles", query, normalizeDomainRole),
     roleResource: (roleId: string) => mappedResource(apiResource<unknown>(`/roles/${encodeURIComponent(roleId)}`), normalizeDomainRole),
     createRole: (input: Pick<DomainRole, "name" | "description" | "status"> & Pick<Partial<DomainRole>, "members" | "memberUserIds">) =>
-      apiRequest<unknown>("/roles", { method: "POST", body: remoteMode ? remoteRoleInput(input) : input, ...mutation() }).then(normalizeDomainRole),
+      apiRequest<unknown>("/roles", { method: "POST", body: remoteRoleInput(input), ...mutation() }).then(normalizeDomainRole),
     updateRole: (roleId: string, patch: Partial<DomainRole>, ifMatch?: string) =>
-      apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}`, { method: "PATCH", body: remoteMode ? remoteRoleInput(patch) : patch, ifMatch }).then(normalizeDomainRole),
+      apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}`, { method: "PATCH", body: remoteRoleInput(patch), ifMatch }).then(normalizeDomainRole),
     deleteRole: (roleId: string, ifMatch: string) =>
       apiRequest<void>(`/roles/${encodeURIComponent(roleId)}`, { method: "DELETE", ifMatch }),
     groups: (query: PageQuery & { purpose?: string } = {}) =>
       pageRequest("/workflow-permission-groups", query, normalizeWorkflowGroup),
     groupResource: (groupId: string) => mappedResource(apiResource<unknown>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`), normalizeWorkflowGroup),
     createGroup: (input: Pick<WorkflowPermissionGroup, "name" | "purposes" | "status"> & Pick<Partial<WorkflowPermissionGroup>, "directMembers" | "linkedRoles" | "directMemberUserIds" | "linkedRoleIds">) =>
-      apiRequest<unknown>("/workflow-permission-groups", { method: "POST", body: remoteMode ? remoteGroupInput(input) : input, ...mutation() }).then(normalizeWorkflowGroup),
+      apiRequest<unknown>("/workflow-permission-groups", { method: "POST", body: remoteGroupInput(input), ...mutation() }).then(normalizeWorkflowGroup),
     updateGroup: (groupId: string, patch: Partial<WorkflowPermissionGroup>, ifMatch?: string) =>
-      apiRequest<unknown>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`, { method: "PATCH", body: remoteMode ? remoteGroupInput(patch) : patch, ifMatch }).then(normalizeWorkflowGroup),
+      apiRequest<unknown>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`, { method: "PATCH", body: remoteGroupInput(patch), ifMatch }).then(normalizeWorkflowGroup),
     deleteGroup: (groupId: string, ifMatch: string) =>
       apiRequest<void>(`/workflow-permission-groups/${encodeURIComponent(groupId)}`, { method: "DELETE", ifMatch }),
   },
   organization: {
-    departments: async (q?: string) => normalizeDepartments(await apiRequest<unknown>("/departments", { query: { q, includeDisabled: remoteMode ? true : undefined } })),
+    departments: async (q?: string) => normalizeDepartments(await apiRequest<unknown>("/departments", { query: { q, includeDisabled: true } })),
     department: async (departmentId: string) => mappedResource(apiResource<unknown>(`/departments/${encodeURIComponent(departmentId)}`), (value) => normalizeDepartments([value])[0]),
     createDepartment: async (input: { name: string; parentId?: string; sortOrder?: number; description?: string }) =>
       normalizeDepartments([await apiRequest<unknown>("/departments", {
         method: "POST",
-        body: remoteMode ? remoteDepartmentInput({ ...input, status: "启用", sortOrder: input.sortOrder ?? 10 }) : input,
+        body: remoteDepartmentInput({ ...input, status: "启用", sortOrder: input.sortOrder ?? 10 }),
         ...mutation(),
       })])[0],
     updateDepartment: async (departmentId: string, patch: Partial<DepartmentRecord>, ifMatch: string) =>
       normalizeDepartments([await apiRequest<unknown>(`/departments/${encodeURIComponent(departmentId)}`, {
         method: "PATCH",
-        body: remoteMode ? remoteDepartmentInput(patch) : patch,
+        body: remoteDepartmentInput(patch),
         ifMatch,
       })])[0],
     removeDepartment: (departmentId: string, ifMatch: string) => apiRequest<void>(`/departments/${encodeURIComponent(departmentId)}`, { method: "DELETE", ifMatch }),
@@ -636,22 +612,22 @@ export const flowPilotApi = {
     createPosition: async (input: { name: string; description?: string; sortOrder?: number }) =>
       normalizePositions([await apiRequest<unknown>("/positions", {
         method: "POST",
-        body: remoteMode ? remotePositionInput({ ...input, status: "启用", sortOrder: input.sortOrder ?? 10 }) : input,
+        body: remotePositionInput({ ...input, status: "启用", sortOrder: input.sortOrder ?? 10 }),
         ...mutation(),
       })])[0],
     updatePosition: async (positionId: string, patch: Partial<PositionRecord>, ifMatch: string) =>
       normalizePositions([await apiRequest<unknown>(`/positions/${encodeURIComponent(positionId)}`, {
         method: "PATCH",
-        body: remoteMode ? remotePositionInput(patch) : patch,
+        body: remotePositionInput(patch),
         ifMatch,
       })])[0],
     removePosition: (positionId: string, ifMatch: string) => apiRequest<void>(`/positions/${encodeURIComponent(positionId)}`, { method: "DELETE", ifMatch }),
     permissionCatalog: async () => normalizePermissionCatalog(await apiRequest<unknown>("/permissions")),
     rolePermissions: (roleId: string) => mappedResource(apiResource<unknown>(`/roles/${encodeURIComponent(roleId)}/permissions`), normalizeRolePermissions),
-    updateRolePermissions: async (roleId: string, permissions: string[], ifMatch: string) => normalizeRolePermissions(await apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}/permissions`, { method: "PUT", body: remoteMode ? { permissionCodes: permissions } : { permissions }, ifMatch })),
+    updateRolePermissions: async (roleId: string, permissions: string[], ifMatch: string) => normalizeRolePermissions(await apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}/permissions`, { method: "PUT", body: { permissionCodes: permissions }, ifMatch })),
     roleImpact: async (roleId: string, nextMemberIds: string[], nextStatus: "启用" | "停用") => normalizeImpactPreview(await apiRequest<unknown>(`/roles/${encodeURIComponent(roleId)}/change-impact`, {
       method: "POST",
-      body: remoteMode ? { nextMemberIds, nextStatus: remoteStatus(nextStatus) } : { nextMemberIds, nextStatus },
+      body: { nextMemberIds, nextStatus: remoteStatus(nextStatus) },
       ...mutation(),
     })),
     groupEffectiveMembers: (groupId: string, query: PageQuery = {}) =>
@@ -663,7 +639,7 @@ export const flowPilotApi = {
     visible: (query: PageQuery = {}) => definitionPageRequest("/me/visible-process-definitions", query),
     list: (query: PageQuery & { type?: DefinitionType; status?: string } = {}) => definitionPageRequest("/process-definitions", {
       ...query,
-      status: remoteMode && query.status ? remoteDefinitionStatus[query.status] ?? query.status : query.status,
+      status: query.status ? remoteDefinitionStatus[query.status] ?? query.status : undefined,
     }),
     launchConfig: async (definitionId: string) => {
       const resource = await apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/launch-config`);
@@ -693,7 +669,7 @@ export const flowPilotApi = {
       return { ...resource, data: normalizeProcessDefinition(resource.data, await fullVersionsRequest(definitionId)) };
     },
     create: (input: { basic: ProcessBasicConfig }) =>
-      apiRequest<unknown>("/process-definitions", { method: "POST", body: { basic: remoteMode ? remoteBasicInput(input.basic) : input.basic }, ...mutation() }).then(normalizeDefinitionVersionResult),
+      apiRequest<unknown>("/process-definitions", { method: "POST", body: { basic: remoteBasicInput(input.basic) }, ...mutation() }).then(normalizeDefinitionVersionResult),
     import: async (document: unknown) => {
       const value = await apiRequest<unknown>("/process-definitions/imports", { method: "POST", body: { document }, ...mutation() });
       const definition = normalizeProcessDefinition(value);
@@ -716,19 +692,19 @@ export const flowPilotApi = {
     createVersion: (definitionId: string, sourceVersionId: string) =>
       apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions`, { method: "POST", body: { sourceVersionId }, ...mutation() }).then(normalizeProcessVersion),
     saveBasic: (definitionId: string, versionId: string, basic: ProcessBasicConfig, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/basic`, { method: "PUT", body: remoteMode ? remoteBasicInput(basic) : basic, ifMatch }).then(normalizeSavedVersion),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/basic`, { method: "PUT", body: remoteBasicInput(basic), ifMatch }).then(normalizeSavedVersion),
     saveBasicResource: (definitionId: string, versionId: string, basic: ProcessBasicConfig, ifMatch?: string) =>
-      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/basic`, { method: "PUT", body: remoteMode ? remoteBasicInput(basic) : basic, ifMatch }), normalizeSavedVersion),
+      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/basic`, { method: "PUT", body: remoteBasicInput(basic), ifMatch }), normalizeSavedVersion),
     saveDesigner: (definitionId: string, versionId: string, snapshot: Partial<CompleteDesignerSnapshot>, ifMatch?: string) =>
       apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/designer`, { method: "PUT", body: snapshot, ifMatch }).then(normalizeSavedVersion),
     saveFormDesigner: (definitionId: string, versionId: string, input: Pick<CompleteDesignerSnapshot, "form" | "systemFields">, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: remoteMode ? remoteFormDesignerInput(input) : input, ifMatch }).then(normalizeSavedVersionResult),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: remoteFormDesignerInput(input), ifMatch }).then(normalizeSavedVersionResult),
     saveFormDesignerResource: (definitionId: string, versionId: string, input: Pick<CompleteDesignerSnapshot, "form" | "systemFields">, ifMatch?: string) =>
-      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: remoteMode ? remoteFormDesignerInput(input) : input, ifMatch }), normalizeSavedVersionResult),
+      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/form-designer`, { method: "PUT", body: remoteFormDesignerInput(input), ifMatch }), normalizeSavedVersionResult),
     saveFlowDesigner: (definitionId: string, versionId: string, input: { basicPatch: Pick<ProcessBasicConfig, "name" | "starterGroups">; flow: CompleteDesignerSnapshot["flow"] }, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteMode ? remoteFlowDesignerInput(input) : input, ifMatch }).then(normalizeSavedVersionResult),
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteFlowDesignerInput(input), ifMatch }).then(normalizeSavedVersionResult),
     saveFlowDesignerResource: (definitionId: string, versionId: string, input: { basicPatch: Pick<ProcessBasicConfig, "name" | "starterGroups">; flow: CompleteDesignerSnapshot["flow"] }, ifMatch?: string) =>
-      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteMode ? remoteFlowDesignerInput(input) : input, ifMatch }), normalizeSavedVersionResult),
+      mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/flow-designer`, { method: "PUT", body: remoteFlowDesignerInput(input), ifMatch }), normalizeSavedVersionResult),
     validate: async (definitionId: string, versionId: string, ifMatch?: string) => {
       const value = await apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/validate`, { method: "POST", ifMatch, ...mutation() });
       if (isRecord(value) && value.snapshot && value.basic) return normalizeProcessVersion(value);
@@ -751,28 +727,26 @@ export const flowPilotApi = {
   },
   instances: {
     list: (query: ProcessInstanceQuery = {}) => pageRequest("/process-instances", {
-      ...(remoteMode ? {
-        page: query.page,
-        pageSize: query.pageSize,
-        q: query.q,
-        definitionId: query.definitionId,
-        status: query.status ? remoteInstanceStatus[query.status] : undefined,
-        initiatorId: query.initiatorId,
-        dynamicFilters: query.dynamicFilters,
-        activeOnly: query.activeOnly,
-        ...defaultInstanceDateRange(),
-        dateFrom: query.createdFrom ?? defaultInstanceDateRange().dateFrom,
-        dateTo: query.createdTo ?? defaultInstanceDateRange().dateTo,
-      } : query),
+      page: query.page,
+      pageSize: query.pageSize,
+      q: query.q,
+      definitionId: query.definitionId,
+      status: query.status ? remoteInstanceStatus[query.status] : undefined,
+      initiatorId: query.initiatorId,
+      dynamicFilters: query.dynamicFilters,
+      activeOnly: query.activeOnly,
+      ...defaultInstanceDateRange(),
+      dateFrom: query.createdFrom ?? defaultInstanceDateRange().dateFrom,
+      dateTo: query.createdTo ?? defaultInstanceDateRange().dateTo,
     }, normalizeProcessInstance),
     get: (instanceId: string) => apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`).then(normalizeInstanceDetail),
     getResource: (instanceId: string) => mappedResource(apiResource<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`), normalizeInstanceDetail),
     create: (input: { definitionId: string; formValues: Record<string, unknown>; copySourceInstanceId?: string; assigneeByNode?: Record<string, string | undefined>; firstAssigneeId?: string; attachmentIds?: string[]; attachmentIdsByField?: Record<string, string[]> }) =>
       apiRequest<unknown>("/process-instances", { method: "POST", body: input, ...mutation() }).then(normalizeInstanceDetail),
     updateSubmission: (instanceId: string, input: { formValues: Record<string, unknown>; attachmentNames?: string[]; attachmentIdsByField?: Record<string, string[]>; assigneeByNode?: Record<string, string> }, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/submission`, { method: "PATCH", body: remoteMode ? { formValues: input.formValues, attachmentIdsByField: input.attachmentIdsByField ?? {}, assigneeByNode: input.assigneeByNode } : input, ifMatch }).then(normalizeInstanceDetail),
+      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/submission`, { method: "PATCH", body: { formValues: input.formValues, attachmentIdsByField: input.attachmentIdsByField ?? {}, assigneeByNode: input.assigneeByNode }, ifMatch }).then(normalizeInstanceDetail),
     resubmit: (instanceId: string, input: { formValues: Record<string, unknown>; attachmentNames?: string[]; attachmentIdsByField?: Record<string, string[]> }, ifMatch?: string) =>
-      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/resubmissions`, { method: "POST", body: remoteMode ? { formValues: input.formValues, attachmentIdsByField: input.attachmentIdsByField ?? {} } : input, ifMatch, ...mutation() }).then(normalizeInstanceDetail),
+      apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/resubmissions`, { method: "POST", body: { formValues: input.formValues, attachmentIdsByField: input.attachmentIdsByField ?? {} }, ifMatch, ...mutation() }).then(normalizeInstanceDetail),
     close: (instanceId: string, reason: string, ifMatch?: string) =>
       apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/close`, { method: "POST", body: { reason }, ifMatch, ...mutation() }).then(normalizeInstanceDetail),
   },
@@ -802,7 +776,7 @@ export const flowPilotApi = {
       const baseFieldRevisions = Object.fromEntries(revisedFieldIds.map((fieldId) => [fieldId, instance?.fieldRevisions?.[fieldId] ?? 0]));
       const value = await apiRequest<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}/decision`, {
         method: "POST",
-        body: remoteMode ? { ...input, fieldValues, baseFieldRevisions, attachmentIdsByField } : input,
+        body: { ...input, fieldValues, baseFieldRevisions, attachmentIdsByField },
         ifMatch,
         ...mutation(),
       });
@@ -825,7 +799,7 @@ export const flowPilotApi = {
       const baseFieldRevisions = Object.fromEntries(revisedFieldIds.map((fieldId) => [fieldId, instance?.fieldRevisions?.[fieldId] ?? 0]));
       const value = await apiRequest<unknown>(`/workflow-tasks/${encodeURIComponent(taskId)}/field-revisions`, {
         method: "POST",
-        body: remoteMode ? { fieldValues: allowedValues, baseFieldRevisions, comment, attachmentIdsByField: allowedAttachmentIds } : { fieldValues, comment, attachmentIdsByField },
+        body: { fieldValues: allowedValues, baseFieldRevisions, comment, attachmentIdsByField: allowedAttachmentIds },
         ifMatch,
         ...mutation(),
       });
@@ -857,19 +831,15 @@ export const flowPilotApi = {
       return normalizeInstanceDetail(result).instance;
     },
     reply: async (instanceId: string, content: string, ifMatch?: string) => {
-      const result = await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies`, { method: "POST", body: { content }, ifMatch, ...mutation() });
-      return remoteMode
-        ? normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`)).instance
-        : normalizeProcessInstance(result);
+      await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies`, { method: "POST", body: { content }, ifMatch, ...mutation() });
+      return normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`)).instance;
     },
     transfer: (instanceId: string, nextAssigneeId: string, content?: string, ifMatch?: string) =>
       apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/transfers`, { method: "POST", body: { nextAssigneeId, content }, ifMatch, ...mutation() })
         .then((value) => normalizeInstanceDetail(value).instance),
     editReply: async (instanceId: string, entryId: string, content: string, ifMatch?: string) => {
-      const result = await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies/${encodeURIComponent(entryId)}`, { method: "PATCH", body: { content }, ifMatch });
-      return remoteMode
-        ? normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`)).instance
-        : normalizeProcessInstance(result);
+      await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}/free-collaboration/replies/${encodeURIComponent(entryId)}`, { method: "PATCH", body: { content }, ifMatch });
+      return normalizeInstanceDetail(await apiRequest<unknown>(`/process-instances/${encodeURIComponent(instanceId)}`)).instance;
     },
     updateSubmission: (instanceId: string, input: {
       formValues: Record<string, unknown>;
@@ -892,7 +862,7 @@ export const flowPilotApi = {
         .then((value) => normalizeInstanceDetail(value).instance),
   },
   attachments: {
-    upload: (file: File, input: { instanceId?: string; definitionId?: string; versionId?: string; fieldId?: string; purpose?: "form-field" | "free-reply" } = {}) => {
+    upload: (file: File, input: { instanceId?: string; definitionId?: string; versionId?: string; fieldId?: string; purpose?: "form-field" | "free-reply" | "rich-text-media" } = {}) => {
       const form = new FormData();
       form.set("file", file);
       if (input.instanceId) form.set("instanceId", input.instanceId);
@@ -929,7 +899,7 @@ export const flowPilotApi = {
       const remoteStatus = query.status === "sent" ? "sent" : query.status === "failed" ? "dead-letter" : query.status === "queued" ? "pending" : undefined;
       return pageRequest("/email-outbox", {
         ...query,
-        status: remoteMode ? remoteStatus : query.status,
+        status: remoteStatus,
         dateFrom: query.dateFrom ?? dateFrom,
         dateTo: query.dateTo ?? dateTo,
       }, normalizeEmailOutboxItem);
@@ -937,9 +907,6 @@ export const flowPilotApi = {
     emailDelivery: (deliveryId: string) =>
       apiRequest<unknown>(`/email-outbox/${encodeURIComponent(deliveryId)}`).then(normalizeEmailOutboxItem),
     retryEmail: async (deliveryId: string) => {
-      if (!remoteMode) {
-        return apiRequest<unknown>(`/email-outbox/${encodeURIComponent(deliveryId)}/retry`, { method: "POST", ...mutation() }).then(normalizeEmailOutboxItem);
-      }
       const resource = await apiResource<unknown>(`/email-outbox/${encodeURIComponent(deliveryId)}`);
       return apiRequest<unknown>(`/email-outbox/${encodeURIComponent(deliveryId)}/retry`, {
         method: "POST",

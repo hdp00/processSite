@@ -203,6 +203,8 @@ public sealed record ProcessInstanceDetailDto
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? CanTransferFree { get; init; }
 
+    public required bool CanClose { get; init; }
+
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<TaskCenterUserRefDto>? FreeAssigneeCandidates { get; init; }
 
@@ -450,6 +452,7 @@ public sealed record ProcessInstanceQueryActor(
     bool IsSuperAdmin,
     bool CanReview,
     bool CanResubmit,
+    bool CanClose,
     bool CanViewAllInstances);
 
 public enum ProcessInstanceQueryError

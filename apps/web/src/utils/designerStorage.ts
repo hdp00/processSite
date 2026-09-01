@@ -1,34 +1,14 @@
-import {
-  SYSTEM_LIST_FIELDS_STORAGE_KEY_PREFIX,
-  cloneDefaultSystemListFields,
-  loadSystemListFields,
-  type SystemListFieldConfig,
-} from "../data/listFieldConfig";
+import { cloneDefaultSystemListFields, type SystemListFieldConfig } from "../data/listFieldConfig";
 import {
   normalizeDesignerChoiceOptions,
   normalizeDesignerChoiceValue,
   type DesignerChoiceOption,
 } from "./designerOptions";
 
-export const FORM_DESIGNER_STORAGE_KEY_PREFIX = "flowpilot-form-designer-draft-v2";
-export const FLOW_DESIGNER_STORAGE_KEY_PREFIX = "flowpilot-flow-designer-v2";
-
 export interface CompleteDesignerSnapshot {
   form: StoredFormDesignerSnapshot;
   flow: StoredFlowDesignerSnapshot;
   systemFields: SystemListFieldConfig[];
-}
-
-const workingArtifactKeys = (definitionId: string) => ({
-  form: `${FORM_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`,
-  flow: `${FLOW_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`,
-  systemFields: `${SYSTEM_LIST_FIELDS_STORAGE_KEY_PREFIX}:${definitionId}`,
-});
-
-export function clearDefinitionDesignerArtifacts(definitionId: string) {
-  if (typeof window === "undefined") return;
-  const keys = workingArtifactKeys(definitionId);
-  Object.values(keys).forEach((key) => window.localStorage.removeItem(key));
 }
 
 export interface StoredDesignerTableColumn {
@@ -333,75 +313,6 @@ export interface StoredFlowDesignerSnapshot {
   };
 }
 
-export const readFormDesignerSnapshot = (definitionId: string): StoredFormDesignerSnapshot | undefined => {
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = window.localStorage.getItem(`${FORM_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as Partial<StoredFormDesignerSnapshot>;
-    if (!Array.isArray(parsed.fields)) return undefined;
-    const normalizedFields = ensureProcessTitleField(parsed.fields).map(normalizeStoredDesignerField);
-    return {
-      fields: normalizedFields.map((field) => ({
-        ...field,
-        inputStage: normalizeDesignerInputPermission(field),
-        displayCondition: field.id === PROCESS_TITLE_FIELD_ID
-          ? undefined
-          : normalizeConditionChoiceValues(field.displayCondition, normalizedFields),
-      })),
-      savedAt: parsed.savedAt,
-    };
-  } catch {
-    return undefined;
-  }
-};
-
-export const readFlowDesignerSnapshot = (definitionId: string): StoredFlowDesignerSnapshot | undefined => {
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = window.localStorage.getItem(`${FLOW_DESIGNER_STORAGE_KEY_PREFIX}-${definitionId}`);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as Partial<StoredFlowDesignerSnapshot>;
-    return Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)
-      ? {
-          nodes: parsed.nodes.map((node) => ({
-            ...node,
-            data: node.data?.kind === "approval"
-              ? {
-                  ...node.data,
-                  handlingMode: node.data.handlingMode ?? "approval",
-                  allowRepeatedEditing: Boolean(node.data.allowRepeatedEditing && node.data.editableFields?.length),
-                }
-              : node.data,
-          })),
-          edges: parsed.edges,
-          meta: parsed.meta,
-        }
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-export const captureWorkingDesignerSnapshot = (definitionId: string): CompleteDesignerSnapshot => ({
-  form: readFormDesignerSnapshot(definitionId) ?? { fields: [createProcessTitleField()] },
-  flow: readFlowDesignerSnapshot(definitionId) ?? { nodes: [], edges: [], meta: { rejectionHandling: "resubmit-or-close" } },
-  systemFields: loadSystemListFields(definitionId),
-});
-
-export const writeWorkingDesignerSnapshot = (definitionId: string, snapshot: CompleteDesignerSnapshot) => {
-  if (typeof window === "undefined") return false;
-  try {
-    const keys = workingArtifactKeys(definitionId);
-    window.localStorage.setItem(keys.form, JSON.stringify(snapshot.form));
-    window.localStorage.setItem(keys.flow, JSON.stringify(snapshot.flow));
-    window.localStorage.setItem(keys.systemFields, JSON.stringify(snapshot.systemFields));
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapshot): CompleteDesignerSnapshot => {
   if (!snapshot) return {
     form: { fields: [createProcessTitleField()] },
@@ -453,24 +364,6 @@ export const cloneCompleteDesignerSnapshot = (snapshot?: CompleteDesignerSnapsho
       exportVisible: field.exportVisible ?? field.processListVisible,
     }))),
   };
-};
-
-export const getReviewEditableFieldOptions = (definitionId: string): EditableFieldOption[] => {
-  const snapshot = readFormDesignerSnapshot(definitionId);
-  if (!snapshot) return [];
-  return snapshot.fields.flatMap((field) => {
-    const inputStage = normalizeDesignerInputPermission(field);
-    if (field.type === "table") {
-      if (inputStage === "reviewer") return [{ value: field.id, label: `${field.label}（整表）` }];
-      if (inputStage !== "both") return [];
-      return (field.columns ?? [])
-        .filter((column) => column.reviewEditable)
-        .map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }));
-    }
-    return inputStage === "both" || inputStage === "reviewer"
-      ? [{ value: field.id, label: field.label }]
-      : [];
-  });
 };
 
 const emptyValue = (value: unknown) => value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);

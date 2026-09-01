@@ -1,4 +1,6 @@
 import { expect, test as base, type Page } from "@playwright/test";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 type ConsoleAuditFixture = {
   consoleAudit: void;
@@ -6,6 +8,9 @@ type ConsoleAuditFixture = {
 
 const ignoredConsoleErrors = [
   /favicon\.ico/i,
+  // 会话探测和“错误密码”用例预期后端返回 401；浏览器会把预期 HTTP
+  // 状态写成 console.error，但应用已经通过 ApiError 正常处理。
+  /Failed to load resource:.*status of 401.*\/api\/flowpilot\/v1\/auth\/(?:me|login)/i,
 ];
 
 export const test = base.extend<ConsoleAuditFixture>({
@@ -30,34 +35,42 @@ export const test = base.extend<ConsoleAuditFixture>({
 
 export { expect } from "@playwright/test";
 
-export const isMockTarget = (process.env.FLOWPILOT_TEST_TARGET ?? "mock") === "mock";
-
 export async function gotoApp(page: Page, path: string) {
   await page.goto(path.replace(/^\//, ""));
 }
 
-export async function loginAs(page: Page, username: string, password = "1") {
+interface LocalDevelopmentConfiguration {
+  FlowPilot?: { Bootstrap?: { SuperAdminPassword?: string } };
+}
+
+export function getTestCredentials() {
+  const username = process.env.FLOWPILOT_E2E_USERNAME ?? "superadmin";
+  if (process.env.FLOWPILOT_E2E_PASSWORD) {
+    return { username, password: process.env.FLOWPILOT_E2E_PASSWORD };
+  }
+  const candidates = [
+    resolve(process.cwd(), "../api/config/appsettings.Development.local.json"),
+    resolve(process.cwd(), "apps/api/config/appsettings.Development.local.json"),
+  ];
+  const path = candidates.find(existsSync);
+  const password = path
+    ? (JSON.parse(readFileSync(path, "utf8")) as LocalDevelopmentConfiguration).FlowPilot?.Bootstrap?.SuperAdminPassword
+    : undefined;
+  if (!password) {
+    throw new Error("请设置 FLOWPILOT_E2E_PASSWORD，或在后端本地配置中填写 FlowPilot:Bootstrap:SuperAdminPassword。");
+  }
+  return { username, password };
+}
+
+export async function loginAs(page: Page, username?: string, password?: string) {
+  const configured = getTestCredentials();
   await gotoApp(page, "login");
   await expect(page.getByRole("heading", { name: "登录流程中心" })).toBeVisible();
-  const accountInput = page.getByLabel("账号");
-  if (isMockTarget) {
-    await expect(accountInput).toHaveValue("superadmin");
-    await expect(accountInput).toHaveAttribute("readonly", "");
-  } else {
-    await accountInput.fill(username);
-  }
-  await page.getByLabel("密码").fill(isMockTarget ? "1" : password);
+  await page.getByLabel("账号").fill(username ?? configured.username);
+  await page.getByLabel("密码").fill(password ?? configured.password);
   await page.locator("button.login-submit").click();
   await expect(page).toHaveURL(/\/flowpilot\/tasks$/);
   await expect(page.locator(".app-header")).toBeVisible();
-
-  if (isMockTarget && username !== "superadmin") {
-    const personaSelect = page.getByRole("combobox", { name: "切换演示身份" });
-    await personaSelect.click();
-    await personaSelect.fill(username);
-    await personaSelect.press("Enter");
-    await expect(page.locator(".user-copy strong")).not.toHaveText("超级管理员");
-  }
 }
 
 export async function stabilizeVisualPage(page: Page) {

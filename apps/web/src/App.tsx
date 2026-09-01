@@ -8,8 +8,8 @@ import { AppBackButton } from "./components/AppBackButton";
 import { ProcessLaunchConfigProvider } from "./components/ProcessLaunchConfigContext";
 import type { ProcessLaunchConfig } from "./api/contracts";
 import { LoginPage } from "./pages/LoginPage";
-import { canPersonaAccessLaunch, canPersonaLaunchDefinition, hasPersonaPermission } from "./state/rolePermissions";
-import { getPublishedVersion, useProcessDefinitionStore } from "./state/useProcessDefinitionStore";
+import { canPersonaAccessLaunch, hasPersonaPermission } from "./state/rolePermissions";
+import { useProcessDefinitionStore } from "./state/useProcessDefinitionStore";
 import { usePrototypeStore } from "./state/usePrototypeStore";
 import { canUserViewInstance } from "./state/workflowAccess";
 import { flowPilotApi } from "./api/flowPilotApi";
@@ -53,17 +53,13 @@ export function PersonaGate({ scope, definitionId, permission, children }: { sco
   const targetDefinition = useProcessDefinitionStore((state) =>
     state.definitions.find((item) => item.id === targetDefinitionId),
   );
-  const targetPublishedVersion = getPublishedVersion(targetDefinition);
-  const remoteMode = import.meta.env.VITE_API_MODE === "remote";
   const allowed = scope === "permission"
     ? Boolean(permission && hasPersonaPermission(personaId, permission))
     : targetDefinitionId
       ? Boolean(
         targetDefinition
         && !targetDefinition.disabled
-        && (remoteMode ? Boolean(targetDefinition.publishedVersionId) : Boolean(
-          targetPublishedVersion && canPersonaLaunchDefinition(personaId, targetDefinitionId)
-        )),
+        && Boolean(targetDefinition.publishedVersionId),
       )
       : canPersonaAccessLaunch(personaId);
 
@@ -84,8 +80,7 @@ function ProcessDefinitionLoader({ children }: { children: ReactNode }) {
   const [failed, setFailed] = useState(false);
   const [loadedDefinitionId, setLoadedDefinitionId] = useState<string>();
   useEffect(() => {
-    if (import.meta.env.VITE_API_MODE !== "remote"
-      || !definitionId
+    if (!definitionId
       || definitionId === "new"
       || loadedDefinitionId === definitionId) return;
     let cancelled = false;
@@ -116,7 +111,7 @@ function LaunchDefinitionLoader({ children }: { children: ReactNode }) {
   const [failed, setFailed] = useState(false);
   const [launchConfig, setLaunchConfig] = useState<ProcessLaunchConfig>();
   useEffect(() => {
-    if (import.meta.env.VITE_API_MODE !== "remote" || !definitionId) return;
+    if (!definitionId) return;
     let cancelled = false;
     setLoading(true);
     setFailed(false);
@@ -142,7 +137,7 @@ function LaunchDefinitionLoader({ children }: { children: ReactNode }) {
   }, [copySourceId, definitionId]);
   const activeLaunchConfig = launchConfig?.definition.id === definitionId ? launchConfig : undefined;
   if (failed) return <Result status="403" title="流程当前不可发起" subTitle="流程可能已停用、取消发布或当前身份不在发起权限组中。" />;
-  if (import.meta.env.VITE_API_MODE === "remote" && (loading || !activeLaunchConfig)) {
+  if (loading || !activeLaunchConfig) {
     return <Spin fullscreen description="正在加载发起配置…" />;
   }
   return <ProcessLaunchConfigProvider value={activeLaunchConfig}>{children}</ProcessLaunchConfigProvider>;
@@ -150,21 +145,16 @@ function LaunchDefinitionLoader({ children }: { children: ReactNode }) {
 
 function ProcessDetailRoute() {
   const { id } = useParams();
-  const personaId = usePrototypeStore((state) => state.personaId);
   const instance = usePrototypeStore((state) => state.instances.find((item) => item.id === id));
-  const lockedVersionLoaded = useProcessDefinitionStore((state) => Boolean(
-    instance && state.definitions.find((definition) => definition.id === instance.definitionId)
-      ?.versions.some((version) => version.id === instance.versionId),
-  ));
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (import.meta.env.VITE_API_MODE !== "remote" || !id || (instance && lockedVersionLoaded)) return;
+    if (!id) return;
     let cancelled = false;
     setLoading(true);
     setFailed(false);
     void (async () => {
-      const detail = instance ? { instance, tasks: undefined } : await flowPilotApi.instances.get(id);
+      const detail = await flowPilotApi.instances.get(id);
       if (cancelled) return;
       cacheProcessRuntime(detail.instance, detail.tasks);
       const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === detail.instance.definitionId);
@@ -180,7 +170,7 @@ function ProcessDetailRoute() {
   }, [id]);
   if (loading) return <Spin fullscreen description="正在加载流程详情…" />;
   if (failed) return <Result status="404" title="流程不存在或无权查看" />;
-  if (!instance || !canUserViewInstance(personaId, instance)) {
+  if (!instance) {
     return <Result status="403" title="无权查看此流程" subTitle="流程数据范围会在每次打开详情时重新校验。" extra={<AppBackButton onClick={() => window.history.back()} />} />;
   }
   return instance?.workflowType === "free"
@@ -192,19 +182,15 @@ function ProcessPrintRoute() {
   const { id } = useParams();
   const personaId = usePrototypeStore((state) => state.personaId);
   const instance = usePrototypeStore((state) => state.instances.find((item) => item.id === id));
-  const lockedVersionLoaded = useProcessDefinitionStore((state) => Boolean(
-    instance && state.definitions.find((definition) => definition.id === instance.definitionId)
-      ?.versions.some((version) => version.id === instance.versionId),
-  ));
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (import.meta.env.VITE_API_MODE !== "remote" || !id || (instance && lockedVersionLoaded)) return;
+    if (!id) return;
     let cancelled = false;
     setLoading(true);
     setFailed(false);
     void (async () => {
-      const detail = instance ? { instance, tasks: undefined } : await flowPilotApi.instances.get(id);
+      const detail = await flowPilotApi.instances.get(id);
       if (cancelled) return;
       cacheProcessRuntime(detail.instance, detail.tasks);
       const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === detail.instance.definitionId);

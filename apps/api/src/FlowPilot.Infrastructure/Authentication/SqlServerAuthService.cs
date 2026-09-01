@@ -716,7 +716,9 @@ public sealed partial class SqlServerAuthService : IAuthService
         await using var command = CreateCommand(
             connection,
             transaction,
-            "SELECT MAX([created_at]) FROM [flowpilot].[sessions] WHERE [operator_user_id] = @user_id;");
+            // 最近登录时间只用于展示。会话创建或续期事务会持有各自会话行的写锁；
+            // 此聚合若使用普通读锁，并发登录/页面水合时会形成交叉等待。
+            "SELECT MAX([created_at]) FROM [flowpilot].[sessions] WITH (READUNCOMMITTED) WHERE [operator_user_id] = @user_id;");
         command.Parameters.Add("@user_id", SqlDbType.UniqueIdentifier).Value = userId;
         var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         return value is DateTime timestamp ? AsUtc(timestamp) : null;

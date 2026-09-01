@@ -1,17 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const previewPort = Number(process.env.FLOWPILOT_TEST_PORT ?? 4173);
+const apiPort = Number(process.env.FLOWPILOT_TEST_API_PORT ?? 3100);
 const localOrigin = `http://127.0.0.1:${previewPort}`;
-const target = process.env.FLOWPILOT_TEST_TARGET ?? "mock";
+const localApiOrigin = `http://127.0.0.1:${apiPort}`;
 const configuredBaseUrl = process.env.FLOWPILOT_TEST_BASE_URL?.replace(/\/$/, "");
-
-if (target === "remote" && !configuredBaseUrl) {
-  throw new Error("FLOWPILOT_TEST_TARGET=remote 时必须设置 FLOWPILOT_TEST_BASE_URL。");
-}
-
 const configuredOrigin = configuredBaseUrl?.replace(/\/flowpilot$/i, "");
 const appBaseUrl = `${configuredOrigin ?? localOrigin}/flowpilot/`;
-const useManagedPreview = target === "mock" && !configuredBaseUrl;
+const useManagedServers = !configuredBaseUrl;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -62,12 +58,27 @@ export default defineConfig({
       },
     },
   ],
-  webServer: useManagedPreview
-    ? {
-        command: `pnpm build:debug && pnpm preview --host 127.0.0.1 --port ${previewPort} --strictPort`,
-        url: `${localOrigin}/flowpilot/login`,
-        reuseExistingServer: !process.env.CI,
-        timeout: 120_000,
-      }
+  webServer: useManagedServers
+    ? [
+        {
+          command: `dotnet bin/Debug/net10.0/FlowPilot.Api.dll --environment Development --Kestrel:Endpoints:Http:Url ${localApiOrigin}`,
+          cwd: "../api/src/FlowPilot.Api",
+          url: `${localApiOrigin}/api/flowpilot/v1/health/ready`,
+          reuseExistingServer: false,
+          timeout: 180_000,
+          env: {
+            ASPNETCORE_ENVIRONMENT: "Development",
+          },
+        },
+        {
+          command: `pnpm dev --host 127.0.0.1 --port ${previewPort} --strictPort --mode debug`,
+          url: `${localOrigin}/flowpilot/login`,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+          env: {
+            VITE_API_PROXY_TARGET: localApiOrigin,
+          },
+        },
+      ]
     : undefined,
 });

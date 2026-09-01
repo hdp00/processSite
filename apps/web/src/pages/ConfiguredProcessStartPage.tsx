@@ -9,6 +9,7 @@ import {
 } from "@ant-design/icons";
 import {
   Alert,
+  App,
   Button,
   Card,
   Cascader,
@@ -25,7 +26,6 @@ import {
   Tag,
   Typography,
   Upload,
-  message,
   type TableProps,
   type UploadFile,
   type UploadProps,
@@ -175,6 +175,7 @@ export function DynamicFieldControl({
   onConvertExcel?: (field: StoredDesignerField, file: File) => void;
   onRemoveUploadedAttachment?: (file: UploadFile<AttachmentRecord>) => Promise<boolean>;
 }) {
+  const { message } = App.useApp();
   const options = designerChoiceOptionsToAntd(field.options);
   if (field.type === "richtext") {
     return <RichTextEditor value={typeof value === "string" ? value : ""} onChange={(next) => onChange?.(next)} placeholder={field.placeholder} minHeight={180} />;
@@ -246,6 +247,7 @@ export function ConfiguredProcessStartPage({
   assigneeCandidatesByNode,
   firstAssigneeCandidates,
 }: ConfiguredProcessStartPageProps) {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const identityUsers = useIdentityStore((state) => state.users);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);

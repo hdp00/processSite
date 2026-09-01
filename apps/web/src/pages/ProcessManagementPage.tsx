@@ -1,5 +1,5 @@
 import { BranchesOutlined, CheckCircleOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, FileTextOutlined, MessageOutlined, MoreOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, StopOutlined, UploadOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Descriptions, Dropdown, Form, Input, Modal, Select, Space, Table, Tag, Typography, Upload, message, type MenuProps, type TableProps } from "antd";
+import { Alert, App, Button, Card, Descriptions, Dropdown, Form, Input, Modal, Select, Space, Table, Tag, Typography, Upload, type MenuProps, type TableProps } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { flowPilotApi } from "../api/flowPilotApi";
@@ -10,11 +10,10 @@ import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import { useIdentityStore } from "../state/useIdentityStore";
 import { hasPersonaPermission } from "../state/rolePermissions";
 import { usePrototypeStore } from "../state/usePrototypeStore";
-import { definitionStatus, getPublishedVersion, useProcessDefinitionStore, type DefinitionStatus, type DefinitionType, type ProcessDefinition, type ProcessVersion } from "../state/useProcessDefinitionStore";
+import { definitionStatus, getPublishedVersion, type DefinitionStatus, type DefinitionType, type ProcessDefinition, type ProcessVersion } from "../state/useProcessDefinitionStore";
 import { parseProcessDefinitionImport, type ProcessDefinitionImportPreview } from "../utils/processDefinitionTransfer";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import "./process-admin-pages.css";
-import { isBrowserMockMode } from "../utils/runtimeMode";
 
 interface CreateProcessValues { name: string; type: DefinitionType; description?: string }
 interface ImportPreviewState extends ProcessDefinitionImportPreview { fileName: string; document: unknown }
@@ -27,9 +26,9 @@ const typeMeta: Record<DefinitionType, { label: string; icon: React.ReactNode; c
 const editUrl = (record: ProcessDefinition, version: ProcessVersion) => `/admin/processes/${record.id}/basic?versionId=${version.id}`;
 
 export function ProcessManagementPage() {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const [form] = Form.useForm<CreateProcessValues>();
-  const definitions = useProcessDefinitionStore((state) => state.definitions);
   const users = useIdentityStore((state) => state.users);
   const roles = useIdentityStore((state) => state.roles);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
@@ -55,7 +54,6 @@ export function ProcessManagementPage() {
   });
 
   useEffect(() => {
-    if (isBrowserMockMode) return;
     let cancelled = false;
     setRemoteLoading(true);
     void flowPilotApi.definitions.list({
@@ -76,17 +74,7 @@ export function ProcessManagementPage() {
     return () => { cancelled = true; };
   }, [appliedFilters, page, pageSize]);
 
-  const filteredDefinitions = useMemo(() => {
-    if (!isBrowserMockMode) return remoteDefinitions;
-    const normalized = appliedFilters.keyword.trim().toLowerCase();
-    return definitions.filter((item) => {
-      const published = getPublishedVersion(item);
-      const matched = !normalized || `${item.name}${item.code}${published?.basic.instancePrefix ?? ""}${item.description}`.toLowerCase().includes(normalized);
-      return matched &&
-        (!appliedFilters.status || definitionStatus(item) === appliedFilters.status) &&
-        (!appliedFilters.type || item.type === appliedFilters.type);
-    });
-  }, [appliedFilters, definitions, remoteDefinitions]);
+  const filteredDefinitions = remoteDefinitions;
 
   const applyFilters = () => {
     setPage(1);
@@ -144,12 +132,10 @@ export function ProcessManagementPage() {
           removeCachedProcessDefinition(record.id);
           setRemoteDefinitions((rows) => rows.filter((item) => item.id !== record.id));
           setRemoteTotal((total) => Math.max(0, total - 1));
-          if (!isBrowserMockMode) {
-            try {
-              await refreshRemoteWorkflowGroups();
-            } catch {
-              message.warning("流程已删除，权限组引用统计刷新失败；进入权限组页面时将重新加载");
-            }
+          try {
+            await refreshRemoteWorkflowGroups();
+          } catch {
+            message.warning("流程已删除，权限组引用统计刷新失败；进入权限组页面时将重新加载");
           }
           message.success("流程定义及其全部无实例版本已删除");
         } catch (error) {
@@ -237,7 +223,7 @@ export function ProcessManagementPage() {
       {createDefinitionGuard}
       <Card className="pa-overview-card" variant="borderless">
         <div className="pa-overview-copy"><span className="pa-eyebrow"><FileTextOutlined /> 流程配置</span><Typography.Title level={3}>流程定义概览</Typography.Title><Typography.Text type="secondary">流程定义负责名称与员工侧入口；每个版本都是完整快照，最多一个版本处于发布状态。</Typography.Text></div>
-        <div className="pa-overview-stats" aria-label="流程统计"><span><strong>{isBrowserMockMode ? definitions.length : remoteTotal}</strong><small>流程定义</small></span><span><strong>{filteredDefinitions.filter((item) => definitionStatus(item) === "已发布").length}</strong><small>{isBrowserMockMode ? "已发布" : "当前页已发布"}</small></span><span><strong>{filteredDefinitions.reduce((total, item) => total + (item.versionCount ?? item.versions.length), 0)}</strong><small>{isBrowserMockMode ? "正式版本" : "当前页版本"}</small></span></div>
+        <div className="pa-overview-stats" aria-label="流程统计"><span><strong>{remoteTotal}</strong><small>流程定义</small></span><span><strong>{filteredDefinitions.filter((item) => definitionStatus(item) === "已发布").length}</strong><small>当前页已发布</small></span><span><strong>{filteredDefinitions.reduce((total, item) => total + (item.versionCount ?? item.versions.length), 0)}</strong><small>当前页版本</small></span></div>
       </Card>
       <Card className="query-card pa-filter-card">
         <div className="pa-filter-row">
@@ -273,8 +259,8 @@ export function ProcessManagementPage() {
         </div>
       </Card>
       <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}>
-        <div className="table-result-head pa-table-head"><div><strong>流程定义</strong><Tag variant="filled">{isBrowserMockMode ? filteredDefinitions.length : remoteTotal} 条</Tag></div><Typography.Text type="secondary">进入版本记录可发布、取消发布、切换发布版本或从任意版本复制新建</Typography.Text></div>
-        <Table<ProcessDefinition> loading={remoteLoading} rowKey="id" columns={columns} dataSource={filteredDefinitions} scroll={{ x: 1120 }} pagination={{ current: page, pageSize, total: isBrowserMockMode ? filteredDefinitions.length : remoteTotal, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录`, onChange: setPage }} />
+        <div className="table-result-head pa-table-head"><div><strong>流程定义</strong><Tag variant="filled">{remoteTotal} 条</Tag></div><Typography.Text type="secondary">进入版本记录可发布、取消发布、切换发布版本或从任意版本复制新建</Typography.Text></div>
+        <Table<ProcessDefinition> loading={remoteLoading} rowKey="id" columns={columns} dataSource={filteredDefinitions} scroll={{ x: 1120 }} pagination={{ current: page, pageSize, total: remoteTotal, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录`, onChange: setPage }} />
       </Card>
       <Modal title="新建流程定义" open={createOpen} width={560} okText="继续填写基本信息" cancelText="取消" destroyOnHidden onCancel={() => { setCreateDirty(false); setCreateOpen(false); form.resetFields(); }} onOk={() => void createDefinition()}>
         <Form<CreateProcessValues> form={form} layout="vertical" requiredMark={false} initialValues={{ type: "approval" }} onValuesChange={() => setCreateDirty(true)} className="pa-modal-form"><Form.Item name="name" label="流程名称" rules={[{ required: true, message: "请输入流程名称" }, { max: 60 }]}><Input placeholder="例如：设备变更审核" maxLength={60} showCount /></Form.Item><Form.Item name="type" label="流程类型" rules={[{ required: true }]}><Select options={[{ value: "approval", label: "固定审批 — 按预设节点和连线流转" }, { value: "free", label: "自由协作 — 每次处理后选择下一位受理人" }]} /></Form.Item><Form.Item name="description" label="流程说明"><Input.TextArea placeholder="简要说明适用范围和使用目的" rows={3} maxLength={200} showCount /></Form.Item><div className="pa-inline-note">下一步填写完整基本信息。首次保存时才创建流程定义并生成正式 V1；在此之前不会形成流程或中间业务状态。</div></Form>
@@ -284,7 +270,7 @@ export function ProcessManagementPage() {
           <Alert type="info" showIcon title="导入不会覆盖或自动发布流程" description="系统会生成新的流程编号和内部标识；文件中的权限组、角色、用户只按显示名称匹配，未找到的引用自动省略。" />
           <Descriptions bordered size="small" column={2} items={[
             { key: "file", label: "文件", children: importPreview.fileName, span: 2 },
-            { key: "name", label: "流程名称", children: definitions.some((definition) => definition.name === importPreview.definition.name) ? `${importPreview.definition.name}（导入）` : importPreview.definition.name },
+            { key: "name", label: "流程名称", children: remoteDefinitions.some((definition) => definition.name === importPreview.definition.name) ? `${importPreview.definition.name}（导入）` : importPreview.definition.name },
             { key: "type", label: "流程类型", children: typeMeta[importPreview.definition.type].label },
             { key: "versions", label: "版本数量", children: `${importPreview.definition.versions.length} 个完整版本` },
             { key: "publish", label: "导入后状态", children: <Tag>未发布</Tag> },

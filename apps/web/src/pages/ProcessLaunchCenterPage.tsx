@@ -9,14 +9,9 @@ import {
 import { Button, Card, Empty, Space, Tag, Typography } from "antd";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { canPersonaLaunchDefinition } from "../state/rolePermissions";
-import { resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
-import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
-import { usePrototypeStore } from "../state/usePrototypeStore";
 import "./launch-pages.css";
 import { flowPilotApi } from "../api/flowPilotApi";
 import type { LaunchableProcessDefinition } from "../api/contracts";
-import { isBrowserMockMode } from "../utils/runtimeMode";
 
 interface LaunchDefinition {
   id: string;
@@ -79,12 +74,8 @@ const launchDefinitions: LaunchDefinition[] = [
 
 export function ProcessLaunchCenterPage() {
   const navigate = useNavigate();
-  const personaId = usePrototypeStore((state) => state.personaId);
-  const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
-  const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const [remoteLaunchable, setRemoteLaunchable] = useState<LaunchableProcessDefinition[]>([]);
   useEffect(() => {
-    if (isBrowserMockMode) return;
     let cancelled = false;
     void flowPilotApi.definitions.launchable()
       .then((items) => { if (!cancelled) setRemoteLaunchable(items); })
@@ -92,24 +83,7 @@ export function ProcessLaunchCenterPage() {
     return () => { cancelled = true; };
   }, []);
   const availableDefinitions = useMemo(
-    () => isBrowserMockMode ? managedDefinitions.flatMap((managed, index) => {
-      const effective = getPublishedVersion(managed);
-      if (managed.disabled || !effective) return [];
-      const preset = launchDefinitions.find((item) => item.id === managed.id);
-      const allowed = canPersonaLaunchDefinition(personaId, managed.id);
-      if (!allowed) return [];
-      return [{
-        id: managed.id,
-        name: effective.basic.name,
-        description: effective.basic.description,
-        categoryLabel: managed.type === "approval" ? "固定审批" : "自由流程",
-        version: effective.version,
-        permissionGroups: resolveWorkflowGroupLabels(workflowGroups, effective.basic.starterGroups),
-        icon: preset?.icon ?? (managed.type === "approval" ? <SafetyCertificateOutlined /> : <MessageOutlined />),
-        tone: preset?.tone ?? (["blue", "cyan", "purple", "amber"] as const)[index % 4],
-        route: `/launch/${managed.id}`,
-      }];
-    }) : remoteLaunchable.map((definition, index) => {
+    () => remoteLaunchable.map((definition, index) => {
       const preset = launchDefinitions.find((item) => item.id === definition.definitionId);
       return {
         id: definition.definitionId,
@@ -123,7 +97,7 @@ export function ProcessLaunchCenterPage() {
         route: `/launch/${definition.definitionId}`,
       } satisfies LaunchDefinition;
     }),
-    [managedDefinitions, personaId, remoteLaunchable, workflowGroups],
+    [remoteLaunchable],
   );
 
   return (
@@ -171,7 +145,7 @@ export function ProcessLaunchCenterPage() {
                 <Button
                   type="primary"
                   icon={<RightOutlined />}
-                  iconPosition="end"
+                  iconPlacement="end"
                   aria-label={`发起${definition.name}`}
                   onClick={(event) => {
                     event.stopPropagation();

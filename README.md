@@ -1,11 +1,10 @@
 # FlowPilot 流程审核平台
 
-当前完整可演示部分是 React 前端交互原型，开发环境默认启用浏览器内 Mock REST API，无需启动后端即可演示登录、流程定义、实例、任务、附件、邮件 Outbox、审计和 Excel 导出。
+FlowPilot 是 React 前端与 .NET 10 / ASP.NET Core 10 后端组成的公司内部流程审核平台。所有业务数据、附件、权限和会话均以后端及 SQL Server 为唯一事实来源；前端不提供 Mock 数据模式，也不使用 localStorage、sessionStorage 或 IndexedDB 保存业务数据。
 
-正式后端使用 .NET 10 / ASP.NET Core 10 Controller Web API、EF Core 10 和 SQL Server 2016 SP2 及之后版本。旧 NestJS 骨架已删除，`apps/api/FlowPilot.slnx` 已实现首版 REST 契约：认证与域登录、组织权限、流程定义全生命周期、任务与流程实例、自由协作、附件、邮件 Outbox、审计、Excel 数据集和运维状态均可连接真实 SQL Server 调试。浏览器 Mock 继续用于无需后端的独立演示。
+后端使用 EF Core 10 和 SQL Server 2016 SP2 及之后版本。`apps/api/FlowPilot.slnx` 已实现认证与域登录、组织权限、流程定义全生命周期、任务与流程实例、自由协作、附件、邮件 Outbox、审计、Excel 数据集和运维状态。富文本编辑器上传的图片和视频同样进入后端附件存储，正文只保存附件标识和受认证内容地址。
 
 - [统一需求](REQUIREMENTS.md)
-- [Mock REST API 使用说明](document/MOCK_REST_API.md)
 - [IIS 与 .NET Windows Service 部署说明](document/IIS_DEPLOYMENT.md)
 - [.NET 正式后端实现设计](document/BACKEND_IMPLEMENTATION_DESIGN.md)
 - [SQL Server 数据库结构](document/BACKEND_DATABASE_SCHEMA.md)
@@ -17,19 +16,17 @@
 
 ```bash
 pnpm install
+pnpm dev:api
 pnpm dev
 ```
 
-开发入口为 `http://127.0.0.1:5173/flowpilot/`。要连接后续 .NET API，可在被 Git 忽略的 `apps/web/.env.remote.local` 中设置 `VITE_API_PROXY_TARGET`，前端仍请求同源 `/api/flowpilot/v1`。
+开发入口为 `http://127.0.0.1:5173/flowpilot/`。前端必须连接后端；默认代理到 `http://127.0.0.1:3000`，可在被 Git 忽略的 `apps/web/.env.local` 中设置 `VITE_API_PROXY_TARGET`。浏览器始终请求同源 `/api/flowpilot/v1`。
 
-构建命令按数据来源分开：
+构建命令：
 
 ```bash
-# 正式包：请求同源 /api/flowpilot/v1，由 IIS 代理到 ASP.NET Core
+# 请求同源 /api/flowpilot/v1，由开发代理或 IIS 转发到 ASP.NET Core
 pnpm build
-
-# HTTP 演示包：使用页面内 Mock，不注册 Service Worker
-pnpm build:web_mock
 ```
 
 ## 正式后端
@@ -60,7 +57,7 @@ pnpm backend:check
 
 未部署调试时，将 `apps/api/config/appsettings.Development.local.example.json` 复制为同目录的 `appsettings.Development.local.json`，填写两个连接字符串、排序规则和首次超级管理员密码，再依次执行 `pnpm db:init`、`pnpm db:seed`、`pnpm db:verify`。该文件被 Git 忽略并由 API 与数据库工具共同读取；API 不会在启动时自动修改数据库。完整步骤见 [后端 README](apps/api/README.md)。
 
-完成初始化和 Seed 后，`/health/ready` 可验证数据库结构与种子版本。当前后端支持 `superadmin` 与 LDAPS 域账号登录、会话和模拟身份，组织与权限维护，流程定义导入导出及发布生命周期，发起、审批、重新提交、关闭和自由协作完整流转，实例字段与回复附件，MailKit 邮件发送及 Outbox 治理，审计查询、Excel 数据集和详细运维状态。尚需在实际部署环境完成 SQL Server 版本基线、LDAP、SMTP、Windows Service 和 IIS 联调验收。
+完成初始化和 Seed 后，`/api/flowpilot/v1/health/ready` 可验证数据库结构与种子版本。当前后端支持 `superadmin` 与 LDAPS 域账号登录、会话和模拟身份，组织与权限维护，流程定义导入导出及发布生命周期，发起、审批、重新提交、关闭和自由协作完整流转，实例字段与回复附件，MailKit 邮件发送及 Outbox 治理，审计查询、Excel 数据集和详细运维状态。尚需在实际部署环境完成 SQL Server 版本基线、LDAP、SMTP、Windows Service 和 IIS 联调验收。
 
 ## 测试
 

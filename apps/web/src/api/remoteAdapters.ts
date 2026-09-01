@@ -73,9 +73,6 @@ export const normalizeDirectoryUser = (value: unknown): DirectoryUser => {
 export const normalizeAuthSession = (value: unknown): AuthSession => {
   if (!isRecord(value) || !value.user) throw new Error("会话响应格式不正确");
   return {
-    accessToken: text(value.accessToken) || undefined,
-    tokenType: value.tokenType === "Bearer" ? "Bearer" : undefined,
-    expiresIn: typeof value.expiresIn === "number" ? value.expiresIn : undefined,
     user: normalizeDirectoryUser(value.user),
     operatorUser: value.operatorUser ? normalizeDirectoryUser(value.operatorUser) : undefined,
     roleIds: strings(value.roleIds),
@@ -698,6 +695,7 @@ export const normalizeProcessInstance = (value: unknown): ProcessInstance => {
       ? value.participants.filter(isRecord).map((item) => text(item.id)).filter(Boolean)
       : [],
     canTransferFree: typeof value.canTransferFree === "boolean" ? value.canTransferFree : undefined,
+    canClose: value.canClose === true,
     freeAssigneeCandidates: Array.isArray(value.freeAssigneeCandidates)
       ? value.freeAssigneeCandidates.filter(isRecord).map((item) => ({
           id: text(item.id),

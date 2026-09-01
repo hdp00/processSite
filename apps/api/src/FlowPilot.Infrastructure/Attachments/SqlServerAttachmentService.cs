@@ -246,7 +246,14 @@ public sealed partial class SqlServerAttachmentService(
         if (StartsWith(signature, [0x89, 0x50, 0x4e, 0x47])) return "image/png";
         if (StartsWith(signature, [0xff, 0xd8, 0xff])) return "image/jpeg";
         if (StartsWith(signature, "GIF8"u8)) return "image/gif";
+        if (signature.Length >= 8 && signature.AsSpan(4, 4).SequenceEqual("ftyp"u8)) return "video/mp4";
+        if (StartsWith(signature, [0x1a, 0x45, 0xdf, 0xa3])) return "video/webm";
         if (StartsWith(signature, [0x50, 0x4b, 0x03, 0x04])) return "application/zip";
+        if (declaredContentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true
+            || declaredContentType?.StartsWith("video/", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return "application/octet-stream";
+        }
         return declaredContentType ?? "application/octet-stream";
     }
 

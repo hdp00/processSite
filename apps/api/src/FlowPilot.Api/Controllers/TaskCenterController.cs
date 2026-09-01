@@ -342,6 +342,7 @@ public sealed class TaskCenterController(
         session.SuperAdmin,
         HasPermission(session, TaskReviewPermission),
         HasPermission(session, ProcessLaunchPermission),
+        HasPermission(session, TaskClosePermission),
         HasPermission(session, ProcessMonitorPermission));
 
     private static bool HasPermission(SessionDto session, string permission) =>

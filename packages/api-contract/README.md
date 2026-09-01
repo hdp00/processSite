@@ -25,8 +25,6 @@ The ASP.NET Core backend implements C# request/response DTOs, DataAnnotations an
 domain validation independently, then compares its generated OpenAPI document with
 the repository contract through semantic contract tests.
 
-Current transition note: the documentation-only 1.5.0 contract update introduces
-the task-center discriminator, `active` attachment status and latest-only free reply
-shape. `src/generated` and the browser Mock remain on the previous compatibility
-shape until the code migration task runs `pnpm contract:generate` and updates the
-adapters/tests together; do not treat those generated files as the current contract.
+`src/generated` is regenerated and checked in CI from the current OpenAPI document.
+The browser uses the ASP.NET Core REST service directly; this package does not
+provide a browser-side service implementation or a second data source.

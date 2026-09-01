@@ -28,7 +28,7 @@ const normalizeAppBasePlugin = (): Plugin => ({
 });
 
 export const createViteConfig = (mode: string): UserConfig => {
-  const remoteEnvironment = mode === "remote" ? loadEnv(mode, configDirectory, "VITE_") : {};
+  const environment = loadEnv(mode, configDirectory, "VITE_");
 
   return {
     // The application is hosted as the /flowpilot IIS application.
@@ -37,13 +37,11 @@ export const createViteConfig = (mode: string): UserConfig => {
     server: {
       host: "127.0.0.1",
       port: 5173,
-      ...(mode === "remote" ? {
-        proxy: {
-          "/api/flowpilot": {
-            target: remoteEnvironment.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:3000",
-          },
+      proxy: {
+        "/api/flowpilot": {
+          target: environment.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:3000",
         },
-      } : {}),
+      },
     },
     build: {
       chunkSizeWarningLimit: 950,

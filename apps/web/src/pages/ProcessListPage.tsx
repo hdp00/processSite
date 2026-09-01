@@ -39,15 +39,13 @@ import type { InstanceStatus, ProcessInstance } from "../data/types";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canPersonaLaunchDefinition, hasPersonaPermission } from "../state/rolePermissions";
-import { canUserViewInstance } from "../state/workflowAccess";
-import { createDefaultDateRange, isDateTimeInRange, normalizeDayRange } from "../utils/dateRange";
+import { createDefaultDateRange, normalizeDayRange } from "../utils/dateRange";
 import { normalizeDesignerFieldValue, PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
 import { designerChoiceOptionsToAntd } from "../utils/designerOptions";
 import { downloadProcessListXlsx } from "../utils/processExcelExport";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import { formatRoundLabel } from "../utils/roundDisplay";
 import { getBusinessListColumnWidth, getSystemListColumnWidth } from "../utils/listColumnWidth";
-import { isBrowserMockMode } from "../utils/runtimeMode";
 
 export function ProcessListPage() {
   const { message: messageApi } = App.useApp();
@@ -60,7 +58,7 @@ export function ProcessListPage() {
   const managedDefinition = managedDefinitions.find((item) => item.id === definitionId);
   const currentVersion = getPublishedVersion(managedDefinition);
   const definition = { id: definitionId, label: currentVersion?.basic.name ?? managedDefinition?.name ?? "未命名流程" };
-  const { instances, personaId } = usePrototypeStore();
+  const personaId = usePrototypeStore((state) => state.personaId);
   const [form] = Form.useForm();
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<InstanceStatus>();
@@ -113,7 +111,7 @@ export function ProcessListPage() {
   }, [definition.id, form]);
 
   useEffect(() => {
-    if (isBrowserMockMode || !managedDefinition || currentVersion) return;
+    if (!managedDefinition || currentVersion) return;
     let cancelled = false;
     void flowPilotApi.definitions.get(managedDefinition.id)
       .then((loaded) => { if (!cancelled) cacheProcessDefinition(loaded); })
@@ -122,7 +120,7 @@ export function ProcessListPage() {
   }, [currentVersion, managedDefinition, messageApi]);
 
   useEffect(() => {
-    if (isBrowserMockMode || !definition.id || !currentVersion) return;
+    if (!definition.id || !currentVersion) return;
     let cancelled = false;
     setRemoteLoading(true);
     const normalizedRange = normalizeDayRange(appliedFilters.dateRange);
@@ -147,29 +145,7 @@ export function ProcessListPage() {
     return () => { cancelled = true; };
   }, [appliedFilters, currentVersion, definition.id, messageApi, page, pageSize]);
 
-  const filtered = useMemo(
-    () => isBrowserMockMode
-      ? instances.filter((item) => {
-        const matchesKeyword = `${item.code}${item.title}${item.documentCode}${item.initiator}`
-          .toLowerCase()
-          .includes(appliedFilters.keyword.trim().toLowerCase());
-        const matchesAdvanced = queryFields.every((field) => {
-          const query = appliedFilters.advancedValues[field.id]?.trim().toLowerCase();
-          if (!query) return true;
-          const raw = normalizeDesignerFieldValue(field, item.formValues?.[field.id]);
-          const value = Array.isArray(raw) ? raw.join("/") : String(raw ?? "");
-          return value.toLowerCase().includes(query);
-        });
-        return matchesKeyword
-          && (!appliedFilters.status || item.status === appliedFilters.status)
-          && isDateTimeInRange(item.createdAt, appliedFilters.dateRange)
-          && item.definitionId === definition.id
-          && canUserViewInstance(personaId, item)
-          && matchesAdvanced;
-      })
-      : remoteRows,
-    [appliedFilters, definition.id, instances, personaId, queryFields, remoteRows],
-  );
+  const filtered = remoteRows;
 
   const dynamicColumns: TableProps<ProcessInstance>["columns"] = listFields.map((field) => ({
     title: field.label,
@@ -417,7 +393,7 @@ export function ProcessListPage() {
 
       <Card className="content-card" styles={{ body: { padding: 0 } }}>
         <div className="table-result-head">
-          <div><strong>流程实例</strong><Tag variant="filled">{isBrowserMockMode ? filtered.length : remoteTotal} 条</Tag></div>
+          <div><strong>流程实例</strong><Tag variant="filled">{remoteTotal} 条</Tag></div>
           <Space>
             <Typography.Text type="secondary">{definition.label} · 包含当前用户可见的全部历史版本实例</Typography.Text>
             <Button icon={<ExportOutlined />} loading={exporting} onClick={() => void exportCurrentQuery()}>导出 Excel</Button>
@@ -432,7 +408,7 @@ export function ProcessListPage() {
           bordered
           size="middle"
           scroll={{ x: "max-content" }}
-          pagination={{ current: page, pageSize, total: isBrowserMockMode ? filtered.length : remoteTotal, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录`, onChange: setPage }}
+          pagination={{ current: page, pageSize, total: remoteTotal, showSizeChanger: false, showTotal: (total) => `共 ${total} 条记录`, onChange: setPage }}
           onRow={(record) => ({ onDoubleClick: () => navigate(`/processes/${record.id}`) })}
         />
       </Card>

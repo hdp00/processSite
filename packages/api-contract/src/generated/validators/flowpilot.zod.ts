@@ -14,8 +14,7 @@
  * SMTP 发送在事务提交后异步执行。Excel 文件只在浏览器中根据后端返回的
  * 已鉴权导出数据集生成，后端不生成、不保存 Excel 文件。
  *
- * 浏览器原型的 MSW 适配层可以在独立 Mock 地址使用演示 Bearer；该方案不属于
- * 本正式契约。正式后端只使用 HttpOnly 会话 Cookie。
+ * 浏览器只使用同源 HttpOnly 会话 Cookie，不保存访问令牌或业务数据。
  *
  * OpenAPI spec version: 1.5.0
  */
@@ -1594,6 +1593,7 @@ export const ProcessInstanceDetailDto = ProcessInstanceSummaryDto.and(zod.strict
   "attachments": zod.array(AttachmentDto),
   "participants": zod.array(UserRef).describe('自由协作事项的发起人、当前受理人及历史参与人；审批流程为空数组。'),
   "canTransferFree": zod.boolean().optional().describe('当前登录人是否可以在此进行中的自由协作事项中变更受理人；非自由流程或非进行中事项为 false。'),
+  "canClose": zod.boolean().describe('后端根据当前会话的关闭动作权限和实例锁定版本的关闭流程权限组计算；超级管理员具有关闭资格。'),
   "freeAssigneeCandidates": zod.array(UserRef).optional().describe('此自由协作流程锁定版本的受理权限组中当前有效且启用的用户；非自由流程为空数组。'),
   "reviewProgress": zod.array(ReviewProgressDto),
   "tasks": zod.array(WorkflowTaskDto),
@@ -4083,8 +4083,9 @@ export const ReopenFreeCollaboration428Response = ProblemDetails
 /**
  * 仅创建暂存文件与元数据，不直接修改流程表单。正式引用必须随实例创建、表单保存、
  * 重新提交或任务决策原子提交。启用 PDF 展示的字段由服务端强制最多一个 attachmentId，
- * 新引用替换旧引用；旧物理文件仅在确认无其他引用后异步清理。
- * @summary 上传暂存附件
+ * 新引用替换旧引用；旧物理文件仅在确认无其他引用后异步清理。富文本图片和视频使用
+ * purpose=rich-text-media 上传为后端托管媒体，正文仅保存附件标识和受认证内容地址。
+ * @summary 上传附件
  */
 export const uploadAttachmentHeaderIdempotencyKeyMin = 16;
 export const uploadAttachmentHeaderIdempotencyKeyMax = 100;
@@ -4101,7 +4102,7 @@ export const UploadAttachmentBody = zod.strictObject({
   "versionId": zod.string().optional().describe('发起前暂存时必填，不允许回退当前发布版本'),
   "instanceId": zod.string().optional().describe('已创建实例编辑时使用；与 definitionId\/versionId 二选一'),
   "fieldId": zod.string().optional().describe('表单附件字段稳定标识'),
-  "purpose": zod.enum(['form-field', 'free-reply']).optional()
+  "purpose": zod.enum(['form-field', 'free-reply', 'rich-text-media']).optional()
 })
 
 export const UploadAttachment201Response = AttachmentDto
@@ -4169,7 +4170,7 @@ export const DeleteStagedAttachment428Response = ProblemDetails
 
 
 /**
- * @summary 按实例数据范围校验后下载或内联预览附件
+ * @summary 按数据范围校验后下载或内联预览附件
  */
 export const DownloadAttachmentParams = zod.strictObject({
   "attachmentId": zod.uuid()

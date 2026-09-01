@@ -1013,7 +1013,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     let cancelled = false;
     void flowPilotApi.definitions.versionResource(definitionId, versionId).then((resource) => {
       if (cancelled) return;
-      if (import.meta.env.VITE_API_MODE === "remote") cacheProcessVersion(definitionId, resource.data);
+      cacheProcessVersion(definitionId, resource.data);
       setVersionEtag(resource.etag);
     }).catch((error) => {
       if (!cancelled) messageApi.error(error instanceof Error ? error.message : "流程版本加载失败");
@@ -1030,7 +1030,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
         form: { fields: ensureProcessTitleField(fields).map(normalizeStoredDesignerField), savedAt: time },
         systemFields: systemListFields,
       }, versionEtag);
-      if (import.meta.env.VITE_API_MODE === "remote") cacheProcessVersion(definitionId, saved.data.version);
+      cacheProcessVersion(definitionId, saved.data.version);
       setVersionEtag(saved.etag);
     } catch (error) {
       messageApi.error(error instanceof Error ? error.message : "当前版本不可编辑，请返回版本记录确认发布状态和实例数量");

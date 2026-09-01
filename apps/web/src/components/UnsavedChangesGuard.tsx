@@ -1,4 +1,4 @@
-import { Button, Modal, Typography, message } from "antd";
+import { App, Button, Modal, Typography } from "antd";
 import { useCallback, useRef, useState } from "react";
 import { useBeforeUnload, useBlocker } from "react-router-dom";
 
@@ -15,6 +15,7 @@ export function useUnsavedChangesGuard({
   title = "当前页面有未保存修改",
   description = "离开后，尚未保存的修改将丢失。",
 }: UnsavedChangesGuardOptions) {
+  const { message } = App.useApp();
   const bypassNextNavigation = useRef(false);
   const [saving, setSaving] = useState(false);
   const blocker = useBlocker(useCallback(({ currentLocation, nextLocation }) => {

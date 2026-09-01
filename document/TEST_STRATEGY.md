@@ -1,6 +1,6 @@
 # FlowPilot 自动化测试策略
 
-> 适用范围：当前 React 前端、浏览器 Mock REST API，以及同一 OpenAPI 契约下的 .NET 10 / ASP.NET Core 10 后端。
+> 适用范围：当前 React 前端、.NET 10 / ASP.NET Core 10 后端和真实 SQL Server 数据链路。
 
 ## 1. 测试分层
 
@@ -8,23 +8,23 @@
 | --- | --- | --- |
 | 单元与领域测试 | Vitest（Node） | 流程拓扑、版本、权限、数据迁移、编号、导出等纯逻辑 |
 | 组件测试 | Vitest、jsdom、Testing Library | 表单校验、反馈、路由门禁和组件交互 |
-| Mock API 契约测试 | Vitest、MSW Node | OpenAPI 数据形状、鉴权、Problem Details、ETag、幂等和分页 |
+| 前端适配与请求测试 | Vitest、jsdom | 正式 DTO 规范化、错误中文化、Cookie 请求、分页与 ETag 传递 |
 | 后端单元与契约测试 | xUnit、WebApplicationFactory、实现侧 OpenAPI 语义比较 | ASP.NET Core 领域服务、Middleware、Controller、DTO、响应契约和错误码 |
 | SQL Server 集成测试 | xUnit、真实 SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的较新版本 | EF Core 仓储、Migration/DBA SQL、约束、锁、事务和投影 |
 | 浏览器端到端测试 | Playwright | 从登录到流程配置、发起、处理、查询和治理的用户链路 |
 | 视觉与无障碍测试 | Playwright、axe-core | 关键桌面页面的稳定视觉基线及 WCAG A/AA 自动检查 |
 
-当前 Mock API 只能验证前端契约和领域适配，不能代替正式后端的 SQL Server 事务、真正并发、附件磁盘恢复或 SMTP 测试。
+前端测试替身只隔离组件依赖，不能代替 ASP.NET Core、SQL Server 事务、真正并发、附件磁盘恢复或 SMTP 测试。
 
 ## 2. 覆盖率与质量门禁
 
 - 覆盖率使用 V8 provider。核心领域门禁显式纳入权限、身份、流程定义/运行 Store、发布校验和设计器迁移模块，包含未被测试导入的代码；聚合最低门槛为行和函数 80%、分支 75%。
 - 权限、身份、发布校验和设计器迁移等可独立验证的核心模块最低门槛为行和函数 90%、分支 85%。
-- 另生成不设百分比门禁的全源码报告，持续显示页面、浏览器适配和 Mock handler 的覆盖缺口；这些模块的主要门禁是 Playwright 用户链路，避免用 jsdom 调用替代真实界面验证。
+- 另生成全源码报告，持续显示页面和浏览器适配的覆盖缺口；这些模块的主要门禁是 Playwright 用户链路，避免用 jsdom 调用替代真实界面验证。
 - Chromium 运行全部 E2E；Microsoft Edge 稳定版运行标记为 `@smoke` 的关键链路。
 - 关键页面的 axe 扫描不得存在 `critical` 或 `serious` 级别问题。
-- 视觉差异必须人工确认后，才能通过专用快照更新命令写入基线。
-- 测试不得依赖执行顺序，不共享上一个用例产生的浏览器数据，也不得清理非 FlowPilot 的浏览器存储。
+- 视觉基线只覆盖不依赖可变业务数据的稳定页面；差异必须人工确认后才能更新快照。动态业务页面通过布局、可访问性和用户链路断言验证，避免把当前数据库内容固化进截图。
+- 测试不得依赖执行顺序或上一个用例产生的数据；浏览器测试使用独立 BrowserContext，数据库写链路使用可回滚事务或唯一隔离数据库。
 
 ## 3. 本地命令
 
@@ -40,8 +40,6 @@ pnpm test:coverage         # 核心领域覆盖率门禁与 HTML 报告
 pnpm test:coverage:all     # 全源码覆盖率报告
 pnpm test:e2e              # Chromium 全量 E2E
 pnpm test:e2e:edge         # Edge 冒烟
-pnpm test:visual           # Chromium 视觉回归
-pnpm test:update-snapshots # 人工确认后的视觉基线更新
 pnpm test:all              # 全仓门禁：契约、完整后端测试、类型、覆盖率、双构建与全部浏览器测试
 ```
 
@@ -60,26 +58,24 @@ SQL Server 集成测试必须通过独立测试配置连接真实 SQL Server 201
 
 核心与全源码覆盖率分别输出到 `apps/web/coverage/core` 和 `apps/web/coverage/all-source`；Playwright HTML 报告和失败附件输出到 `apps/web/test-results`。这些生成物均不提交 Git。
 
-## 4. 浏览器数据与定位规则
+## 4. 浏览器与定位规则
 
-- Playwright 每个用例使用独立 BrowserContext，默认从 Mock 初始数据启动；需要验证刷新持久化时只在同一用例内刷新。
-- 旧 schema 或损坏存储使用 `addInitScript` 定向写入 FlowPilot 自有 key，不执行整个 `localStorage.clear()`。
-- 权限存储升级测试需要区分原全权限系统管理员与自定义角色：前者补齐新权限，后者保持原授权；用户删除测试按页面真实路径覆盖“启用且有角色 → 停用 → 清空角色 → 引用检查 → 删除”。
+- Playwright 每个用例使用独立 BrowserContext，并连接真实后端。默认先构建 Debug API，再在独立的 `3100` 端口启动编译产物，避免误用开发者正在运行的服务；四个 Chromium worker 并行执行也作为会话和基础目录并发读取的回归验证。至少一个冒烟用例禁用 localStorage、sessionStorage 和 IndexedDB，防止重新引入浏览器业务数据源。
+- 用户删除测试按页面真实路径覆盖“启用且有角色 → 停用 → 清空角色 → 引用检查 → 删除”。
 - E2E 优先使用角色、可访问名称和用户可见中文文本定位；只有画布、文件输入等缺少稳定语义的控件才增加测试标识。
-- 视觉基线固定 Windows、1440×900、`zh-CN`、`Asia/Shanghai`，禁用动画并遮罩时间、编号等动态区域。
 - 失败时保留截图、视频和 trace；正常通过不保留大体积媒体。
 
-## 5. 正式后端复用边界
+## 5. 后端测试边界
 
-- 黑盒场景通过 `FLOWPILOT_TEST_TARGET=mock|remote` 和 `FLOWPILOT_TEST_BASE_URL` 选择目标；账号凭据仅从环境变量读取。
+- Playwright 默认启动本地 API 与 Vite，也可通过 `FLOWPILOT_TEST_BASE_URL` 指向已部署服务；账号通过 `FLOWPILOT_E2E_USERNAME`、`FLOWPILOT_E2E_PASSWORD` 配置，本地未设置密码时可读取被 Git 忽略的后端开发配置。
 - OpenAPI 操作矩阵、Problem Details、ETag、幂等和权限场景应原样对 ASP.NET Core 重跑，不添加测试专用生产接口。
 - 正式认证测试至少覆盖：域用户成功/失败、域服务不可用且不回退本地密码、普通密码用户成功与失败时均不调用或探测 LDAP、固定密码模式超级管理员、未知账号的域可用性探测、两种登录方式切换后的会话失效，以及域用户禁止本地密码重置。
 - 模拟身份测试需要证明只有真实登录的内置超级管理员可以调用；域用户和密码用户作为目标时均不校验目标凭据，响应直接返回双身份会话，权限按生效用户计算且审计同时保留真实操作者。
 - 正式后端实现后，SQL Server 数据访问层必须执行仓储契约和完整业务场景套件；另外验证结构迁移、事务回滚、任务抢占、附件状态机和 Outbox 恢复。
-- 每个用户可触发的后端写操作至少要有一个直接调用真实实现、落入正式 Migration 数据库的成功路径；前端 Store、MSW、Controller 替身和单独调用 Outbox Writer 都不能作为该写操作已通过数据库集成测试的证据。
+- 每个用户可触发的后端写操作至少要有一个直接调用真实实现、落入正式 Migration 数据库的成功路径；前端内存缓存、组件替身、Controller 替身和单独调用 Outbox Writer 都不能作为该写操作已通过数据库集成测试的证据。
 - 同一入口存在“仅更新 A”“仅更新 B”“同时更新 A+B”时，必须按独立分支测试，不能用组合成功路径推断单项路径。例如自由协作分别覆盖仅回复、仅变更受理人、回复并变更受理人。
 - 新建父记录后又创建引用该记录的 Outbox、审计或附件引用时，集成测试必须执行完整命令并提交事务，核对外键、写入顺序、幂等重放和回滚；只测试生成器或 Writer 不足以发现 EF 保存顺序问题。
-- 所有带数据库触发器的表都要通过真实增删改用例验证 EF 写入方式。测试报告必须区分“前端 Mock 已覆盖”“HTTP 契约已覆盖”“真实 SQL 命令已覆盖”和“部署环境已验收”，不得合并表述为“完整链路已覆盖”。
+- 所有带数据库触发器的表都要通过真实增删改用例验证 EF 写入方式。测试报告必须区分“前端组件已覆盖”“HTTP 契约已覆盖”“真实 SQL 命令已覆盖”和“部署环境已验收”，不得合并表述为“完整链路已覆盖”。
 - 核心流程生命周期 SQL 测试必须为每次运行创建唯一临时数据库，执行正式迁移与内置数据初始化，再走完“创建定义、保存表单、保存流程、过期 revision 冲突、发布、发起、处理待办、完成通知”链路，最后仅删除符合 `_WorkflowTests_` 命名约束的临时数据库。不得依靠删除审计日志来清理测试数据。
 - 流程定义配置矩阵必须覆盖文本/多行文本、富文本、下拉、多级下拉、单选、复选、附件、表格及其全部选择列、显示条件、输入阶段、列表/查询/导出属性、系统字段显示属性；流程图必须覆盖节点位置、权限组、指定审核人、审批/确认处理方式、可修改字段、重复修改、执行条件、驳回规则和节点/结束邮件通知。测试至少证明这些配置经过保存、发布、复制新版本和实例锁定后保持一致。
 - 自由协作浏览器链路必须证明发起、详情和编辑使用同一锁定版本表单；附件开启 Excel 转 PDF 时，编辑场景仍进入转换处理，并在替换、移除或取消时只清理临时附件。
@@ -91,9 +87,9 @@ SQL Server 集成测试必须通过独立测试配置连接真实 SQL Server 201
 - 路径测试通过注入临时部署树，验证从 `current\api` 和真实 `releases\{releaseId}\api` 均能在 6 层上限内找到唯一 `flowpilot.root`，并覆盖标记缺失、重复、超出深度、磁盘根、联接逃逸和 Config/Secrets/Data/Logs/Temp/Backup 边界；Windows Service 冒烟必须故意使用不同的当前工作目录，且 `FLOWPILOT_HOME` 等旧路径变量不能改变结果。
 - AD 和 SMTP 使用可控替身覆盖超时、证书、错误凭据、死信和重试；部署验收再使用外置测试账号完成一次真实域登录和一次测试邮件，凭据不得进入测试代码或报告。
 - 邮件链路测试需要验证任务和结束通知生成正确的 FlowPilot 详情链接：内外网入口分别发起写请求时，后端把 `Origin`（缺失时才用 `Referer`）与可信代理后的 protocol/host 精确比较并冻结对应的 `${origin}/flowpilot`；来源不匹配时返回 403。还要验证无请求事件继承实例已验证入口、缺失时明确失败而不猜地址、首次发送冻结绝对 URL、重试不改变链接、链接不含令牌、未登录后安全返回详情、无权限用户不能因收到邮件读取或处理流程，以及 Outbox/每次投递尝试均可在 SQL Server 中核对。
-- 远程前端测试需要证明登录不全量下载用户、实例、任务和审计；列表使用服务端分页，完整流程版本按需加载，正式请求只依靠 Cookie 且不发送 Mock Bearer。
+- 前端测试需要证明登录不全量下载用户、实例、任务和审计；列表使用服务端分页，完整流程版本按需加载，请求只依靠 Cookie 且不发送 Bearer。
 - IIS 冒烟覆盖 `/health/live`、`/health/ready`、受保护的 `/health/details`、Cookie、Origin/Referer、代理客户端 IP、上传大小、Range、原生 .NET Windows Service 重启，以及 API/Web 统一切换到新 release 和切回 previous。代理测试必须从两个不同来源验证限流桶彼此独立，通过每个允许的内外网绑定验证同源请求及邮件入口，并伪造 `X-Forwarded-For`、`X-Forwarded-Host` 和 `X-Forwarded-Proto`，证明 IIS 覆盖全部外部值、ASP.NET Core 仍识别真实来源和 authority，不能通过伪造头绕过限流/同源校验或改变邮件链接；未知 Host 必须在反代前被拒绝。
-- 在正式 .NET 后端、真实 SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的较新版本通过前，测试报告必须明确标记为“未执行”；不能用 Mock、SQLite、EF InMemory 替代，也不能只测试较新 SQL Server 而跳过最低基线。
+- 在真实 SQL Server 2016 SP2/兼容级别 130 最低基线及实际部署的较新版本通过前，测试报告必须明确标记为“未执行”；不能用 SQLite、EF InMemory 替代，也不能只测试较新 SQL Server 而跳过最低基线。
 
 ## 6. 缺陷处理
 

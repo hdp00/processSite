@@ -59,7 +59,7 @@ public sealed partial class SqlServerAttachmentService
                 contentType,
                 attachment.OriginalFileName,
                 attachment.Sha256 ?? string.Empty,
-                contentType == "application/pdf"), null);
+                RichTextMediaPolicy.CanInline(contentType)), null);
         }
         catch (IOException)
         {
@@ -80,6 +80,15 @@ public sealed partial class SqlServerAttachmentService
         if (attachment is null || attachment.State is "uploading" or "failed" or "deleted")
         {
             return AttachmentDeleteResult.Failed(NotFound());
+        }
+
+        if (attachment.State == "active" && attachment.Purpose == RichTextMediaPolicy.Purpose)
+        {
+            return AttachmentDeleteResult.Failed(Failure(
+                409,
+                "RICH_TEXT_MEDIA_ACTIVE",
+                "富文本媒体已生效",
+                "为避免已保存的正文失效，富文本图片或视频不能通过暂存附件接口删除。"));
         }
 
         if (attachment.State != "staged")
@@ -165,6 +174,10 @@ public sealed partial class SqlServerAttachmentService
             .ThenBy(item => item.Id)
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
+        if (attachment.State == "active" && attachment.Purpose == RichTextMediaPolicy.Purpose)
+        {
+            return AccessibleAttachment.Success(attachment, references);
+        }
         if ((attachment.State is "staged" or "cleanup-pending") && references.Length == 0)
         {
             return actor.IsSuperAdmin || attachment.UploadedBy == actor.UserId
@@ -182,6 +195,7 @@ public sealed partial class SqlServerAttachmentService
             actor.IsSuperAdmin,
             actor.CanReview,
             actor.CanLaunch,
+            false,
             actor.CanViewAllInstances);
         foreach (var instanceId in references.Select(item => item.InstanceId).Distinct())
         {

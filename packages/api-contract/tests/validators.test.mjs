@@ -77,7 +77,7 @@ test("boolean 查询参数仅接受 true/false/1/0 并保留正确语义", () =>
   );
 });
 
-test("ProblemCode 包含服务端与 mock 已使用的错误码", () => {
+test("ProblemCode 包含后端已使用的稳定错误码", () => {
   for (const code of [
     "USER_ROLE_REQUIRED",
     "PDF_ATTACHMENT_REQUIRED",

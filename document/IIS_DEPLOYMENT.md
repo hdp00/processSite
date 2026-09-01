@@ -159,9 +159,9 @@ Invoke-WebRequest http://127.0.0.1:3000/api/flowpilot/v1/health/ready
 - `index.html` 返回 `Cache-Control: no-cache`
 - 带内容哈希的 JS/CSS 可长缓存
 - `/flowpilot` 保留查询参数重定向到 `/flowpilot/`
-- SPA 回退只处理前端路由，不接管 `/api/flowpilot/*` 或 `/flowpilot/mock-api/*`
+- SPA 回退只处理前端路由，不接管 `/api/flowpilot/*`
 
-生产前端只使用 `/api/flowpilot/v1`。从仓库根目录运行 `pnpm build:web_mock` 可生成单浏览器演示包；它不接入真实数据库或多人环境。
+生产前端只使用 `/api/flowpilot/v1`。开发、调试、测试和生产构建均连接 ASP.NET Core 后端，不提供单浏览器数据包或浏览器 Mock 模式。
 
 ## 10. IIS/ARR 反向代理
 

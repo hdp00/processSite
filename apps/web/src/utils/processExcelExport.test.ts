@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { initialInstances } from "../data/mock";
-import type { ProcessInstance } from "../data/types";
+import { normalizeProcessInstance } from "../api/remoteAdapters";
 import type { SystemListFieldConfig } from "../data/listFieldConfig";
 import type { StoredDesignerField } from "./designerStorage";
 import { buildProcessExcelDataset, createProcessListXlsxFile } from "./processExcelExport";
@@ -22,21 +21,31 @@ const field = (
 
 describe("流程清单 Excel 数据", () => {
   it("输出系统字段、选择项、富文本和表格的业务可读值", () => {
-    const instance = {
-      ...initialInstances[0],
+    const instance = normalizeProcessInstance({
+      id: "instance-1",
       definitionId: "definition",
       versionId: "version",
-      initiatorId: "initiator",
+      instanceNumber: "DOC26090001",
+      title: "导出测试",
+      processName: "导出测试流程",
+      versionLabel: "V2",
+      initiator: {
+        id: "initiator",
+        name: "张三",
+        departmentPath: "研发部",
+      },
       workflowType: "approval",
+      status: "reviewing",
       round: 2,
-      department: "研发部",
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:00:00Z",
       formValues: {
         summary: "<p>测试 <strong>内容</strong></p>",
         priorityField: "high",
         tags: ["a", "b"],
         detailTable: [{ product: "A", result: "pass" }],
       },
-    } as ProcessInstance;
+    });
     const dataset = buildProcessExcelDataset({
       definitionId: "definition",
       definitionName: "导出/测试",

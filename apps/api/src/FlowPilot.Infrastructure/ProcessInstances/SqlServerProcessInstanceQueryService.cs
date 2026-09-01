@@ -59,6 +59,14 @@ public sealed partial class SqlServerProcessInstanceQueryService(
                 effectiveGroupIds,
                 cancellationToken)
             .ConfigureAwait(false);
+        var canClose = actor.CanClose && (actor.IsSuperAdmin || await _dbContext.RuntimeWorkflowGroupReferences
+            .AsNoTracking()
+            .AnyAsync(
+                item => item.VersionId == version.Id
+                    && item.Purpose == "close"
+                    && effectiveGroupIds.Contains(item.GroupId),
+                cancellationToken)
+            .ConfigureAwait(false));
 
         var tasks = await _dbContext.WorkflowTasks
             .AsNoTracking()
@@ -180,6 +188,7 @@ public sealed partial class SqlServerProcessInstanceQueryService(
             initiator,
             participantIds,
             freeAccess.CanTransfer,
+            canClose,
             freeAccess.AssigneeCandidates,
             effectiveGroupIds,
             actor));
@@ -390,6 +399,7 @@ public sealed partial class SqlServerProcessInstanceQueryService(
         TaskCenterUserRefDto Initiator,
         IReadOnlyList<Guid> ParticipantIds,
         bool CanTransferFree,
+        bool CanClose,
         IReadOnlyList<TaskCenterUserRefDto> FreeAssigneeCandidates,
         IReadOnlySet<Guid> EffectiveGroupIds,
         ProcessInstanceQueryActor Actor);

@@ -31,7 +31,7 @@
 - [ ] `document/flowpilot-rest-api.openapi.yaml` 继续作为唯一对外契约。
 - [ ] Redocly lint 与 Orval TypeScript/Axios 生成可重复，重新生成无未提交差异。
 - [ ] C# DTO 使用 DataAnnotations 和领域校验；`Microsoft.AspNetCore.OpenApi` 生成实现侧文档并与规范做语义比较。
-- [ ] 正式 OpenAPI 只声明 `flowpilot_session` HttpOnly Cookie；Mock Bearer 不进入正式后端。
+- [ ] OpenAPI 只声明 `flowpilot_session` HttpOnly Cookie；前端不保存或发送 Bearer 访问令牌。
 - [ ] 登录成功响应明确设置 `flowpilot_session`，注销响应明确清除同一路径 Cookie；二者及其他写请求都覆盖 403 CSRF 契约测试。
 - [ ] Problem Details、稳定错误码、traceId、ETag/If-Match、Idempotency-Key、分页、任务中心 discriminator 和 `deepObject` 编码均有契约测试。
 - [ ] 正式模式关闭 CORS；登录、注销及其他写请求的 Origin/Referer、可信转发头和未知 Host 规则按需求实现。
@@ -123,7 +123,7 @@
 ## 9. 日志、健康与部署
 
 - [ ] Serilog 输出滚动 JSON 文件到 `{部署根目录}\Logs`，默认 30 天，包含 traceId 且完成秘密/业务值脱敏。
-- [ ] `/health/live` 不依赖外部服务；`/health/ready` 验证硬依赖；`/health/details` 需要运维权限且只输出脱敏状态。
+- [ ] `/api/flowpilot/v1/health/live` 不依赖外部服务；`/api/flowpilot/v1/health/ready` 验证硬依赖；`/api/flowpilot/v1/health/details` 需要运维权限且只输出脱敏状态。
 - [ ] Windows Service 使用独立低权限账号，程序只读，Config/Secrets 只读，Data/Logs/Temp 按需修改；IIS 账号只读 web。
 - [ ] `dotnet publish -c Release -r win-x64` 的实际发布模式（自包含或框架依赖）在目标服务器验证并写入发布记录。
 - [ ] `release.json` 记录 releaseId、产品版本、构建时间、提交、API 契约版本、所需数据库结构版本、允许兼容范围、迁移校验和及文件校验信息；发布目录创建后不可覆盖。

@@ -30,38 +30,8 @@ export const DEFAULT_SYSTEM_LIST_FIELDS: SystemListFieldConfig[] = [
   { key: "updatedAt", label: "更新时间", description: "流程实例最近一次发生变化的时间", taskVisible: false, processListVisible: false, exportVisible: false },
 ];
 
-export const SYSTEM_LIST_FIELDS_STORAGE_KEY_PREFIX = "flowpilot-system-list-fields-v1";
-
 export const cloneDefaultSystemListFields = () =>
   DEFAULT_SYSTEM_LIST_FIELDS.map((field) => ({ ...field }));
-
-export function loadSystemListFields(definitionId: string): SystemListFieldConfig[] {
-  if (typeof window === "undefined") return cloneDefaultSystemListFields();
-  try {
-    const saved = window.localStorage.getItem(`${SYSTEM_LIST_FIELDS_STORAGE_KEY_PREFIX}:${definitionId}`);
-    if (!saved) return cloneDefaultSystemListFields();
-    const parsed = JSON.parse(saved) as Partial<SystemListFieldConfig>[];
-    if (!Array.isArray(parsed)) return cloneDefaultSystemListFields();
-    return DEFAULT_SYSTEM_LIST_FIELDS.map((fallback) => {
-      const saved = parsed.find((item) => item.key === fallback.key);
-      return {
-        ...fallback,
-        ...saved,
-        key: fallback.key,
-        label: fallback.label,
-        description: fallback.description,
-        exportVisible: saved?.exportVisible ?? saved?.processListVisible ?? fallback.processListVisible,
-      };
-    });
-  } catch {
-    return cloneDefaultSystemListFields();
-  }
-}
-
-export function saveSystemListFields(definitionId: string, fields: SystemListFieldConfig[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(`${SYSTEM_LIST_FIELDS_STORAGE_KEY_PREFIX}:${definitionId}`, JSON.stringify(fields));
-}
 
 export function isSystemFieldVisible(
   fields: SystemListFieldConfig[],

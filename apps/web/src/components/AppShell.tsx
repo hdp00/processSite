@@ -7,7 +7,6 @@ import {
   KeyOutlined,
   LogoutOutlined,
   MonitorOutlined,
-  ReloadOutlined,
   RocketOutlined,
   SafetyCertificateOutlined,
   SwapOutlined,
@@ -16,6 +15,7 @@ import {
 } from "@ant-design/icons";
 import {
   Alert,
+  App,
   Avatar,
   Button,
   Divider,
@@ -25,7 +25,6 @@ import {
   Select,
   Space,
   Typography,
-  message,
   type MenuProps,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
@@ -37,14 +36,11 @@ import type { DirectoryUser } from "../api/contracts";
 import { ROLE_PERMISSIONS_CHANGED_EVENT, canPersonaAccessLaunch, hasPersonaPermission } from "../state/rolePermissions";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import {
-  isSuperAdminPersona,
-  personas,
   usePrototypeStore,
   type PersonaId,
 } from "../state/usePrototypeStore";
 import { useIdentityStore } from "../state/useIdentityStore";
 import { canUserViewDefinition } from "../state/workflowAccess";
-import { buildDebugPersonaOptions } from "../utils/personaOptions";
 
 const { Header, Sider, Content } = Layout;
 
@@ -63,6 +59,7 @@ const pageMeta: Record<string, { title: string; eyebrow: string }> = {
 };
 
 export function AppShell() {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const [permissionRevision, setPermissionRevision] = useState(0);
@@ -71,24 +68,15 @@ export function AppShell() {
   const {
     personaId,
     operatorUserId,
-    sessionSuperAdmin,
     operatorSuperAdmin,
     impersonation,
-    switchPersona,
   } = usePrototypeStore();
-  const debugMode = import.meta.env.VITE_API_MODE === "mock"
-    || (import.meta.env.DEV && import.meta.env.VITE_API_MODE !== "remote");
-  const canResetDemoData = debugMode && (
-    sessionSuperAdmin
-    || operatorSuperAdmin
-    || isSuperAdminPersona(personaId)
-  );
 
   const identityUsers = useIdentityStore((state) => state.users);
   const identityUser = identityUsers.find((user) => user.id === personaId);
   const persona = identityUser
     ? { id: identityUser.id, name: identityUser.name, role: identityUser.roles.join("、") || identityUser.jobTitle }
-    : personas.find((item) => item.id === personaId) ?? personas[2];
+    : { id: personaId, name: "当前用户", role: "身份信息加载中" };
   const managedDefinitions = useProcessDefinitionStore((state) => state.definitions);
   const canInitiate = canPersonaAccessLaunch(personaId);
   const can = (permission: string) => hasPersonaPermission(personaId, permission);
@@ -98,7 +86,7 @@ export function AppShell() {
     return () => window.removeEventListener(ROLE_PERMISSIONS_CHANGED_EVENT, refreshPermissions);
   }, []);
   useEffect(() => {
-    if (debugMode || !operatorSuperAdmin) return;
+    if (!operatorSuperAdmin) return;
     const loadCandidates = async () => {
       const users: DirectoryUser[] = [];
       for (let page = 1; ; page += 1) {
@@ -110,7 +98,7 @@ export function AppShell() {
     void loadCandidates()
       .then(setImpersonationCandidates)
       .catch(() => setImpersonationCandidates([]));
-  }, [debugMode, operatorSuperAdmin]);
+  }, [operatorSuperAdmin]);
 
   const finishIdentitySwitch = async () => {
     await hydrateRemoteApplication();
@@ -119,10 +107,6 @@ export function AppShell() {
   };
 
   const selectPersona = async (targetUserId: PersonaId) => {
-    if (debugMode) {
-      switchPersona(targetUserId);
-      return;
-    }
     if (targetUserId === operatorUserId) {
       if (!impersonation) return;
       setSwitchingPersona(true);
@@ -157,18 +141,12 @@ export function AppShell() {
     }
   };
 
-  const debugPersonaOptions = useMemo(
-    () => buildDebugPersonaOptions(identityUsers),
-    [identityUsers],
-  );
-  const personaOptions = debugMode
-    ? debugPersonaOptions
-    : impersonationCandidates.map((user) => ({
+  const personaOptions = impersonationCandidates.map((user) => ({
       value: user.id,
       label: `${user.name} · ${user.roles.join("、") || user.jobTitle}`,
       searchText: `${user.account} ${user.name} ${user.roles.join(" ")} ${user.jobTitle}`,
     }));
-  if (!debugMode && operatorSuperAdmin && !personaOptions.some((option) => option.value === operatorUserId)) {
+  if (operatorSuperAdmin && !personaOptions.some((option) => option.value === operatorUserId)) {
     const operator = useIdentityStore.getState().users.find((user) => user.id === operatorUserId);
     personaOptions.unshift({
       value: operatorUserId,
@@ -221,7 +199,7 @@ export function AppShell() {
             label: "流程清单",
             children: managedDefinitions.filter((definition) => Boolean(
               definition.publishedVersionId
-              && (import.meta.env.VITE_API_MODE === "remote" || canUserViewDefinition(personaId, definition.id)),
+              && canUserViewDefinition(personaId, definition.id),
             )).map((definition) => ({
               key: `/processes?definitionId=${definition.id}`,
               label: definition.name,
@@ -259,31 +237,15 @@ export function AppShell() {
     [canInitiate, managedDefinitions, permissionRevision, personaId],
   );
 
-  const resetDemoData = async () => {
-    try {
-      await flowPilotApi.system.resetDemo();
-      navigate("/tasks", { replace: true });
-      message.success("演示数据已重置");
-    } catch (error) {
-      message.error(error instanceof ApiError ? error.message : "重置演示数据失败");
-    }
-  };
-
   const userMenu: MenuProps["items"] = [
-    ...(canResetDemoData ? [{
-      key: "reset",
-      icon: <ReloadOutlined />,
-      label: "重置演示数据",
-      onClick: () => {
-        void resetDemoData();
-      },
-    }, { type: "divider" as const }] : []),
     {
       key: "logout",
       icon: <LogoutOutlined />,
       label: "退出登录",
       onClick: () => {
-        void flowPilotApi.auth.logout().finally(() => navigate("/login"));
+        void flowPilotApi.auth.logout()
+          .catch(() => undefined)
+          .finally(() => navigate("/login", { replace: true }));
       },
     },
   ];
@@ -322,11 +284,11 @@ export function AppShell() {
             <Typography.Title level={4}>{meta.title}</Typography.Title>
           </div>
           <Space size={12}>
-            {(debugMode || operatorSuperAdmin) && <div className="persona-switcher">
+            {operatorSuperAdmin && <div className="persona-switcher">
               <SwapOutlined />
-              <span>{debugMode ? "演示身份" : "模拟身份"}</span>
+              <span>模拟身份</span>
               <Select
-                aria-label={debugMode ? "切换演示身份" : "切换模拟身份"}
+                aria-label="切换模拟身份"
                 variant="borderless"
                 value={personaId}
                 loading={switchingPersona}
@@ -337,7 +299,7 @@ export function AppShell() {
                 options={personaOptions}
               />
             </div>}
-            {(debugMode || operatorSuperAdmin) && <Divider orientation="vertical" />}
+            {operatorSuperAdmin && <Divider orientation="vertical" />}
             <Dropdown menu={{ items: userMenu }} trigger={["click"]}>
               <button className="user-button" type="button">
                 <Avatar className="user-avatar">{persona.name.slice(-1)}</Avatar>
@@ -351,7 +313,7 @@ export function AppShell() {
         </Header>
 
         <Content className={`app-content${isDesignerRoute ? " is-designer-content" : ""}`}>
-          {!debugMode && impersonation && (
+          {impersonation && (
             <Alert
               className="impersonation-alert"
               type="warning"

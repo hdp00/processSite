@@ -8,7 +8,6 @@ import { usePrototypeStore } from "./state/usePrototypeStore";
 
 describe("应用路由权限", () => {
   beforeEach(() => {
-    window.localStorage.clear();
     usePrototypeStore.setState({
       authenticated: false,
       personaId: "lina",

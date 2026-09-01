@@ -11,16 +11,6 @@ import type {
 
 export type DirectoryUser = Omit<DomainUser, "password">;
 
-export interface ApiMeta {
-  requestId: string;
-  timestamp: string;
-}
-
-export interface ApiEnvelope<T> {
-  data: T;
-  meta: ApiMeta;
-}
-
 export interface PageInfo {
   number: number;
   size: number;
@@ -58,26 +48,14 @@ export interface ApiProblemDetails {
   currentEtag?: string;
 }
 
-export type MockScenario = "normal" | "slow" | "offline" | "server-error" | "conflict" | "mail-fail" | "upload-fail";
-
-export interface MockApiSettings {
-  scenario: MockScenario;
-  readDelayMs: number;
-  writeDelayMs: number;
-}
-
 export interface ApiHealth {
-  status: "ok";
-  service: "flowpilot-mock-api";
-  version: "v1";
-  mode: "mock";
-  time: string;
+  status: string;
+  service?: string;
+  version?: string;
+  time?: string;
 }
 
 export interface AuthSession {
-  accessToken?: string;
-  tokenType?: "Bearer";
-  expiresIn?: number;
   /** 当前请求实际生效的用户；所有权限和数据范围均以此用户为准。 */
   user: DirectoryUser;
   /** 建立登录会话的真实操作者；模拟身份期间不会改变。 */
@@ -178,7 +156,7 @@ export interface AttachmentRecord {
   uploadedAt: string;
   instanceId?: string;
   fieldId?: string;
-  purpose?: "form-field" | "free-reply";
+  purpose?: "form-field" | "free-reply" | "rich-text-media";
   lifecycle?: "temporary" | "active" | "cleanup-pending";
   cleanupAfter?: string;
 }

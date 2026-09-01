@@ -79,10 +79,11 @@ public sealed partial class SqlServerAttachmentService
             return await GetAsync(replayId, actor, cancellationToken).ConfigureAwait(false);
         }
 
-        attachment.State = "staged";
+        var isRichTextMedia = string.Equals(scope.Purpose, RichTextMediaPolicy.Purpose, StringComparison.Ordinal);
+        attachment.State = isRichTextMedia ? "active" : "staged";
         attachment.Purpose = scope.Purpose;
         attachment.StagedAt = now.UtcDateTime;
-        attachment.CleanupAfter = now.AddHours(24).UtcDateTime;
+        attachment.CleanupAfter = isRichTextMedia ? null : now.AddHours(24).UtcDateTime;
         attachment.LastError = null;
         attachment.Revision = checked(attachment.Revision + 1);
 
@@ -129,6 +130,30 @@ public sealed partial class SqlServerAttachmentService
         RuntimeAttachment attachment,
         CancellationToken cancellationToken)
     {
+        if (string.Equals(scope.Purpose, RichTextMediaPolicy.Purpose, StringComparison.Ordinal))
+        {
+            if (scope.DefinitionId is not null
+                || scope.VersionId is not null
+                || scope.InstanceId is not null
+                || !string.IsNullOrWhiteSpace(scope.FieldId))
+            {
+                return Failure(
+                    422,
+                    "ATTACHMENT_SCOPE_INVALID",
+                    "富文本媒体范围无效",
+                    "富文本媒体上传只需要提供 purpose=rich-text-media。");
+            }
+
+            var contentType = attachment.DetectedContentType ?? attachment.DeclaredContentType ?? string.Empty;
+            return RichTextMediaPolicy.IsSupportedContentType(contentType)
+                ? null
+                : Failure(
+                    415,
+                    "RICH_TEXT_MEDIA_TYPE_INVALID",
+                    "富文本媒体格式不支持",
+                    "富文本编辑器只允许上传图片或视频文件。");
+        }
+
         if (string.Equals(scope.Purpose, "free-reply", StringComparison.Ordinal))
         {
             return await ValidateFreeReplyUploadScopeAsync(scope, actor, cancellationToken)
@@ -137,7 +162,7 @@ public sealed partial class SqlServerAttachmentService
 
         if (!string.Equals(scope.Purpose, "form-field", StringComparison.Ordinal))
         {
-            return Failure(422, "ATTACHMENT_PURPOSE_INVALID", "附件用途无效", "purpose 只支持 form-field 或 free-reply。");
+            return Failure(422, "ATTACHMENT_PURPOSE_INVALID", "附件用途无效", "purpose 只支持 form-field、free-reply 或 rich-text-media。");
         }
 
         if (scope.InstanceId is not null)
@@ -275,6 +300,7 @@ public sealed partial class SqlServerAttachmentService
                 actor.IsSuperAdmin,
                 actor.CanReview,
                 actor.CanLaunch,
+                false,
                 actor.CanViewAllInstances),
             cancellationToken).ConfigureAwait(false);
         if (detailResult.Error is not null || detailResult.Instance is null)

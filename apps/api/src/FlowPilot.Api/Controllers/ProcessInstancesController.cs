@@ -51,6 +51,7 @@ public sealed class ProcessInstancesController(
                 session.SuperAdmin,
                 HasPermission(session, ReviewPermission),
                 HasPermission(session, LaunchPermission),
+                HasPermission(session, ClosePermission),
                 HasPermission(session, ProcessMonitorPermission)),
             cancellationToken).ConfigureAwait(false);
         if (result.Error == ProcessInstanceQueryError.NotFound)
@@ -630,6 +631,7 @@ public sealed class ProcessInstancesController(
         session.SuperAdmin,
         HasPermission(session, ReviewPermission),
         HasPermission(session, LaunchPermission),
+        HasPermission(session, ClosePermission),
         HasPermission(session, ProcessMonitorPermission));
 
     private ObjectResult CommandFailure(ProcessInstanceCommandFailure failure)

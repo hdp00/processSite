@@ -74,8 +74,6 @@ const actionLabels: Record<string, string> = {
   "identity:update-position": "修改职务",
   "identity:delete-position": "删除职务",
   "identity:update-role-permissions": "修改角色权限",
-  "identity:mock-settings.updated": "修改演示设置",
-  "identity:mock.reset": "重置演示数据",
 };
 
 const formalActionLabels: Record<string, string> = {
@@ -143,7 +141,7 @@ const detailFieldLabels: Record<string, string> = {
 const technicalIdentifierPatterns = [
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
   /\b[A-Z]{2,}(?:[-_]?[A-Z0-9]+)+\b/g,
-  /\b(?:auth|mock|runtime|workflow|process|attachment|email)[._-][a-z0-9._-]+\b/gi,
+  /\b(?:auth|runtime|workflow|process|attachment|email)[._-][a-z0-9._-]+\b/gi,
 ];
 
 const cleanText = (value: string) => technicalIdentifierPatterns.reduce(

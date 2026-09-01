@@ -40,6 +40,7 @@ public sealed partial class SqlServerProcessInstanceQueryService
             Initiator = source.Initiator,
             Participants = source.ParticipantIds.Select(id => source.Users[id]).ToArray(),
             CanTransferFree = source.CanTransferFree,
+            CanClose = source.CanClose,
             FreeAssigneeCandidates = source.FreeAssigneeCandidates,
             CreatedAt = AsUtc(source.Instance.CreatedAt),
             UpdatedAt = AsUtc(source.Instance.UpdatedAt),

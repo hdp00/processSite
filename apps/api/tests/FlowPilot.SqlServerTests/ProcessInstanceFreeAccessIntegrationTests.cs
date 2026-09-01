@@ -24,15 +24,29 @@ public sealed class ProcessInstanceFreeAccessIntegrationTests
                 IsSuperAdmin: false,
                 CanReview: false,
                 CanResubmit: false,
+                CanClose: false,
                 CanViewAllInstances: false),
             cancellationToken);
 
         Assert.Null(result.Error);
         var detail = Assert.IsType<ProcessInstanceDetailDto>(result.Instance);
         Assert.True(detail.CanTransferFree);
+        Assert.False(detail.CanClose);
         Assert.Equal(
             new[] { seed.CurrentAssigneeId, seed.GroupMemberId }.Order().ToArray(),
             detail.FreeAssigneeCandidates!.Select(item => item.Id).Order().ToArray());
+
+        var closerResult = await service.GetAsync(
+            seed.InstanceId,
+            new ProcessInstanceQueryActor(
+                seed.StarterMemberId,
+                IsSuperAdmin: false,
+                CanReview: false,
+                CanResubmit: false,
+                CanClose: true,
+                CanViewAllInstances: false),
+            cancellationToken);
+        Assert.True(Assert.IsType<ProcessInstanceDetailDto>(closerResult.Instance).CanClose);
     }
 
     [Theory]

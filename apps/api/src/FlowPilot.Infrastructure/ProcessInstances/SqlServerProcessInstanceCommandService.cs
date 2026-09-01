@@ -221,6 +221,7 @@ public sealed partial class SqlServerProcessInstanceCommandService(
                 definition,
                 version,
                 actor,
+                actor.CanClose && (actor.IsSuperAdmin || access.IsCloser(actor.EffectiveUserId)),
                 form.Values!,
                 form.FieldRevisions!,
                 runtime.Value,

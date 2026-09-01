@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
+import { cloneCompleteDesignerSnapshot } from "../utils/designerStorage";
 import {
   normalizeAttachmentRecord,
   normalizeAuditEvent,
@@ -44,7 +44,33 @@ describe("formal REST response adapters", () => {
   });
 
   it("maps a formal process version DTO to the shared complete snapshot model", () => {
-    const source = useProcessDefinitionStore.getState().definitions[0].versions[0];
+    const source = {
+      id: "version-1",
+      version: "V1",
+      createdAt: "2026-08-31T06:00:00Z",
+      createdBy: "系统",
+      updatedAt: "2026-08-31T06:00:00Z",
+      updatedBy: "系统",
+      changeNote: "测试版本",
+      instanceCount: 0,
+      formFieldCount: 1,
+      nodeCount: 0,
+      starterGroups: ["group-1"],
+      checksum: "checksum",
+      basic: {
+        name: "测试流程",
+        code: "PROC-TEST",
+        instancePrefix: "TEST",
+        type: "approval" as const,
+        description: "测试",
+        starterGroups: ["group-1"],
+        closeGroups: ["group-1"],
+        visibleRoles: [],
+        visibleUsers: [],
+      },
+      snapshot: cloneCompleteDesignerSnapshot(),
+      validation: { status: "通过" as const, checkedAt: "2026-08-31T06:00:00Z", issues: [] },
+    };
     const version = normalizeProcessVersion({
       ...source,
       version: undefined,

@@ -22,7 +22,7 @@ import {
   Tooltip,
   type TableProps,
 } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatusPill } from "../components/StatusPill";
 import { ListFieldValue } from "../components/ListFieldValue";
@@ -36,31 +36,24 @@ import { useIdentityStore } from "../state/useIdentityStore";
 import { getBusinessListColumnWidth, getSystemListColumnWidth } from "../utils/listColumnWidth";
 import { getPublishedVersion, useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { formatRoundLabel } from "../utils/roundDisplay";
-import { canUserProcessTask } from "../state/workflowAccess";
 import { PROCESS_TITLE_FIELD_ID } from "../utils/designerStorage";
-import { isProcessInstanceResubmissionTodo } from "../utils/processInstanceAccess";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import { flowPilotApi } from "../api/flowPilotApi";
 import type { TaskCenterFlowCategory } from "../api/contracts";
 import { cacheProcessDefinition } from "../api/entityCache";
-import { isBrowserMockMode } from "../utils/runtimeMode";
 import { resolveTaskCenterFlowLabel, taskCenterFlowSelectionUnavailable } from "../utils/taskCenterFlowLabel";
 
 const ALL_FLOWS = "__all__";
-const TASK_FLOW_STORAGE_PREFIX = "flowpilot-task-center-flow-v1";
 type TaskCenterTab = "mine" | "substitute" | "initiated";
 
 export function TaskCenterPage() {
   const navigate = useNavigate();
-  const { instances, tasks, personaId, sessionSuperAdmin } = usePrototypeStore();
+  const { personaId, sessionSuperAdmin } = usePrototypeStore();
   const definitions = useProcessDefinitionStore((state) => state.definitions);
-  const identityUser = useIdentityStore((state) => state.users.find((user) => user.id === personaId));
   const [tab, setTab] = useState<TaskCenterTab>("mine");
   const [keyword, setKeyword] = useState("");
   const [flowKeyword, setFlowKeyword] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState(() =>
-    window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
-  );
+  const [selectedTemplate, setSelectedTemplate] = useState(ALL_FLOWS);
   const [selectedTemplateLabel, setSelectedTemplateLabel] = useState<string>();
   const [selectedTemplateSuspended, setSelectedTemplateSuspended] = useState(false);
   const isSuperAdmin = sessionSuperAdmin || isSuperAdminPersona(personaId);
@@ -72,11 +65,10 @@ export function TaskCenterPage() {
   const [remoteFlowCategories, setRemoteFlowCategories] = useState<TaskCenterFlowCategory[]>([]);
   const [remoteTabTotals, setRemoteTabTotals] = useState<Record<TaskCenterTab, number>>({ mine: 0, substitute: 0, initiated: 0 });
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const tableHostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setSelectedTemplate(
-      window.localStorage.getItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`) ?? ALL_FLOWS,
-    );
+    setSelectedTemplate(ALL_FLOWS);
     setSelectedTemplateLabel(undefined);
     setSelectedTemplateSuspended(false);
     setFlowKeyword("");
@@ -89,7 +81,6 @@ export function TaskCenterPage() {
   }, [tab]);
 
   useEffect(() => {
-    if (isBrowserMockMode) return;
     let cancelled = false;
     void Promise.all([
       flowPilotApi.tasks.listMine({ page: 1, pageSize: 1, view: "pending" }),
@@ -106,7 +97,6 @@ export function TaskCenterPage() {
   }, [personaId]);
 
   useEffect(() => {
-    if (isBrowserMockMode) return;
     let cancelled = false;
     setRemoteLoading(true);
     const definitionId = selectedTemplate === ALL_FLOWS || selectedTemplateSuspended
@@ -138,78 +128,22 @@ export function TaskCenterPage() {
     return () => { cancelled = true; };
   }, [keyword, page, pageSize, personaId, selectedTemplate, selectedTemplateSuspended, tab]);
 
-  const runtimeInstances = isBrowserMockMode ? instances : remoteInstances;
-  const runtimeTasks = isBrowserMockMode ? tasks : remoteTasks;
-  const actionableTasks = useMemo(() => runtimeTasks
-    .filter((task) => task.status === "待处理" && (!isBrowserMockMode || canUserProcessTask(personaId, task))), [personaId, runtimeTasks]);
-  const actionableTasksByInstance = useMemo(() => actionableTasks.reduce((result, task) => {
+  const actionableTasksByInstance = useMemo(() => remoteTasks.reduce((result, task) => {
     const current = result.get(task.instanceId) ?? [];
     result.set(task.instanceId, [...current, task]);
     return result;
-  }, new Map<string, WorkflowTask[]>()), [actionableTasks]);
-  const myTaskItems = useMemo(() => actionableTasks.filter((task) =>
-    isSuperAdmin || !task.defaultAssigneeId || task.defaultAssigneeId === personaId,
-  ), [actionableTasks, isSuperAdmin, personaId]);
-  const substituteTaskItems = useMemo(() => isSuperAdmin ? [] : actionableTasks.filter((task) =>
-    Boolean(task.defaultAssigneeId && task.defaultAssigneeId !== personaId),
-  ), [actionableTasks, isSuperAdmin, personaId]);
-  const actionable = useMemo(() => runtimeInstances.filter((instance) =>
-    instance.workflowType === "free"
-      ? instance.status === "进行中" && Boolean(isSuperAdmin || identityUser?.id === instance.currentAssigneeId)
-      : instance.status === "审核中" && actionableTasksByInstance.has(instance.id),
-  ), [actionableTasksByInstance, identityUser?.id, isSuperAdmin, runtimeInstances]);
-
-  const reviewTaskInstances = actionable.filter((instance) => {
-    if (isSuperAdmin || instance.workflowType === "free") return true;
-    return myTaskItems.some((task) => task.instanceId === instance.id);
-  });
-  const substituteTasks = actionable.filter((instance) => {
-    if (isSuperAdmin || instance.workflowType === "free") return false;
-    return substituteTaskItems.some((task) => task.instanceId === instance.id);
-  });
-  const initiatedInstances = useMemo(() => runtimeInstances.filter((instance) => {
-    const initiatedByCurrentUser = instance.initiatorId === personaId
-      || Boolean(identityUser?.name && instance.initiator === identityUser.name);
-    return initiatedByCurrentUser && instance.status !== "已完成" && instance.status !== "已关闭";
-  }), [identityUser?.name, personaId, runtimeInstances]);
-  const rejectedInitiatedInstances = useMemo(() => identityUser
-    ? initiatedInstances.filter((instance) => isProcessInstanceResubmissionTodo(instance, identityUser))
-    : [], [identityUser, initiatedInstances]);
-  const myTasks = [
-    ...reviewTaskInstances,
-    ...rejectedInitiatedInstances.filter((instance) => !reviewTaskInstances.some((item) => item.id === instance.id)),
-  ];
-
-  const source = isBrowserMockMode
-    ? tab === "mine" ? myTasks : tab === "substitute" ? substituteTasks : initiatedInstances
-    : remoteInstances;
-  const flowCategories = useMemo(() => {
-    if (!isBrowserMockMode) {
-      return remoteFlowCategories.map((category) => ({
-        template: category.definitionId,
-        count: category.count,
-        label: resolveTaskCenterFlowLabel(category.definitionId, {
-          definitions,
-          instances: source,
-          rememberedLabel: category.definitionId === selectedTemplate ? selectedTemplateLabel : undefined,
-        }),
-        workflowType: category.workflowType,
-      }));
-    }
-
-    const counts = new Map<string, number>();
-    source.forEach((item) => item.definitionId && counts.set(item.definitionId, (counts.get(item.definitionId) ?? 0) + 1));
-    return Array.from(counts, ([definitionId, count]) => ({
-      template: definitionId,
-      count,
-      label: resolveTaskCenterFlowLabel(definitionId, {
-        definitions,
-        instances: source,
-        rememberedLabel: definitionId === selectedTemplate ? selectedTemplateLabel : undefined,
-      }),
-      workflowType: source.find((item) => item.definitionId === definitionId)?.workflowType,
-    })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label, "zh-CN"));
-  }, [definitions, remoteFlowCategories, selectedTemplate, selectedTemplateLabel, source]);
+  }, new Map<string, WorkflowTask[]>()), [remoteTasks]);
+  const source = remoteInstances;
+  const flowCategories = useMemo(() => remoteFlowCategories.map((category) => ({
+    template: category.definitionId,
+    count: category.count,
+    label: resolveTaskCenterFlowLabel(category.definitionId, {
+      definitions,
+      instances: source,
+      rememberedLabel: category.definitionId === selectedTemplate ? selectedTemplateLabel : undefined,
+    }),
+    workflowType: category.workflowType,
+  })), [definitions, remoteFlowCategories, selectedTemplate, selectedTemplateLabel, source]);
   const remoteCategoryTotal = remoteFlowCategories.reduce((total, category) => total + category.count, 0);
   const activeTemplate = selectedTemplate !== ALL_FLOWS
     && !selectedTemplateSuspended
@@ -222,7 +156,7 @@ export function TaskCenterPage() {
   const selectedDefinition = definitions.find((item) => item.id === activeTemplate);
   const selectedVersion = getPublishedVersion(selectedDefinition);
   useEffect(() => {
-    if (isBrowserMockMode || !selectedDefinition || selectedVersion) return;
+    if (!selectedDefinition || selectedVersion) return;
     let cancelled = false;
     void flowPilotApi.definitions.get(selectedDefinition.id)
       .then((loaded) => { if (!cancelled) cacheProcessDefinition(loaded); })
@@ -237,12 +171,18 @@ export function TaskCenterPage() {
         rememberedLabel: selectedTemplateLabel,
       })
     : tab === "initiated" ? "全部发起" : "全部待办";
+  useEffect(() => {
+    const scrollRegion = tableHostRef.current?.querySelector<HTMLElement>(".ant-table-content");
+    if (!scrollRegion) return;
+    scrollRegion.tabIndex = 0;
+    scrollRegion.setAttribute("role", "region");
+    scrollRegion.setAttribute("aria-label", `${activeCategoryLabel}列表，可横向滚动`);
+  }, [activeCategoryLabel, remoteLoading]);
   const selectFlow = (template: string, label?: string) => {
     setSelectedTemplate(template);
     setSelectedTemplateLabel(template === ALL_FLOWS ? undefined : label);
     setSelectedTemplateSuspended(false);
     setPage(1);
-    window.localStorage.setItem(`${TASK_FLOW_STORAGE_PREFIX}:${personaId}`, template);
   };
   const systemListFields = selectedVersion
     ? selectedVersion.snapshot.systemFields
@@ -281,12 +221,10 @@ export function TaskCenterPage() {
 
   const tasksForRecord = (record: ProcessInstance) => {
     const recordTasks = actionableTasksByInstance.get(record.id) ?? [];
-    if (tab === "mine") return recordTasks.filter((task) => isSuperAdmin || !task.defaultAssigneeId || task.defaultAssigneeId === personaId);
-    if (tab === "substitute") return recordTasks.filter((task) => !isSuperAdmin && Boolean(task.defaultAssigneeId && task.defaultAssigneeId !== personaId));
-    return [];
+    return tab === "initiated" ? [] : recordTasks;
   };
   const isResubmissionTask = (record: ProcessInstance) =>
-    tab === "mine" && record.status === "驳回待处理" && rejectedInitiatedInstances.some((item) => item.id === record.id);
+    tab === "mine" && record.status === "驳回待处理";
 
   const approvalTaskActionLabel = (record: ProcessInstance, task?: WorkflowTask) => {
     const definition = definitions.find((item) => item.id === record.definitionId);
@@ -429,15 +367,15 @@ export function TaskCenterPage() {
             onChange={(value) => setTab(value as TaskCenterTab)}
             options={[
               {
-                label: <span className="task-tab-label">我的待办 <span className="task-tab-count">{isBrowserMockMode ? myTaskItems.length + rejectedInitiatedInstances.length : remoteTabTotals.mine}</span></span>,
+                label: <span className="task-tab-label">我的待办 <span className="task-tab-count">{remoteTabTotals.mine}</span></span>,
                 value: "mine",
               },
               {
-                label: <span className="task-tab-label">可代办 <span className="task-tab-count">{isBrowserMockMode ? substituteTaskItems.length : remoteTabTotals.substitute}</span></span>,
+                label: <span className="task-tab-label">可代办 <span className="task-tab-count">{remoteTabTotals.substitute}</span></span>,
                 value: "substitute",
               },
               {
-                label: <span className="task-tab-label">我的发起 <span className="task-tab-count">{isBrowserMockMode ? initiatedInstances.length : remoteTabTotals.initiated}</span></span>,
+                label: <span className="task-tab-label">我的发起 <span className="task-tab-count">{remoteTabTotals.initiated}</span></span>,
                 value: "initiated",
               },
             ]}
@@ -480,7 +418,7 @@ export function TaskCenterPage() {
             >
               <span className="task-flow-item__icon"><AppstoreOutlined /></span>
               <span className="task-flow-item__copy"><strong>{tab === "initiated" ? "全部发起" : "全部待办"}</strong><small>{tab === "initiated" ? "本人发起且未完成" : "所有流程"}</small></span>
-              <span className="task-flow-item__count">{isBrowserMockMode ? source.length : remoteCategoryTotal}</span>
+              <span className="task-flow-item__count">{remoteCategoryTotal}</span>
             </button>
             {visibleFlowCategories.map((category) => (
               <button
@@ -501,10 +439,11 @@ export function TaskCenterPage() {
 
         <Card className="content-card task-list-card" styles={{ body: { padding: 0 } }}>
           <div className="task-list-context">
-            <div><strong>{activeCategoryLabel}</strong><Tag variant="filled">{isBrowserMockMode ? filtered.length : remoteTotal} 项</Tag></div>
+            <div><strong>{activeCategoryLabel}</strong><Tag variant="filled">{remoteTotal} 项</Tag></div>
             <span>{activeTemplate ? "公共列 + 当前流程自定义列" : "全部流程仅显示公共列"}</span>
           </div>
-          <Table<ProcessInstance>
+          <div ref={tableHostRef}>
+            <Table<ProcessInstance>
             key={`${tab}-${activeTemplate ?? ALL_FLOWS}`}
             className="task-table process-record-table"
             rowKey="id"
@@ -514,7 +453,7 @@ export function TaskCenterPage() {
             bordered
             size="middle"
             scroll={{ x: "max-content" }}
-            pagination={{ current: page, pageSize, total: isBrowserMockMode ? filtered.length : remoteTotal, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total) => `共 ${total} 项${tab === "initiated" ? "流程" : "任务"}`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }}
+            pagination={{ current: page, pageSize, total: remoteTotal, showSizeChanger: true, pageSizeOptions: [20, 50, 100], showTotal: (total) => `共 ${total} 项${tab === "initiated" ? "流程" : "任务"}`, onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }}
             locale={{
               emptyText: (
                 <Empty
@@ -524,7 +463,8 @@ export function TaskCenterPage() {
               ),
             }}
             onRow={(record) => ({ onDoubleClick: () => navigate(`/processes/${record.id}`) })}
-          />
+            />
+          </div>
         </Card>
       </div>
     </div>

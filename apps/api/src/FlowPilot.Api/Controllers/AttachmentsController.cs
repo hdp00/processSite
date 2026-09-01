@@ -198,7 +198,7 @@ public sealed class AttachmentsController(
         if (disposition == "inline" && !content.CanInline)
         {
             content.Stream.Dispose();
-            return ProblemResponse(415, "ATTACHMENT_INLINE_NOT_ALLOWED", "不能内联预览", "只有实际识别为 PDF 的附件可以内联预览。");
+            return ProblemResponse(415, "ATTACHMENT_INLINE_NOT_ALLOWED", "不能内联预览", "只有实际识别为 PDF、图片或视频的附件可以内联预览。");
         }
 
         Response.Headers.CacheControl = "private, no-store";

@@ -4,7 +4,7 @@ import type { ProcessInstance, WorkflowTask } from "../data/types";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 
 /**
- * REST 响应写入的只读客户端缓存。领域命令仍由服务端/MSW handler执行，
+ * REST 响应写入的只读客户端内存缓存。所有领域命令均由服务端执行，
  * 页面不得通过这里推演业务状态。
  */
 export const cacheProcessDefinition = (definition: ProcessDefinition) => {

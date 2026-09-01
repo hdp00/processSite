@@ -9,6 +9,7 @@ import {
 } from "@ant-design/icons";
 import {
   Alert,
+  App,
   Button,
   Card,
   Col,
@@ -19,7 +20,6 @@ import {
   Space,
   Tag,
   Typography,
-  message,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -47,6 +47,7 @@ interface ProcessBasicConfigPageProps {
 type BasicConfigValues = ProcessBasicConfig;
 
 export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageProps) {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const params = useParams<{ definitionId?: string; id?: string }>();
   const [searchParams] = useSearchParams();

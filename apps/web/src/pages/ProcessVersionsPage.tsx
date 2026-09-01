@@ -1,5 +1,5 @@
 import { ApartmentOutlined, ArrowDownOutlined, CheckCircleOutlined, CopyOutlined, DeleteOutlined, EditOutlined, EyeOutlined, FormOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, RocketOutlined, SafetyCertificateOutlined, TableOutlined, TeamOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Descriptions, Drawer, Input, Modal, Space, Table, Tabs, Tag, Timeline, Tooltip, Typography, message, type TableProps } from "antd";
+import { Alert, App, Button, Card, Descriptions, Drawer, Input, Modal, Space, Table, Tabs, Tag, Timeline, Tooltip, Typography, type TableProps } from "antd";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
@@ -14,7 +14,6 @@ import { usePrototypeStore } from "../state/usePrototypeStore";
 import { buildFlowLevels, conditionOperatorLabel, normalizeDesignerInputPermission, rejectionHandlingLabel, type StoredDesignerField, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import { displayDesignerChoiceValue, flattenDesignerChoiceOptions } from "../utils/designerOptions";
 import { formatDisplayDateTime } from "../utils/domainTime";
-import { isBrowserMockMode } from "../utils/runtimeMode";
 import "./process-admin-pages.css";
 
 const fieldTypeLabels: Record<string, string> = {
@@ -146,6 +145,7 @@ function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type:
 }
 
 export function ProcessVersionsPage() {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const { definitionId = "" } = useParams<{ definitionId: string }>();
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
@@ -228,12 +228,10 @@ export function ProcessVersionsPage() {
           const resource = await flowPilotApi.definitions.versionResource(definition.id, version.id);
           await flowPilotApi.definitions.removeVersion(definition.id, version.id, resource.etag);
           removeCachedProcessVersion(definition.id, version.id);
-          if (!isBrowserMockMode) {
-            try {
-              await refreshRemoteWorkflowGroups();
-            } catch {
-              message.warning("版本已删除，权限组引用统计刷新失败；进入权限组页面时将重新加载");
-            }
+          try {
+            await refreshRemoteWorkflowGroups();
+          } catch {
+            message.warning("版本已删除，权限组引用统计刷新失败；进入权限组页面时将重新加载");
           }
           const stillExists = useProcessDefinitionStore.getState().definitions.some((item) => item.id === definition.id);
           message.success(stillExists ? `${version.version} 已删除，版本号不会复用` : "最后一个版本和流程定义已删除");

@@ -46,12 +46,12 @@ import {
 } from "@ant-design/icons";
 import {
   Alert,
+  App,
   Button,
   Checkbox,
   Divider,
   Drawer,
   Input,
-  message,
   Radio,
   Segmented,
   Select,
@@ -445,60 +445,6 @@ const flowDraftFingerprint = (
   })),
 });
 
-const readStoredDraft = (
-  storageKey: string,
-  fallbackMeta: FlowMeta,
-  fallbackTopology: Pick<StoredDraft, "nodes" | "edges">,
-): StoredDraft => {
-  if (typeof window === "undefined") {
-    return { ...fallbackTopology, meta: fallbackMeta };
-  }
-
-  try {
-    const stored = window.localStorage.getItem(storageKey);
-    if (!stored) return { ...fallbackTopology, meta: fallbackMeta };
-    const parsed = JSON.parse(stored) as Partial<StoredDraft>;
-    if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges) || !parsed.meta) {
-      return { ...fallbackTopology, meta: fallbackMeta };
-    }
-    if (
-      parsed.nodes.some(
-        (node) => (node.data as Record<string, unknown> | undefined)?.kind === "parallel",
-      )
-    ) {
-      return { ...fallbackTopology, meta: fallbackMeta };
-    }
-    return {
-      nodes: parsed.nodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          permissionGroups: node.data.kind === "start"
-            ? node.data.permissionGroups ?? (node.data.permissionGroup ? [node.data.permissionGroup] : [])
-            : node.data.permissionGroups,
-          editableFields: node.data.editableFields ?? [],
-          handlingMode: node.data.kind === "approval" ? node.data.handlingMode ?? "approval" : node.data.handlingMode,
-          allowRepeatedEditing: node.data.kind === "approval"
-            ? Boolean(node.data.allowRepeatedEditing && node.data.editableFields?.length)
-            : false,
-          emailNotification: node.data.kind === "approval" || node.data.kind === "end"
-            ? normalizeEmailNotification(node.data.kind, node.data.emailNotification)
-            : undefined,
-        },
-      })),
-      edges: parsed.edges,
-      meta: {
-        ...parsed.meta,
-        ...fallbackMeta,
-        rejectionHandling:
-          parsed.meta.rejectionHandling ?? fallbackMeta.rejectionHandling,
-      },
-    } as StoredDraft;
-  } catch {
-    return { ...fallbackTopology, meta: fallbackMeta };
-  }
-};
-
 const ProcessNode = ({ data, selected }: NodeProps<DesignerNode>) => {
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const meta = kindMeta[data.kind];
@@ -566,6 +512,7 @@ interface DesignerWorkspaceProps {
 }
 
 const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFieldOptions, conditionFieldOptions, formFields, starterGroups }: DesignerWorkspaceProps) => {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const users = useIdentityStore((state) => state.users);
@@ -864,7 +811,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     let cancelled = false;
     void flowPilotApi.definitions.versionResource(definitionId, versionId).then((resource) => {
       if (cancelled) return;
-      if (import.meta.env.VITE_API_MODE === "remote") cacheProcessVersion(definitionId, resource.data);
+      cacheProcessVersion(definitionId, resource.data);
       setVersionEtag(resource.etag);
     }).catch((error) => {
       if (!cancelled) message.error(error instanceof Error ? error.message : "流程版本加载失败");
@@ -887,7 +834,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
           meta: { rejectionHandling: meta.rejectionHandling },
         } as StoredFlowDesignerSnapshot,
       }, versionEtag);
-      if (import.meta.env.VITE_API_MODE === "remote") cacheProcessVersion(definitionId, saved.data.version);
+      cacheProcessVersion(definitionId, saved.data.version);
       setVersionEtag(saved.etag);
       setMeta((current) => ({
         ...current,
@@ -1493,7 +1440,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
 
       <Drawer
         title="流程检查结果"
-        width={480}
+        size={480}
         open={validationOpen}
         onClose={() => setValidationOpen(false)}
         footer={

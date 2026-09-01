@@ -1,5 +1,5 @@
 import { ApartmentOutlined, ArrowRightOutlined, AuditOutlined, CheckCircleFilled, CheckCircleOutlined, FileTextOutlined, PlayCircleOutlined, RocketOutlined, SafetyCertificateOutlined, TeamOutlined } from "@ant-design/icons";
-import { Alert, Button, Card, Descriptions, Divider, Form, Input, Modal, Space, Tag, Typography, message } from "antd";
+import { Alert, App, Button, Card, Descriptions, Divider, Form, Input, Modal, Space, Tag, Typography } from "antd";
 import { Fragment, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
@@ -16,6 +16,7 @@ import { formatDisplayDateTime } from "../utils/domainTime";
 import "./process-admin-pages.css";
 
 export function ProcessPublishPage() {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const { definitionId = "" } = useParams<{ definitionId: string }>();
   const [searchParams] = useSearchParams();
