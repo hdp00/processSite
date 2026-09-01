@@ -51,6 +51,15 @@ public sealed partial class SqlServerProcessInstanceQueryService(
             return new ProcessInstanceQueryResult(null, ProcessInstanceQueryError.Forbidden);
         }
 
+        var freeAccess = await LoadFreeAccessAsync(
+                definition.Type,
+                instance.Status,
+                version.Id,
+                actor,
+                effectiveGroupIds,
+                cancellationToken)
+            .ConfigureAwait(false);
+
         var tasks = await _dbContext.WorkflowTasks
             .AsNoTracking()
             .Where(item => item.InstanceId == instance.Id)
@@ -170,6 +179,8 @@ public sealed partial class SqlServerProcessInstanceQueryService(
             users,
             initiator,
             participantIds,
+            freeAccess.CanTransfer,
+            freeAccess.AssigneeCandidates,
             effectiveGroupIds,
             actor));
         return new ProcessInstanceQueryResult(detail, null);
@@ -272,6 +283,75 @@ public sealed partial class SqlServerProcessInstanceQueryService(
         return direct.Concat(throughRoles).ToHashSet();
     }
 
+    private async Task<FreeAccess> LoadFreeAccessAsync(
+        string workflowType,
+        string instanceStatus,
+        Guid versionId,
+        ProcessInstanceQueryActor actor,
+        HashSet<Guid> effectiveGroupIds,
+        CancellationToken cancellationToken)
+    {
+        if (workflowType != "free")
+        {
+            return new FreeAccess(false, []);
+        }
+
+        var groupReferences = await _dbContext.RuntimeWorkflowGroupReferences
+            .AsNoTracking()
+            .Where(item => item.VersionId == versionId
+                && (item.Purpose == "start" || item.Purpose == "review"))
+            .Select(item => new { item.GroupId, item.Purpose })
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var canTransfer = instanceStatus == "in-progress"
+            && (actor.IsSuperAdmin || groupReferences.Any(item => effectiveGroupIds.Contains(item.GroupId)));
+        var reviewGroupIds = groupReferences
+            .Where(item => item.Purpose == "review")
+            .Select(item => item.GroupId)
+            .Distinct()
+            .ToArray();
+        if (reviewGroupIds.Length == 0)
+        {
+            return new FreeAccess(canTransfer, []);
+        }
+
+        var directUserIds = await (
+                from member in _dbContext.RuntimeWorkflowGroupUsers.AsNoTracking()
+                join workflowGroup in _dbContext.RuntimeWorkflowGroups.AsNoTracking()
+                    on member.GroupId equals workflowGroup.Id
+                where reviewGroupIds.Contains(member.GroupId) && workflowGroup.IsEnabled
+                select member.UserId)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var roleUserIds = await (
+                from groupRole in _dbContext.RuntimeWorkflowGroupRoles.AsNoTracking()
+                join workflowGroup in _dbContext.RuntimeWorkflowGroups.AsNoTracking()
+                    on groupRole.GroupId equals workflowGroup.Id
+                join role in _dbContext.RuntimeRoles.AsNoTracking()
+                    on groupRole.RoleId equals role.Id
+                join userRole in _dbContext.RuntimeUserRoles.AsNoTracking()
+                    on role.Id equals userRole.RoleId
+                where reviewGroupIds.Contains(groupRole.GroupId) && workflowGroup.IsEnabled && role.IsEnabled
+                select userRole.UserId)
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var candidateIds = directUserIds.Concat(roleUserIds).Distinct().ToArray();
+        var candidates = await (
+                from user in _dbContext.OrganizationUserReferences.AsNoTracking()
+                join department in _dbContext.Departments.AsNoTracking()
+                    on user.DepartmentId equals department.Id into departments
+                from department in departments.DefaultIfEmpty()
+                where candidateIds.Contains(user.Id) && user.IsEnabled
+                orderby user.DisplayName, user.LoginName
+                select new TaskCenterUserRefDto(
+                    user.Id,
+                    user.DisplayName,
+                    department == null ? null : department.Path))
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return new FreeAccess(canTransfer, candidates);
+    }
+
     private static JsonObject ParseObject(string json)
     {
         try
@@ -309,6 +389,12 @@ public sealed partial class SqlServerProcessInstanceQueryService(
         IReadOnlyDictionary<Guid, TaskCenterUserRefDto> Users,
         TaskCenterUserRefDto Initiator,
         IReadOnlyList<Guid> ParticipantIds,
+        bool CanTransferFree,
+        IReadOnlyList<TaskCenterUserRefDto> FreeAssigneeCandidates,
         IReadOnlySet<Guid> EffectiveGroupIds,
         ProcessInstanceQueryActor Actor);
+
+    private sealed record FreeAccess(
+        bool CanTransfer,
+        IReadOnlyList<TaskCenterUserRefDto> AssigneeCandidates);
 }

@@ -200,6 +200,12 @@ public sealed record ProcessInstanceDetailDto
 
     public required IReadOnlyList<TaskCenterUserRefDto> Participants { get; init; }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? CanTransferFree { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<TaskCenterUserRefDto>? FreeAssigneeCandidates { get; init; }
+
     public required DateTimeOffset CreatedAt { get; init; }
 
     public required DateTimeOffset UpdatedAt { get; init; }

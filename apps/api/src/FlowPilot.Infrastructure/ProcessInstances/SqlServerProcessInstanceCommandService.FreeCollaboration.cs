@@ -343,6 +343,9 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 requestHash,
                 value,
                 transferAt));
+            // Outbox rows reference the newly-created task. Persist the task first because
+            // these lightweight runtime projections intentionally have no EF navigation relationship.
+            await _dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await _emailOutboxWriter.EnqueueAsync(
                 current,
                 definition,

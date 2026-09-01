@@ -1,6 +1,6 @@
 import { getPublishedVersion, useProcessDefinitionStore } from "./useProcessDefinitionStore";
 import { isUserInWorkflowGroup } from "./useIdentityStore";
-import { isSuperAdminPersona, type PersonaId } from "./usePrototypeStore";
+import { isSessionSuperAdmin, type PersonaId } from "./usePrototypeStore";
 import {
   ROLE_PERMISSIONS_CHANGED_EVENT,
   ROLE_PERMISSION_STORAGE_KEY,
@@ -32,7 +32,7 @@ export function canPersonaAccessLaunch(personaId: PersonaId) {
 }
 
 export function canPersonaLaunchDefinition(personaId: PersonaId, definitionId: string) {
-  if (isSuperAdminPersona(personaId)) return true;
+  if (isSessionSuperAdmin(personaId)) return true;
   if (!canPersonaAccessLaunch(personaId)) return false;
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);
   const version = getPublishedVersion(definition);

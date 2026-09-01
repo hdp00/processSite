@@ -114,7 +114,7 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
     private static void ConfigureOrganizationUserReference(
         EntityTypeBuilder<OrganizationUserReference> entity)
     {
-        entity.ToTable("users");
+        entity.ToTable("users", table => table.UseSqlOutputClause(false));
         entity.HasKey(item => item.Id);
         entity.Property(item => item.Id).HasColumnName("id");
         entity.Property(item => item.DepartmentId).HasColumnName("department_id");
@@ -292,7 +292,7 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         task.Property(item => item.ResultComment).HasColumnName("result_comment");
 
         var workflowEvent = modelBuilder.Entity<WorkflowEventEntity>();
-        workflowEvent.ToTable("workflow_events");
+        workflowEvent.ToTable("workflow_events", table => table.UseSqlOutputClause(false));
         workflowEvent.HasKey(item => item.Id);
         workflowEvent.Property(item => item.Id).HasColumnName("id");
         workflowEvent.Property(item => item.EventType).HasColumnName("event_type");
@@ -306,7 +306,7 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         workflowEvent.Property(item => item.MetadataJson).HasColumnName("metadata_json");
 
         var auditEvent = modelBuilder.Entity<RuntimeAuditEvent>();
-        auditEvent.ToTable("audit_events");
+        auditEvent.ToTable("audit_events", table => table.UseSqlOutputClause(false));
         auditEvent.HasKey(item => item.Id);
         auditEvent.Property(item => item.Id).HasColumnName("id");
         auditEvent.Property(item => item.ResourceType).HasColumnName("resource_type");
@@ -363,7 +363,7 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
     private static void ConfigureRuntimeSupport(ModelBuilder modelBuilder)
     {
         var timeline = modelBuilder.Entity<FreeTimelineEntryEntity>();
-        timeline.ToTable("free_timeline_entries");
+        timeline.ToTable("free_timeline_entries", table => table.UseSqlOutputClause(false));
         timeline.HasKey(item => item.Id);
         timeline.Property(item => item.Id).HasColumnName("id");
         timeline.Property(item => item.InstanceId).HasColumnName("instance_id");

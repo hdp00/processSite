@@ -206,7 +206,8 @@ export const UserDto = zod.strictObject({
   "roles": zod.array(RoleRef),
   "superAdmin": zod.boolean(),
   "createdAt": zod.iso.datetime({"offset":true}),
-  "updatedAt": zod.iso.datetime({"offset":true})
+  "updatedAt": zod.iso.datetime({"offset":true}),
+  "lastLoginAt": zod.union([zod.iso.datetime({"offset":true}),zod.null()]).describe('该账号最近一次成功完成凭据认证并建立登录会话的时间；从未登录时为 null。模拟身份不会计为目标账号登录。')
 });
 
 export type UserDto = zod.input<typeof UserDto>;
@@ -1592,6 +1593,8 @@ export const ProcessInstanceDetailDto = ProcessInstanceSummaryDto.and(zod.strict
   "fieldRevisions": zod.record(zod.string(), zod.int().min(processInstanceDetailDtoTwoFieldRevisionsMinOne)).describe('每个稳定字段 ID 的当前并发版本'),
   "attachments": zod.array(AttachmentDto),
   "participants": zod.array(UserRef).describe('自由协作事项的发起人、当前受理人及历史参与人；审批流程为空数组。'),
+  "canTransferFree": zod.boolean().optional().describe('当前登录人是否可以在此进行中的自由协作事项中变更受理人；非自由流程或非进行中事项为 false。'),
+  "freeAssigneeCandidates": zod.array(UserRef).optional().describe('此自由协作流程锁定版本的受理权限组中当前有效且启用的用户；非自由流程为空数组。'),
   "reviewProgress": zod.array(ReviewProgressDto),
   "tasks": zod.array(WorkflowTaskDto),
   "timeline": zod.array(TimelineEventDto),

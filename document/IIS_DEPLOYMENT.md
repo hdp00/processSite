@@ -95,7 +95,7 @@ dotnet publish src/FlowPilot.Api/FlowPilot.Api.csproj -c Release -r win-x64 --no
 
 - `{部署根目录}\App\current\api\appsettings.json`：随版本发布，只含稳定、非敏感默认值。
 - `{部署根目录}\Config\appsettings.Production.json`：环境非敏感值及显式覆盖。
-- `{部署根目录}\Secrets\secrets.Production.json`：SQL Server、LDAP、SMTP 地址与凭据、首次超级管理员密码。
+- `{部署根目录}\Secrets\secrets.Production.json`：SQL Server、LDAP、SMTP 地址与凭据、首次超级管理员密码。SMTP 联调阶段可设置 `FlowPilot:Smtp:TestEMail`；非空有效时所有通知只发送到该测试邮箱，正式启用实际收件人前必须将其清空。
 
 配置值优先级为：标准 .NET 进程环境变量 > Secrets JSON > Config JSON > 默认 appsettings。目录和文件位置不允许被环境变量覆盖；不再设置或支持 `FLOWPILOT_HOME`、`FLOWPILOT_CONFIG_FILE`、`FLOWPILOT_SECRETS_FILE`。应用显式加载上述两个固定外置 JSON 文件，缺失或无读取权限时拒绝就绪。
 

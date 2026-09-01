@@ -58,8 +58,10 @@ public static class ProductionStartupConfigurationValidator
         var port = configuration.GetValue("FlowPilot:Smtp:Port", 587);
         var userName = configuration["FlowPilot:Smtp:UserName"];
         var password = configuration["FlowPilot:Smtp:Password"];
+        var testEmail = configuration["FlowPilot:Smtp:TestEMail"]?.Trim();
         if (string.IsNullOrWhiteSpace(configuration["FlowPilot:Smtp:Host"])
             || !MailboxAddress.TryParse(configuration["FlowPilot:Smtp:From"], out _)
+            || !string.IsNullOrEmpty(testEmail) && !MailboxAddress.TryParse(testEmail, out _)
             || port is < 1 or > 65535
             || string.IsNullOrWhiteSpace(userName) != string.IsNullOrWhiteSpace(password)
             || security is not ("starttls" or "ssl" or "none")

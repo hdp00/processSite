@@ -105,6 +105,14 @@ export interface ProcessInstance {
   currentAssigneeId?: string;
   participants?: string[];
   participantIds?: string[];
+  /** 正式后端根据当前登录人及锁定版本权限组计算的变更受理人权限。 */
+  canTransferFree?: boolean;
+  /** 正式后端根据锁定版本受理权限组计算的有效候选人。 */
+  freeAssigneeCandidates?: Array<{
+    id: string;
+    name: string;
+    departmentPath?: string;
+  }>;
   freeTimeline?: FreeFlowEntry[];
   formValues?: Record<string, unknown>;
   /** 正式后端返回的字段并发版本，用于审核字段级乐观锁。 */

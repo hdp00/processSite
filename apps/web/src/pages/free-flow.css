@@ -28,8 +28,8 @@
 .free-system-event__time { flex: 0 0 auto; margin-left: auto; font-size: 11px; }
 .free-reply-card { box-shadow: 0 4px 14px rgba(30, 43, 68, .04); }
 .free-reply-card__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #edf0f4; }
-.free-compose-card { border-color: #d9e0ff; box-shadow: 0 7px 24px rgba(49, 87, 213, .07); }
-.free-compose-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; }
+.free-compose { display: flex; flex-direction: column; gap: 14px; }
+.free-compose-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .current-assignee { display: flex; align-items: center; gap: 12px; }
 .current-assignee > div { display: flex; flex-direction: column; gap: 2px; }
 .current-assignee .ant-avatar { color: #3157d5; background: #e9edff; }
@@ -73,7 +73,6 @@
   border-top: 1px solid #dfe4ec;
 }
 
-.free-reply-card,
-.free-compose-card {
+.free-reply-card {
   box-shadow: 0 1px 3px rgba(23, 32, 51, .045);
 }

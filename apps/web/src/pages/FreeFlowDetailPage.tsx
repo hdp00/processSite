@@ -41,7 +41,7 @@ import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { AttachmentRecord } from "../api/contracts";
 import type { FreeFlowEntry, ProcessInstance } from "../data/types";
-import { canUserTransferFreeFlow, isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
+import { canUserTransferFreeFlow, isSessionSuperAdmin, usePrototypeStore } from "../state/usePrototypeStore";
 import { effectiveGroupMemberIds, findIdentityUser, isUserInWorkflowGroup, useIdentityStore } from "../state/useIdentityStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserCloseInstance } from "../state/workflowAccess";
@@ -208,11 +208,15 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const configuredFields = (lockedVersion?.snapshot.form.fields ?? [])
     .filter((field) => (field.inputStage ?? "initiator") !== "reviewer");
   const assigneeIds = new Set((lockedVersion?.basic.assigneeGroups ?? []).flatMap(effectiveGroupMemberIds));
-  const userOptions = identityUsers.filter((user) => assigneeIds.has(user.id)).map((user) => ({
+  const localUserOptions = identityUsers.filter((user) => assigneeIds.has(user.id)).map((user) => ({
     value: user.id,
     label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}`,
   }));
-  const isSuperAdmin = isSuperAdminPersona(personaId);
+  const userOptions = instance?.freeAssigneeCandidates?.map((user) => ({
+    value: user.id,
+    label: [user.name, user.departmentPath].filter(Boolean).join(" · "),
+  })) ?? localUserOptions;
+  const isSuperAdmin = isSessionSuperAdmin(personaId);
   const [replyContent, setReplyContent] = useState("");
   const [nextAssignee, setNextAssignee] = useState<string>();
   const [editEntry, setEditEntry] = useState<FreeFlowEntry>();
@@ -581,7 +585,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
             setInitialFormDirty(false);
             setInitialEditOpen(true);
           }}>编辑初始表单</Button>}
-          {canClose && <Button danger icon={<LockOutlined />} onClick={() => setCloseOpen(true)}>关闭事项</Button>}
+          {canClose && <Button danger icon={<LockOutlined />} onClick={() => setCloseOpen(true)}>关闭</Button>}
           {canReopen && <Button type="primary" icon={<ReloadOutlined />} onClick={() => setReopenOpen(true)}>重新打开</Button>}
         </Space>
       </div>
@@ -631,7 +635,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
           {isOpen ? (
             canReply || canTransfer ? (
-              <Card className="free-compose-card" title={<Space><MessageOutlined />协作处理</Space>}>
+              <div className="free-compose">
                 {canReply && <RichTextEditor value={replyContent} onChange={setReplyContent} placeholder="补充协作信息…" minHeight={180} />}
                 <div className="free-compose-actions">
                   <Text type="secondary">发表回复不会改变当前受理人；发起或受理权限组成员可直接变更受理人。</Text>
@@ -647,7 +651,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
                     >{collaborationActionLabel}</Button>
                   </Space>
                 </div>
-              </Card>
+              </div>
             ) : <Alert showIcon type="info" title="当前为只读查看" description="发起人、当前或历史参与人可以回复；发起或受理权限组成员可以切换当前受理人。" />
           ) : <Alert showIcon icon={<LockOutlined />} type="warning" title="事项已关闭，内容已锁定" description="重新打开后，参与人可继续回复，原作者也可继续编辑自己的历史回复。" />}
         </main>

@@ -48,7 +48,7 @@ Copy-Item apps/api/config/appsettings.Development.local.example.json apps/api/co
 - `FlowPilot:Database:ExpectedCollation`：目标数据库排序规则；
 - `FlowPilot:Bootstrap:SuperAdminPassword`：首次创建 `superadmin` 时使用。
 - `FlowPilot:Ldap`：存在域登录用户时填写 LDAPS 地址、Base DN 和 UPN 后缀；
-- `FlowPilot:Smtp`：需要实际发信时填写服务器、TLS、账号和固定发件人，并把 `Enabled` 改为 `true`。
+- `FlowPilot:Smtp`：需要发信时填写服务器、TLS、账号和固定发件人，并把 `Enabled` 改为 `true`。联调时可填写 `TestEMail`，所有通知只投递到该测试邮箱；留空则使用用户实际邮箱。
 
 附件调试目录默认是 `apps/api/.local-data/Attachments`，已被 Git 忽略。通常无需配置；需要放到其他磁盘时，可在同一 JSON 中设置 `FlowPilot:Attachments:RootDirectory`，相对路径以 `apps/api` 为基准。
 

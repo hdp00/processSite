@@ -165,6 +165,7 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 requestHash,
                 value,
                 now));
+            await _dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await _emailOutboxWriter.EnqueueAsync(
                 instance,
                 definition,

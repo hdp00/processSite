@@ -209,6 +209,7 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 actor,
                 traceId,
                 now);
+            await _dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await _emailOutboxWriter.EnqueueAsync(
                 rejectedInstance,
                 definition,

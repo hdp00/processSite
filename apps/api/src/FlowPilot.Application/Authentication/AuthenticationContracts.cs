@@ -54,7 +54,8 @@ public sealed record UserDto(
     IReadOnlyList<RoleRefDto> Roles,
     bool SuperAdmin,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? LastLoginAt);
 
 public sealed record DepartmentRefDto(Guid Id, string Name, string Path);
 

@@ -2,7 +2,7 @@ import type { ProcessInstance, WorkflowTask } from "../data/types";
 import { hasPersonaPermission } from "./rolePermissions";
 import { getPublishedVersion, useProcessDefinitionStore } from "./useProcessDefinitionStore";
 import { findIdentityUser, isUserInWorkflowGroup } from "./useIdentityStore";
-import { isSuperAdminPersona, usePrototypeStore } from "./usePrototypeStore";
+import { isSessionSuperAdmin, usePrototypeStore } from "./usePrototypeStore";
 import { resolveLockedProcessVersion } from "./processVersionResolver";
 
 const instanceVersion = (instance: ProcessInstance) => {
@@ -15,7 +15,7 @@ const isNamedOrId = (values: string[], userId: string, userName: string) =>
 
 export function canUserViewInstance(userId: string, instance: ProcessInstance) {
   if (!hasPersonaPermission(userId, "work-list:查看")) return false;
-  if (isSuperAdminPersona(userId)) return true;
+  if (isSessionSuperAdmin(userId)) return true;
   const user = findIdentityUser(userId);
   if (!user || user.status !== "启用") return false;
   if (instance.initiatorId === user.id || instance.initiator === user.name) return true;
@@ -42,7 +42,7 @@ export function canUserViewDefinition(userId: string, definitionId: string) {
   const instances = usePrototypeStore.getState().instances.filter((instance) => instance.definitionId === definitionId);
   if (instances.some((instance) => canUserViewInstance(userId, instance))) return true;
   if (!hasPersonaPermission(userId, "work-list:查看")) return false;
-  if (isSuperAdminPersona(userId)) return true;
+  if (isSessionSuperAdmin(userId)) return true;
   const user = findIdentityUser(userId);
   const definition = useProcessDefinitionStore.getState().definitions.find((item) => item.id === definitionId);
   const version = getPublishedVersion(definition);
@@ -59,13 +59,13 @@ export function canUserViewDefinition(userId: string, definitionId: string) {
 
 export function canUserProcessTask(userId: string, task: WorkflowTask) {
   if (!hasPersonaPermission(userId, "work-task:审核")) return false;
-  return isSuperAdminPersona(userId) || isUserInWorkflowGroup(userId, task.permissionGroupId);
+  return isSessionSuperAdmin(userId) || isUserInWorkflowGroup(userId, task.permissionGroupId);
 }
 
 export function canUserCloseInstance(userId: string, instance: ProcessInstance) {
   const version = instanceVersion(instance);
   if (instance.status === "驳回待处理" && version?.snapshot.flow.meta?.rejectionHandling === "resubmit-only") return false;
   if (!hasPersonaPermission(userId, "work-task:关闭")) return false;
-  if (isSuperAdminPersona(userId)) return true;
+  if (isSessionSuperAdmin(userId)) return true;
   return Boolean(version?.basic.closeGroups.some((groupId) => isUserInWorkflowGroup(userId, groupId)));
 }

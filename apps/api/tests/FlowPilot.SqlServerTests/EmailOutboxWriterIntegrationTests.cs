@@ -2,11 +2,55 @@ using System.Text.Json.Nodes;
 using FlowPilot.Infrastructure.BackgroundJobs;
 using FlowPilot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace FlowPilot.SqlServerTests;
 
 public sealed class EmailOutboxWriterIntegrationTests
 {
+    [Fact]
+    public async Task TestEmailOverridesEmptyRecipientEmail()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var scope = await SqlServerRuntimeTestScope.CreateAsync(cancellationToken);
+        var recipientId = await scope.AddUserAsync(string.Empty, cancellationToken);
+        var now = new DateTimeOffset(2026, 9, 1, 2, 0, 0, TimeSpan.Zero);
+        var snapshot = JsonNode.Parse(
+            $$"""
+            { "flow": { "nodes": [
+              { "id": "review", "data": { "kind": "approval", "emailNotification": {
+                "enabled": true, "notifyReviewers": false, "extraUserIds": ["{{recipientId}}"] } } }
+            ] } }
+            """)!.AsObject();
+        var seed = await AddRuntimeAsync(scope, snapshot, "reviewing", now, cancellationToken);
+        var groupId = await scope.AddWorkflowGroupAsync(cancellationToken);
+        var task = CreateTask(seed.Instance.Id, seed.Version.Id, groupId, "review", now);
+        scope.Context.WorkflowTasks.Add(task);
+        await scope.Context.SaveChangesAsync(cancellationToken);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["FlowPilot:Smtp:TestEMail"] = "flowpilot-test@example.test",
+            })
+            .Build();
+
+        var writer = new EmailOutboxWriter(scope.Context, configuration);
+        await writer.EnqueueAsync(
+            seed.Instance,
+            seed.Definition,
+            seed.Version,
+            snapshot,
+            [task],
+            now,
+            cancellationToken);
+        await scope.Context.SaveChangesAsync(cancellationToken);
+
+        var message = await scope.Context.RuntimeEmailOutboxMessages
+            .SingleAsync(item => item.InstanceId == seed.Instance.Id, cancellationToken);
+        Assert.Equal(recipientId, message.RecipientUserId);
+        Assert.Equal("flowpilot-test@example.test", message.RecipientEmailSnapshot);
+    }
+
     [Fact]
     public async Task TaskActivationFreezesRecipientAndDeduplicatesParallelNodes()
     {

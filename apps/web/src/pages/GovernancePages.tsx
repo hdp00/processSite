@@ -88,6 +88,7 @@ import { isBrowserMockMode } from "../utils/runtimeMode";
 import { auditActionLabel, auditDetailText, auditModuleLabel, auditResultLabel, auditSummaryText } from "../utils/auditDisplay";
 import { deriveAllWorkflowGroupStatistics } from "../state/workflowGroupStatistics";
 import { flowPilotApi } from "../api/flowPilotApi";
+import { refreshRemoteWorkflowGroups } from "../api/remoteHydration";
 import type { AuditEvent, EffectiveWorkflowMember } from "../api/contracts";
 import "./governance-pages.css";
 
@@ -1193,9 +1194,12 @@ export function WorkflowPermissionGroupsPage() {
   const setGroups = useIdentityStore((state) => state.setWorkflowGroups);
   const definitions = useProcessDefinitionStore((state) => state.definitions);
   const tasks = usePrototypeStore((state) => state.tasks);
+  const [remoteGroupsLoading, setRemoteGroupsLoading] = useState(!isBrowserMockMode);
   const groups = useMemo(
-    () => isBrowserMockMode ? deriveAllWorkflowGroupStatistics(storedGroups, definitions, tasks) : storedGroups,
-    [definitions, storedGroups, tasks],
+    () => isBrowserMockMode
+      ? deriveAllWorkflowGroupStatistics(storedGroups, definitions, tasks)
+      : remoteGroupsLoading ? [] : storedGroups,
+    [definitions, remoteGroupsLoading, storedGroups, tasks],
   );
   const identityUsers = useIdentityStore((state) => state.users);
   const identityRoles = useIdentityStore((state) => state.roles);
@@ -1216,6 +1220,12 @@ export function WorkflowPermissionGroupsPage() {
   const [effectiveMemberKeyword, setEffectiveMemberKeyword] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
   const [editorEtag, setEditorEtag] = useState<string>();
+  useEffect(() => {
+    if (isBrowserMockMode) return;
+    void refreshRemoteWorkflowGroups()
+      .catch(() => message.error("流程权限组引用统计加载失败，请刷新后重试"))
+      .finally(() => setRemoteGroupsLoading(false));
+  }, []);
   const candidateUsers = useDirectoryUserCandidates(effectiveMemberKeyword, editor !== null, directMemberUserIds);
   const [form] = Form.useForm();
   const { guard: workflowGroupEditorGuard } = useUnsavedChangesGuard({
@@ -1313,7 +1323,7 @@ export function WorkflowPermissionGroupsPage() {
       {workflowGroupEditorGuard}
       <Alert type="info" showIcon title="成员变化立即影响运行中的待办" description="直接成员和关联角色成员合并去重后形成有效成员。允许用途决定权限组可出现的设计位置，已引用流程由系统自动统计；停用权限组不影响已运行流程，引用后不可删除。" />
       <Card className="query-card gov-query-card"><div className="gov-filter-grid gov-filter-grid--groups"><label><span>关键词</span><Input allowClear prefix={<SearchOutlined />} placeholder="权限组名称或编号" value={keyword} onChange={(event) => setKeyword(event.target.value)} /></label><label><span>已引用流程</span><Select allowClear placeholder="全部流程" value={process} onChange={setProcess} options={[...new Set(groups.flatMap((group) => group.processes))].map((value) => ({ value }))} /></label><label><span>状态</span><Select allowClear placeholder="全部状态" value={status} onChange={setStatus} options={["启用", "停用"].map((value) => ({ value }))} /></label><div className="gov-filter-actions"><Button icon={<ReloadOutlined />} onClick={() => { setKeyword(""); setProcess(undefined); setStatus(undefined); }}>重置</Button></div></div></Card>
-      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程权限组" count={filtered.length} extra={canEditGroups ? <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增权限组</Button> : null} /><Table<GroupRecord> rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 个权限组` }} /></Card>
+      <Card className="content-card gov-content-card" styles={{ body: { padding: 0 } }}><ResultHeader title="流程权限组" count={filtered.length} extra={canEditGroups ? <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor("new")}>新增权限组</Button> : null} /><Table<GroupRecord> loading={remoteGroupsLoading} rowKey="id" columns={columns} dataSource={filtered} scroll={{ x: 1400 }} pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (total) => `共 ${total} 个权限组` }} /></Card>
       <Drawer width={720} open={editor !== null} onClose={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })} title={editor === "new" ? "新增流程权限组" : "编辑流程权限组"} extra={<Space><Button onClick={() => confirmEditorClose(editorDirty, "流程权限组", () => { setEditorDirty(false); setEditor(null); })}>取消</Button><Button type="primary" onClick={() => form.submit()}>保存并立即生效</Button></Space>}>
         {editor !== "new" && editor?.openTasks ? <Alert className="gov-drawer-alert" type="warning" showIcon title={`当前有 ${editor.openTasks} 项运行待办`} description="保存后，新增成员立即获得处理资格；被移除成员将立即失去尚未处理的待办资格。" /> : null}
         <Form form={form} layout="vertical" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {

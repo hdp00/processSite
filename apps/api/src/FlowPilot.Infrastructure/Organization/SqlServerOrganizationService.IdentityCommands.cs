@@ -438,6 +438,9 @@ public sealed partial class SqlServerOrganizationService
                 [u].[authentication_mode], [u].[is_enabled], [u].[is_builtin_super_admin],
                 [d].[id], [d].[name], [d].[path_cache], [p].[id], [p].[name],
                 [u].[created_at], [u].[updated_at],
+                (SELECT MAX([login_session].[created_at])
+                    FROM [flowpilot].[sessions] AS [login_session]
+                    WHERE [login_session].[operator_user_id] = [u].[id]),
                 COALESCE((SELECT [r].[id], [r].[name]
                     FROM [flowpilot].[user_roles] AS [ur]
                     INNER JOIN [flowpilot].[roles] AS [r] ON [r].[id] = [ur].[role_id]
@@ -468,10 +471,11 @@ public sealed partial class SqlServerOrganizationService
             reader.GetBoolean(6) ? "enabled" : "disabled",
             reader.IsDBNull(8) ? null : new DepartmentRefDto(reader.GetGuid(8), reader.GetString(9), reader.GetString(10)),
             reader.IsDBNull(11) ? null : new PositionRefDto(reader.GetGuid(11), reader.GetString(12)),
-            DeserializeArray<RoleRefDto>(reader.GetString(15)),
+            DeserializeArray<RoleRefDto>(reader.GetString(16)),
             reader.GetBoolean(7),
             AsUtc(reader.GetDateTime(13)),
-            AsUtc(reader.GetDateTime(14)));
+            AsUtc(reader.GetDateTime(14)),
+            reader.IsDBNull(15) ? null : AsUtc(reader.GetDateTime(15)));
     }
 
     private async Task InsertOrganizationAuditAsync(

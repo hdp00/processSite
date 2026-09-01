@@ -697,6 +697,14 @@ export const normalizeProcessInstance = (value: unknown): ProcessInstance => {
     participantIds: Array.isArray(value.participants)
       ? value.participants.filter(isRecord).map((item) => text(item.id)).filter(Boolean)
       : [],
+    canTransferFree: typeof value.canTransferFree === "boolean" ? value.canTransferFree : undefined,
+    freeAssigneeCandidates: Array.isArray(value.freeAssigneeCandidates)
+      ? value.freeAssigneeCandidates.filter(isRecord).map((item) => ({
+          id: text(item.id),
+          name: text(item.name),
+          departmentPath: text(item.departmentPath) || undefined,
+        })).filter((item) => item.id && item.name)
+      : undefined,
     description: text(formValues.description),
     category: text(formValues.category) || undefined,
     formValues,

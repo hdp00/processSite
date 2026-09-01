@@ -54,7 +54,7 @@ import { RuntimeReadonlyChoice } from "../components/RuntimeReadonlyChoice";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { ReviewerProgress } from "../data/types";
-import { isSuperAdminPersona, usePrototypeStore } from "../state/usePrototypeStore";
+import { isSessionSuperAdmin, usePrototypeStore } from "../state/usePrototypeStore";
 import { effectiveGroupMemberIds, findIdentityUser, useIdentityStore } from "../state/useIdentityStore";
 import { canUserCloseInstance, canUserProcessTask } from "../state/workflowAccess";
 import { createClientUuid } from "../utils/clientId";
@@ -164,7 +164,7 @@ export function ProcessDetailPage() {
   const identityUsers = useIdentityStore((state) => state.users);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const persona = findIdentityUser(personaId);
-  const isSuperAdmin = isSuperAdminPersona(personaId);
+  const isSuperAdmin = isSessionSuperAdmin(personaId);
   const [comment, setComment] = useState("");
   const [documentLevel, setDocumentLevel] = useState(instance?.documentLevel ?? "受控文件");
   const [draftTitle, setDraftTitle] = useState(instance?.title ?? "");

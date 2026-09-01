@@ -225,34 +225,35 @@ public sealed class WorkflowLifecycleIntegrationTests
             CanClose: true,
             EffectiveUserName: "链路发起人",
             EffectiveUserDepartmentPath: "测试部");
+        var instanceFormValues = new JsonObject
+        {
+            ["title"] = "真实数据库完整链路",
+            ["summary"] = "覆盖所有表单设置",
+            ["priority"] = "high",
+            ["product"] = new JsonArray("motor", "stepper"),
+            ["result"] = "pass",
+            ["departments"] = new JsonArray("rd", "qa"),
+            ["conditional-note"] = "当天完成",
+            ["rich-content"] = "<p>完整配置</p>",
+            ["evidence"] = new JsonArray(),
+            ["items"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["key"] = "row-1",
+                    ["name"] = "物料",
+                    ["category"] = "a",
+                    ["decision"] = "yes",
+                    ["tags"] = new JsonArray("safe"),
+                },
+            },
+            ["review-note"] = string.Empty,
+        };
         var createdInstance = await instanceService.CreateAsync(
             new CreateProcessInstanceRequest
             {
                 DefinitionId = definitionId,
-                FormValues = new JsonObject
-                {
-                    ["title"] = "真实数据库完整链路",
-                    ["summary"] = "覆盖所有表单设置",
-                    ["priority"] = "high",
-                    ["product"] = new JsonArray("motor", "stepper"),
-                    ["result"] = "pass",
-                    ["departments"] = new JsonArray("rd", "qa"),
-                    ["conditional-note"] = "当天完成",
-                    ["rich-content"] = "<p>完整配置</p>",
-                    ["evidence"] = new JsonArray(),
-                    ["items"] = new JsonArray
-                    {
-                        new JsonObject
-                        {
-                            ["key"] = "row-1",
-                            ["name"] = "物料",
-                            ["category"] = "a",
-                            ["decision"] = "yes",
-                            ["tags"] = new JsonArray("safe"),
-                        },
-                    },
-                    ["review-note"] = string.Empty,
-                },
+                FormValues = instanceFormValues,
                 AssigneeByNode = new Dictionary<string, Guid?>
                 {
                     [approval["id"]!.GetValue<string>()] = reviewerId,
@@ -265,10 +266,28 @@ public sealed class WorkflowLifecycleIntegrationTests
             cancellationToken);
         Assert.True(createdInstance.Succeeded, createdInstance.Failure?.Detail);
         var instanceId = createdInstance.Value!.Instance.Id;
-        var task = Assert.Single(createdInstance.Value.Instance.Tasks);
-        Assert.Equal("pending", task.Status);
-        Assert.Equal(reviewerId, task.DefaultAssignee?.Id);
+        var createdTask = Assert.Single(createdInstance.Value.Instance.Tasks);
+        Assert.Equal("pending", createdTask.Status);
+        Assert.Equal(reviewerId, createdTask.DefaultAssignee?.Id);
         scope.Context.ChangeTracker.Clear();
+
+        var updatedFormValues = instanceFormValues.DeepClone().AsObject();
+        updatedFormValues["summary"] = "审核前由发起人补充的说明";
+        var updatedSubmission = await instanceService.UpdateSubmissionAsync(
+            instanceId,
+            new UpdateProcessInstanceSubmissionRequest
+            {
+                FormValues = updatedFormValues,
+            },
+            initiator,
+            createdInstance.Value.Instance.Revision,
+            keyPrefix + "update-submission",
+            cancellationToken);
+        Assert.True(updatedSubmission.Succeeded, updatedSubmission.Failure?.Detail);
+        instanceFormValues = updatedFormValues;
+        scope.Context.ChangeTracker.Clear();
+        var task = await scope.Context.WorkflowTasks
+            .SingleAsync(item => item.Id == createdTask.Id, cancellationToken);
 
         var reviewer = new ProcessInstanceActor(
             reviewerId,
@@ -279,17 +298,73 @@ public sealed class WorkflowLifecycleIntegrationTests
             CanClose: false,
             EffectiveUserName: "链路审核人",
             EffectiveUserDepartmentPath: "测试部");
-        var decision = await instanceService.DecideTaskAsync(
+        var rejection = await instanceService.DecideTaskAsync(
             task.Id,
             new TaskDecisionRequest
             {
-                Action = "pass",
-                Comment = "完整链路审核通过",
+                Action = "reject",
+                Comment = "先驳回以验证重新提交",
             },
             reviewer,
             task.Revision,
-            keyPrefix + "decision",
-            keyPrefix + "decision",
+            keyPrefix + "reject",
+            keyPrefix + "reject",
+            cancellationToken);
+        Assert.True(rejection.Succeeded, rejection.Failure?.Detail);
+
+        scope.Context.ChangeTracker.Clear();
+        var rejectedInstance = await scope.Context.WorkflowInstances
+            .SingleAsync(item => item.Id == instanceId, cancellationToken);
+        Assert.Equal("rejected-pending", rejectedInstance.Status);
+        var resubmissionTask = await scope.Context.WorkflowTasks
+            .SingleAsync(item => item.InstanceId == instanceId
+                && item.TaskType == "resubmission"
+                && item.Status == "pending", cancellationToken);
+        Assert.Equal(initiatorId, resubmissionTask.AssigneeId);
+
+        var resubmitted = await instanceService.ResubmitAsync(
+            instanceId,
+            new UpdateProcessInstanceSubmissionRequest
+            {
+                FormValues = instanceFormValues.DeepClone().AsObject(),
+            },
+            initiator,
+            rejectedInstance.Revision,
+            keyPrefix + "resubmit",
+            keyPrefix + "resubmit",
+            cancellationToken);
+        Assert.True(resubmitted.Succeeded, resubmitted.Failure?.Detail);
+
+        scope.Context.ChangeTracker.Clear();
+        var nextTask = await scope.Context.WorkflowTasks
+            .SingleAsync(item => item.InstanceId == instanceId
+                && item.TaskType == "approval"
+                && item.Round == 2
+                && item.Status == "pending", cancellationToken);
+        var instanceBeforeDecision = await scope.Context.WorkflowInstances
+            .AsNoTracking()
+            .SingleAsync(item => item.Id == instanceId, cancellationToken);
+        var fieldRevisions = JsonNode.Parse(instanceBeforeDecision.FieldRevisionsJson)!.AsObject();
+        var reviewNoteRevision = fieldRevisions["review-note"]?.GetValue<int>() ?? 0;
+        var decision = await instanceService.DecideTaskAsync(
+            nextTask.Id,
+            new TaskDecisionRequest
+            {
+                Action = "pass",
+                Comment = "重新提交后审核通过",
+                FieldValues = new JsonObject
+                {
+                    ["review-note"] = "审核人只提交节点授权字段",
+                },
+                BaseFieldRevisions = new Dictionary<string, int>
+                {
+                    ["review-note"] = reviewNoteRevision,
+                },
+            },
+            reviewer,
+            nextTask.Revision,
+            keyPrefix + "pass",
+            keyPrefix + "pass",
             cancellationToken);
         Assert.True(decision.Succeeded, decision.Failure?.Detail);
 
@@ -298,11 +373,55 @@ public sealed class WorkflowLifecycleIntegrationTests
             .SingleAsync(item => item.Id == instanceId, cancellationToken);
         Assert.Equal("completed", persisted.Status);
         Assert.NotNull(persisted.CompletedAt);
+        Assert.Equal(
+            "审核人只提交节点授权字段",
+            JsonNode.Parse(persisted.FormValuesJson)?["review-note"]?.GetValue<string>());
         var outbox = await scope.Context.RuntimeEmailOutboxMessages
             .Where(item => item.InstanceId == instanceId)
             .OrderBy(item => item.CreatedAt)
             .ToArrayAsync(cancellationToken);
         Assert.Contains(outbox, message => message.EventType == "task-activated" && message.RecipientUserId == reviewerId);
         Assert.Contains(outbox, message => message.EventType == "process-completed" && message.RecipientUserId == initiatorId);
+
+        scope.Context.ChangeTracker.Clear();
+        var completedTask = await scope.Context.WorkflowTasks
+            .AsNoTracking()
+            .SingleAsync(item => item.Id == nextTask.Id, cancellationToken);
+        var completedInstance = await scope.Context.WorkflowInstances
+            .AsNoTracking()
+            .SingleAsync(item => item.Id == instanceId, cancellationToken);
+        var completedFieldRevisions = JsonNode.Parse(completedInstance.FieldRevisionsJson)!.AsObject();
+        var revised = await instanceService.ReviseTaskFieldsAsync(
+            completedTask.Id,
+            new ReviseTaskFieldsRequest
+            {
+                FieldValues = new JsonObject
+                {
+                    ["review-note"] = "审核完成后的补充修订",
+                },
+                BaseFieldRevisions = new Dictionary<string, int>
+                {
+                    ["review-note"] = completedFieldRevisions["review-note"]?.GetValue<int>() ?? 0,
+                },
+                Comment = "验证允许重复修改的真实数据库链路",
+            },
+            reviewer,
+            completedTask.Revision,
+            keyPrefix + "revise-fields",
+            keyPrefix + "revise-fields",
+            cancellationToken);
+        Assert.True(revised.Succeeded, revised.Failure?.Detail);
+
+        scope.Context.ChangeTracker.Clear();
+        var revisedInstance = await scope.Context.WorkflowInstances
+            .SingleAsync(item => item.Id == instanceId, cancellationToken);
+        Assert.Equal(
+            "审核完成后的补充修订",
+            JsonNode.Parse(revisedInstance.FormValuesJson)?["review-note"]?.GetValue<string>());
+        Assert.Contains(
+            await scope.Context.WorkflowEvents
+                .Where(item => item.InstanceId == instanceId)
+                .ToArrayAsync(cancellationToken),
+            item => item.EventType == "task-fields-revised" && item.TaskId == completedTask.Id);
     }
 }

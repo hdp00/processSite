@@ -637,6 +637,11 @@ public sealed partial class SqlServerAuthService : IAuthService
             transaction,
             userId,
             cancellationToken).ConfigureAwait(false);
+        var lastLoginAt = await LoadLastLoginAtAsync(
+            connection,
+            transaction,
+            userId,
+            cancellationToken).ConfigureAwait(false);
         IReadOnlyList<string> permissions = user.IsBuiltinSuperAdmin
             ? BuiltinCatalog.PermissionCodes.ToArray()
             : await LoadPermissionsAsync(
@@ -662,7 +667,8 @@ public sealed partial class SqlServerAuthService : IAuthService
             roles,
             user.IsBuiltinSuperAdmin,
             user.CreatedAt,
-            user.UpdatedAt);
+            user.UpdatedAt,
+            lastLoginAt);
 
         return new UserSessionView(
             user,
@@ -699,6 +705,21 @@ public sealed partial class SqlServerAuthService : IAuthService
         }
 
         return roles;
+    }
+
+    private async Task<DateTimeOffset?> LoadLastLoginAtAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = CreateCommand(
+            connection,
+            transaction,
+            "SELECT MAX([created_at]) FROM [flowpilot].[sessions] WHERE [operator_user_id] = @user_id;");
+        command.Parameters.Add("@user_id", SqlDbType.UniqueIdentifier).Value = userId;
+        var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+        return value is DateTime timestamp ? AsUtc(timestamp) : null;
     }
 
     private async Task<IReadOnlyList<string>> LoadPermissionsAsync(

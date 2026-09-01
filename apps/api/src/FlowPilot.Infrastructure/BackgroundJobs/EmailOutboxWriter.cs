@@ -2,13 +2,17 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using FlowPilot.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using MimeKit;
 
 namespace FlowPilot.Infrastructure.BackgroundJobs;
 
-public sealed class EmailOutboxWriter(FlowPilotDbContext dbContext)
+public sealed class EmailOutboxWriter(
+    FlowPilotDbContext dbContext,
+    IConfiguration? configuration = null)
 {
     private readonly FlowPilotDbContext _dbContext = dbContext;
+    private readonly IConfiguration? _configuration = configuration;
 
     internal async Task EnqueueAsync(
         WorkflowInstanceEntity instance,
@@ -83,12 +87,18 @@ public sealed class EmailOutboxWriter(FlowPilotDbContext dbContext)
             return;
         }
 
+        var testEmail = TestEmailOverride.Read(_configuration);
+        if (testEmail.Configured && testEmail.Address is null)
+        {
+            return;
+        }
+
         var userIds = requests.SelectMany(item => item.RecipientIds).Distinct().ToArray();
         var users = await _dbContext.OrganizationUserReferences.AsNoTracking()
             .Where(item => userIds.Contains(item.Id)
                 && item.IsEnabled
-                && !item.IsBuiltInSuperAdmin
-                && item.Email != "")
+                && (!item.IsBuiltInSuperAdmin || testEmail.Address != null)
+                && (testEmail.Address != null || item.Email != ""))
             .ToDictionaryAsync(item => item.Id, cancellationToken)
             .ConfigureAwait(false);
         var keys = requests.SelectMany(request => request.RecipientIds.Select(userId => request.Key(userId)))
@@ -114,12 +124,13 @@ public sealed class EmailOutboxWriter(FlowPilotDbContext dbContext)
                 }
 
                 var key = request.Key(userId);
-                if (existing.Contains(key)
-                    || !users.TryGetValue(userId, out var user)
-                    || !MailboxAddress.TryParse(user.Email, out _))
+                if (existing.Contains(key) || !users.TryGetValue(userId, out var user))
                 {
                     continue;
                 }
+
+                var recipientEmail = testEmail.Address ?? user.Email;
+                if (!MailboxAddress.TryParse(recipientEmail, out _)) continue;
 
                 var targetPath = request.Task is null
                     ? $"/processes/{instance.Id:D}"
@@ -136,7 +147,7 @@ public sealed class EmailOutboxWriter(FlowPilotDbContext dbContext)
                     TaskId = request.Task?.Id,
                     TemplateKey = request.EventType,
                     RecipientUserId = user.Id,
-                    RecipientEmailSnapshot = user.Email,
+                    RecipientEmailSnapshot = recipientEmail,
                     Subject = SafeHeader(request.EventType switch
                     {
                         "process-completed" => $"[FlowPilot] {definition.Name} - 已完成",

@@ -145,7 +145,8 @@ const isStarterActor = (instance: ProcessInstance, userId: string) => {
 
 export const canUserTransferFreeFlow = (instance: ProcessInstance, userId: string) => {
   if (instance.workflowType !== "free" || instance.status !== "进行中") return false;
-  if (isSuperAdminPersona(userId)) return true;
+  if (typeof instance.canTransferFree === "boolean") return instance.canTransferFree;
+  if (isSessionSuperAdmin(userId)) return true;
   const version = resolveInstanceVersion(instance);
   if (!version) return false;
   return [...version.basic.starterGroups, ...(version.basic.assigneeGroups ?? [])]
@@ -695,7 +696,10 @@ export const usePrototypeStore = create<PrototypeState>()(
         operatorSuperAdmin: false,
         impersonation: undefined,
       }),
-      switchPersona: (personaId) => set({ personaId }),
+      switchPersona: (personaId) => set({
+        personaId,
+        sessionSuperAdmin: isSuperAdminPersona(personaId),
+      }),
       createProcessInstance: (input) => {
         const state = get();
         const actor = findIdentityUser(state.personaId);
@@ -1081,7 +1085,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                   : [...new Set([...(instance.participantIds ?? []), persona.id])],
                 freeTimeline: [
                   ...(instance.freeTimeline ?? []),
-                  freeEntry("reply", persona.name, { content, attachments }),
+                  freeEntry("reply", persona.name, { content, attachments, time: actionAt }),
                 ],
               };
             }),
@@ -1223,6 +1227,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                   freeEntry("form-edited", persona.name, {
                     content: `修改了${fieldChanges.map((change) => change.field).join("、") || "初始表单"}`,
                     fieldChanges,
+                    time: actionAt,
                   }),
                 ],
               };
@@ -1248,7 +1253,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                 designatedReviewer: undefined,
                 currentNode: "事项已关闭",
                 updatedAt: actionAt,
-                freeTimeline: [...(instance.freeTimeline ?? []), freeEntry("closed", persona.name, { content: reason })],
+                freeTimeline: [...(instance.freeTimeline ?? []), freeEntry("closed", persona.name, { content: reason, time: actionAt })],
               };
             }),
           };
@@ -1278,7 +1283,7 @@ export const usePrototypeStore = create<PrototypeState>()(
                 participantIds: [...new Set([...(instance.participantIds ?? []), ...(assigneeId ? [assigneeId] : [])])],
                 freeTimeline: [
                   ...(instance.freeTimeline ?? []),
-                  freeEntry("reopened", persona.name, { content: reason, assignee }),
+                  freeEntry("reopened", persona.name, { content: reason, assignee, time: actionAt }),
                 ],
               };
             }),
@@ -1339,5 +1344,11 @@ export const usePrototypeStore = create<PrototypeState>()(
     },
   ),
 );
+
+export const isSessionSuperAdmin = (personaId: PersonaId) => {
+  if (isSuperAdminPersona(personaId)) return true;
+  const session = usePrototypeStore.getState();
+  return session.authenticated && session.personaId === personaId && session.sessionSuperAdmin;
+};
 
 useProcessDefinitionStore.getState().synchronizeInstanceCounts(usePrototypeStore.getState().instances);

@@ -116,7 +116,12 @@ describe("原型会话状态边界", () => {
     });
 
     prototypeModule.usePrototypeStore.getState().switchPersona("zhaolei");
-    expect(prototypeModule.usePrototypeStore.getState().personaId).toBe("zhaolei");
+    expect(prototypeModule.usePrototypeStore.getState()).toMatchObject({
+      personaId: "zhaolei",
+      sessionSuperAdmin: false,
+      operatorSuperAdmin: true,
+    });
+    expect(prototypeModule.isSessionSuperAdmin("zhaolei")).toBe(false);
     prototypeModule.usePrototypeStore.getState().logout();
     expect(prototypeModule.usePrototypeStore.getState()).toMatchObject({
       authenticated: false,
@@ -474,6 +479,18 @@ describe("自由协作异常操作", () => {
     setActor("zhangwei");
     prototypeModule.usePrototypeStore.getState().reopenFreeFlow("free-12", "无效受理人", "何静");
     expect(instanceById("free-12")).toEqual(closedBefore);
+  });
+
+  it("正式后端返回的变更权限不依赖前端是否加载权限组管理目录", () => {
+    const source = instanceById("free-18")!;
+    expect(prototypeModule.canUserTransferFreeFlow({
+      ...source,
+      canTransferFree: true,
+    }, "remote-group-member")).toBe(true);
+    expect(prototypeModule.canUserTransferFreeFlow({
+      ...source,
+      canTransferFree: false,
+    }, "remote-group-member")).toBe(false);
   });
 
   it("超级管理员可补充回复但不会被写入业务参与人列表", () => {

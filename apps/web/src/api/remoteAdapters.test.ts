@@ -116,6 +116,10 @@ describe("formal REST response adapters", () => {
       status: "reviewing",
       round: 1,
       currentNodeNames: ["研发审核", "质量审核"],
+      canTransferFree: true,
+      freeAssigneeCandidates: [
+        { id: "user-2", name: "侯冬平", departmentPath: "研发 / 软件" },
+      ],
       initiator: { id: "user-1", name: "王敏", departmentPath: "质量" },
       formValues: { priority: "紧急", description: "说明" },
       fieldRevisions: { title: 2 },
@@ -144,7 +148,14 @@ describe("formal REST response adapters", () => {
       createdAt: "2026-08-21T08:00:00Z",
     });
 
-    expect(instance).toMatchObject({ status: "审核中", currentNode: "研发审核、质量审核", priority: "紧急", fieldRevisions: { title: 2 } });
+    expect(instance).toMatchObject({
+      status: "审核中",
+      currentNode: "研发审核、质量审核",
+      priority: "紧急",
+      canTransferFree: true,
+      freeAssigneeCandidates: [{ id: "user-2", name: "侯冬平", departmentPath: "研发 / 软件" }],
+      fieldRevisions: { title: 2 },
+    });
     expect(task).toMatchObject({ status: "待处理", handlingMode: "approval", editableFieldIds: ["title"], allowedActions: ["pass", "reject"] });
   });
 

@@ -36,6 +36,16 @@ const loadRemoteDefinitions = async () => {
   return [];
 };
 
+const loadRemoteWorkflowGroups = () => collectPages((page) =>
+  flowPilotApi.directory.groups({ page, pageSize: 100 }));
+
+/** 重新读取服务端计算的流程权限组引用统计。 */
+export const refreshRemoteWorkflowGroups = async () => {
+  const workflowGroups = await loadRemoteWorkflowGroups();
+  useIdentityStore.setState({ workflowGroups });
+  return workflowGroups;
+};
+
 /** 登录和会话恢复时加载页面所需的小型目录数据，不在此下载完整用户列表。 */
 export const hydrateRemoteProcessDefinitions = async () => {
   await hydrateRemoteApplication();
@@ -48,7 +58,7 @@ export const hydrateRemoteProcessDefinitions = async () => {
 export const hydrateRemoteApplication = async () => {
   const [roles, workflowGroups, definitions, departments, positions] = await Promise.all([
     collectPages((page) => flowPilotApi.directory.roles({ page, pageSize: 100 })),
-    collectPages((page) => flowPilotApi.directory.groups({ page, pageSize: 100 })),
+    loadRemoteWorkflowGroups(),
     loadRemoteDefinitions(),
     flowPilotApi.organization.departments(),
     flowPilotApi.organization.positions(),

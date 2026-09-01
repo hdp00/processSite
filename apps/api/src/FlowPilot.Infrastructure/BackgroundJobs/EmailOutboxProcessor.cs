@@ -248,7 +248,7 @@ public sealed class EmailOutboxProcessor(
         };
         var result = new MimeMessage();
         result.From.Add(new MailboxAddress(settings.FromName, settings.FromAddress));
-        result.To.Add(MailboxAddress.Parse(message.RecipientEmailSnapshot));
+        result.To.Add(MailboxAddress.Parse(settings.TestEmail ?? message.RecipientEmailSnapshot));
         result.Subject = SafeHeader(message.Subject);
         result.Body = new BodyBuilder
         {
@@ -277,6 +277,7 @@ public sealed class EmailOutboxProcessor(
         string? Password,
         string FromAddress,
         string FromName,
+        string? TestEmail,
         int MaxAttempts,
         int BatchSize,
         int TimeoutSeconds)
@@ -292,8 +293,10 @@ public sealed class EmailOutboxProcessor(
             var from = configuration["FlowPilot:Smtp:From"]?.Trim();
             var userName = configuration["FlowPilot:Smtp:UserName"]?.Trim();
             var password = configuration["FlowPilot:Smtp:Password"];
+            var testEmail = TestEmailOverride.Read(configuration);
             if (string.IsNullOrWhiteSpace(host)
                 || !MailboxAddress.TryParse(from, out var mailbox)
+                || testEmail.Configured && testEmail.Address is null
                 || string.IsNullOrWhiteSpace(userName) != string.IsNullOrWhiteSpace(password))
             {
                 return null;
@@ -327,6 +330,7 @@ public sealed class EmailOutboxProcessor(
                 password,
                 mailbox.Address,
                 configuration["FlowPilot:Smtp:FromName"]?.Trim() ?? "FlowPilot",
+                testEmail.Address,
                 Math.Clamp(configuration.GetValue("FlowPilot:Smtp:MaxAttempts", 6), 1, 20),
                 Math.Clamp(configuration.GetValue("FlowPilot:Smtp:BatchSize", 10), 1, 100),
                 Math.Clamp(configuration.GetValue("FlowPilot:Smtp:TimeoutSeconds", 30), 5, 120));

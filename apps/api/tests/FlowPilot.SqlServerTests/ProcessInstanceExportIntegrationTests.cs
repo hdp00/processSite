@@ -122,8 +122,8 @@ public sealed class ProcessInstanceExportIntegrationTests
             """
             {
               "systemFields": [
-                { "key": "code", "label": "编号", "exportVisible": true },
-                { "key": "templateVersion", "label": "版本", "exportVisible": true }
+                { "key": "instanceCode", "label": "编号", "exportVisible": true },
+                { "key": "processVersion", "label": "版本", "exportVisible": true }
               ],
               "form": { "fields": [
                 { "id": "amount", "label": "金额", "type": "number", "exportVisible": true },

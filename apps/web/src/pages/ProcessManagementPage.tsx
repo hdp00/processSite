@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { cacheProcessDefinition, removeCachedProcessDefinition } from "../api/entityCache";
+import { refreshRemoteWorkflowGroups } from "../api/remoteHydration";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import { useIdentityStore } from "../state/useIdentityStore";
@@ -143,6 +144,13 @@ export function ProcessManagementPage() {
           removeCachedProcessDefinition(record.id);
           setRemoteDefinitions((rows) => rows.filter((item) => item.id !== record.id));
           setRemoteTotal((total) => Math.max(0, total - 1));
+          if (!isBrowserMockMode) {
+            try {
+              await refreshRemoteWorkflowGroups();
+            } catch {
+              message.warning("流程已删除，权限组引用统计刷新失败；进入权限组页面时将重新加载");
+            }
+          }
           message.success("流程定义及其全部无实例版本已删除");
         } catch (error) {
           message.error(error instanceof Error ? error.message : "流程已发布或已有实例，不能删除");

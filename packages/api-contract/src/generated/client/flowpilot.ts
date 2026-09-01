@@ -306,6 +306,8 @@ export interface UserDto {
   superAdmin: boolean;
   createdAt: string;
   updatedAt: string;
+  /** 该账号最近一次成功完成凭据认证并建立登录会话的时间；从未登录时为 null。模拟身份不会计为目标账号登录。 */
+  lastLoginAt: string | null;
 }
 
 export interface ImpersonationContextDto {
@@ -1683,6 +1685,10 @@ export type ProcessInstanceDetailDto = ProcessInstanceSummaryDto & {
   attachments: AttachmentDto[];
   /** 自由协作事项的发起人、当前受理人及历史参与人；审批流程为空数组。 */
   participants: UserRef[];
+  /** 当前登录人是否可以在此进行中的自由协作事项中变更受理人；非自由流程或非进行中事项为 false。 */
+  canTransferFree?: boolean;
+  /** 此自由协作流程锁定版本的受理权限组中当前有效且启用的用户；非自由流程为空数组。 */
+  freeAssigneeCandidates?: UserRef[];
   reviewProgress: ReviewProgressDto[];
   tasks: WorkflowTaskDto[];
   timeline: TimelineEventDto[];

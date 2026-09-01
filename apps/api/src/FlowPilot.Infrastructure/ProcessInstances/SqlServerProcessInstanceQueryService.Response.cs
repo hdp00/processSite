@@ -39,6 +39,8 @@ public sealed partial class SqlServerProcessInstanceQueryService
             CurrentAssignee = User(source.Users, source.Instance.CurrentAssigneeId),
             Initiator = source.Initiator,
             Participants = source.ParticipantIds.Select(id => source.Users[id]).ToArray(),
+            CanTransferFree = source.CanTransferFree,
+            FreeAssigneeCandidates = source.FreeAssigneeCandidates,
             CreatedAt = AsUtc(source.Instance.CreatedAt),
             UpdatedAt = AsUtc(source.Instance.UpdatedAt),
             ListValues = ProjectListValues(source.FormValues, source.Fields),

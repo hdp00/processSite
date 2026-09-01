@@ -103,6 +103,31 @@ describe("Mock REST API 通用契约", () => {
     });
   });
 
+  it("自由协作仅变更受理人时不要求回复内容，并保持单一受理人", async () => {
+    await apiModule.flowPilotApi.auth.login("zhangwei", "1");
+    const before = await apiModule.flowPilotApi.instances.getResource("free-18");
+    const timelineLength = before.data.instance.freeTimeline?.length ?? 0;
+
+    const updated = await apiModule.flowPilotApi.freeFlows.transfer(
+      "free-18",
+      "zhaolei",
+      undefined,
+      before.etag,
+    );
+
+    expect(updated).toMatchObject({
+      currentAssignee: "赵磊",
+      currentAssigneeId: "zhaolei",
+    });
+    expect(updated.freeTimeline).toHaveLength(timelineLength + 1);
+    expect(updated.freeTimeline?.at(-1)).toMatchObject({
+      type: "assigned",
+      actor: "张伟",
+      previousAssignee: "林晓",
+      assignee: "赵磊",
+    });
+  });
+
   it("演示数据重置只允许真实登录的内置超级管理员，模拟切换不能提升权限", async () => {
     const initialDefinitionCount = definitionModule.useProcessDefinitionStore.getState().definitions.length;
 

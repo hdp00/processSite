@@ -395,6 +395,24 @@ describe("页面入口与流程数据范围", () => {
     expect(workflowAccessModule.canUserViewInstance("wangmin", instance)).toBe(false);
   });
 
+  it("正式会话中的超级管理员 GUID 可以查看和处理任意流程", () => {
+    const userId = "f6f819c0-cc2d-4ab7-b857-e8ee70e71c5c";
+    const instance = { ...isolatedInstance(), definitionId: "missing" };
+    vi.stubEnv("VITE_API_MODE", "remote");
+    prototypeModule.usePrototypeStore.setState({
+      authenticated: true,
+      personaId: userId,
+      operatorUserId: userId,
+      sessionPermissions: [],
+      sessionSuperAdmin: true,
+      operatorSuperAdmin: true,
+    });
+
+    expect(workflowAccessModule.canUserViewInstance(userId, instance)).toBe(true);
+    expect(workflowAccessModule.canUserCloseInstance(userId, instance)).toBe(true);
+    expect(rolePermissionModule.canPersonaLaunchDefinition(userId, "missing")).toBe(true);
+  });
+
   it("历史待办的默认处理人和实际完成人都保留实例查看权", () => {
     configurePublishedAccess("pdf-review", {});
     const instance = isolatedInstance();

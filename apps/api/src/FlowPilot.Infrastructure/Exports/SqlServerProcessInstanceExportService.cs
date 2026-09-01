@@ -405,12 +405,12 @@ public sealed partial class SqlServerProcessInstanceExportService(
         if (!column.IsSystem) return ReadScalar(ParseObject(instance.FormValuesJson)[column.SourceKey], column.OptionLabels);
         return column.SourceKey switch
         {
-            "code" => instance.InstanceNumber,
-            "template" => definition.Name,
-            "templateVersion" => versionLabels.GetValueOrDefault(instance.VersionId),
+            "instanceCode" or "code" => instance.InstanceNumber,
+            "processName" or "template" => definition.Name,
+            "processVersion" or "templateVersion" => versionLabels.GetValueOrDefault(instance.VersionId),
             "status" => TranslateStatus(instance.Status),
             "currentNode" => instance.CurrentNodeSummary,
-            "round" => $"第 {instance.CurrentRound} 轮",
+            "currentRound" or "round" => $"第 {instance.CurrentRound} 轮",
             "initiator" => FormatInitiator(users.GetValueOrDefault(instance.InitiatorUserId)),
             "createdAt" => DateTime.SpecifyKind(instance.CreatedAt, DateTimeKind.Utc).ToString("O", CultureInfo.InvariantCulture),
             "updatedAt" => DateTime.SpecifyKind(instance.UpdatedAt, DateTimeKind.Utc).ToString("O", CultureInfo.InvariantCulture),

@@ -5,6 +5,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { AppBackButton } from "../components/AppBackButton";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { cacheProcessDefinition, cacheProcessVersion, removeCachedProcessVersion } from "../api/entityCache";
+import { refreshRemoteWorkflowGroups } from "../api/remoteHydration";
 import { StatusPill } from "../components/StatusPill";
 import { resolveWorkflowGroupLabel, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import { canEditVersion, definitionStatus, getPublishedVersion, getVersionStatus, useProcessDefinitionStore, type ProcessVersion } from "../state/useProcessDefinitionStore";
@@ -13,6 +14,7 @@ import { usePrototypeStore } from "../state/usePrototypeStore";
 import { buildFlowLevels, conditionOperatorLabel, normalizeDesignerInputPermission, rejectionHandlingLabel, type StoredDesignerField, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import { displayDesignerChoiceValue, flattenDesignerChoiceOptions } from "../utils/designerOptions";
 import { formatDisplayDateTime } from "../utils/domainTime";
+import { isBrowserMockMode } from "../utils/runtimeMode";
 import "./process-admin-pages.css";
 
 const fieldTypeLabels: Record<string, string> = {
@@ -226,6 +228,13 @@ export function ProcessVersionsPage() {
           const resource = await flowPilotApi.definitions.versionResource(definition.id, version.id);
           await flowPilotApi.definitions.removeVersion(definition.id, version.id, resource.etag);
           removeCachedProcessVersion(definition.id, version.id);
+          if (!isBrowserMockMode) {
+            try {
+              await refreshRemoteWorkflowGroups();
+            } catch {
+              message.warning("版本已删除，权限组引用统计刷新失败；进入权限组页面时将重新加载");
+            }
+          }
           const stillExists = useProcessDefinitionStore.getState().definitions.some((item) => item.id === definition.id);
           message.success(stillExists ? `${version.version} 已删除，版本号不会复用` : "最后一个版本和流程定义已删除");
           if (!stillExists) navigate("/admin/processes");
