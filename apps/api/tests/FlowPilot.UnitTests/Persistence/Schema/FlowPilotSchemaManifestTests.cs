@@ -14,9 +14,12 @@ public sealed class FlowPilotSchemaManifestTests
         var expectedColumns = inventory.Columns
             .Append("workflow_definition_versions.change_note")
             .Append("sessions.impersonation_record_id")
+            .Append("workflow_definition_versions.source_version_id")
+            .Append("workflow_definition_versions.source_version_label")
             .ToHashSet(StringComparer.Ordinal);
         var expectedConstraints = inventory.Constraints
             .Append("sessions.fk_sessions_impersonation_record")
+            .Append("workflow_definition_versions.ck_workflow_definition_versions_source")
             .ToHashSet(StringComparer.Ordinal);
         var expectedIndexes = inventory.Indexes
             .Append("sessions.ux_sessions_impersonation_record")

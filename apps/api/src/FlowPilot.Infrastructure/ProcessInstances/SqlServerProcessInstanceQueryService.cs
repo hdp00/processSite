@@ -85,8 +85,10 @@ public sealed partial class SqlServerProcessInstanceQueryService(
             .ConfigureAwait(false);
         var freeTimeline = await _dbContext.FreeTimelineEntries
             .AsNoTracking()
-            .Where(item => item.InstanceId == instance.Id)
-            .OrderBy(item => item.OccurredAt)
+            .Where(item => item.InstanceId == instance.Id && item.EntryType != "reply-edited")
+            .OrderBy(item => item.EntryType == "reply" && item.EditedAt.HasValue
+                ? item.EditedAt.Value
+                : item.OccurredAt)
             .ThenBy(item => item.Id)
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);

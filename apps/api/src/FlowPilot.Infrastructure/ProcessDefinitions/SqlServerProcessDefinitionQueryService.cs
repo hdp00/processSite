@@ -212,6 +212,8 @@ public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDef
         [pv].[revision] AS [pv_revision],
         [pv].[version_number] AS [pv_version_number],
         [pv].[version_label] AS [pv_version_label],
+        [pv].[source_version_id] AS [pv_source_version_id],
+        [pv].[source_version_label] AS [pv_source_version_label],
         CONVERT(int, (SELECT COUNT_BIG(1)
             FROM [flowpilot].[workflow_instances] AS [published_instance]
             WHERE [published_instance].[version_id] = [pv].[id])) AS [pv_instance_count],
@@ -260,6 +262,8 @@ public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDef
         [v].[revision] AS [version_revision],
         [v].[version_number],
         [v].[version_label],
+        [v].[source_version_id],
+        [v].[source_version_label],
         CONVERT(int, (SELECT COUNT_BIG(1)
             FROM [flowpilot].[workflow_instances] AS [version_instance]
             WHERE [version_instance].[version_id] = [v].[id])) AS [version_instance_count],
@@ -633,6 +637,8 @@ public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDef
         reader.GetInt32(reader.GetOrdinal("pv_revision")),
         reader.GetInt32(reader.GetOrdinal("pv_version_number")),
         reader.GetString(reader.GetOrdinal("pv_version_label")),
+        GetNullableGuid(reader, "pv_source_version_id"),
+        GetNullableString(reader, "pv_source_version_label"),
         reader.GetInt32(reader.GetOrdinal("pv_instance_count")),
         GetNullableString(reader, "pv_validation_status"),
         GetNullableString(reader, "pv_validation_json"),
@@ -659,6 +665,8 @@ public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDef
         reader.GetInt32(reader.GetOrdinal("version_revision")),
         reader.GetInt32(reader.GetOrdinal("version_number")),
         reader.GetString(reader.GetOrdinal("version_label")),
+        GetNullableGuid(reader, "source_version_id"),
+        GetNullableString(reader, "source_version_label"),
         reader.GetInt32(reader.GetOrdinal("version_instance_count")),
         GetNullableString(reader, "validation_status"),
         GetNullableString(reader, "validation_json"),
@@ -868,6 +876,8 @@ public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDef
         int Revision,
         int VersionNumber,
         string VersionLabel,
+        Guid? SourceVersionId,
+        string? SourceVersionLabel,
         int InstanceCount,
         string? ValidationStatus,
         string? ValidationJson,
@@ -893,6 +903,9 @@ public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDef
             Revision = Revision,
             VersionNumber = VersionNumber,
             VersionLabel = VersionLabel,
+            BasedOn = SourceVersionId.HasValue && SourceVersionLabel is not null
+                ? new ProcessVersionSourceDto(SourceVersionId.Value, SourceVersionLabel)
+                : null,
             InstanceCount = InstanceCount,
             Editable = InstanceCount == 0 && PublishedVersionId != Id,
             Status = PublishedVersionId == Id
@@ -927,6 +940,7 @@ public sealed partial class SqlServerProcessDefinitionQueryService : IProcessDef
                 Revision = summary.Revision,
                 VersionNumber = summary.VersionNumber,
                 VersionLabel = summary.VersionLabel,
+                BasedOn = summary.BasedOn,
                 InstanceCount = summary.InstanceCount,
                 Editable = summary.Editable,
                 Status = summary.Status,

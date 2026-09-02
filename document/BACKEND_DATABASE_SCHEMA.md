@@ -85,6 +85,7 @@
 主要列：
 
 - `id`、`definition_id`、`version_number`、`version_label`。
+- 可空的 `source_version_id` 与 `source_version_label` 保存复制来源快照；不建立来源版本外键，避免来源删除阻止派生版本继续使用和展示来源版本号。
 - `basic_json nvarchar(max)`、`snapshot_json nvarchar(max)`。
 - `validation_status`、`validation_json nvarchar(max)`、`validated_at`。
 - `instance_count`、`revision`。
@@ -160,8 +161,8 @@
 
 ### 4.4 自由协作事实与投影
 
-- `flowpilot.free_timeline_entries`：`id`、`instance_id`、`entry_type`、`actor_user_id`、可空 `related_entry_id`、可空 `content`、可空 `previous_assignee_id`、可空 `assignee_id`、可空 `reason`、可空 `field_changes_json`、`occurred_at`、可空 `edited_by`、可空 `edited_at`、`revision`。`entry_type` 至少包含 `created | reply | reply-edited | transferred | form-edited | reassigned | closed | reopened`；`reply-edited` 必须通过同表 `NO ACTION` 外键 `related_entry_id` 指向被编辑回复。
-- 回复正文只保存在原 `entry_type='reply'` 行的 `content` 中，编辑时覆盖为最新正文并更新编辑人、编辑时间和 revision；另追加不含旧正文的 `reply-edited` 事件。不得创建保存旧正文的回复修订表。
+- `flowpilot.free_timeline_entries`：`id`、`instance_id`、`entry_type`、`actor_user_id`、可空 `related_entry_id`、可空 `content`、可空 `previous_assignee_id`、可空 `assignee_id`、可空 `reason`、可空 `field_changes_json`、`occurred_at`、可空 `edited_by`、可空 `edited_at`、`revision`。`entry_type` 包含 `created | reply | transferred | form-edited | reassigned | closed | reopened`；旧数据库中已有的 `reply-edited` 记录仅兼容保留，实例时间线查询必须排除。
+- 回复正文只保存在原 `entry_type='reply'` 行的 `content` 中，编辑时覆盖为最新正文并更新编辑人、编辑时间和 revision，不再追加独立时间线事件。统一时间线以回复的 `edited_at`（没有编辑时使用 `occurred_at`）排序；不得创建保存旧正文的回复修订表。
 - `flowpilot.free_participants`：`instance_id + user_id` 联合主键，保存首次/最近参与时间及参与来源位集合；它是由发起人、所有历史受理人和回复作者事务内维护的查询投影，可从实例和自由协作时间线重建。
 - 自由协作实例、任务、时间线、参与人投影、附件引用和 `updated_at` 必须在同一领域事务内保持一致。时间线和参与人事实永久保留，不因用户停用或事项关闭删除。
 

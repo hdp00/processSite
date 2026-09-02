@@ -54,6 +54,10 @@
   background: #e9edff;
 }
 
+.rich-editor__file-input {
+  display: none !important;
+}
+
 .rich-editor__content img,
 .rich-content img,
 .rich-editor__content video,

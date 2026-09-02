@@ -918,7 +918,9 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
         string validationJson,
         Guid actorId,
         DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? sourceVersionId = null,
+        string? sourceVersionLabel = null)
     {
         await using var command = CreateCommand();
         command.CommandText =
@@ -926,6 +928,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
             INSERT INTO [flowpilot].[workflow_definition_versions]
             (
                 [id], [definition_id], [version_number], [version_label],
+                [source_version_id], [source_version_label],
                 [basic_json], [snapshot_json], [validation_status], [validation_json],
                 [validated_at], [instance_count], [revision], [created_at], [created_by],
                 [updated_at], [updated_by], [first_published_at], [first_published_by],
@@ -935,6 +938,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
             VALUES
             (
                 @id, @definition_id, 1, N'V1',
+                @source_version_id, @source_version_label,
                 @basic_json, @snapshot_json, @validation_status, @validation_json,
                 @validated_at, 0, 1, @created_at, @created_by,
                 @updated_at, @updated_by, NULL, NULL,
@@ -943,6 +947,8 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
             """;
         Add(command, "@id", SqlDbType.UniqueIdentifier, versionId);
         Add(command, "@definition_id", SqlDbType.UniqueIdentifier, definitionId);
+        AddNullable(command, "@source_version_id", SqlDbType.UniqueIdentifier, sourceVersionId);
+        AddNullable(command, "@source_version_label", SqlDbType.NVarChar, sourceVersionLabel, 100);
         Add(command, "@basic_json", SqlDbType.NVarChar, basicJson);
         Add(command, "@snapshot_json", SqlDbType.NVarChar, snapshotJson);
         Add(command, "@validation_status", SqlDbType.NVarChar, validation.Status, 20);

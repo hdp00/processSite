@@ -18,6 +18,10 @@ public sealed record ProcessDefinitionUserRefDto(
     Guid Id,
     string Name);
 
+public sealed record ProcessVersionSourceDto(
+    Guid VersionId,
+    string VersionLabel);
+
 public sealed record ProcessDefinitionValidationIssueDto(
     string Code,
     string Message,
@@ -40,6 +44,9 @@ public record ProcessVersionSummaryDto
     public required int VersionNumber { get; init; }
 
     public required string VersionLabel { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProcessVersionSourceDto? BasedOn { get; init; }
 
     public required int InstanceCount { get; init; }
 

@@ -199,7 +199,7 @@ public sealed class ProcessInstanceFreeAccessIntegrationTests
         var reply = Assert.Single(timeline, item => item.EntryType == "reply");
         Assert.Equal("<p>修改后的回复内容</p>", reply.Content);
         Assert.NotNull(reply.EditedAt);
-        Assert.Single(timeline, item => item.EntryType == "reply-edited");
+        Assert.DoesNotContain(timeline, item => item.EntryType == "reply-edited");
         Assert.DoesNotContain(timeline, item => item.EntryType == "transferred");
     }
 

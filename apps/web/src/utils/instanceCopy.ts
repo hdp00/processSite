@@ -2,6 +2,17 @@ import { normalizeDesignerFieldValue, type StoredDesignerField, type StoredDesig
 import { PROCESS_TITLE_FIELD_ID } from "./designerStorage";
 import { flattenDesignerChoiceOptions, normalizeDesignerChoiceValue } from "./designerOptions";
 
+interface CopyAssigneeNode {
+  id: string;
+  specifyAssignee?: boolean;
+}
+
+interface CopyAssigneeTask {
+  nodeId: string;
+  round: number;
+  defaultAssigneeId?: string;
+}
+
 const cloneValue = <T,>(value: T): T => structuredClone(value);
 
 const defaultColumnValue = (column: StoredDesignerTableColumn) =>
@@ -88,3 +99,17 @@ export const buildCopiedInstanceInitialValues = (
     return [targetField.id, sourceValue === undefined ? defaultFieldValue(targetField) : cloneValue(sourceValue)];
   }));
 };
+
+export const buildCopiedAssigneeInitialValues = (
+  targetNodes: CopyAssigneeNode[],
+  sourceTasks: CopyAssigneeTask[],
+  sourceRound: number,
+  candidateIdsByNode: Record<string, string[]>,
+) => Object.fromEntries(targetNodes.flatMap((node) => {
+  if (!node.specifyAssignee) return [];
+  const sourceAssigneeId = sourceTasks.find((task) =>
+    task.nodeId === node.id && task.round === sourceRound)?.defaultAssigneeId;
+  return sourceAssigneeId && candidateIdsByNode[node.id]?.includes(sourceAssigneeId)
+    ? [[`reviewer-${node.id}`, sourceAssigneeId]]
+    : [];
+}));

@@ -26,6 +26,7 @@ export function ProcessStartPage() {
     ?? (launchConfig?.definition.id === resolvedDefinitionId ? launchConfig.definition : undefined);
   const personaId = usePrototypeStore((state) => state.personaId);
   const instances = usePrototypeStore((state) => state.instances);
+  const tasks = usePrototypeStore((state) => state.tasks);
   const effectiveVersion = launchConfig?.definition.id === resolvedDefinitionId
     ? launchConfig.version
     : getPublishedVersion(definition);
@@ -77,6 +78,7 @@ export function ProcessStartPage() {
     version={effectiveVersion}
     copySource={canCopySource ? copyCandidate : undefined}
     copySourceVersion={canCopySource ? copySourceVersion : undefined}
+    copySourceTasks={canCopySource ? tasks.filter((task) => task.instanceId === copyCandidate?.id) : undefined}
     assigneeCandidatesByNode={launchConfig?.assigneeCandidatesByNode}
     firstAssigneeCandidates={launchConfig?.firstAssigneeCandidates}
   />;

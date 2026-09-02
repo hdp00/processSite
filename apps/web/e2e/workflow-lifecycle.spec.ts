@@ -87,6 +87,10 @@ test("固定审批从发布版本发起、提交授权字段审核并打印实�
   const reviewRow = page.locator(".print-review-table tbody tr").first();
   await expect(reviewRow.locator("td").nth(3)).toHaveText(workflow.primaryUser.name);
   await expect(reviewRow.locator("td").nth(3)).not.toHaveText("组内共享");
+
+  await gotoApp(page, `launch/${workflow.definitionId}?copyFrom=${instance.id}`);
+  await expect(page.locator(".start-reviewer-item .ant-select"))
+    .toContainText(workflow.primaryUser.name);
 });
 
 test("自由协作可以只变更受理人且时间线立即更新", async ({ page }) => {
@@ -181,6 +185,60 @@ test("受理权限组普通成员无需当前受理或历史参与即可回复�
   await expect(page.getByText(workflow.secondaryUser.name, { exact: true }).first()).toBeVisible();
 });
 
+test("自由协作编辑回复后按编辑时间重排且不显示独立编辑事件", async ({ page }) => {
+  await loginAs(page);
+  const workflow = await createPublishedWorkflow(page, "free");
+  const instance = await launchWorkflow(page, workflow, "自由协作回复编辑链路", "free");
+
+  await gotoApp(page, `processes/${instance.id}`);
+  await page.locator(".free-compose .ProseMirror").fill("稍后需要编辑的回复");
+  const replyResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    response.url().endsWith(`/api/flowpilot/v1/process-instances/${instance.id}/free-collaboration/replies`),
+  );
+  await page.locator(".free-compose-actions button.ant-btn-primary")
+    .filter({ hasText: "发表回复" })
+    .click();
+  expect((await replyResponsePromise).ok()).toBe(true);
+
+  await selectAntOption(
+    page,
+    page.locator(".free-compose-actions .ant-select"),
+    workflow.secondaryUser.name,
+  );
+  const transferResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    /\/api\/flowpilot\/v1\/process-instances\/[^/]+\/free-collaboration\/transfers$/.test(response.url()),
+  );
+  await page.locator(".free-compose-actions button.ant-btn-primary")
+    .filter({ hasText: "变更受理人" })
+    .click();
+  expect((await transferResponsePromise).ok()).toBe(true);
+
+  const replyCard = page.locator(".free-reply-card").filter({ hasText: "稍后需要编辑的回复" });
+  await replyCard.getByRole("button", { name: "编辑" }).click();
+  const editModal = page.locator(".ant-modal:visible").filter({ hasText: "编辑我的回复" });
+  await editModal.locator(".ProseMirror").fill("已经更新的回复内容");
+  const editResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "PATCH" &&
+    /\/api\/flowpilot\/v1\/process-instances\/[^/]+\/free-collaboration\/replies\/[^/]+$/.test(response.url()),
+  );
+  await editModal.getByRole("button", { name: "保存修改" }).click();
+  expect((await editResponsePromise).ok()).toBe(true);
+
+  await expect(page.getByText("更新了一条回复内容", { exact: true })).toHaveCount(0);
+  const timelineItems = page.locator(".free-timeline .ant-timeline-item");
+  await expect(timelineItems.last()).toContainText("已经更新的回复内容");
+  await expect(timelineItems.nth((await timelineItems.count()) - 2)).toContainText("变更受理人");
+
+  await page.getByRole("button", { name: "编辑初始表单" }).click();
+  const initialFormModal = page.locator(".ant-modal:visible").filter({ hasText: "编辑初始表单" });
+  const nativeFileInputs = initialFormModal.locator("input.rich-editor__file-input");
+  await expect(nativeFileInputs).toHaveCount(2);
+  await expect(nativeFileInputs.first()).toBeHidden();
+  await expect(nativeFileInputs.last()).toBeHidden();
+});
+
 test("固定审批驳回后修改并重新提交可进入新一轮完成", async ({ page }) => {
   await loginAs(page);
   const workflow = await createPublishedWorkflow(page, "approval");
@@ -266,4 +324,30 @@ test("初始表单和流程设计器再次进入保持已保存状态", async ({
   await expect(page.locator(".fd-save-status")).toContainText("版本已保存 ·");
   await expect(page.locator(".fd-save-status")).not.toContainText("有未保存修改");
   await expect(page.locator(".fd-property-panel")).not.toContainText("选项设置");
+});
+
+test("复制创建的流程定义在版本记录中显示来源版本", async ({ page }) => {
+  await loginAs(page);
+  const workflow = await createPublishedWorkflow(page, "approval");
+  const origin = new URL(page.url()).origin;
+  const copyResponse = await page.request.post(
+    `/api/flowpilot/v1/process-definitions/${workflow.definitionId}/copies`,
+    {
+      headers: {
+        Origin: origin,
+        "Idempotency-Key": `e2e-copy-definition-${Date.now()}`,
+      },
+      data: {
+        sourceVersionId: workflow.versionId,
+        name: `${workflow.name}-副本`,
+      },
+    },
+  );
+  expect(copyResponse.status()).toBe(201);
+  const copied = await copyResponse.json() as { definition: { id: string } };
+
+  await gotoApp(page, `admin/processes/${copied.definition.id}/versions`);
+  const versionRow = page.locator(".ant-table-tbody tr.ant-table-row").first();
+  await expect(versionRow.locator("td").nth(2)).toHaveText("V1");
+  await expect(versionRow.locator("td").nth(2)).not.toHaveText("首次创建");
 });

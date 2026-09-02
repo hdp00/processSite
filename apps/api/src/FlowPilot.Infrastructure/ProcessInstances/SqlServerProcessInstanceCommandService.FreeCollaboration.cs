@@ -466,17 +466,6 @@ public sealed partial class SqlServerProcessInstanceCommandService
             entry.EditedAt = now.UtcDateTime;
             entry.Revision = checked(entry.Revision + 1);
             instance.Value!.UpdatedAt = now.UtcDateTime;
-
-            _dbContext.FreeTimelineEntries.Add(new FreeTimelineEntryEntity
-            {
-                Id = Guid.NewGuid(),
-                InstanceId = instanceId,
-                EntryType = "reply-edited",
-                ActorUserId = actor.EffectiveUserId,
-                RelatedEntryId = entry.Id,
-                OccurredAt = now.UtcDateTime,
-                Revision = 1,
-            });
             AddFreeAudit(instanceId, "edit-reply", actor, traceId, now);
 
             var value = new EditFreeReplyCommandValue(

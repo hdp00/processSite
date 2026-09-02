@@ -291,7 +291,13 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     description: "离开后，当前回复、表单修改或操作理由将丢失。",
   });
 
-  const timeline = useMemo(() => instance?.freeTimeline ?? [], [instance?.freeTimeline]);
+  const timeline = useMemo(() => [...(instance?.freeTimeline ?? [])]
+    .filter((entry) => entry.type !== "reply-edited")
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.editedAt ?? left.time);
+      const rightTime = Date.parse(right.editedAt ?? right.time);
+      return leftTime - rightTime || left.id.localeCompare(right.id);
+    }), [instance?.freeTimeline]);
 
   const refreshResource = async (instanceId: string) => {
     const resource = await flowPilotApi.instances.getResource(instanceId);
@@ -543,9 +549,7 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     const changedFieldNames = entry.fieldChanges?.map((change) => change.field).join("、");
     const detail = entry.type === "created"
       ? <>创建事项，首位受理人 <strong>{entry.assignee}</strong></>
-      : entry.type === "reply-edited"
-        ? <>更新了一条回复内容</>
-        : entry.type === "assigned"
+      : entry.type === "assigned"
           ? <>受理人变更为 <strong>{entry.assignee}</strong></>
           : entry.type === "form-edited"
             ? <>修改了{changedFieldNames || "初始表单"}</>

@@ -186,7 +186,17 @@ export async function createPublishedWorkflow(
       queryable: false,
       exportVisible: true,
       inputStage: "reviewer",
-    }] : []),
+    }] : [{
+      id: "details",
+      type: "rich-text",
+      label: "详细说明",
+      required: false,
+      listVisible: false,
+      taskVisible: true,
+      queryable: false,
+      exportVisible: true,
+      inputStage: "initiator",
+    }]),
   ];
   const saveFormResponse = await page.request.put(
     `/api/flowpilot/v1/process-definitions/${created.definition.id}/versions/${created.version.id}/form-designer`,

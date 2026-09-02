@@ -191,8 +191,8 @@ export function RichTextEditor({
             }} /></Tooltip>
             <Tooltip title="上传图片"><Button aria-label="上传图片" type="text" size="small" loading={uploadingMedia} icon={<PictureOutlined />} onClick={() => selectMedia("image")} /></Tooltip>
             <Tooltip title="上传视频"><Button aria-label="上传视频" type="text" size="small" loading={uploadingMedia} icon={<VideoCameraOutlined />} onClick={() => selectMedia("video")} /></Tooltip>
-            <input ref={imageInputRef} type="file" accept="image/*" hidden onChange={(event) => handleMediaSelection("image", event.currentTarget.files?.[0], event.currentTarget)} />
-            <input ref={videoInputRef} type="file" accept="video/*" hidden onChange={(event) => handleMediaSelection("video", event.currentTarget.files?.[0], event.currentTarget)} />
+            <input ref={imageInputRef} className="rich-editor__file-input" type="file" accept="image/*" hidden tabIndex={-1} aria-hidden="true" onChange={(event) => handleMediaSelection("image", event.currentTarget.files?.[0], event.currentTarget)} />
+            <input ref={videoInputRef} className="rich-editor__file-input" type="file" accept="video/*" hidden tabIndex={-1} aria-hidden="true" onChange={(event) => handleMediaSelection("video", event.currentTarget.files?.[0], event.currentTarget)} />
           </Space>
           <span className="rich-editor__hint">Tiptap · 支持文字、图片、视频和链接</span>
         </div>

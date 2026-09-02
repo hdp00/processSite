@@ -154,6 +154,8 @@ public sealed class FlowPilotDbContext(DbContextOptions<FlowPilotDbContext> opti
         version.Property(item => item.DefinitionId).HasColumnName("definition_id");
         version.Property(item => item.VersionNumber).HasColumnName("version_number");
         version.Property(item => item.VersionLabel).HasColumnName("version_label");
+        version.Property(item => item.SourceVersionId).HasColumnName("source_version_id");
+        version.Property(item => item.SourceVersionLabel).HasColumnName("source_version_label");
         version.Property(item => item.BasicJson).HasColumnName("basic_json");
         version.Property(item => item.SnapshotJson).HasColumnName("snapshot_json");
         version.Property(item => item.ValidationStatus).HasColumnName("validation_status");

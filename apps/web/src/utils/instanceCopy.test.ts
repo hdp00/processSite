@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { StoredDesignerField } from "./designerStorage";
 import { PROCESS_TITLE_FIELD_ID } from "./designerStorage";
-import { buildCopiedInstanceInitialValues } from "./instanceCopy";
+import { buildCopiedAssigneeInitialValues, buildCopiedInstanceInitialValues } from "./instanceCopy";
 import { createDesignerChoiceOption, displayDesignerChoiceValue, updateDesignerChoiceOption } from "./designerOptions";
 
 const fields: StoredDesignerField[] = [
@@ -72,5 +72,29 @@ describe("buildCopiedInstanceInitialValues", () => {
 
     expect(copied.scope).toEqual([optionA.id]);
     expect(displayDesignerChoiceValue(targetOptions, copied.scope)).toBe("A1");
+  });
+});
+
+describe("buildCopiedAssigneeInitialValues", () => {
+  it("copies only assignees who remain valid for the corresponding target node", () => {
+    const copied = buildCopiedAssigneeInitialValues(
+      [
+        { id: "review-a", specifyAssignee: true },
+        { id: "review-b", specifyAssignee: true },
+        { id: "shared", specifyAssignee: false },
+      ],
+      [
+        { nodeId: "review-a", round: 1, defaultAssigneeId: "old-a" },
+        { nodeId: "review-a", round: 2, defaultAssigneeId: "user-a" },
+        { nodeId: "review-b", round: 2, defaultAssigneeId: "removed-user" },
+      ],
+      2,
+      {
+        "review-a": ["user-a", "user-b"],
+        "review-b": ["user-b"],
+      },
+    );
+
+    expect(copied).toEqual({ "reviewer-review-a": "user-a" });
   });
 });

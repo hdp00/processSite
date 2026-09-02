@@ -37,7 +37,7 @@ import { ExcelPdfPreviewModal } from "../components/ExcelPdfPreviewModal";
 import { RichTextEditor } from "../components/RichTextEditor";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { AttachmentRecord, DirectoryUser } from "../api/contracts";
-import type { ProcessInstance } from "../data/types";
+import type { ProcessInstance, WorkflowTask } from "../data/types";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { cacheProcessRuntime } from "../api/entityCache";
 import { effectiveGroupMemberIds, resolveWorkflowGroupLabel, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
@@ -54,7 +54,7 @@ import {
   type StoredDesignerTableColumn,
 } from "../utils/designerStorage";
 import { designerChoiceOptionsToAntd } from "../utils/designerOptions";
-import { buildCopiedInstanceInitialValues } from "../utils/instanceCopy";
+import { buildCopiedAssigneeInitialValues, buildCopiedInstanceInitialValues } from "../utils/instanceCopy";
 import { convertXlsxToPdf, type ExcelPdfConversionResult } from "../utils/excelToPdf";
 
 type DynamicRow = Record<string, string | string[] | undefined> & { key: string };
@@ -65,6 +65,7 @@ interface ConfiguredProcessStartPageProps {
   version: ProcessVersion;
   copySource?: ProcessInstance;
   copySourceVersion?: ProcessVersion;
+  copySourceTasks?: WorkflowTask[];
   assigneeCandidatesByNode?: Record<string, DirectoryUser[]>;
   firstAssigneeCandidates?: DirectoryUser[];
 }
@@ -244,6 +245,7 @@ export function ConfiguredProcessStartPage({
   version,
   copySource,
   copySourceVersion,
+  copySourceTasks,
   assigneeCandidatesByNode,
   firstAssigneeCandidates,
 }: ConfiguredProcessStartPageProps) {
@@ -303,12 +305,29 @@ export function ConfiguredProcessStartPage({
   });
   const initialValues = useMemo(() => {
     if (copySource && copySourceVersion) {
-      return buildCopiedInstanceInitialValues(
+      const copiedFields = buildCopiedInstanceInitialValues(
         initiatorFields,
         copySourceVersion.snapshot.form.fields,
         copySource.formValues ?? {},
         copySource.title,
       );
+      const candidateIdsByNode = Object.fromEntries(approvalNodes.map((node) => {
+        const groupIds = node.data?.permissionGroup ? [node.data.permissionGroup] : [];
+        const memberIds = new Set(groupIds.flatMap(effectiveGroupMemberIds));
+        const candidates = assigneeCandidatesByNode?.[node.id]
+          ?? identityUsers.filter((user) => memberIds.has(user.id));
+        return [node.id, candidates.map((user) => user.id)];
+      }));
+      const copiedAssignees = buildCopiedAssigneeInitialValues(
+        approvalNodes.map((node) => ({
+          id: node.id,
+          specifyAssignee: node.data?.specifyAssignee,
+        })),
+        copySourceTasks ?? [],
+        copySource.round,
+        candidateIdsByNode,
+      );
+      return { ...copiedFields, ...copiedAssignees };
     }
     return Object.fromEntries(initiatorFields.map((field) => [
       field.id,
@@ -318,7 +337,7 @@ export function ConfiguredProcessStartPage({
           ? [createRow(field.columns ?? [])]
           : normalizeDesignerFieldValue(field, field.defaultValue ?? (field.type === "checkbox" ? [] : "")),
     ]));
-  }, [copySource, copySourceVersion, initiatorFields]);
+  }, [approvalNodes, assigneeCandidatesByNode, copySource, copySourceTasks, copySourceVersion, identityUsers, initiatorFields, workflowGroups]);
   const watchedValues = Form.useWatch([], form) as DynamicFormValues | undefined;
   const visibleInitiatorFields = initiatorFields.filter((field) =>
     isDesignerFieldVisible(field, watchedValues ?? initialValues),
@@ -508,7 +527,7 @@ export function ConfiguredProcessStartPage({
         type="info"
         showIcon
         title={`正在复制新建：${copySource.code}`}
-        description="已带入来源流程中与当前发布版本兼容的最终表单内容，附件、审批记录和人员选择未复制。当前尚未创建新流程，也未占用实例编号；请修改并确认无误后点击提交。"
+        description="已带入与当前发布版本兼容的最终表单内容和仍具备节点权限的原审核人员；附件和审批记录不复制。当前尚未创建新流程，也未占用实例编号；请修改并确认无误后点击提交。"
       /> : null}
 
       <Card className="start-progress-card">

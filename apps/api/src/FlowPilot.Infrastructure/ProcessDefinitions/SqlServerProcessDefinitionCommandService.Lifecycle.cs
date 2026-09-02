@@ -257,7 +257,9 @@ public sealed partial class SqlServerProcessDefinitionCommandService
                 SerializeValidation(validation),
                 actor.EffectiveUserId,
                 now,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                sourceVersion.Id,
+                sourceVersion.VersionLabel).ConfigureAwait(false);
             await ReplaceReferencesAsync(newVersionId, basic, snapshot, cancellationToken)
                 .ConfigureAwait(false);
             await ReplaceFieldCatalogAsync(newVersionId, snapshot, cancellationToken)
@@ -282,7 +284,8 @@ public sealed partial class SqlServerProcessDefinitionCommandService
                 actor,
                 now,
                 basicJson,
-                snapshotJson);
+                snapshotJson,
+                new ProcessVersionSourceDto(sourceVersion.Id, sourceVersion.VersionLabel));
             await CompleteIdempotencySuccessAsync(
                 reservation,
                 201,
@@ -381,6 +384,8 @@ public sealed partial class SqlServerProcessDefinitionCommandService
                 DefinitionId = definitionId,
                 VersionNumber = versionNumber,
                 VersionLabel = $"V{versionNumber}",
+                SourceVersionId = source.Id,
+                SourceVersionLabel = source.VersionLabel,
                 BasicJson = source.BasicJson,
                 SnapshotJson = source.SnapshotJson,
                 ValidationStatus = validation.Status,
@@ -585,6 +590,9 @@ public sealed partial class SqlServerProcessDefinitionCommandService
             CreatedBy = user,
             UpdatedAt = new DateTimeOffset(version.UpdatedAt, TimeSpan.Zero),
             UpdatedBy = user,
+            BasedOn = version.SourceVersionId.HasValue && version.SourceVersionLabel is not null
+                ? new ProcessVersionSourceDto(version.SourceVersionId.Value, version.SourceVersionLabel)
+                : null,
             Basic = basic,
             Snapshot = snapshot.DeepClone().AsObject(),
         };

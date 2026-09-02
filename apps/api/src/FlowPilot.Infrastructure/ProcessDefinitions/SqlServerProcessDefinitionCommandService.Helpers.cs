@@ -1137,7 +1137,8 @@ public sealed partial class SqlServerProcessDefinitionCommandService
         ProcessDefinitionMutationActor actor,
         DateTimeOffset now,
         string basicJson,
-        string snapshotJson)
+        string snapshotJson,
+        ProcessVersionSourceDto? basedOn = null)
     {
         var user = new ProcessDefinitionUserRefDto(actor.EffectiveUserId, actor.EffectiveUserName);
         var responseBasic = ParseObject(basicJson, "basic_json");
@@ -1158,6 +1159,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService
             CreatedBy = user,
             UpdatedAt = now,
             UpdatedBy = user,
+            BasedOn = basedOn,
             Basic = responseBasic,
             Snapshot = snapshot.DeepClone().AsObject(),
         };

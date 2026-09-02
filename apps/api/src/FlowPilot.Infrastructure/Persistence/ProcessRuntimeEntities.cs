@@ -25,6 +25,8 @@ internal sealed class RuntimeWorkflowVersion
     public Guid DefinitionId { get; set; }
     public int VersionNumber { get; set; }
     public string VersionLabel { get; set; } = string.Empty;
+    public Guid? SourceVersionId { get; set; }
+    public string? SourceVersionLabel { get; set; }
     public string BasicJson { get; set; } = string.Empty;
     public string SnapshotJson { get; set; } = string.Empty;
     public string? ValidationStatus { get; set; }
