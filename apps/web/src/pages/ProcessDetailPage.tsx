@@ -353,7 +353,7 @@ export function ProcessDetailPage() {
   const historyItems = [
     {
       color: "blue",
-      content: <HistoryItem title="流程发起" person={`${instance.initiator} · ${instance.department}`} time={instance.createdAt} />,
+      content: <HistoryItem title="流程发起" person={instance.initiator} time={instance.createdAt} />,
     },
     ...Array.from({ length: instance.round }, (_, index) => index + 1).flatMap((round) => {
       const resubmission = instance.resubmissions?.find((record) => record.round === round);
@@ -369,10 +369,12 @@ export function ProcessDetailPage() {
                 color: task.action === "通过" || task.action === "确认" ? "green" : "red",
                 content: <HistoryItem
                   title={prefixWithRound(task.round, `${task.nodeName} · ${task.action ? `已${task.action}` : "已完成"}`)}
-                  person={`实际处理人 ${task.completedByName ?? "未知"}${task.defaultAssigneeId && task.completedById && task.defaultAssigneeId !== task.completedById ? "（代办）" : ""}`}
+                  person={task.defaultAssigneeId && task.completedById && task.defaultAssigneeId !== task.completedById
+                    ? `实际处理人 ${task.completedByName ?? "未知"}（代办）`
+                    : task.completedByName ?? "未知"}
                   time={task.completedAt ?? ""}
                   detail={[
-                    task.comment ?? (task.action === "确认" ? "未填写确认说明" : "未填写意见"),
+                    task.comment?.trim() ?? "",
                     task.submittedFieldChanges?.length ? `修改字段：${[...new Set(task.submittedFieldChanges.map((change) => change.label))].join("、")}` : "",
                   ].filter(Boolean).join("；")}
                 />,
@@ -405,7 +407,6 @@ export function ProcessDetailPage() {
             title={formatRoundStartLabel(round)}
             person={`${resubmission.submittedByName} · 重新提交`}
             time={resubmission.submittedAt}
-            detail={resubmission.modifiedFields.length ? `重新生成全部审批待办；修改字段：${resubmission.modifiedFields.map((field) => field.label).join("、")}` : "重新生成全部审批待办"}
           />,
         }] : []),
         ...roundEvents,

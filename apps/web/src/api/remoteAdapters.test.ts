@@ -108,6 +108,7 @@ describe("formal REST response adapters", () => {
             { id: "remote-text", type: "text", label: "文本", options: [{ id: "invalid", label: "不应保留" }] },
             { id: "remote-file", type: "attachment", label: "附件", options: [{ id: "invalid-file", label: "不应保留" }] },
             { id: "remote-select", type: "select", label: "下拉", options: [{ id: "valid", label: "应保留" }] },
+            { id: "remote-checkbox", type: "checkbox", label: "", options: [{ id: "confirmed", label: "我已确认" }] },
           ],
         },
       },
@@ -127,6 +128,10 @@ describe("formal REST response adapters", () => {
     expect(version.snapshot.form.fields.find((field) => field.id === "remote-text")?.options).toBeUndefined();
     expect(version.snapshot.form.fields.find((field) => field.id === "remote-file")?.options).toBeUndefined();
     expect(version.snapshot.form.fields.find((field) => field.id === "remote-select")?.options).toHaveLength(1);
+    expect(version.snapshot.form.fields.find((field) => field.id === "remote-checkbox")).toMatchObject({
+      label: "",
+      options: [{ id: "confirmed", label: "我已确认" }],
+    });
   });
 
   it("maps formal instance and task enums without leaking transport DTOs into pages", () => {

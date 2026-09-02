@@ -67,14 +67,35 @@ public sealed partial class SqlServerProcessInstanceCommandService
                 .AnyAsync(item => item.InstanceId == instanceId
                     && item.UserId == actor.EffectiveUserId, cancellationToken)
                 .ConfigureAwait(false);
-            if (!actor.IsSuperAdmin && !isParticipant)
+            var canReply = actor.IsSuperAdmin || isParticipant;
+            if (!canReply)
+            {
+                var version = await _dbContext.RuntimeWorkflowVersions
+                    .SingleAsync(item => item.Id == instance.Value!.VersionId, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!TryParseVersion(version, out var basic, out _))
+                {
+                    await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                    return FreeReplyFailed(Failure(
+                        ProcessInstanceCommandError.Conflict,
+                        "LOCKED_VERSION_INVALID",
+                        "流程版本不可用",
+                        "实例锁定的自由协作版本配置无法读取。"));
+                }
+
+                var access = await LoadRuntimeAccessAsync(version.Id, basic!, cancellationToken)
+                    .ConfigureAwait(false);
+                canReply = access.CanTransferFree(actor.EffectiveUserId);
+            }
+
+            if (!canReply)
             {
                 await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
                 return FreeReplyFailed(Failure(
                     ProcessInstanceCommandError.Forbidden,
                     "FREE_REPLY_FORBIDDEN",
                     "不能回复该事项",
-                    "只有发起人、当前受理人或历史参与人可以回复。"));
+                    "只有参与人或实例锁定版本的有效发起、受理流程权限组成员可以回复。"));
             }
 
             var attachmentPreparation = await PrepareFreeReplyAttachmentsAsync(

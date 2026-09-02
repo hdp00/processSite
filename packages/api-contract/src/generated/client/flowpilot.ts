@@ -938,7 +938,7 @@ export interface DesignerFieldDto {
      */
   id: string;
   type: DesignerFieldType;
-  /** @minLength 1 */
+  /** 可为空；选择控件可直接使用选项文字表达含义 */
   label: string;
   description?: string;
   placeholder?: string;

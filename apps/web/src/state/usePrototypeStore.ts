@@ -58,3 +58,12 @@ export const canUserTransferFreeFlow = (instance: ProcessInstance, userId: strin
   && instance.status === "进行中"
   && userId === usePrototypeStore.getState().personaId
   && Boolean(instance.canTransferFree);
+
+export const canUserReplyFreeFlow = (
+  instance: ProcessInstance,
+  userId: string,
+  isParticipant: boolean,
+) => instance.workflowType === "free"
+  && instance.status === "进行中"
+  && userId === usePrototypeStore.getState().personaId
+  && (isParticipant || Boolean(instance.canTransferFree));

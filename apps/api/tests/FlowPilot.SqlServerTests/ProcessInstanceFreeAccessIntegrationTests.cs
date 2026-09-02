@@ -203,6 +203,70 @@ public sealed class ProcessInstanceFreeAccessIntegrationTests
         Assert.DoesNotContain(timeline, item => item.EntryType == "transferred");
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PermissionGroupMemberCanReplyWithoutBeingAssigneeOrParticipant(bool useStarterMember)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var scope = await SqlServerRuntimeTestScope.CreateIsolatedAsync(cancellationToken);
+        var seed = await SeedFreeFlowAsync(scope, cancellationToken);
+        var service = new SqlServerProcessInstanceCommandService(
+            scope.Context,
+            TimeProvider.System,
+            new EmailOutboxWriter(scope.Context));
+        var actorId = useStarterMember ? seed.StarterMemberId : seed.GroupMemberId;
+
+        var result = await service.AddFreeReplyAsync(
+            seed.InstanceId,
+            new CreateFreeReplyRequest { Content = "<p>权限组成员直接参与协作</p>" },
+            Actor(actorId, useStarterMember ? "发起权限组成员" : "受理权限组成员"),
+            expectedRevision: 1,
+            idempotencyKey: Guid.NewGuid().ToString(),
+            traceId: Guid.NewGuid().ToString("N"),
+            cancellationToken);
+
+        Assert.True(result.Succeeded, result.Failure?.Detail);
+        scope.Context.ChangeTracker.Clear();
+        var reply = await scope.Context.FreeTimelineEntries.SingleAsync(
+            item => item.InstanceId == seed.InstanceId && item.EntryType == "reply",
+            cancellationToken);
+        Assert.Equal(actorId, reply.ActorUserId);
+        Assert.True(await scope.Context.FreeParticipants.AnyAsync(
+            item => item.InstanceId == seed.InstanceId && item.UserId == actorId,
+            cancellationToken));
+        var instance = await scope.Context.WorkflowInstances.SingleAsync(
+            item => item.Id == seed.InstanceId,
+            cancellationToken);
+        Assert.Equal(seed.CurrentAssigneeId, instance.CurrentAssigneeId);
+    }
+
+    [Fact]
+    public async Task ReplyRejectsUserWithoutPermissionOrParticipation()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var scope = await SqlServerRuntimeTestScope.CreateIsolatedAsync(cancellationToken);
+        var seed = await SeedFreeFlowAsync(scope, cancellationToken);
+        var service = new SqlServerProcessInstanceCommandService(
+            scope.Context,
+            TimeProvider.System,
+            new EmailOutboxWriter(scope.Context));
+
+        var result = await service.AddFreeReplyAsync(
+            seed.InstanceId,
+            new CreateFreeReplyRequest { Content = "<p>无权回复</p>" },
+            Actor(seed.OutsiderId, "无关用户"),
+            expectedRevision: 1,
+            idempotencyKey: Guid.NewGuid().ToString(),
+            traceId: Guid.NewGuid().ToString("N"),
+            cancellationToken);
+
+        Assert.Equal("FREE_REPLY_FORBIDDEN", result.Failure?.Code);
+        Assert.Empty(await scope.Context.FreeTimelineEntries
+            .Where(item => item.InstanceId == seed.InstanceId)
+            .ToArrayAsync(cancellationToken));
+    }
+
     [Fact]
     public async Task InitiatorCanUpdateFreeInitialFormWithoutChangingCurrentTask()
     {

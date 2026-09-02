@@ -14,10 +14,8 @@ import {
   UserOutlined,
 } from "@ant-design/icons";
 import {
-  Alert,
   App,
   Avatar,
-  Button,
   Divider,
   Dropdown,
   Layout,
@@ -313,16 +311,6 @@ export function AppShell() {
         </Header>
 
         <Content className={`app-content${isDesignerRoute ? " is-designer-content" : ""}`}>
-          {impersonation && (
-            <Alert
-              className="impersonation-alert"
-              type="warning"
-              showIcon
-              title={`正在以 ${persona.name} 的身份操作`}
-              description="权限与数据范围按模拟用户计算；审计记录会同时保留真实操作者和当前模拟用户。"
-              action={<Button size="small" loading={switchingPersona} onClick={() => void selectPersona(operatorUserId)}>退出模拟</Button>}
-            />
-          )}
           <Outlet />
         </Content>
       </Layout>

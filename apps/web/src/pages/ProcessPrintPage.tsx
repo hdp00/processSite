@@ -180,7 +180,7 @@ export function ProcessPrintPage() {
                   <td>{task.round > 1 ? <>{formatRoundLabel(task.round)}<br /></> : null}{task.nodeName}</td>
                   <td>{node?.data?.handlingMode === "confirmation" ? "确认" : "审批"}</td>
                   <td>{groupName}</td>
-                  <td>{findIdentityUser(task?.defaultAssigneeId ?? "")?.name ?? "组内共享"}</td>
+                  <td>{task.defaultAssigneeName ?? findIdentityUser(task.defaultAssigneeId ?? "")?.name ?? "组内共享"}</td>
                   <td>{task.completedAt ? <>{task.completedByName ?? "—"}{isSubstitute ? "（代办）" : ""}</> : "—"}</td>
                   <td><span className={`print-review-status ${reviewStatusClass[status]}`}>{status}</span></td>
                   <td>{formatDisplayDateTime(task.completedAt ?? task.conditionEvaluatedAt)}</td>

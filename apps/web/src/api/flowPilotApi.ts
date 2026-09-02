@@ -689,8 +689,13 @@ export const flowPilotApi = {
     versions: (definitionId: string) => fullVersionsRequest(definitionId),
     version: (definitionId: string, versionId: string) => apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}`).then(normalizeProcessVersion),
     versionResource: (definitionId: string, versionId: string) => mappedResource(apiResource<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}`), normalizeProcessVersion),
-    createVersion: (definitionId: string, sourceVersionId: string) =>
-      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions`, { method: "POST", body: { sourceVersionId }, ...mutation() }).then(normalizeProcessVersion),
+    createVersion: (definitionId: string, sourceVersionId: string, ifMatch: string) =>
+      apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions`, {
+        method: "POST",
+        body: { sourceVersionId },
+        ifMatch,
+        ...mutation(),
+      }).then(normalizeProcessVersion),
     saveBasic: (definitionId: string, versionId: string, basic: ProcessBasicConfig, ifMatch?: string) =>
       apiRequest<unknown>(`/process-definitions/${encodeURIComponent(definitionId)}/versions/${encodeURIComponent(versionId)}/basic`, { method: "PUT", body: remoteBasicInput(basic), ifMatch }).then(normalizeSavedVersion),
     saveBasicResource: (definitionId: string, versionId: string, basic: ProcessBasicConfig, ifMatch?: string) =>

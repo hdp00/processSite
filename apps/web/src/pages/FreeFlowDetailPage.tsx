@@ -41,7 +41,12 @@ import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import type { AttachmentRecord } from "../api/contracts";
 import type { FreeFlowEntry, ProcessInstance } from "../data/types";
-import { canUserTransferFreeFlow, isSessionSuperAdmin, usePrototypeStore } from "../state/usePrototypeStore";
+import {
+  canUserReplyFreeFlow,
+  canUserTransferFreeFlow,
+  isSessionSuperAdmin,
+  usePrototypeStore,
+} from "../state/usePrototypeStore";
 import { effectiveGroupMemberIds, findIdentityUser, isUserInWorkflowGroup, useIdentityStore } from "../state/useIdentityStore";
 import { useProcessDefinitionStore } from "../state/useProcessDefinitionStore";
 import { canUserCloseInstance } from "../state/workflowAccess";
@@ -248,7 +253,14 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
     isSuperAdmin || lockedVersion?.basic.starterGroups.some((groupId) => isUserInWorkflowGroup(personaId, groupId)),
   );
   const canCloseByGroup = Boolean(instance && canUserCloseInstance(personaId, instance));
-  const canReply = Boolean(isOpen && (participants.includes(persona?.name ?? "") || isSuperAdmin));
+  const isParticipant = Boolean(
+    instance?.participantIds?.includes(personaId)
+    || participants.includes(persona?.name ?? ""),
+  );
+  const canTransfer = Boolean(instance && canUserTransferFreeFlow(instance, personaId));
+  const canReply = Boolean(
+    instance && canUserReplyFreeFlow(instance, personaId, isParticipant || isSuperAdmin),
+  );
   const canClose = Boolean(isOpen && canCloseByGroup);
   const canReopen = Boolean(
     instance?.status === "已关闭" &&
@@ -257,7 +269,6 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
   const canEditInitial = Boolean(
     isOpen && instance && persona && canEditProcessInstanceSubmission(instance, persona, isSuperAdmin),
   );
-  const canTransfer = Boolean(instance && canUserTransferFreeFlow(instance, personaId));
   const initialEntry = instance?.freeTimeline?.find((entry) => entry.type === "created");
   const hasReplyDraft = hasRichContent(replyContent);
   const collaborationActionLabel = nextAssignee

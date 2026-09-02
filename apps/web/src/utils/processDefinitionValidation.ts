@@ -185,9 +185,9 @@ export const validateApprovalFlow = (
   const editableLabelByValue = new Map<string, string>();
   fields.forEach((field) => {
     if (field.type === "table") {
-      if (normalizeDesignerInputPermission(field) === "reviewer") editableLabelByValue.set(field.id, `${field.label}（整表）`);
-      if (normalizeDesignerInputPermission(field) === "both") field.columns?.filter((column) => column.reviewEditable).forEach((column) => editableLabelByValue.set(`${field.id}.${column.id}`, `${field.label} / ${column.label}`));
-    } else if (normalizeDesignerInputPermission(field) !== "initiator") editableLabelByValue.set(field.id, field.label);
+      if (normalizeDesignerInputPermission(field) === "reviewer") editableLabelByValue.set(field.id, `${field.label || field.id}（整表）`);
+      if (normalizeDesignerInputPermission(field) === "both") field.columns?.filter((column) => column.reviewEditable).forEach((column) => editableLabelByValue.set(`${field.id}.${column.id}`, `${field.label || field.id} / ${column.label}`));
+    } else if (normalizeDesignerInputPermission(field) !== "initiator") editableLabelByValue.set(field.id, field.label || field.id);
   });
   const splitNodes = nodes.filter((node) => (adjacency.get(node.id)?.length ?? 0) >= 2);
   const joinNodes = nodes.filter((node) => (reverseAdjacency.get(node.id)?.length ?? 0) >= 2);

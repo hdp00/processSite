@@ -1225,7 +1225,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
                 fieldId,
                 tableFieldId: null,
                 columnId: null,
-                StringValue(field, "label")!,
+                FieldCatalogName(fieldId, StringValue(field, "label")),
                 fieldType,
                 BoolValue(field, "queryable"),
                 BoolValue(field, "listVisible") || BoolValue(field, "taskVisible"),
@@ -1431,7 +1431,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
             var path = $"form.fields[{index}]";
             var id = RequiredString(field, "id", path, 100, issues);
             var type = RequiredString(field, "type", path, 50, issues);
-            var label = RequiredString(field, "label", path, 200, issues);
+            var label = OptionalTrimmedString(field, "label", path, 200, issues);
             if (id is not null && !fieldIds.Add(id))
             {
                 issues.Add(InputIssue($"{path}.id", "DUPLICATE_ID", "表单字段标识不能重复。"));
@@ -1992,6 +1992,26 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
 
         return value;
     }
+
+    private static string? OptionalTrimmedString(
+        JsonObject source,
+        string name,
+        string path,
+        int maxLength,
+        List<ProcessDefinitionInputIssueDto> issues)
+    {
+        var value = StringValue(source, name)?.Trim() ?? string.Empty;
+        if (value.Length > maxLength)
+        {
+            issues.Add(InputIssue($"{path}.{name}", "INVALID_LENGTH", $"{name} 不能超过 {maxLength} 个字符。"));
+            return null;
+        }
+
+        return value;
+    }
+
+    private static string FieldCatalogName(string fieldId, string? label) =>
+        string.IsNullOrWhiteSpace(label) ? fieldId : label;
 
     private static void CopyOptionalString(
         JsonObject source,

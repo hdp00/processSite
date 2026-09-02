@@ -873,7 +873,6 @@ export type NodeConditionDto = zod.input<typeof NodeConditionDto>;
 export type NodeConditionDtoOutput = zod.output<typeof NodeConditionDto>;
 
 
-
 export const designerFieldDtoTaskWidthMin = 60;
 
 
@@ -881,7 +880,7 @@ export const designerFieldDtoTaskWidthMin = 60;
 export const DesignerFieldDto = zod.strictObject({
   "id": zod.string().min(1).describe('版本家族内稳定字段标识；title 为系统固定标题字段'),
   "type": DesignerFieldType,
-  "label": zod.string().min(1),
+  "label": zod.string().describe('可为空；选择控件可直接使用选项文字表达含义'),
   "description": zod.string().optional(),
   "placeholder": zod.string().optional(),
   "required": zod.boolean(),

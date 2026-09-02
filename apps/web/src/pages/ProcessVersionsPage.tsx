@@ -14,6 +14,7 @@ import { usePrototypeStore } from "../state/usePrototypeStore";
 import { buildFlowLevels, conditionOperatorLabel, normalizeDesignerInputPermission, rejectionHandlingLabel, type StoredDesignerField, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import { displayDesignerChoiceValue, flattenDesignerChoiceOptions } from "../utils/designerOptions";
 import { formatDisplayDateTime } from "../utils/domainTime";
+import { createNextProcessVersion } from "../utils/processVersionActions";
 import "./process-admin-pages.css";
 
 const fieldTypeLabels: Record<string, string> = {
@@ -167,7 +168,7 @@ export function ProcessVersionsPage() {
   const edit = (version: ProcessVersion) => navigate(`/admin/processes/${definition.id}/basic?versionId=${version.id}`);
   const copy = async (version: ProcessVersion) => {
     try {
-      const created = await flowPilotApi.definitions.createVersion(definition.id, version.id);
+      const created = await createNextProcessVersion(definition.id, version.id);
       cacheProcessVersion(definition.id, created);
       message.success(`已从 ${version.version} 的完整快照创建 ${created.version}`);
       edit(created);

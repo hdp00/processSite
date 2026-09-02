@@ -4390,7 +4390,7 @@ components:
           $ref: "#/components/schemas/DesignerFieldType"
         label:
           type: string
-          minLength: 1
+          description: 可为空；选择控件可直接使用选项文字表达含义
         description:
           type: string
         placeholder:

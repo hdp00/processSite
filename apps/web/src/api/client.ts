@@ -41,6 +41,7 @@ const statusMessage = (status: number) => {
   if (status === 403) return "当前账号没有执行此操作的权限。";
   if (status === 404) return "请求的数据或功能不存在，请刷新页面后重试。";
   if (status === 409 || status === 412) return "数据已发生变化，请刷新后重试。";
+  if (status === 428) return "页面数据缺少最新版本信息，请刷新后重试。";
   if (status === 429) return "操作过于频繁，请稍后重试。";
   if (status >= 500) return "服务器处理请求时发生错误，请稍后重试。";
   if (status >= 400) return "请求未能完成，请检查输入后重试。";

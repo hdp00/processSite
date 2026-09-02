@@ -30,6 +30,43 @@ test("超级管理员治理页面均从后端完成加载", async ({ page }) => 
   }
 });
 
+test("治理列表响应格式错误后会结束加载并显示反馈", async ({ page }) => {
+  await loginAs(page);
+
+  await page.route("**/api/flowpilot/v1/users?**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ items: [] }),
+  }));
+  await gotoApp(page, "admin/users");
+  await expect(page.getByText("用户列表加载失败，请重试", { exact: true })).toBeVisible();
+  await expect(page.locator(".ant-table-wrapper .ant-spin-spinning")).toHaveCount(0);
+  await page.unroute("**/api/flowpilot/v1/users?**");
+
+  await page.route("**/api/flowpilot/v1/audit-events?**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ items: [] }),
+  }));
+  await gotoApp(page, "ops/audit-logs");
+  await expect(page.getByText("审计日志加载失败，请稍后重试", { exact: true })).toBeVisible();
+  await expect(page.locator(".ant-table-wrapper .ant-spin-spinning")).toHaveCount(0);
+});
+
+test("新增用户默认职务为员工且可选信息不阻止编辑", async ({ page }) => {
+  await loginAs(page);
+  await gotoApp(page, "admin/users");
+  await page.getByRole("button", { name: "新增用户" }).click();
+
+  const drawer = page.getByRole("dialog", { name: "新增用户" });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByText("员工", { exact: true })).toBeVisible();
+  await expect(drawer.getByRole("textbox", { name: /账号/ })).toBeEnabled();
+  await expect(drawer.getByRole("textbox", { name: /邮箱/ })).toHaveValue("");
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
+});
+
 test("富文本图片作为后端长期附件上传、读取且不能按暂存附件删除", async ({ page }) => {
   await loginAs(page);
   const origin = new URL(page.url()).origin;

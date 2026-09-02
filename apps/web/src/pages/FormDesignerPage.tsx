@@ -719,7 +719,7 @@ const SortableField = ({ field, selected, locked, onSelect, onPatch, onDelete }:
             <button
               type="button"
               className="fd-drag-handle"
-              aria-label={`拖动${field.label}`}
+              aria-label={`拖动${field.label || typeLabel[field.type]}`}
               {...attributes}
               {...listeners}
               onClick={(event) => event.stopPropagation()}
@@ -740,7 +740,7 @@ const SortableField = ({ field, selected, locked, onSelect, onPatch, onDelete }:
         ) : (
           <Popconfirm title="删除这个字段？" description="删除后可从左侧组件库重新添加。" onConfirm={onDelete}>
             <Button
-              aria-label={`删除${field.label}`}
+              aria-label={`删除${field.label || typeLabel[field.type]}`}
               danger
               icon={<DeleteOutlined />}
               size="small"
@@ -881,7 +881,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
     .filter((field) => ["text", "select", "cascader", "radio", "checkbox"].includes(field.type))
     .map((field) => ({
       value: field.id,
-      label: field.label,
+      label: field.label || field.id,
       type: field.type,
       choiceOptions: flattenDesignerChoiceOptions(field.options),
     }));
@@ -1056,13 +1056,6 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
   };
 
   const goNext = async () => {
-    const invalidField = fields.find((field) => !field.label.trim());
-    if (invalidField) {
-      setSelectedId(invalidField.id);
-      setPropertyMode("field");
-      messageApi.error("存在未命名字段，请补充后继续");
-      return;
-    }
     if (hasUnsavedChanges && !await saveVersion()) return;
     allowNextNavigation();
     navigate(definition?.type === "free"
@@ -1272,7 +1265,7 @@ const FormDesignerWorkspace = ({ definitionId, versionId }: { definitionId: stri
                       description="字段标识、文本框类型和必填规则由系统固定；字段名称、说明、提示、输入权限以及任务中心和流程清单的展示位置可在此配置。"
                     />
                   ) : null}
-                  <Form.Item label="字段名称" required>
+                  <Form.Item label="字段名称" extra="可不填写；选择控件可以直接使用选项文字表达含义。">
                     <Input value={selectedField.label} onChange={(event) => updateField({ label: event.target.value })} />
                   </Form.Item>
                   <Form.Item label="字段说明">

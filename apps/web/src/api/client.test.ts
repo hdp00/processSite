@@ -33,4 +33,25 @@ describe("统一 REST 客户端", () => {
 
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
   });
+
+  it("将反向代理 502 转换为用户可理解的后端未启动提示", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Bad Gateway", {
+      status: 502,
+      headers: { "Content-Type": "text/plain" },
+    })));
+
+    await expect(apiRequest("/auth/login", { method: "POST", body: {} }))
+      .rejects.toThrow("无法连接后端服务，请确认后端已启动，或稍后重试。");
+  });
+
+  it.each([
+    [401, "登录状态已失效，请重新登录。"],
+    [409, "数据已发生变化，请刷新后重试。"],
+    [412, "数据已发生变化，请刷新后重试。"],
+    [428, "页面数据缺少最新版本信息，请刷新后重试。"],
+  ])("将无 Problem Details 的 HTTP %i 转换为可操作提示", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status })));
+
+    await expect(apiRequest("/test")).rejects.toThrow(expected);
+  });
 });

@@ -1506,17 +1506,17 @@ export const FlowDesignerPage = () => {
     const fields = version?.snapshot.form.fields ?? [];
     return fields.flatMap((field) => field.type === "table"
       ? normalizeDesignerInputPermission(field) === "reviewer"
-        ? [{ value: field.id, label: `${field.label}（整表）` }]
+        ? [{ value: field.id, label: `${field.label || field.id}（整表）` }]
         : normalizeDesignerInputPermission(field) === "both"
-          ? (field.columns ?? []).filter((column) => column.reviewEditable).map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label} / ${column.label}` }))
+          ? (field.columns ?? []).filter((column) => column.reviewEditable).map((column) => ({ value: `${field.id}.${column.id}`, label: `${field.label || field.id} / ${column.label}` }))
           : []
-      : normalizeDesignerInputPermission(field) !== "initiator" ? [{ value: field.id, label: field.label }] : []);
+      : normalizeDesignerInputPermission(field) !== "initiator" ? [{ value: field.id, label: field.label || field.id }] : []);
   }, [version?.snapshot.form.fields]);
   const conditionFieldOptions = useMemo<ConditionFieldOption[]>(() => (version?.snapshot.form.fields ?? [])
-    .filter((field: StoredDesignerField) => Boolean(field.id && field.label) && !["attachment", "table", "richtext"].includes(field.type))
+    .filter((field: StoredDesignerField) => Boolean(field.id) && !["attachment", "table", "richtext"].includes(field.type))
     .map((field) => ({
       value: field.id,
-      label: field.label,
+      label: field.label || field.id,
       type: field.type,
       choiceOptions: flattenDesignerChoiceOptions(field.options),
       inputStage: normalizeDesignerInputPermission(field),

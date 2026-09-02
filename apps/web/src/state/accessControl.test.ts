@@ -16,7 +16,7 @@ import {
   notifyRolePermissionsChanged,
 } from "./rolePermissions";
 import { useProcessDefinitionStore } from "./useProcessDefinitionStore";
-import { usePrototypeStore } from "./usePrototypeStore";
+import { canUserReplyFreeFlow, canUserTransferFreeFlow, usePrototypeStore } from "./usePrototypeStore";
 import {
   canUserCloseInstance,
   canUserProcessTask,
@@ -126,5 +126,19 @@ describe("后端返回能力控制界面入口", () => {
     expect(canUserProcessTask("user-1", task(undefined))).toBe(false);
     expect(canUserCloseInstance("user-1", instance)).toBe(true);
     expect(canUserCloseInstance("user-1", { ...instance, canClose: false })).toBe(false);
+  });
+
+  it("自由协作权限组成员无需成为当前受理人或历史参与人即可回复和变更受理人", () => {
+    const freeInstance = {
+      ...instance,
+      workflowType: "free",
+      status: "进行中",
+      canTransferFree: true,
+    } as ProcessInstance;
+
+    expect(canUserReplyFreeFlow(freeInstance, "user-1", false)).toBe(true);
+    expect(canUserTransferFreeFlow(freeInstance, "user-1")).toBe(true);
+    expect(canUserReplyFreeFlow({ ...freeInstance, canTransferFree: false }, "user-1", false)).toBe(false);
+    expect(canUserReplyFreeFlow({ ...freeInstance, canTransferFree: false }, "user-1", true)).toBe(true);
   });
 });

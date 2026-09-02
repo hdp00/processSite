@@ -355,7 +355,7 @@ const normalizeTableColumn = (value: unknown, scope: string): StoredDesignerTabl
 };
 
 const normalizeDesignerField = (value: unknown): StoredDesignerField | undefined => {
-  if (!isRecord(value) || !text(value.id) || !text(value.type) || !text(value.label)) return undefined;
+  if (!isRecord(value) || !text(value.id) || !text(value.type)) return undefined;
   const fieldId = text(value.id);
   const type = value.type === "rich-text"
     ? "richtext"
