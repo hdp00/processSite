@@ -14,9 +14,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:coverage:all": "vitest run --config vitest.all.config.ts --coverage",
-    "build:e2e-api": "dotnet build ../api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug -m:1 /nodeReuse:false",
-    "test:e2e": "pnpm build:e2e-api && playwright test --project=chromium",
-    "test:e2e:edge": "pnpm build:e2e-api && playwright test --project=edge",
+    "build:e2e-api": "dotnet restore ../api/FlowPilot.slnx --locked-mode -m:1 && dotnet build ../api/src/FlowPilot.Api/FlowPilot.Api.csproj -c Debug -o ../api/src/FlowPilot.Api/artifacts/e2e --no-restore -m:1 /nodeReuse:false && dotnet build ../api/tools/FlowPilot.DatabaseTool/FlowPilot.DatabaseTool.csproj -c Debug -o ../api/tools/FlowPilot.DatabaseTool/artifacts/e2e --no-restore -m:1 /nodeReuse:false",
+    "test:e2e": "pnpm build:e2e-api && node ./scripts/run-playwright.mjs --project=chromium",
+    "test:e2e:edge": "pnpm build:e2e-api && node ./scripts/run-playwright.mjs --project=edge",
     "test:all": "pnpm typecheck && pnpm test:coverage && pnpm test:coverage:all && pnpm build && pnpm build:debug && pnpm test:e2e && pnpm test:e2e:edge"
   },
   "dependencies": {

@@ -521,15 +521,15 @@ export function ConfiguredProcessStartPage({
           responsive={false}
           items={definition.type === "free"
             ? [
-                { title: "填写并创建", description: "选择首位受理人" },
-                { title: "持续协作", description: "回复并选择下一人" },
-                { title: "手动关闭", description: "允许填写理由后重开" },
+                { title: "填写并创建", content: "选择首位受理人" },
+                { title: "持续协作", content: "回复并选择下一人" },
+                { title: "手动关闭", content: "允许填写理由后重开" },
               ]
             : [
-                { title: "填写并提交", description: starterGroupLabels.join("、") },
+                { title: "填写并提交", content: starterGroupLabels.join("、") },
                 {
                   title: approvalNodes.length > 0 && approvalNodes.every((node) => node.data?.handlingMode === "confirmation") ? "流程确认" : "流程处理",
-                  description: approvalStageText.length ? (
+                  content: approvalStageText.length ? (
                     <span className="start-flow-route" title={approvalStageText.join(" → ")}>
                       {approvalStageText.map((stage, index) => (
                         <span key={stage}>
@@ -540,7 +540,7 @@ export function ConfiguredProcessStartPage({
                     </span>
                   ) : "按当前拓扑",
                 },
-                { title: "流程结束", description: "全部前置节点通过或确认" },
+                { title: "流程结束", content: "全部前置节点通过或确认" },
               ]}
         />
       </Card>

@@ -1,5 +1,6 @@
 extern alias DatabaseTool;
 
+using FlowPilot.Infrastructure.Configuration;
 using Microsoft.Extensions.Configuration;
 using DatabaseToolConfigurationException = DatabaseTool::DatabaseToolConfigurationException;
 using DatabaseToolConfigurationFiles = DatabaseTool::DatabaseToolConfigurationFiles;
@@ -15,6 +16,8 @@ public sealed class DatabaseToolConfigurationTests
     [Theory]
     [InlineData("initialize", "Initialize")]
     [InlineData("verify", "Verify")]
+    [InlineData("prepare-browser-tests", "PrepareBrowserTests")]
+    [InlineData("cleanup-browser-tests", "CleanupBrowserTests")]
     public void Parse_AcceptsCommandsAndDotNetStyleConfigurationValues(
         string command,
         string expectedCommand)
@@ -198,6 +201,51 @@ public sealed class DatabaseToolConfigurationTests
     {
         Assert.True(DatabaseToolConnectionStringValidator.IsValid(
             "Server=127.0.0.1;Database=FlowPilot_Development;User ID=dev;Password=secret"));
+    }
+
+    [Fact]
+    public void BrowserTestConnections_UseASeparateSafelyNamedDatabase()
+    {
+        var configuration = CreateBrowserTestConfiguration("PlaywrightTests_3100");
+
+        var result = BrowserTestDatabaseConnectionStrings.FromConfiguration(configuration);
+
+        Assert.Equal("FlowPilot_PlaywrightTests_3100", result.DatabaseName);
+        Assert.Equal(
+            result.DatabaseName,
+            new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(
+                result.RuntimeConnectionString).InitialCatalog);
+        Assert.Equal(
+            "master",
+            new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(
+                result.MigrationMasterConnectionString).InitialCatalog);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("FlowPilot")]
+    [InlineData("PlaywrightTests_port")]
+    [InlineData("PlaywrightTests_3100_extra")]
+    public void BrowserTestConnections_RejectUnsafeSuffix(string suffix)
+    {
+        var configuration = CreateBrowserTestConfiguration(suffix);
+
+        Assert.Throws<InvalidOperationException>(
+            () => BrowserTestDatabaseConnectionStrings.FromConfiguration(configuration));
+    }
+
+    private static ConfigurationManager CreateBrowserTestConfiguration(string suffix)
+    {
+        var configuration = new ConfigurationManager();
+        configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:FlowPilot"] =
+                "Server=127.0.0.1;Database=FlowPilot;User ID=runtime;Password=secret",
+            ["ConnectionStrings:FlowPilotMigration"] =
+                "Server=127.0.0.1;Database=FlowPilot;User ID=migration;Password=secret",
+            [BrowserTestDatabaseConnectionStrings.SuffixConfigurationKey] = suffix,
+        });
+        return configuration;
     }
 
     private static string CreateTemporaryApiRoot()

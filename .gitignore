@@ -9,6 +9,8 @@ test-results
 **/obj/
 **/TestResults/
 apps/api/artifacts/
+apps/api/src/FlowPilot.Api/artifacts/
+apps/api/tools/FlowPilot.DatabaseTool/artifacts/
 apps/api/.local-data/
 *.user
 *.suo

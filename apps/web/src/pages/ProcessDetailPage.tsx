@@ -150,7 +150,7 @@ const acquirePdfPreviewUrl = (attachmentId: string, fileName: string) => {
 type PendingAction = "pass" | "confirm" | "reject" | null;
 
 export function ProcessDetailPage() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -520,7 +520,7 @@ export function ProcessDetailPage() {
       message.warning("请完善必填表单内容后再重新提交");
       return;
     }
-    Modal.confirm({
+    modal.confirm({
       title: `确认重新提交并开启第 ${instance.round + 1} 轮审核？`,
       content: hasAttachments
         ? "当前表单修改和附件变更将一起提交，全部审批分支都会重新生成待办。"
@@ -708,7 +708,7 @@ export function ProcessDetailPage() {
   };
   const removeAttachment = (field: StoredDesignerField, attachment: RuntimeAttachmentItem) => {
     const attachmentKey = `${field.id}:${attachment.id ?? attachment.sourceIndex}`;
-    Modal.confirm({
+    modal.confirm({
       title: "确认删除附件？",
       content: `删除后将无法继续预览或下载“${attachment.name}”。`,
       okText: "删除",
@@ -890,7 +890,7 @@ export function ProcessDetailPage() {
               <StatusPill status={instance.status} />
               {instance.priority === "紧急" && <Tag color="error">紧急</Tag>}
             </div>
-            <Space split={<Divider orientation="vertical" />} wrap>
+            <Space separator={<Divider orientation="vertical" />} wrap>
               <Typography.Text copyable>{instance.code}</Typography.Text>
               <span>{instance.template} · {instance.templateVersion}</span>
               {instance.round > 1 ? <span>{formatRoundLabel(instance.round)}</span> : null}

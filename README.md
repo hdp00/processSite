@@ -71,3 +71,5 @@ pnpm test:all
 ```
 
 `pnpm test` 同时运行 .NET 后端测试和前端 Vitest。`pnpm test:all` 是整个仓库的完整门禁：先执行 OpenAPI 契约检查、后端 Release 构建、后端单元测试、HTTP/API 测试和必须通过的真实 SQL Server 集成测试，再执行前端类型检查、覆盖率、双构建、Chromium 全量 E2E 和 Edge 冒烟测试。数据库集成测试仍需在 SQL Server 2016 SP2/兼容级别 130 最低基线以及实际部署版本上复验；本地自动化不能代替 LDAP、SMTP、IIS、磁盘附件或 Windows Service 的部署环境验收。
+
+本地执行 `pnpm test:e2e` 或 `pnpm test:e2e:edge` 时，会根据开发配置自动创建带 `_PlaywrightTests_<API 端口>` 后缀的隔离数据库和独立附件目录，初始化后运行浏览器测试，最后自动删除。测试不会写入开发数据库，也不会停止或覆盖正在运行的 `dotnet watch`。如果通过 `FLOWPILOT_TEST_BASE_URL` 测试已部署服务，则不自动操作远端数据库，并跳过会写入流程业务数据的隔离链路。

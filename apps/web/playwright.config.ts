@@ -8,6 +8,8 @@ const configuredBaseUrl = process.env.FLOWPILOT_TEST_BASE_URL?.replace(/\/$/, ""
 const configuredOrigin = configuredBaseUrl?.replace(/\/flowpilot$/i, "");
 const appBaseUrl = `${configuredOrigin ?? localOrigin}/flowpilot/`;
 const useManagedServers = !configuredBaseUrl;
+const browserTestDatabaseSuffix = `PlaywrightTests_${apiPort}`;
+const browserTestAttachmentRoot = process.env.FlowPilot__Attachments__RootDirectory;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -61,13 +63,18 @@ export default defineConfig({
   webServer: useManagedServers
     ? [
         {
-          command: `dotnet bin/Debug/net10.0/FlowPilot.Api.dll --environment Development --Kestrel:Endpoints:Http:Url ${localApiOrigin}`,
+          command: `dotnet artifacts/e2e/FlowPilot.Api.dll --environment Development --Kestrel:Endpoints:Http:Url ${localApiOrigin}`,
           cwd: "../api/src/FlowPilot.Api",
           url: `${localApiOrigin}/api/flowpilot/v1/health/ready`,
           reuseExistingServer: false,
           timeout: 180_000,
           env: {
             ASPNETCORE_ENVIRONMENT: "Development",
+            FlowPilot__BrowserTests__DatabaseSuffix:
+              process.env.FlowPilot__BrowserTests__DatabaseSuffix ?? browserTestDatabaseSuffix,
+            ...(browserTestAttachmentRoot
+              ? { FlowPilot__Attachments__RootDirectory: browserTestAttachmentRoot }
+              : {}),
           },
         },
         {

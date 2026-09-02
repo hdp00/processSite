@@ -36,6 +36,7 @@ if (builder.Environment.IsDevelopment())
     builder.Configuration.AddFlowPilotDevelopmentConfiguration(
         builder.Environment.ContentRootPath,
         args);
+    BrowserTestDatabaseConnectionStrings.ApplyRuntimeOverride(builder.Configuration);
 }
 
 DeploymentPaths? deploymentPaths = null;

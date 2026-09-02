@@ -81,6 +81,16 @@ static async Task<int> RunAsync(string[] arguments)
                     databaseOptions,
                     cancellation.Token)
                 .ConfigureAwait(false),
+            DatabaseToolCommand.PrepareBrowserTests => await PrepareBrowserTestsAsync(
+                    configuration,
+                    databaseOptions,
+                    cancellation.Token)
+                .ConfigureAwait(false),
+            DatabaseToolCommand.CleanupBrowserTests => await CleanupBrowserTestsAsync(
+                    configuration,
+                    databaseOptions,
+                    cancellation.Token)
+                .ConfigureAwait(false),
             _ => 2,
         };
     }
@@ -88,6 +98,45 @@ static async Task<int> RunAsync(string[] arguments)
     {
         WriteError("DATABASE_OPERATION_CANCELLED", "数据库操作已取消。");
         return 130;
+    }
+}
+
+static async Task<int> PrepareBrowserTestsAsync(
+    IConfiguration configuration,
+    FlowPilotDatabaseOptions databaseOptions,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        var manager = new BrowserTestDatabaseManager(configuration, databaseOptions);
+        await manager.PrepareAsync(cancellationToken).ConfigureAwait(false);
+        var database = BrowserTestDatabaseConnectionStrings.FromConfiguration(configuration);
+        Console.WriteLine($"浏览器测试数据库已准备：{database.DatabaseName}。");
+        return 0;
+    }
+    catch (Exception exception) when (exception is SqlException or InvalidOperationException)
+    {
+        WriteError("BROWSER_TEST_DATABASE_PREPARE_FAILED", exception.Message);
+        return 3;
+    }
+}
+
+static async Task<int> CleanupBrowserTestsAsync(
+    IConfiguration configuration,
+    FlowPilotDatabaseOptions databaseOptions,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        var manager = new BrowserTestDatabaseManager(configuration, databaseOptions);
+        await manager.DropAsync(cancellationToken).ConfigureAwait(false);
+        Console.WriteLine("浏览器测试数据库已清理。");
+        return 0;
+    }
+    catch (Exception exception) when (exception is SqlException or InvalidOperationException)
+    {
+        WriteError("BROWSER_TEST_DATABASE_CLEANUP_FAILED", exception.Message);
+        return 3;
     }
 }
 
@@ -320,6 +369,8 @@ static void WriteHelp()
     Console.WriteLine("  initialize [--Key=Value ...]  初始化或升级现有数据库结构");
     Console.WriteLine("  seed       [--Key=Value ...]  初始化或同步内置数据");
     Console.WriteLine("  verify     [--Key=Value ...]  使用运行账号验证连接与结构");
+    Console.WriteLine("  prepare-browser-tests          重建并初始化隔离的浏览器测试数据库");
+    Console.WriteLine("  cleanup-browser-tests          删除隔离的浏览器测试数据库");
     Console.WriteLine();
     Console.WriteLine("固定读取 API 默认配置与 apps/api/config/appsettings.Development.local.json。");
 }
@@ -333,6 +384,8 @@ internal enum DatabaseToolCommand
     Initialize,
     Seed,
     Verify,
+    PrepareBrowserTests,
+    CleanupBrowserTests,
 }
 
 internal sealed record ToolArguments(
@@ -354,6 +407,8 @@ internal sealed record ToolArguments(
             "initialize" => DatabaseToolCommand.Initialize,
             "seed" => DatabaseToolCommand.Seed,
             "verify" => DatabaseToolCommand.Verify,
+            "prepare-browser-tests" => DatabaseToolCommand.PrepareBrowserTests,
+            "cleanup-browser-tests" => DatabaseToolCommand.CleanupBrowserTests,
             _ => DatabaseToolCommand.None,
         };
         if (command == DatabaseToolCommand.None)

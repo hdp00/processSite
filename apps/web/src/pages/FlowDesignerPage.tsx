@@ -888,7 +888,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
               <Title level={4}>{meta.name}</Title>
               <StatusPill status={meta.status} />
             </div>
-            <Space size={8} split={<span className="flow-designer-toolbar__dot">·</span>}>
+            <Space size={8} separator={<span className="flow-designer-toolbar__dot">·</span>}>
               <Text type="secondary">{meta.code}</Text>
               <Text type="secondary">正式版本 {meta.version}</Text>
               <Text type="secondary">{meta.basedOn === "全新流程" ? "首次创建" : `来源 ${meta.basedOn}`}</Text>
