@@ -135,6 +135,7 @@ export function ProcessPublishPage() {
             { key: "starter", label: "发起权限组", children: resolveWorkflowGroupLabels(workflowGroups, version.basic.starterGroups).join("、") || "—", span: 2 },
             { key: "closer", label: "关闭权限组", children: resolveWorkflowGroupLabels(workflowGroups, version.basic.closeGroups).join("、") || "—", span: 2 },
             ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: resolveWorkflowGroupLabels(workflowGroups, version.basic.assigneeGroups ?? []).join("、") || "—", span: 2 as const }] : []),
+            ...(definition.type === "free" ? [{ key: "email", label: "邮件通知", children: version.basic.emailNotificationEnabled ? "已开启：通知当前受理人；事项关闭时通知发起人" : "已关闭", span: 2 as const }] : []),
             { key: "form", label: "初始表单", children: "标题字段由系统固定，其余字段按版本配置", span: 2 },
             { key: "fields", label: "表单字段", children: `${version.snapshot.form.fields.length} 个` },
             { key: "system", label: "系统列表字段", children: `${version.snapshot.systemFields.length} 个配置` },
@@ -195,7 +196,7 @@ export function ProcessPublishPage() {
               <div><strong>内容锁定</strong><span>首个审核结果提交前，发起方可修改；提交后锁定，驳回后重新开放修改。</span></div>
             </div>
           </> : <Alert type="error" showIcon title="尚未形成可预览的审批拓扑" description="请返回流程设计，配置开始、审批、结束节点并完成连线。" />}
-        </Card> : <Card className="pa-section-card" title={<span className="pa-card-title"><TeamOutlined /> 自由协作规则</span>}><Alert type="info" showIcon title="不使用流程图" description={`受理人从 ${version.basic.assigneeGroups?.length ?? 0} 个流程权限组的有效成员中选择；每次回复后可继续指定下一位受理人，直到手动关闭。`} /></Card>}
+        </Card> : <Card className="pa-section-card" title={<span className="pa-card-title"><TeamOutlined /> 自由协作规则</span>}><Alert type="info" showIcon title="不使用流程图" description={`受理人从 ${version.basic.assigneeGroups?.length ?? 0} 个流程权限组的有效成员中选择；每次回复后可继续指定下一位受理人，直到手动关闭。邮件通知${version.basic.emailNotificationEnabled ? "已开启" : "已关闭"}。`} /></Card>}
       </div>
 
       <aside className="pa-config-aside">

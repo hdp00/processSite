@@ -202,6 +202,10 @@ export function UserManagementPage() {
   const [editorEtag, setEditorEtag] = useState<string>();
   const [form] = Form.useForm();
   const selectedAuthenticationMode = Form.useWatch("authenticationMode", form) as AuthenticationMode | undefined;
+  const switchingDomainToPassword = drawerUser !== "new"
+    && drawerUser?.authenticationMode === "domain"
+    && selectedAuthenticationMode === "password";
+  const requiresNewPassword = switchingDomainToPassword && drawerUser.hasLocalPassword !== true;
   const { guard: userEditorGuard } = useUnsavedChangesGuard({
     dirty: editorDirty,
     title: "用户信息尚未保存",
@@ -393,7 +397,7 @@ export function UserManagementPage() {
           type="info"
           showIcon
           title={drawerUser === "new" ? "普通用户默认使用域登录" : "可调整普通用户的登录方式"}
-          description={drawerUser === "new" ? "域登录不设置本地密码；密码登录必须填写初始密码。部门、职务和角色均可留空。" : "切换为密码登录时需要设置新密码；部门、职务和角色均可留空。账号状态仍通过列表操作处理。"}
+          description={drawerUser === "new" ? "域登录不设置本地密码；密码登录必须填写初始密码。部门、职务和角色均可留空。" : "切换到域登录时保留原本地密码但不使用；以后切回密码登录时可继续使用。此前从未设置本地密码的域账号，切换时仍需设置新密码。"}
         />
         <Form form={form} layout="vertical" requiredMark="optional" onValuesChange={() => setEditorDirty(true)} onFinish={async (values) => {
           const department = Array.isArray(values.department) ? values.department : [];
@@ -407,7 +411,7 @@ export function UserManagementPage() {
               message.success("用户已创建");
             } else if (drawerUser) {
               if (!editorEtag) throw new Error("用户最新版本尚未加载完成");
-              const updated = await flowPilotApi.directory.updateUser(drawerUser.id, { account: values.account, email: String(values.email ?? "").trim(), authenticationMode: values.authenticationMode, newPassword: drawerUser.authenticationMode === "domain" && values.authenticationMode === "password" ? values.newPassword : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles }, editorEtag);
+              const updated = await flowPilotApi.directory.updateUser(drawerUser.id, { account: values.account, email: String(values.email ?? "").trim(), authenticationMode: values.authenticationMode, newPassword: requiresNewPassword ? values.newPassword : undefined, name: values.name, department: values.department, departmentPath: String(path), jobTitle: values.jobTitle, roles: values.roles }, editorEtag);
               cacheVisibleUser(updated);
               message.success("用户信息已保存");
             }
@@ -433,8 +437,9 @@ export function UserManagementPage() {
             <Input maxLength={120} placeholder="name@company.com" />
           </Form.Item>
           <Form.Item name="authenticationMode" label="登录方式" rules={[{ required: true, message: "请选择登录方式" }]} extra="域登录由后端连接公司域服务校验；密码登录由后端安全保存密码摘要。"><Select options={[{ value: "domain", label: "域登录（默认）" }, { value: "password", label: "密码登录" }]} /></Form.Item>
-          {drawerUser === "new" && selectedAuthenticationMode === "password" && <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 1, message: "密码至少 1 个字符" }]} extra="仅密码登录用户需要设置；正式后端使用 Node.js scrypt 保存版本化散列。"><Input.Password maxLength={64} /></Form.Item>}
-          {drawerUser !== "new" && drawerUser?.authenticationMode === "domain" && selectedAuthenticationMode === "password" && <Form.Item name="newPassword" label="新密码" rules={[{ required: true, min: 1, message: "切换为密码登录时必须设置新密码" }]}><Input.Password maxLength={64} /></Form.Item>}
+          {drawerUser === "new" && selectedAuthenticationMode === "password" && <Form.Item name="password" label="初始密码" rules={[{ required: true, min: 1, message: "密码至少 1 个字符" }]} extra="仅密码登录用户需要设置；后端只保存 ASP.NET Core PasswordHasher 生成的安全散列。"><Input.Password maxLength={64} /></Form.Item>}
+          {switchingDomainToPassword && drawerUser.hasLocalPassword === true && <Typography.Paragraph type="secondary">该账号保留了原本地密码，切换后继续使用原密码登录。</Typography.Paragraph>}
+          {requiresNewPassword && <Form.Item name="newPassword" label="新密码" rules={[{ required: true, min: 1, message: "该账号没有可恢复的本地密码，请设置新密码" }]}><Input.Password maxLength={64} /></Form.Item>}
           <Form.Item name="department" label="所属部门" extra="可留空，也可选择一级或二级部门。"><Cascader changeOnSelect showSearch allowClear options={departmentOptions} placeholder="未设置" /></Form.Item>
           {drawerUser === "new" ? <div className="gov-form-grid">
             <Form.Item name="jobTitle" label="职务"><Select allowClear placeholder="未设置" options={selectableJobTitles.map((item) => ({ value: item.name, label: item.status === "停用" ? `${item.name}（已停用，仅保留历史）` : item.name }))} /></Form.Item>

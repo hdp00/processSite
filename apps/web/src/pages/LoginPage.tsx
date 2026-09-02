@@ -8,10 +8,11 @@ import {
 } from "@ant-design/icons";
 import { App, Button, Checkbox, Form, Input, Tag, Typography } from "antd";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { flowPilotApi } from "../api/flowPilotApi";
 import { hydrateRemoteProcessDefinitions } from "../api/remoteHydration";
+import { safeLoginReturnPath } from "../utils/authReturnPath";
 
 interface LoginValues {
   username: string;
@@ -22,6 +23,7 @@ interface LoginValues {
 export function LoginPage() {
   const { message } = App.useApp();
   const navigate = useNavigate();
+  const location = useLocation();
   const [form] = Form.useForm<LoginValues>();
   const initialUsername = "";
   const [submitting, setSubmitting] = useState(false);
@@ -37,7 +39,7 @@ export function LoginPage() {
         throw error;
       }
       message.success("登录成功");
-      navigate("/tasks", { replace: true });
+      navigate(safeLoginReturnPath(location.state), { replace: true });
     } catch (error) {
       message.error(error instanceof ApiError ? error.message : "登录失败，请稍后重试");
     } finally {

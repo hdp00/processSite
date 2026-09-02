@@ -26,7 +26,10 @@ public sealed class EmailOutboxWriter(
         var requests = new List<NotificationRequest>();
         if (definition.Type == "free")
         {
-            AddFreeCollaborationRequests(instance, tasks, requests);
+            if (ReadFreeEmailNotificationEnabled(version))
+            {
+                AddFreeCollaborationRequests(instance, tasks, requests);
+            }
         }
         else if (definition.Type == "approval")
         {
@@ -79,6 +82,16 @@ public sealed class EmailOutboxWriter(
                         recipients,
                         "流程结束"));
                 }
+            }
+
+            if (instance.Status == "closed")
+            {
+                requests.Add(new NotificationRequest(
+                    "approval-closed",
+                    instance.Id,
+                    null,
+                    new HashSet<Guid> { instance.InitiatorUserId },
+                    "事项关闭"));
             }
         }
 
@@ -151,6 +164,7 @@ public sealed class EmailOutboxWriter(
                     Subject = SafeHeader(request.EventType switch
                     {
                         "process-completed" => $"[FlowPilot] {definition.Name} - 已完成",
+                        "approval-closed" => $"[FlowPilot] {definition.Name} - 已关闭",
                         "free-collaboration-closed" => $"[FlowPilot] {definition.Name} - 已关闭",
                         _ => $"[FlowPilot] {definition.Name} - {instance.Title}",
                     }),
@@ -212,6 +226,22 @@ public sealed class EmailOutboxWriter(
             null,
             new HashSet<Guid> { instance.InitiatorUserId },
             "事项关闭"));
+    }
+
+    private static bool ReadFreeEmailNotificationEnabled(RuntimeWorkflowVersion version)
+    {
+        try
+        {
+            var basic = JsonNode.Parse(version.BasicJson) as JsonObject;
+            return basic?["emailNotificationEnabled"] is JsonValue value
+                && value.TryGetValue<bool>(out var enabled)
+                    ? enabled
+                    : true;
+        }
+        catch (JsonException)
+        {
+            return true;
+        }
     }
 
     private async Task<Guid[]> LoadEffectiveGroupMembersAsync(Guid groupId, CancellationToken cancellationToken)

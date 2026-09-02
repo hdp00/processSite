@@ -146,6 +146,7 @@ internal static class ProcessDefinitionTransferMapper
                 StarterGroupIds = ResolveNames(basicSource["发起权限组"], references.GroupIds),
                 AssigneeGroupIds = ResolveNames(basicSource["审批受理权限组"], references.GroupIds),
                 CloseGroupIds = ResolveNames(basicSource["关闭权限组"], references.GroupIds),
+                EmailNotificationEnabled = Bool(basicSource, "邮件通知", true),
                 VisibleRoleIds = ResolveNames(basicSource["额外可见角色"], references.RoleIds),
                 VisibleUserIds = ResolveNames(basicSource["额外可见用户"], references.UserIds),
             };
@@ -213,6 +214,7 @@ internal static class ProcessDefinitionTransferMapper
                 ["发起权限组"] = NameArray(GuidValues(basic["starterGroupIds"]), references.Groups),
                 ["关闭权限组"] = NameArray(GuidValues(basic["closeGroupIds"]), references.Groups),
                 ["审批受理权限组"] = NameArray(GuidValues(basic["assigneeGroupIds"]), references.Groups),
+                ["邮件通知"] = Bool(basic, "emailNotificationEnabled", true),
                 ["额外可见角色"] = NameArray(GuidValues(basic["visibleRoleIds"]), references.Roles),
                 ["额外可见用户"] = NameArray(GuidValues(basic["visibleUserIds"]), references.Users),
             },
@@ -529,13 +531,14 @@ internal static class ProcessDefinitionTransferMapper
                 data["permissionGroupId"] = groupId.ToString("D");
             }
             if (raw["执行条件"] is JsonObject condition) data["activationCondition"] = ImportCondition(condition, fieldIds);
-            if (raw["邮件通知"] is JsonObject email)
+            if (kind is "approval" or "end")
             {
+                var email = raw["邮件通知"] as JsonObject ?? new JsonObject();
                 data["emailNotification"] = new JsonObject
                 {
-                    ["enabled"] = Bool(email, "启用"),
-                    ["notifyReviewers"] = Bool(email, "通知审核人"),
-                    ["notifyInitiator"] = Bool(email, "通知发起人"),
+                    ["enabled"] = Bool(email, "启用", true),
+                    ["notifyReviewers"] = kind == "approval" && Bool(email, "通知审核人", true),
+                    ["notifyInitiator"] = kind == "end" && Bool(email, "通知发起人", true),
                     ["extraUserIds"] = GuidArray(ResolveNames(email["额外通知用户"], references.UserIds)),
                 };
             }

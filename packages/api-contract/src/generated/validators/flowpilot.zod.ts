@@ -199,6 +199,7 @@ export const UserDto = zod.strictObject({
   "name": zod.string(),
   "email": zod.string().describe('普通用户为有效邮箱；超级管理员固定为空字符串。'),
   "authenticationMode": AuthenticationMode,
+  "hasLocalPassword": zod.boolean().describe('是否存在可在密码登录模式下恢复使用的本地密码；不表示当前认证方式，也不暴露密码内容'),
   "status": EnabledStatus,
   "department": zod.union([DepartmentRef,zod.null()]),
   "position": zod.union([PositionRef,zod.null()]),
@@ -320,8 +321,8 @@ export const UpdateUserRequest = zod.strictObject({
   "positionId": zod.uuid().nullish(),
   "roleIds": zod.array(zod.uuid()).optional().describe('可提交空数组以清空角色，账号状态不影响该约束。'),
   "authenticationMode": AuthenticationMode.optional(),
-  "newPassword": zod.string().min(1).max(updateUserRequestNewPasswordMax).optional().describe('仅从域登录切换到密码登录时使用，不返回、不展示已有密码')
-}).describe('后端结合用户当前状态校验登录方式变化；只有从 domain 切换到 password 时要求 newPassword，保持现有 password 模式不要求重复设置密码。');
+  "newPassword": zod.string().min(1).max(updateUserRequestNewPasswordMax).optional().describe('仅从没有可恢复本地密码的域登录账号切换到密码登录时使用；已有密码、密码散列和明文均不返回、不展示')
+}).describe('后端结合用户当前状态校验登录方式变化；从 domain 切换到 password 且没有可恢复的本地密码时要求 newPassword，存在保留密码时继续使用原密码。保持现有 password 模式不允许通过此接口修改密码。');
 
 export type UpdateUserRequest = zod.input<typeof UpdateUserRequest>;
 export type UpdateUserRequestOutput = zod.output<typeof UpdateUserRequest>;
@@ -743,7 +744,7 @@ export const processBasicConfigInputDescriptionMax = 2000;
 
 
 
-
+export const processBasicConfigInputEmailNotificationEnabledDefault = true;
 
 export const ProcessBasicConfigInput = zod.strictObject({
   "name": zod.string().min(1).max(processBasicConfigInputNameMax),
@@ -753,6 +754,7 @@ export const ProcessBasicConfigInput = zod.strictObject({
   "starterGroupIds": zod.array(zod.uuid()).min(1),
   "assigneeGroupIds": zod.array(zod.uuid()).optional().describe('自由协作流程至少一个审批\/受理权限组'),
   "closeGroupIds": zod.array(zod.uuid()).min(1).describe('至少一个可关闭流程实例的权限组；关闭资格不由发起或审批\/受理资格隐含获得'),
+  "emailNotificationEnabled": zod.boolean().default(processBasicConfigInputEmailNotificationEnabledDefault).describe('自由协作流程的邮件通知总开关；缺省按开启处理，固定审批流程忽略此字段'),
   "visibleRoleIds": zod.array(zod.uuid()),
   "visibleUserIds": zod.array(zod.uuid())
 });
@@ -2176,7 +2178,7 @@ export const GetUser404Response = ProblemDetails
 
 
 /**
- * 超级管理员账号不可修改。普通用户登录账号变化后注销其现存会话；账号状态由专用命令修改；切换为密码登录时必须在同一请求中设置新密码，切换为域登录时清除本地密码散列并使现存会话失效。
+ * 超级管理员账号不可修改。普通用户登录账号变化后注销其现存会话；账号状态由专用命令修改；切换为域登录时保留已有本地密码散列但停止使用，切回密码登录时继续使用原密码。只有账号没有可恢复的本地密码时，切换为密码登录才必须在同一请求中设置新密码。登录方式变化会使现存会话失效。
  * @summary 修改用户账号、资料、登录方式、部门、职务和角色
  */
 export const UpdateUserParams = zod.strictObject({

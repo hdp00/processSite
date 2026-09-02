@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyDesignerFieldVisibility,
   cloneCompleteDesignerSnapshot,
+  createDefaultNodeEmailNotification,
   ensureProcessTitleField,
   isDesignerFieldVisible,
   normalizeStoredCondition,
@@ -11,6 +12,21 @@ import {
 const field = (value: Partial<StoredDesignerField> & Pick<StoredDesignerField, "id" | "type" | "label">): StoredDesignerField => value;
 
 describe("表单字段条件显示", () => {
+  it("enables email notification and its primary recipient for new workflow nodes", () => {
+    expect(createDefaultNodeEmailNotification("approval")).toEqual({
+      enabled: true,
+      notifyReviewers: true,
+      notifyInitiator: false,
+      extraUserIds: [],
+    });
+    expect(createDefaultNodeEmailNotification("end")).toEqual({
+      enabled: true,
+      notifyReviewers: false,
+      notifyInitiator: true,
+      extraUserIds: [],
+    });
+  });
+
   it("always restores the fixed title query capability from legacy snapshots", () => {
     const [title] = ensureProcessTitleField([
       field({ id: "title", type: "text", label: "标题", queryable: false }),

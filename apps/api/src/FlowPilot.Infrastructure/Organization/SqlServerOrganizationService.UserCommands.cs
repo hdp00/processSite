@@ -481,21 +481,20 @@ public sealed partial class SqlServerOrganizationService
 
         string? passwordHash = current.PasswordHash;
         var switchingToPassword = current.AuthenticationMode == "domain" && authenticationMode == "password";
-        if (switchingToPassword && string.IsNullOrEmpty(request.NewPassword))
+        if (switchingToPassword
+            && string.IsNullOrEmpty(current.PasswordHash)
+            && string.IsNullOrEmpty(request.NewPassword))
         {
-            issues.Add(Issue("newPassword", "REQUIRED", "切换为密码登录时必须设置新密码。"));
+            issues.Add(Issue("newPassword", "REQUIRED", "该账号没有可恢复的本地密码，切换为密码登录时必须设置新密码。"));
         }
-        else if (!switchingToPassword && request.NewPassword is not null)
+        else if (request.NewPassword is not null
+            && (!switchingToPassword || !string.IsNullOrEmpty(current.PasswordHash)))
         {
-            issues.Add(Issue("newPassword", "NOT_ALLOWED", "新密码只用于从域登录切换为密码登录；其他情况请使用重置密码。"));
+            issues.Add(Issue("newPassword", "NOT_ALLOWED", "账号已有可恢复的本地密码；切回密码登录后如需修改，请使用重置密码。"));
         }
-        else if (switchingToPassword)
+        else if (switchingToPassword && request.NewPassword is not null)
         {
-            passwordHash = FlowPilotPasswordHasher.HashPassword(normalizedLoginName, request.NewPassword!);
-        }
-        else if (authenticationMode == "domain")
-        {
-            passwordHash = null;
+            passwordHash = FlowPilotPasswordHasher.HashPassword(normalizedLoginName, request.NewPassword);
         }
 
         return issues.Count > 0

@@ -298,6 +298,8 @@ export interface UserDto {
   /** 普通用户为有效邮箱；超级管理员固定为空字符串。 */
   email: string;
   authenticationMode: AuthenticationMode;
+  /** 是否存在可在密码登录模式下恢复使用的本地密码；不表示当前认证方式，也不暴露密码内容 */
+  hasLocalPassword: boolean;
   status: EnabledStatus;
   department: DepartmentRef | null;
   position: PositionRef | null;
@@ -416,7 +418,7 @@ export interface CreatePasswordUserRequest {
 export type CreateUserRequest = CreateDomainUserRequest | CreatePasswordUserRequest;
 
 /**
- * 后端结合用户当前状态校验登录方式变化；只有从 domain 切换到 password 时要求 newPassword，保持现有 password 模式不要求重复设置密码。
+ * 后端结合用户当前状态校验登录方式变化；从 domain 切换到 password 且没有可恢复的本地密码时要求 newPassword，存在保留密码时继续使用原密码。保持现有 password 模式不允许通过此接口修改密码。
  */
 export interface UpdateUserRequest {
   /**
@@ -439,7 +441,7 @@ export interface UpdateUserRequest {
   roleIds?: string[];
   authenticationMode?: AuthenticationMode;
   /**
-     * 仅从域登录切换到密码登录时使用，不返回、不展示已有密码
+     * 仅从没有可恢复本地密码的域登录账号切换到密码登录时使用；已有密码、密码散列和明文均不返回、不展示
      * @minLength 1
      * @maxLength 200
      */
@@ -789,6 +791,8 @@ export interface ProcessBasicConfigInput {
      * @minItems 1
      */
   closeGroupIds: string[];
+  /** 自由协作流程的邮件通知总开关；缺省按开启处理，固定审批流程忽略此字段 */
+  emailNotificationEnabled?: boolean;
   visibleRoleIds: string[];
   visibleUserIds: string[];
 }
@@ -3142,7 +3146,7 @@ const getUser = (
   }
 
 /**
- * 超级管理员账号不可修改。普通用户登录账号变化后注销其现存会话；账号状态由专用命令修改；切换为密码登录时必须在同一请求中设置新密码，切换为域登录时清除本地密码散列并使现存会话失效。
+ * 超级管理员账号不可修改。普通用户登录账号变化后注销其现存会话；账号状态由专用命令修改；切换为域登录时保留已有本地密码散列但停止使用，切回密码登录时继续使用原密码。只有账号没有可恢复的本地密码时，切换为密码登录才必须在同一请求中设置新密码。登录方式变化会使现存会话失效。
  * @summary 修改用户账号、资料、登录方式、部门、职务和角色
  */
 const updateUser = (

@@ -11,6 +11,7 @@ export interface DomainUser {
   name: string;
   password: string;
   authenticationMode: AuthenticationMode;
+  hasLocalPassword?: boolean;
   department: string[];
   departmentPath: string;
   jobTitle: string;

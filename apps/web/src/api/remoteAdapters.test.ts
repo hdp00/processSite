@@ -22,6 +22,7 @@ describe("formal REST response adapters", () => {
         name: "张三",
         email: "zhangsan@example.com",
         authenticationMode: "domain",
+        hasLocalPassword: true,
         department: { id: "dept-1", path: "研发 / 平台" },
         position: { id: "position-1", name: "工程师" },
         roles: [{ id: "role-1", name: "研发审核员" }],
@@ -34,6 +35,7 @@ describe("formal REST response adapters", () => {
     expect(result.page).toEqual({ number: 2, size: 20, totalElements: 41, totalPages: 3 });
     expect(result.items[0]).toMatchObject({
       account: "zhangsan",
+      hasLocalPassword: true,
       department: ["dept-1"],
       departmentPath: "研发 / 平台",
       jobTitle: "工程师",
@@ -123,6 +125,7 @@ describe("formal REST response adapters", () => {
       validation: { status: "通过", issues: ["示例提示"] },
     });
     expect(version.formFieldCount).toBe(source.snapshot.form.fields.length);
+    expect(version.basic.emailNotificationEnabled).toBe(true);
     expect(version.nodeCount).toBe(source.snapshot.flow.nodes.length);
     expect(version.snapshot.flow.savedAt).toBe("2026-08-31T06:03:13.090323+00:00");
     expect(version.snapshot.form.fields.find((field) => field.id === "remote-text")?.options).toBeUndefined();

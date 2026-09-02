@@ -34,11 +34,11 @@ public sealed class SqlScriptChecksumTests
     {
         var migrations = MigrationCatalog.Migrations;
 
-        Assert.Equal(7, migrations.Count);
+        Assert.Equal(8, migrations.Count);
         Assert.Equal("202608260001", migrations[0].Id);
         Assert.Equal("initial_schema", migrations[0].Name);
         Assert.Equal(MigrationCatalog.CurrentSchemaVersion, migrations[^1].Id);
-        Assert.Equal("process_version_source", migrations[^1].Name);
+        Assert.Equal("retained_local_password", migrations[^1].Name);
         Assert.Equal(migrations.OrderBy(item => item.Id).Select(item => item.Id), migrations.Select(item => item.Id));
         Assert.All(migrations, migration =>
         {

@@ -1293,6 +1293,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService(
         StarterGroupIds = [.. basic.StarterGroupIds],
         AssigneeGroupIds = [.. basic.AssigneeGroupIds],
         CloseGroupIds = [.. basic.CloseGroupIds],
+        EmailNotificationEnabled = basic.EmailNotificationEnabled,
         VisibleRoleIds = [.. basic.VisibleRoleIds],
         VisibleUserIds = [.. basic.VisibleUserIds],
     };

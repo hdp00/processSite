@@ -3,6 +3,7 @@ import {
   FileTextOutlined,
   InfoCircleOutlined,
   LockOutlined,
+  MailOutlined,
   SaveOutlined,
   SafetyCertificateOutlined,
   TeamOutlined,
@@ -18,6 +19,7 @@ import {
   Row,
   Select,
   Space,
+  Switch,
   Tag,
   Typography,
 } from "antd";
@@ -91,6 +93,7 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     description: definition?.description ?? searchParams.get("description") ?? "",
     starterGroups: [],
     closeGroups: [],
+    emailNotificationEnabled: true,
     visibleRoles: [],
     visibleUsers: [],
   }), [definition?.code, definition?.description, definition?.name, definition?.type, searchParams, version?.basic]);
@@ -341,6 +344,22 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                 </Col>
               </Row>
             </Card>
+
+            {workflowType === "free" && (
+              <Card
+                className="pa-section-card"
+                title={<span className="pa-card-title"><MailOutlined /> 邮件通知</span>}
+              >
+                <Form.Item
+                  name="emailNotificationEnabled"
+                  label="邮件通知"
+                  valuePropName="checked"
+                  extra="开启后，首次发起、变更受理人或重新打开时通知新的当前受理人；事项关闭时通知流程发起人。"
+                >
+                  <Switch checkedChildren="已开启" unCheckedChildren="已关闭" />
+                </Form.Item>
+              </Card>
+            )}
 
             <Card
               className="pa-section-card"

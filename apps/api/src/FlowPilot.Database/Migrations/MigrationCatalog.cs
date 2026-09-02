@@ -17,6 +17,7 @@ public static class MigrationCatalog
         ("202608280003", "session_impersonation_link", ".Migrations.202608280003_session_impersonation_link.sql"),
         ("202608310001", "optional_user_email", ".Migrations.202608310001_optional_user_email.sql"),
         ("202609020001", "process_version_source", ".Migrations.202609020001_process_version_source.sql"),
+        ("202609020002", "retained_local_password", ".Migrations.202609020002_retained_local_password.sql"),
     ];
 
     private static readonly Lazy<ReadOnlyCollection<SchemaMigration>> DefaultMigrations =

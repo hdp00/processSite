@@ -235,6 +235,7 @@ public sealed class EmailOutboxProcessor(
         var description = message.EventType switch
         {
             "process-completed" => $"流程“{encodedProcessName}”（{encodedInstanceNumber}）已完成。",
+            "approval-closed" => $"流程“{encodedProcessName}”（{encodedInstanceNumber}）已关闭。",
             "free-collaboration-closed" => $"自由协作事项“{encodedProcessName}”（{encodedInstanceNumber}）已关闭。",
             "free-collaboration-assigned" => $"自由协作事项“{encodedProcessName}”（{encodedInstanceNumber}）已交由您受理，请及时处理。",
             _ => $"流程“{encodedProcessName}”（{encodedInstanceNumber}）已进入“{encodedNodeName}”，请及时处理。",
@@ -242,6 +243,7 @@ public sealed class EmailOutboxProcessor(
         var textDescription = message.EventType switch
         {
             "process-completed" => $"{processName}（{instanceNumber}）已完成。",
+            "approval-closed" => $"{processName}（{instanceNumber}）已关闭。",
             "free-collaboration-closed" => $"自由协作事项 {processName}（{instanceNumber}）已关闭。",
             "free-collaboration-assigned" => $"自由协作事项 {processName}（{instanceNumber}）已交由您受理，请及时处理。",
             _ => $"{processName}（{instanceNumber}）已进入“{nodeName}”，请及时处理。",

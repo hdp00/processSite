@@ -14,6 +14,7 @@ import { usePrototypeStore } from "./state/usePrototypeStore";
 import { canUserViewInstance } from "./state/workflowAccess";
 import { flowPilotApi } from "./api/flowPilotApi";
 import { cacheProcessDefinition, cacheProcessRuntime, cacheProcessVersion } from "./api/entityCache";
+import { currentAppPath, safeLoginReturnPath } from "./utils/authReturnPath";
 
 const FlowDesignerPage = lazy(() => import("./pages/FlowDesignerPage").then((module) => ({ default: module.FlowDesignerPage })));
 const FreeFlowDetailPage = lazy(() => import("./pages/FreeFlowDetailPage").then((module) => ({ default: module.FreeFlowDetailPage })));
@@ -38,12 +39,18 @@ const WorkflowPermissionGroupsPage = lazy(() => import("./pages/GovernancePages"
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const authenticated = usePrototypeStore((state) => state.authenticated);
-  return authenticated ? children : <Navigate to="/login" replace />;
+  const location = useLocation();
+  return authenticated
+    ? children
+    : <Navigate to="/login" replace state={{ returnTo: currentAppPath(location) }} />;
 }
 
 function LoginRoute() {
   const authenticated = usePrototypeStore((state) => state.authenticated);
-  return authenticated ? <Navigate to="/tasks" replace /> : <LoginPage />;
+  const location = useLocation();
+  return authenticated
+    ? <Navigate to={safeLoginReturnPath(location.state)} replace />
+    : <LoginPage />;
 }
 
 export function PersonaGate({ scope, definitionId, permission, children }: { scope: "initiator" | "permission"; definitionId?: string; permission?: string; children: ReactNode }) {

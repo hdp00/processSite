@@ -30,7 +30,7 @@
 - `normalized_login_name nvarchar(100)`：唯一索引。
 - `display_name nvarchar(100)`、`email nvarchar(320)`；普通用户邮箱可为空，超级管理员固定为空字符串。
 - `authentication_mode nvarchar(20)`：`domain | password`。
-- `password_hash nvarchar(500) null`：仅本地密码账号保存 ASP.NET Core `PasswordHasher<TUser>` 生成的自描述、版本化编码字符串；应用通过 `SuccessRehashNeeded` 处理参数升级，不由数据库解释内部格式。
+- `password_hash nvarchar(500) null`：保存 ASP.NET Core `PasswordHasher<TUser>` 生成的自描述、版本化编码字符串；密码账号切换为域登录时保留该值但认证期间不读取，从未设置过本地密码的域账号可为空。应用通过 `SuccessRehashNeeded` 处理参数升级，不由数据库解释内部格式。
 - `department_id uniqueidentifier null`、`position_id uniqueidentifier null`：可空外键，普通用户按需要维护；超级管理员两项固定为空。
 - `is_enabled bit`：`1` 表示启用，`0` 表示停用；API 映射为 `enabled | disabled`。
 - `is_builtin_super_admin bit`：数据库内只能有一条为 `1`。
@@ -38,7 +38,7 @@
 
 约束：
 
-- `authentication_mode='password'` 时 `password_hash` 必须非空；`domain` 时必须为空。
+- `authentication_mode='password'` 时 `password_hash` 必须非空；`domain` 时允许保留非空密码散列或保持为空，域认证路径不得使用该值。
 - 内置超级管理员必须为 `password` 模式且不允许停用、删除或切换认证方式。
 - 使用 `WHERE is_builtin_super_admin=1` 的筛选唯一索引保证至多一条内置超级管理员记录；首次种子与就绪检查必须保证正式数据库恰好存在一条，不能只依赖应用内约定。
 - 部门和职务使用 `NO ACTION` 外键；存在用户引用时不能删除，只能停用。

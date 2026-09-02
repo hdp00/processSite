@@ -99,6 +99,7 @@ function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type:
     return <div className="pa-snapshot-stack">
       <div className="pa-snapshot-heading"><div><TeamOutlined /><span><strong>自由协作规则</strong><small>该流程类型无需设计审批拓扑</small></span></div></div>
       <div className="pa-snapshot-group"><small>受理流程权限组</small><Space wrap>{version.basic.assigneeGroups?.length ? version.basic.assigneeGroups.map((group) => <Tag color="purple" key={group}>{resolveWorkflowGroupLabel(workflowGroups, group)}</Tag>) : <Typography.Text type="danger">未配置</Typography.Text>}</Space></div>
+      <div className="pa-snapshot-group"><small>邮件通知</small><Tag color={version.basic.emailNotificationEnabled ? "green" : "default"}>{version.basic.emailNotificationEnabled ? "已开启：通知当前受理人；关闭时通知发起人" : "已关闭"}</Tag></div>
       <div className="pa-snapshot-rule-grid">{rules.map(([title, detail]) => <div key={title}><CheckCircleOutlined /><span><strong>{title}</strong><small>{detail}</small></span></div>)}</div>
     </div>;
   }

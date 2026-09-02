@@ -321,6 +321,7 @@ const remoteBasicInput = (input: ProcessBasicConfig) => ({
   starterGroupIds: input.starterGroups,
   assigneeGroupIds: input.assigneeGroups ?? [],
   closeGroupIds: input.closeGroups,
+  emailNotificationEnabled: input.emailNotificationEnabled,
   visibleRoleIds: input.visibleRoles,
   visibleUserIds: input.visibleUsers,
 });

@@ -16,6 +16,7 @@ export interface ProcessBasicConfig {
   starterGroups: string[];
   closeGroups: string[];
   assigneeGroups?: string[];
+  emailNotificationEnabled: boolean;
   visibleRoles: string[];
   visibleUsers: string[];
 }

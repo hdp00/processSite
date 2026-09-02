@@ -10,6 +10,52 @@ namespace FlowPilot.SqlServerTests;
 public sealed class ProcessDefinitionFormIntegrationTests
 {
     [Fact]
+    public async Task FreeWorkflowPersistsDisabledEmailNotification()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var scope = await SqlServerRuntimeTestScope.CreateIsolatedAsync(cancellationToken);
+        var memberId = await scope.AddUserAsync("free-email-setting@example.test", cancellationToken);
+        var groupId = await scope.AddWorkflowGroupAsync(
+            cancellationToken,
+            ["start", "review", "close"],
+            [memberId]);
+        var commandService = new SqlServerProcessDefinitionCommandService(
+            scope.Context,
+            FlowPilotDatabaseOptions.Default,
+            TimeProvider.System);
+        var actor = new ProcessDefinitionMutationActor(
+            scope.AdministratorUserId,
+            scope.AdministratorUserId,
+            "超级管理员");
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+
+        var created = await commandService.CreateAsync(
+            new ProcessBasicConfigInput
+            {
+                Name = $"自由协作邮件-{suffix}",
+                InstancePrefix = $"M{suffix}",
+                Type = "free",
+                Description = "验证邮件通知开关跟随版本保存。",
+                StarterGroupIds = [groupId],
+                AssigneeGroupIds = [groupId],
+                CloseGroupIds = [groupId],
+                EmailNotificationEnabled = false,
+            },
+            actor,
+            Guid.NewGuid().ToString("N"),
+            Guid.NewGuid().ToString("N"),
+            cancellationToken);
+
+        Assert.True(created.Succeeded, created.Failure?.Detail);
+        Assert.False(created.Value!.Response.Version.Basic["emailNotificationEnabled"]!.GetValue<bool>());
+        var persisted = await scope.Context.RuntimeWorkflowVersions
+            .Where(item => item.Id == created.Value.Response.Version.Id)
+            .Select(item => item.BasicJson)
+            .SingleAsync(cancellationToken);
+        Assert.False(JsonNode.Parse(persisted)!["emailNotificationEnabled"]!.GetValue<bool>());
+    }
+
+    [Fact]
     public async Task CopiedDefinitionAndVersionKeepTheirSourceVersionMetadata()
     {
         var cancellationToken = TestContext.Current.CancellationToken;

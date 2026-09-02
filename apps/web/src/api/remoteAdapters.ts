@@ -59,6 +59,7 @@ export const normalizeDirectoryUser = (value: unknown): DirectoryUser => {
     email: text(value.email),
     name: text(value.name),
     authenticationMode: value.authenticationMode === "password" ? "password" : "domain",
+    hasLocalPassword: value.hasLocalPassword === true,
     department: department ? [text(department.id)].filter(Boolean) : [],
     departmentPath: text(department?.path),
     jobTitle: text(position?.name),
@@ -293,6 +294,7 @@ export const normalizeProcessBasic = (value: unknown): ProcessBasicConfig => {
     starterGroups: strings(value.starterGroups).length ? strings(value.starterGroups) : strings(value.starterGroupIds),
     closeGroups: strings(value.closeGroups).length ? strings(value.closeGroups) : strings(value.closeGroupIds),
     assigneeGroups: strings(value.assigneeGroups).length ? strings(value.assigneeGroups) : strings(value.assigneeGroupIds),
+    emailNotificationEnabled: value.emailNotificationEnabled !== false,
     visibleRoles: strings(value.visibleRoles).length ? strings(value.visibleRoles) : strings(value.visibleRoleIds),
     visibleUsers: strings(value.visibleUsers).length ? strings(value.visibleUsers) : strings(value.visibleUserIds),
   };

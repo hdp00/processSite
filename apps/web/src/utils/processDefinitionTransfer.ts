@@ -200,6 +200,7 @@ const exportVersion = (
       "发起权限组": displayNames(version.basic.starterGroups, groupNames),
       "关闭权限组": displayNames(version.basic.closeGroups, groupNames),
       "审批受理权限组": displayNames(version.basic.assigneeGroups, groupNames),
+      "邮件通知": version.basic.emailNotificationEnabled,
       "额外可见角色": displayNames(version.basic.visibleRoles, roleNames),
       "额外可见用户": displayNames(version.basic.visibleUsers, userNames),
     },
@@ -471,9 +472,9 @@ const importFlow = (
         allowRepeatedEditing: kind === "approval" ? booleanValue(raw["允许重复修改"]) : false,
         activationCondition: kind === "approval" ? importCondition(raw["执行条件"], fieldIds, warnings) : undefined,
         emailNotification: kind === "approval" || kind === "end" ? {
-          enabled: booleanValue(email?.["启用"]),
-          notifyReviewers: kind === "approval" && booleanValue(email?.["通知审核人"]),
-          notifyInitiator: kind === "end" && booleanValue(email?.["通知发起人"]),
+          enabled: booleanValue(email?.["启用"], true),
+          notifyReviewers: kind === "approval" && booleanValue(email?.["通知审核人"], true),
+          notifyInitiator: kind === "end" && booleanValue(email?.["通知发起人"], true),
           extraUserIds: resolveNames(stringList(email?.["额外通知用户"]), identities.users, "用户", warnings),
         } : undefined,
       },
@@ -532,6 +533,7 @@ export const parseProcessDefinitionImport = (
       starterGroups: groupIds(basicSource["发起权限组"]),
       closeGroups: groupIds(basicSource["关闭权限组"]),
       assigneeGroups: groupIds(basicSource["审批受理权限组"]),
+      emailNotificationEnabled: booleanValue(basicSource["邮件通知"], true),
       visibleRoles: roleIds(basicSource["额外可见角色"]),
       visibleUsers: userIds(basicSource["额外可见用户"]),
     };

@@ -28,6 +28,7 @@ const version = (id: string, label: string): ProcessVersion => ({
     description: "测试",
     starterGroups: [],
     closeGroups: [],
+    emailNotificationEnabled: true,
     visibleRoles: [],
     visibleUsers: [],
   },

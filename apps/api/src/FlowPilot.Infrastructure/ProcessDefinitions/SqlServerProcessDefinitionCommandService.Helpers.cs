@@ -156,6 +156,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService
         ["starterGroupIds"] = GuidArray(basic.StarterGroupIds),
         ["assigneeGroupIds"] = GuidArray(basic.AssigneeGroupIds),
         ["closeGroupIds"] = GuidArray(basic.CloseGroupIds),
+        ["emailNotificationEnabled"] = basic.EmailNotificationEnabled,
         ["visibleRoleIds"] = GuidArray(basic.VisibleRoleIds),
         ["visibleUserIds"] = GuidArray(basic.VisibleUserIds),
     };
@@ -175,6 +176,7 @@ public sealed partial class SqlServerProcessDefinitionCommandService
             StarterGroupIds = ReadGuidArray(source, "starterGroupIds"),
             AssigneeGroupIds = ReadGuidArray(source, "assigneeGroupIds"),
             CloseGroupIds = ReadGuidArray(source, "closeGroupIds"),
+            EmailNotificationEnabled = source["emailNotificationEnabled"]?.GetValue<bool>() ?? true,
             VisibleRoleIds = ReadGuidArray(source, "visibleRoleIds"),
             VisibleUserIds = ReadGuidArray(source, "visibleUserIds"),
         };

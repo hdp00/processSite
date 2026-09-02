@@ -446,7 +446,8 @@ public sealed partial class SqlServerOrganizationService
                     INNER JOIN [flowpilot].[roles] AS [r] ON [r].[id] = [ur].[role_id]
                     WHERE [ur].[user_id] = [u].[id]
                     ORDER BY [r].[name], [r].[id]
-                    FOR JSON PATH), N'[]')
+                    FOR JSON PATH), N'[]'),
+                CONVERT(bit, CASE WHEN [u].[password_hash] IS NULL THEN 0 ELSE 1 END)
             FROM [flowpilot].[users] AS [u]
             LEFT JOIN [flowpilot].[departments] AS [d] ON [d].[id] = [u].[department_id]
             LEFT JOIN [flowpilot].[positions] AS [p] ON [p].[id] = [u].[position_id]
@@ -475,7 +476,8 @@ public sealed partial class SqlServerOrganizationService
             reader.GetBoolean(7),
             AsUtc(reader.GetDateTime(13)),
             AsUtc(reader.GetDateTime(14)),
-            reader.IsDBNull(15) ? null : AsUtc(reader.GetDateTime(15)));
+            reader.IsDBNull(15) ? null : AsUtc(reader.GetDateTime(15)),
+            reader.GetBoolean(17));
     }
 
     private async Task InsertOrganizationAuditAsync(

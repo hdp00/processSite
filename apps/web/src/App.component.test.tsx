@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
 
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
 import { PersonaGate, ProtectedRoute } from "./App";
 import { usePrototypeStore } from "./state/usePrototypeStore";
+
+const LoginStateProbe = () => {
+  const location = useLocation();
+  const returnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+  return <h1>登录页：{returnTo}</h1>;
+};
 
 describe("应用路由权限", () => {
   beforeEach(() => {
@@ -34,6 +40,24 @@ describe("应用路由权限", () => {
 
     expect(await screen.findByRole("heading", { name: "登录页" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "任务中心" })).not.toBeInTheDocument();
+  });
+
+  it("未登录访问流程深链接时保留完整路径和查询参数", async () => {
+    render(
+      <MemoryRouter initialEntries={["/processes/instance-1?taskId=task-1#review"]}>
+        <Routes>
+          <Route path="/login" element={<LoginStateProbe />} />
+          <Route
+            path="/processes/:id"
+            element={<ProtectedRoute><h1>流程详情</h1></ProtectedRoute>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("heading", {
+      name: "登录页：/processes/instance-1?taskId=task-1#review",
+    })).toBeInTheDocument();
   });
 
   it("已登录但缺少页面权限时展示 403，而不是渲染目标页面", () => {

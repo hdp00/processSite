@@ -2,5 +2,5 @@ namespace FlowPilot.Application.Health;
 
 public static class DatabaseSchemaVersion
 {
-    public const string Current = "202609020001";
+    public const string Current = "202609020002";
 }

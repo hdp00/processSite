@@ -83,6 +83,7 @@ import {
 import {
   buildFlowLevels,
   conditionOperatorLabel,
+  createDefaultNodeEmailNotification as defaultEmailNotification,
   normalizeDesignerInputPermission,
   type DesignerInputPermission,
   type EditableFieldOption,
@@ -199,15 +200,8 @@ const handlingModeOptions: Array<{
   },
 ];
 
-const defaultEmailNotification = (kind: NodeKind): StoredNodeEmailNotification => ({
-  enabled: false,
-  notifyReviewers: kind === "approval",
-  notifyInitiator: kind === "end",
-  extraUserIds: [],
-});
-
 const normalizeEmailNotification = (
-  kind: NodeKind,
+  kind: "approval" | "end",
   notification?: StoredNodeEmailNotification,
 ): StoredNodeEmailNotification => notification
   ? {
@@ -1562,7 +1556,7 @@ export const FlowDesignerPage = () => {
               : false,
             activationCondition: normalizeActivationCondition(node.data?.activationCondition),
             emailNotification: (node.data?.kind ?? "approval") === "approval" || node.data?.kind === "end"
-              ? normalizeEmailNotification(node.data?.kind ?? "approval", node.data?.emailNotification)
+              ? normalizeEmailNotification((node.data?.kind ?? "approval") as "approval" | "end", node.data?.emailNotification)
               : undefined,
           },
         })),

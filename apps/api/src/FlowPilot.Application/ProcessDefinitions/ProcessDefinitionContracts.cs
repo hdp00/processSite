@@ -253,6 +253,8 @@ public sealed record ProcessBasicConfigInput
     [MinLength(1)]
     public required Guid[] CloseGroupIds { get; init; }
 
+    public bool EmailNotificationEnabled { get; init; } = true;
+
     public Guid[] VisibleRoleIds { get; init; } = [];
 
     public Guid[] VisibleUserIds { get; init; } = [];

@@ -55,7 +55,8 @@ public sealed record UserDto(
     bool SuperAdmin,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? LastLoginAt);
+    DateTimeOffset? LastLoginAt,
+    bool HasLocalPassword);
 
 public sealed record DepartmentRefDto(Guid Id, string Name, string Path);
 

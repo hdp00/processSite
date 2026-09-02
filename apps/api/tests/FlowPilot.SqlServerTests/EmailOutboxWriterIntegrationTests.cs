@@ -287,6 +287,91 @@ public sealed class EmailOutboxWriterIntegrationTests
         Assert.Equal(2, messages.Select(message => message.IdempotencyKey).Distinct().Count());
     }
 
+    [Fact]
+    public async Task DisabledFreeCollaborationEmailSkipsAssigneeAndCloseNotifications()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var scope = await SqlServerRuntimeTestScope.CreateAsync(cancellationToken);
+        var initiatorId = await scope.AddUserAsync("disabled-initiator@example.test", cancellationToken);
+        var assigneeId = await scope.AddUserAsync("disabled-assignee@example.test", cancellationToken);
+        var now = new DateTimeOffset(2026, 9, 2, 7, 0, 0, TimeSpan.Zero);
+        var snapshot = new JsonObject();
+        var seed = await AddRuntimeAsync(
+            scope,
+            snapshot,
+            "in-progress",
+            now,
+            cancellationToken,
+            "free",
+            initiatorId);
+        seed.Version.BasicJson = "{\"emailNotificationEnabled\":false}";
+        seed.Instance.CurrentAssigneeId = assigneeId;
+        var task = CreateFreeTask(seed.Instance.Id, seed.Version.Id, assigneeId, now);
+        scope.Context.WorkflowTasks.Add(task);
+        await scope.Context.SaveChangesAsync(cancellationToken);
+
+        var writer = new EmailOutboxWriter(scope.Context);
+        await writer.EnqueueAsync(
+            seed.Instance,
+            seed.Definition,
+            seed.Version,
+            snapshot,
+            [task],
+            now,
+            cancellationToken);
+        task.Status = "cancelled";
+        task.CompletedAt = now.AddMinutes(1).UtcDateTime;
+        seed.Instance.Status = "closed";
+        seed.Instance.CurrentAssigneeId = null;
+        await writer.EnqueueAsync(
+            seed.Instance,
+            seed.Definition,
+            seed.Version,
+            snapshot,
+            [task],
+            now.AddMinutes(1),
+            cancellationToken);
+        await scope.Context.SaveChangesAsync(cancellationToken);
+
+        Assert.False(await scope.Context.RuntimeEmailOutboxMessages
+            .AnyAsync(item => item.InstanceId == seed.Instance.Id, cancellationToken));
+    }
+
+    [Fact]
+    public async Task ApprovalCloseAlwaysNotifiesInitiatorWithoutNodeEmailConfiguration()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var scope = await SqlServerRuntimeTestScope.CreateAsync(cancellationToken);
+        var initiatorId = await scope.AddUserAsync("approval-close@example.test", cancellationToken);
+        var now = new DateTimeOffset(2026, 9, 2, 8, 0, 0, TimeSpan.Zero);
+        var snapshot = new JsonObject();
+        var seed = await AddRuntimeAsync(
+            scope,
+            snapshot,
+            "closed",
+            now,
+            cancellationToken,
+            "approval",
+            initiatorId);
+
+        var writer = new EmailOutboxWriter(scope.Context);
+        await writer.EnqueueAsync(
+            seed.Instance,
+            seed.Definition,
+            seed.Version,
+            snapshot,
+            [],
+            now,
+            cancellationToken);
+        await scope.Context.SaveChangesAsync(cancellationToken);
+
+        var message = await scope.Context.RuntimeEmailOutboxMessages
+            .SingleAsync(item => item.InstanceId == seed.Instance.Id, cancellationToken);
+        Assert.Equal("approval-closed", message.EventType);
+        Assert.Equal(initiatorId, message.RecipientUserId);
+        Assert.Contains("已关闭", message.Subject, StringComparison.Ordinal);
+    }
+
     private static WorkflowTaskEntity CreateTask(
         Guid instanceId,
         Guid versionId,

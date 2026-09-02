@@ -76,6 +76,15 @@ export interface StoredNodeEmailNotification {
   extraUserIds: string[];
 }
 
+export const createDefaultNodeEmailNotification = (
+  kind: "approval" | "end",
+): StoredNodeEmailNotification => ({
+  enabled: true,
+  notifyReviewers: kind === "approval",
+  notifyInitiator: kind === "end",
+  extraUserIds: [],
+});
+
 export const PROCESS_TITLE_FIELD_ID = "title";
 export type DesignerInputPermission = "initiator" | "both" | "reviewer";
 

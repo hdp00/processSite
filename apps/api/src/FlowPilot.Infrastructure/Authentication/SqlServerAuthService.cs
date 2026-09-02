@@ -668,7 +668,8 @@ public sealed partial class SqlServerAuthService : IAuthService
             user.IsBuiltinSuperAdmin,
             user.CreatedAt,
             user.UpdatedAt,
-            lastLoginAt);
+            lastLoginAt,
+            !string.IsNullOrEmpty(user.PasswordHash));
 
         return new UserSessionView(
             user,
