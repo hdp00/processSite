@@ -271,6 +271,7 @@ export default function App() {
           colorError: "#d84952",
           colorText: "#15213a",
           colorTextSecondary: "#647087",
+          colorTextDescription: "#647087",
           colorBorder: "#dce2ec",
           colorBorderSecondary: "#e8ecf2",
           colorBgLayout: "#f3f5f8",

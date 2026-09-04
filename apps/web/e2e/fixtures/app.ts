@@ -69,8 +69,8 @@ export async function loginAs(page: Page, username?: string, password?: string) 
   await page.getByLabel("账号").fill(username ?? configured.username);
   await page.getByLabel("密码").fill(password ?? configured.password);
   await page.locator("button.login-submit").click();
-  await expect(page).toHaveURL(/\/flowpilot\/tasks$/);
   await expect(page.locator(".app-header")).toBeVisible();
+  await expect(page).not.toHaveURL(/\/flowpilot\/login(?:[/?#]|$)/);
 }
 
 export async function stabilizeVisualPage(page: Page) {

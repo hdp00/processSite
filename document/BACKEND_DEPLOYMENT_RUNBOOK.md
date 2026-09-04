@@ -1,140 +1,215 @@
-# FlowPilot 后端生产部署 Runbook
+# FlowPilot 后端首次部署操作手册
 
-> 适用范围：Windows Server 2016 x64、.NET 10、原生 Windows Service、Kestrel loopback、IIS/ARR 反向代理、Microsoft SQL Server。
+> 给谁看：会登录 Windows Server、会复制文件、能以管理员身份打开 PowerShell，但不需要会编程的人。
 >
-> 本文只详细说明后端。前端 `/flowpilot` 应用和 IIS/ARR 完整规则见 [`IIS_DEPLOYMENT.md`](./IIS_DEPLOYMENT.md)。
+> 本手册只负责第一次安装后端。数据库由 DBA 初始化；发布包由开发人员提供；IIS 在后端检查通过后再配置。
 
-## 1. 部署结论与边界
+## 推荐方式：使用安装向导
 
-FlowPilot 后端按以下方式运行：
+开发人员交付发布包时，应同时提供：
 
 ```text
-浏览器
-  -> IIS 主站 /api/flowpilot/*
-  -> ARR 反向代理
-  -> http://127.0.0.1:3000/api/flowpilot/*
-  -> FlowPilot API Windows Service
-  -> SQL Server / LDAP / SMTP / 本机附件目录
+FlowPilot-<releaseId>.zip
+Install-FlowPilotBackend.ps1
 ```
 
-- ASP.NET Core 不由 IIS 应用程序池直接托管。
-- Kestrel 只监听 `127.0.0.1:3000`，不得通过局域网直接访问。
-- IIS 只代理 `/api/flowpilot/*`，不接管同一站点的其他 API。
-- API 启动时不自动创建、迁移或 Seed 数据库。
-- 数据库结构升级由部署人员或 DBA 显式执行。
-- API 与 Web 使用同一个不可变 release，通过同一个 `App\current` 目录联接切换。
-- 允许计划停机；本文不承诺零停机发布。
+安装脚本位于仓库：
 
-## 2. 角色分工
+```text
+deployment\Install-FlowPilotBackend.ps1
+```
 
-| 角色 | 职责 |
+使用方法：
+
+1. 把发布 zip 和脚本复制到目标服务器的临时目录，例如 `C:\FlowPilot-Install`。
+2. 确认文件来自批准的发布包。
+3. 从开始菜单搜索 PowerShell，右键选择“以管理员身份运行”。
+4. 执行下面命令，其中路径按实际位置修改：
+
+```powershell
+Unblock-File -LiteralPath "C:\FlowPilot-Install\Install-FlowPilotBackend.ps1"
+& "C:\FlowPilot-Install\Install-FlowPilotBackend.ps1"
+```
+
+5. 按屏幕提示输入信息。密码和 SQL 连接字符串不会显示在屏幕上。
+6. 最后必须看到“FlowPilot 后端安装完成”。如果显示“安装停止”或“安装未完全通过”，根据提示处理，不要自行覆盖 `current`。
+
+如果公司策略仍然禁止执行脚本，请让 Windows 管理员签名或批准脚本；不要修改整台服务器的执行策略来绕过公司安全要求。
+
+脚本会自动完成：
+
+- 检查管理员权限和 .NET 10 Runtime；
+- 检查发布 zip 和 `release.json`；
+- 收集部署目录、网站域名、排序规则和服务账号；
+- 安全读取 SQL 连接字符串及可选的 LDAP/SMTP 配置；
+- 创建目录和 `flowpilot.root`；
+- 复制发布文件；
+- 收紧 NTFS 权限；
+- 生成 Config 和 Secrets；
+- 创建并验证 `current`；
+- 注册、启动和配置 Windows 服务恢复策略；
+- 检查 live、ready 和端口监听；
+- 在 `Logs` 中生成不含密码的部署结果文件。
+
+脚本不会执行数据库迁移。运行到安装确认前，必须由 DBA 完成 initialize、seed、verify。后面的手工步骤保留用于了解输入要求、排查失败或在没有脚本时由 Windows 管理员操作。
+
+当前安装向导适用于需要用户名和密码的普通域账号或本地服务账号。如果公司使用 gMSA，请由域管理员按公司标准注册 Windows 服务，不要在脚本的凭据窗口中填写虚假密码。
+
+## 一、最后要得到什么
+
+完成后，服务器上会有一个名为 **FlowPilot API** 的 Windows 服务：
+
+- 服务自动启动；
+- 后端只监听本机 `127.0.0.1:3000`；
+- 数据保存在 SQL Server；
+- 附件保存在部署目录外置的 `Data\Attachments`；
+- 两个健康检查都返回 `ok`。
+
+本手册统一使用下面的示例值：
+
+| 项目 | 示例值 |
 | --- | --- |
-| 发布负责人 | 从干净提交构建、测试、生成 release、校验哈希 |
-| Windows 管理员 | 准备目录、账号、NTFS 权限、Runtime、Windows Service 和防火墙 |
-| DBA | 创建数据库和账号、复核并执行迁移、备份与恢复 |
-| 应用管理员 | 填写 Config/Secrets、首次 Seed、健康检查和业务验收 |
-| IIS 管理员 | 配置前端应用、ARR、Host 限制和转发头覆盖 |
+| 部署目录 | `D:\FlowPilot` |
+| 发布版本号 | `2026.09.04.1` |
+| 网站域名 | `flowpilot.internal.example` |
+| Windows 服务账号 | `DOMAIN\svc_flowpilot` |
+| Windows 服务名 | `FlowPilot API` |
 
-同一人员可以承担多个角色，但迁移账号不得作为 API 常驻运行账号。
+实际部署时，把示例值替换成你拿到的真实值。
 
-## 3. 部署前填写表
-
-部署前复制并填写以下内容，真实密码不要写入本文或提交 Git。
-
-| 参数 | 示例 | 实际值 |
-| --- | --- | --- |
-| 部署根目录 | `D:\FlowPilot` |  |
-| releaseId | `2026.09.02.1` |  |
-| API 端口 | `3000` |  |
-| 对外 Host | `flowpilot.internal.example` |  |
-| Windows Service 名 | `FlowPilot API` |  |
-| Windows Service 账号 | `DOMAIN\svc_flowpilot` |  |
-| IIS 应用程序池账号 | `IIS AppPool\FlowPilotWeb` |  |
-| SQL Server 地址 | `sql01.internal.example` |  |
-| 数据库名 | `FlowPilot` |  |
-| 数据库排序规则 | `Chinese_PRC_CI_AS` |  |
-| SQL 迁移账号 | 由 DBA 提供 |  |
-| SQL 运行账号 | 由 DBA 提供 |  |
-| LDAPS 地址 | `ldaps://dc01.internal.example` |  |
-| SMTP 地址 | `smtp.internal.example:587` |  |
-
-## 4. 服务器前置条件
-
-### 4.1 Windows Server
-
-- Windows Server 2016 x64 已安装适用补丁。
-- IIS 已安装；ARR 和 URL Rewrite 在配置 IIS 代理前安装。
-- 服务器防火墙不对局域网开放 API 端口 `3000`。
-- 服务账号已授予“作为服务登录”，但不加入本地 Administrators。
-- 服务器能够通过受控网络访问 SQL Server、LDAPS 和 SMTP。
-- 部署盘为本机 NTFS 卷，不使用网络共享承载 release、附件或目录联接。
-
-### 4.2 .NET Runtime
-
-当前仓库的 `pnpm publish:api` 使用框架依赖发布：
+整个操作顺序只有十步：
 
 ```text
--r win-x64 --self-contained false
+拿到发布包和账号
+→ DBA 准备数据库
+→ 安装 .NET Runtime
+→ 创建目录
+→ 复制发布文件
+→ 填写两个配置文件
+→ 设置文件夹权限
+→ 创建 current
+→ 安装并启动 Windows 服务
+→ 检查 live、ready 和监听地址
 ```
 
-目标服务器安装与发布包匹配的 **.NET 10 ASP.NET Core Runtime x64**，不安装 SDK。安装后验证：
+## 二、开始前必须拿到的东西
+
+在操作服务器前，逐项确认。任何一项没有拿到，都先停止部署。
+
+- [ ] 开发人员提供的发布压缩包，例如 `FlowPilot-2026.09.04.1.zip`。
+- [ ] 发布版本号，例如 `2026.09.04.1`。
+- [ ] 公司批准的部署目录，例如 `D:\FlowPilot`。
+- [ ] 对外访问域名或 IP，例如 `flowpilot.internal.example`。
+- [ ] Windows 服务账号和密码。
+- [ ] DBA 提供的完整 SQL Server **运行账号连接字符串**。
+- [ ] DBA 确认数据库已经完成“初始化、Seed、运行账号验证”。
+- [ ] DBA 确认的数据库排序规则，例如 `Chinese_PRC_CI_AS`。
+- [ ] `.NET 10 ASP.NET Core Runtime x64` 安装程序。
+- [ ] 如果本次启用域账号登录：LDAPS 地址、Base DN、UPN 后缀。
+- [ ] 如果本次启用邮件：SMTP 地址、端口、账号、密码和发件地址。
+
+发布压缩包解压后必须直接看到：
+
+```text
+api
+web
+release.json
+```
+
+并且至少存在：
+
+```text
+api\FlowPilot.Api.exe
+web\index.html
+release.json
+```
+
+如果压缩包缺少这些文件，不要自己从源代码编译，退回开发人员重新提供。
+
+## 三、请 DBA 先完成数据库准备
+
+普通部署人员不要自己执行数据库脚本，也不要把 DBA 账号写入服务器配置。
+
+把下面这段话发给 DBA，其中尖括号内容替换成真实值：
+
+```text
+请为 FlowPilot <发布版本号> 准备数据库：
+1. 目标数据库：<数据库名>
+2. 使用与本次发布包完全相同版本的 FlowPilot DatabaseTool
+3. 依次执行 initialize、seed、verify
+4. verify 必须使用后端长期运行账号通过
+5. 请回复数据库结构版本、Seed 版本、排序规则和验证结果
+6. 首次部署请单独通过安全渠道提供 superadmin 初始密码
+```
+
+只有 DBA 明确回复以下项目全部成功，才能继续：
+
+| DBA 确认项 | 结果 |
+| --- | --- |
+| 数据库初始化或升级成功 |  |
+| 内置数据 Seed 成功 |  |
+| 运行账号 verify 成功 |  |
+| 数据库兼容级别不低于 130 |  |
+| 排序规则已确认 |  |
+| 首次 `superadmin` 密码已安全交付 |  |
+
+注意：服务器长期保存的配置中只放 SQL **运行账号**，绝对不能放迁移账号。
+
+## 四、安装 .NET 运行环境
+
+1. 登录目标服务器。
+2. 双击运行 `.NET 10 ASP.NET Core Runtime x64` 安装程序。
+3. 按安装程序提示完成安装。
+4. 从开始菜单搜索 **PowerShell**。
+5. 右键选择 **以管理员身份运行**。
+6. 执行：
 
 ```powershell
 dotnet --list-runtimes
 ```
 
-输出中应存在 `Microsoft.NETCore.App 10.x` 和 `Microsoft.AspNetCore.App 10.x`。记录实际补丁版本。
+正常情况能看到类似下面两行，最后的小版本号可以不同：
 
-### 4.3 SQL Server
-
-- SQL Server 2016 13.x SP2/SP3 或主版本 14 及以上。
-- 数据库兼容级别不低于 `130`。
-- 使用 SQL 登录认证。
-- 远程 SQL Server 使用受信 TLS 证书，连接字符串设置 `Encrypt=true;TrustServerCertificate=false`。
-- 迁移账号和运行账号分离。
-- 运行账号拥有业务所需 DML 权限和结构元数据可见性，但没有 DDL、`db_owner` 或 `sysadmin` 权限。
-
-DBA 可使用以下只读查询核对目标数据库，不能把系统数据库作为 FlowPilot 目标：
-
-```sql
-SELECT
-    SERVERPROPERTY('ProductVersion') AS product_version,
-    SERVERPROPERTY('ProductLevel') AS product_level,
-    SERVERPROPERTY('Edition') AS edition;
-
-SELECT
-    [name],
-    [compatibility_level],
-    [collation_name],
-    [state_desc]
-FROM sys.databases
-WHERE [name] = N'FlowPilot';
+```text
+Microsoft.AspNetCore.App 10.x.x
+Microsoft.NETCore.App 10.x.x
 ```
 
-## 5. 部署目录
+如果看不到 `10` 开头的版本，停止部署，重新安装正确的 x64 Runtime。
 
-以下命令均在目标服务器的管理员 PowerShell 中运行。先把变量替换为本次部署值：
+## 五、创建部署目录
+
+以下操作都在“管理员 PowerShell”中执行。
+
+先设置本次部署使用的两个值：
 
 ```powershell
 $FlowPilotDeployRoot = "D:\FlowPilot"
-$FlowPilotReleaseId = "2026.09.02.1"
-$FlowPilotReleaseRoot = Join-Path $FlowPilotDeployRoot "App\releases\$FlowPilotReleaseId"
+$FlowPilotReleaseId = "2026.09.04.1"
 ```
 
-首次安装时创建持久化目录：
+请只修改引号中的内容，不要删除 `$`、等号或引号。
+
+第六节到第十二节会继续使用这两个变量。尽量不要关闭这个 PowerShell 窗口。如果中途关闭了，每次重新打开管理员 PowerShell 后，先重新执行上面两行。
+
+然后整段复制执行：
 
 ```powershell
-$FlowPilotPersistentDirectories = @(
-    (Join-Path $FlowPilotDeployRoot "App\releases"),
+$FlowPilotReleasePath = Join-Path $FlowPilotDeployRoot "App\releases\$FlowPilotReleaseId"
+
+if (Test-Path -LiteralPath $FlowPilotReleasePath) {
+    throw "这个发布版本目录已经存在。请停止操作，不要覆盖旧目录。"
+}
+
+@(
+    $FlowPilotReleasePath,
     (Join-Path $FlowPilotDeployRoot "Config"),
     (Join-Path $FlowPilotDeployRoot "Secrets"),
     (Join-Path $FlowPilotDeployRoot "Data\Attachments"),
     (Join-Path $FlowPilotDeployRoot "Logs"),
     (Join-Path $FlowPilotDeployRoot "Temp"),
     (Join-Path $FlowPilotDeployRoot "Backup")
-)
-
-$FlowPilotPersistentDirectories | ForEach-Object {
+) | ForEach-Object {
     New-Item -ItemType Directory -Path $_ -Force | Out-Null
 }
 
@@ -144,235 +219,72 @@ if (-not (Test-Path -LiteralPath $FlowPilotRootMarker -PathType Leaf)) {
 }
 ```
 
-目标结构为：
+执行成功时一般没有红色错误。
+
+打开资源管理器，进入 `D:\FlowPilot`，应看到：
 
 ```text
-{部署根目录}\
-├─ flowpilot.root
-├─ App\
-│  ├─ current\                  -> releases\{releaseId}
-│  ├─ previous\                 -> releases\{上一版本}
-│  └─ releases\
-│     └─ {releaseId}\
-│        ├─ api\
-│        ├─ web\
-│        └─ release.json
-├─ Config\
-│  └─ appsettings.Production.json
-├─ Secrets\
-│  └─ secrets.Production.json
-├─ Data\Attachments\
-├─ Logs\
-├─ Temp\
-└─ Backup\
+App
+Backup
+Config
+Data
+Logs
+Secrets
+Temp
+flowpilot.root
 ```
 
-禁止事项：
+确认文件名是 `flowpilot.root`，不能是 `flowpilot.root.txt`。
 
-- 不把 Config、Secrets、Data、Logs、Temp 或 Backup 放入 `App\releases`。
-- 不把附件目录放入 IIS 网站、API 目录或 Web 目录。
-- 不把 `current` 和 `previous` 指向网络共享或 `App\releases` 之外。
-- 不覆盖已经存在的 releaseId。
-- 不在运行中的 release 目录里直接替换 DLL。
+## 六、复制发布文件
 
-## 6. 构建和生成发布包
+1. 解压开发人员提供的压缩包。
+2. 把解压后的 `api`、`web` 和 `release.json` 复制到：
 
-### 6.1 构建环境要求
-
-在受控构建机或 CI 中使用：
-
-- .NET 10 SDK；
-- Node.js 与 Corepack；
-- pnpm 11.1.3；
-- 能够运行 SQL Server 集成测试的隔离测试数据库；
-- 干净、无未提交文件的指定 Git 提交。
-
-正式包不要从日常开发工作区直接生成。构建前确认：
-
-```powershell
-git status --short
-git rev-parse HEAD
+```text
+D:\FlowPilot\App\releases\2026.09.04.1
 ```
 
-`git status --short` 必须没有输出。
-
-### 6.2 构建与发布
-
-从仓库根目录运行：
+3. 复制完成后执行下面的检查：
 
 ```powershell
-pnpm install --frozen-lockfile
-pnpm backend:check
-pnpm publish:api
-pnpm build:web
-```
+$FlowPilotReleasePath = Join-Path $FlowPilotDeployRoot "App\releases\$FlowPilotReleaseId"
 
-- `pnpm backend:check` 是正式发布前后端门禁，要求测试 SQL Server 可用。
-- API 输出位于 `apps\api\artifacts\publish`。
-- Web 输出位于 `apps\web\dist`。
-- 即使本轮只启用后端，也要把匹配版本的 Web 放进同一个 release，暂不启用 IIS 前端即可。
-- `publish:api` 使用固定输出目录；执行前必须由构建工作区清理流程确认该目录不存在或为空，防止旧文件残留。不要把日常开发机上已有的 `artifacts\publish` 直接打包。
+$FlowPilotRequiredFiles = @(
+    (Join-Path $FlowPilotReleasePath "api\FlowPilot.Api.exe"),
+    (Join-Path $FlowPilotReleasePath "web\index.html"),
+    (Join-Path $FlowPilotReleasePath "release.json")
+)
 
-创建新的暂存包：
-
-```powershell
-$FlowPilotRepoRoot = "D:\Build\processSite"
-$FlowPilotPackageRoot = "D:\Build\FlowPilot-Packages\2026.09.02.1"
-
-if (Test-Path -LiteralPath $FlowPilotPackageRoot) {
-    throw "目标 release 暂存目录已经存在，必须使用新的 releaseId。"
+$FlowPilotMissingFiles = $FlowPilotRequiredFiles | Where-Object {
+    -not (Test-Path -LiteralPath $_ -PathType Leaf)
 }
 
-New-Item -ItemType Directory -Path (Join-Path $FlowPilotPackageRoot "api") -Force | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $FlowPilotPackageRoot "web") -Force | Out-Null
-
-Copy-Item -Path (Join-Path $FlowPilotRepoRoot "apps\api\artifacts\publish\*") -Destination (Join-Path $FlowPilotPackageRoot "api") -Recurse
-Copy-Item -Path (Join-Path $FlowPilotRepoRoot "apps\web\dist\*") -Destination (Join-Path $FlowPilotPackageRoot "web") -Recurse
-```
-
-发布包不得包含：
-
-- `apps/api/config/appsettings.Development.local.json`；
-- 真实 Config 或 Secrets；
-- SQL 迁移账号；
-- 数据库备份和附件；
-- 测试项目、测试结果、SDK 或 `node_modules`；
-- 构建机日志。
-
-### 6.3 release.json
-
-每个 release 根目录必须包含 `release.json`。示例：
-
-```json
-{
-  "releaseId": "2026.09.02.1",
-  "productVersion": "0.1.0",
-  "builtAtUtc": "2026-09-02T04:00:00Z",
-  "sourceCommit": "<完整 Git commit>",
-  "apiContractVersion": "v1",
-  "databaseSchemaVersion": "202609020002",
-  "compatibleDatabaseSchemaVersions": ["202609020002"],
-  "publishMode": "framework-dependent-win-x64",
-  "dotnetRuntime": "10.x",
-  "files": [
-    {
-      "path": "api/FlowPilot.Api.exe",
-      "sha256": "<SHA-256>"
-    }
-  ]
+if ($FlowPilotMissingFiles.Count -gt 0) {
+    $FlowPilotMissingFiles
+    throw "发布包不完整，请停止部署并联系开发人员。"
 }
+
+Write-Host "发布包检查通过。" -ForegroundColor Green
 ```
 
-`databaseSchemaVersion` 必须取自本次源代码的 `DatabaseSchemaVersion.Current`，不能沿用示例。`files` 应覆盖包内所有 API/Web 文件；`release.json` 自身的哈希由交付介质或工单单独记录，避免循环引用。对 `api`、`web` 和 `release.json` 执行病毒扫描与哈希校验后，再复制到服务器。
+看到绿色的“发布包检查通过”才能继续。
 
-## 7. 数据库初始化或升级
+## 七、创建非敏感配置文件
 
-### 7.1 重要限制
-
-当前 `FlowPilot.DatabaseTool` 是受控数据库工具，不随 API 生产包常驻部署。它固定读取仓库中的：
-
-```text
-apps/api/src/FlowPilot.Api/appsettings.json
-apps/api/config/appsettings.Development.local.json
-```
-
-因此生产数据库迁移应从受保护的 DBA 管理工作站执行，管理工作站必须检出与 release 完全相同的 Git commit。不要为了方便把迁移账号放入服务器 `Secrets`。
-
-### 7.2 准备 DBA 工作站配置
-
-在 DBA 工作站复制被 Git 忽略的本地配置：
+在管理员 PowerShell 中执行：
 
 ```powershell
-Copy-Item apps/api/config/appsettings.Development.local.example.json apps/api/config/appsettings.Development.local.json
+notepad (Join-Path $FlowPilotDeployRoot "Config\appsettings.Production.json")
 ```
 
-只在该受保护文件中临时填写：
-
-```json
-{
-  "ConnectionStrings": {
-    "FlowPilot": "Server=<SQL 主机>;Database=<数据库>;User ID=<运行账号>;Password=<运行密码>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100",
-    "FlowPilotMigration": "Server=<SQL 主机>;Database=<数据库>;User ID=<迁移账号>;Password=<迁移密码>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=15;Min Pool Size=0;Max Pool Size=20",
-    "FlowPilotMigrationTest": ""
-  },
-  "FlowPilot": {
-    "Database": {
-      "ExpectedCollation": "<DBA 确认的排序规则>"
-    },
-    "Bootstrap": {
-      "SuperAdminPassword": "<仅首次 Seed 使用的临时密码>"
-    }
-  }
-}
-```
-
-该文件不得提交 Git、发送到服务器、进入工单附件或保留在共享目录。也不要把连接字符串放到命令行参数中，以免进入命令历史或进程列表。
-
-### 7.3 首次初始化
-
-1. DBA 已创建专用空数据库、迁移账号和运行账号。
-2. API Windows Service 尚未启动。
-3. 从与 release 相同提交的仓库根目录运行：
-
-```powershell
-pnpm db:init
-pnpm db:seed
-pnpm db:verify
-```
-
-预期结果：
-
-- `db:init` 报告结构已初始化或已经是当前版本；
-- `db:seed` 创建或确认内置权限、角色和唯一 `superadmin`；
-- `db:verify` 使用运行账号通过连接、版本、迁移账本和结构名称检查。
-
-首次 Seed 成功后：
-
-- 从 DBA 工作站本地配置删除 `SuperAdminPassword`；
-- 按组织秘密处理要求删除迁移密码和不再需要的生产连接信息；
-- 不再次使用配置覆盖已创建的超级管理员密码。
-
-### 7.4 升级已有数据库
-
-升级顺序固定为：
-
-```text
-停止 FlowPilot API
--> 记录当前 release 和数据库结构版本
--> 备份 SQL Server 数据库
--> 生成同一停机点的附件清单/备份
--> 使用新 release 对应的 DatabaseTool 执行 db:init
--> 执行 db:seed
--> 使用运行账号执行 db:verify
--> 切换 current
--> 启动 FlowPilot API
-```
-
-禁止：
-
-- API 启动时调用自动迁移；
-- 在 `master`、`model`、`msdb` 或 `tempdb` 上运行工具；
-- 忽略迁移校验和漂移、未知迁移或部分结构错误；
-- 手工删除迁移账本来伪造成功；
-- 未确认旧程序与新数据库兼容就执行文件回滚。
-
-## 8. 生产配置
-
-### 8.1 Config
-
-创建：
-
-```text
-{部署根目录}\Config\appsettings.Production.json
-```
-
-建议内容：
+如果记事本询问是否创建文件，选择“是”。粘贴下面内容：
 
 ```json
 {
   "FlowPilot": {
     "Http": {
-      "AllowedHosts": "flowpilot.internal.example"
+      "AllowedHosts": "flowpilot.internal.example;127.0.0.1"
     },
     "Authentication": {
       "CookieSecure": false
@@ -397,358 +309,400 @@ pnpm db:verify
 }
 ```
 
-- `AllowedHosts` 填 IIS 对外绑定的真实域名或 IP；多个值用分号分隔。
-- 不使用 `*`。
-- 当前内网 HTTP 部署使用 `CookieSecure=false`；未来启用 HTTPS 时同步改为 `true`。
-- 所有数据库超时必须为 `1` 至 `3600` 秒，不能配置 `0`。
+只需要修改两处：
 
-### 8.2 Secrets
+1. `flowpilot.internal.example` 改成实际网站域名或 IP，但保留后面的 `;127.0.0.1`，它用于服务器本机健康检查。
+2. `Chinese_PRC_CI_AS` 改成 DBA 确认的排序规则。
 
-创建：
+不要把 `AllowedHosts` 改成 `*`。
 
-```text
-{部署根目录}\Secrets\secrets.Production.json
+当前是公司内网 HTTP，所以 `CookieSecure` 保持 `false`。如果实际部署使用 HTTPS，改成 `true`。
+
+保存并关闭记事本。
+
+## 八、创建敏感配置文件
+
+敏感配置里有数据库、LDAP 和 SMTP 密码。不要截图、发群聊或放进 Git。
+
+在管理员 PowerShell 中执行：
+
+```powershell
+notepad (Join-Path $FlowPilotDeployRoot "Secrets\secrets.Production.json")
 ```
 
-建议内容：
+### 情况 A：暂时不启用域登录和邮件
+
+粘贴下面内容，把整条连接字符串替换成 DBA 提供的 SQL 运行账号连接字符串：
 
 ```json
 {
   "ConnectionStrings": {
-    "FlowPilot": "Server=<SQL Server 主机>;Database=<数据库名>;User ID=<运行账号>;Password=<运行密码>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100"
+    "FlowPilot": "Server=<SQL主机>;Database=<数据库名>;User ID=<运行账号>;Password=<运行密码>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100"
+  },
+  "FlowPilot": {
+    "Smtp": {
+      "Enabled": false
+    }
+  }
+}
+```
+
+### 情况 B：启用域登录和邮件
+
+粘贴下面内容，并替换所有尖括号内容：
+
+```json
+{
+  "ConnectionStrings": {
+    "FlowPilot": "Server=<SQL主机>;Database=<数据库名>;User ID=<运行账号>;Password=<运行密码>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100"
   },
   "FlowPilot": {
     "Ldap": {
-      "Url": "ldaps://<域服务地址>",
+      "Url": "ldaps://<域服务器地址>",
       "BaseDn": "<目录搜索根>",
-      "UpnSuffix": "<UPN 后缀>",
+      "UpnSuffix": "<UPN后缀>",
       "TimeoutSeconds": 10
     },
     "Smtp": {
       "Enabled": true,
-      "TestEMail": "<联调阶段测试邮箱；正式启用实际收件人前清空>",
-      "Host": "<SMTP 主机>",
+      "TestEMail": "<联调测试邮箱>",
+      "Host": "<SMTP主机>",
       "Port": 587,
       "Security": "starttls",
-      "UserName": "<SMTP 账号>",
-      "Password": "<SMTP 密码>",
-      "From": "<固定发件地址>",
+      "UserName": "<SMTP账号>",
+      "Password": "<SMTP密码>",
+      "From": "<发件邮箱>",
       "FromName": "FlowPilot"
     }
   }
 }
 ```
 
-如果暂不启用 SMTP，设置 `Enabled=false`，其他 SMTP 值可以留空。生产服务器 Secrets 不保存迁移账号。超级管理员已经由 DBA 工具 Seed 后，生产 Secrets 也不保存初始密码。
+联调期间填写 `TestEMail` 后，所有邮件只会发到测试邮箱。正式启用真实收件人前必须把它改成空字符串：
 
-配置优先级为：
-
-```text
-发布包 appsettings.json
-< Config/appsettings.Production.json
-< Secrets/secrets.Production.json
-< 进程环境变量
+```json
+"TestEMail": ""
 ```
 
-不要设置 `FLOWPILOT_HOME`、`FLOWPILOT_CONFIG_FILE` 或 `FLOWPILOT_SECRETS_FILE`。这些变量不会改变部署路径。
+这个文件中不要填写数据库迁移账号，也不要填写 `superadmin` 初始密码。
 
-## 9. NTFS 权限
+保存并关闭记事本。
 
-先保留 `SYSTEM` 和部署管理员的管理权限，再按以下矩阵授予最小权限：
+## 九、检查两个配置文件是否写坏
 
-| 路径 | API 服务账号 | IIS 前端池账号 | 部署管理员 |
-| --- | --- | --- | --- |
-| `flowpilot.root` | 读取 | 读取 | 修改 |
-| `App\releases\*\api` | 读取/执行 | 无 | 修改 |
-| `App\releases\*\web` | 无需 | 读取 | 修改 |
-| `App\current`、`App\previous` | 读取/执行 | 读取 | 切换 |
-| `Config` | 读取 | 无 | 修改 |
-| `Secrets` | 读取 | 无 | 修改 |
-| `Data\Attachments` | 修改 | 无 | 修改/备份 |
-| `Logs` | 修改 | 无 | 读取/维护 |
-| `Temp` | 修改 | 无 | 修改 |
-| `Backup` | 按备份流程 | 无 | 修改 |
-
-权限配置后，使用服务账号实际验证：
-
-- 能读取两个生产 JSON；
-- 能读取和执行 API；
-- 能在 Logs、Temp 和 Data/Attachments 创建并删除测试文件；
-- IIS 应用池账号不能读取 Secrets 和附件。
-
-不要通过让服务账号加入 Administrators 来修复权限问题。
-
-## 10. 落地 release 与创建 current
-
-把经过哈希校验的完整 release 复制到：
-
-```text
-{部署根目录}\App\releases\{releaseId}
-```
-
-复制后检查：
+在管理员 PowerShell 中整段执行：
 
 ```powershell
-$FlowPilotApiExe = Join-Path $FlowPilotReleaseRoot "api\FlowPilot.Api.exe"
-$FlowPilotWebIndex = Join-Path $FlowPilotReleaseRoot "web\index.html"
-$FlowPilotReleaseManifest = Join-Path $FlowPilotReleaseRoot "release.json"
+$FlowPilotConfigFile = Join-Path $FlowPilotDeployRoot "Config\appsettings.Production.json"
+$FlowPilotSecretsFile = Join-Path $FlowPilotDeployRoot "Secrets\secrets.Production.json"
 
-foreach ($FlowPilotRequiredFile in @(
-    $FlowPilotApiExe,
-    $FlowPilotWebIndex,
-    $FlowPilotReleaseManifest
-)) {
-    if (-not (Test-Path -LiteralPath $FlowPilotRequiredFile -PathType Leaf)) {
-        throw "发布包缺少文件：$FlowPilotRequiredFile"
-    }
+try {
+    Get-Content -LiteralPath $FlowPilotConfigFile -Raw | ConvertFrom-Json | Out-Null
+    Get-Content -LiteralPath $FlowPilotSecretsFile -Raw | ConvertFrom-Json | Out-Null
+    Write-Host "两个配置文件格式正确。" -ForegroundColor Green
+}
+catch {
+    Write-Host "配置文件格式错误，请检查逗号、双引号和大括号。" -ForegroundColor Red
+    throw
 }
 ```
 
-首次安装创建 `current` 联接，不创建无效的 `previous`：
+看到绿色的“两个配置文件格式正确”才能继续。
+
+注意：此检查只能确认 JSON 格式正确，不能确认数据库密码或地址正确。
+
+## 十、设置文件夹权限
+
+这一节建议由 Windows 管理员操作。如果你没有修改 NTFS 权限的经验，不要通过“给 Everyone 完全控制”解决问题。
+
+必须保留 `SYSTEM` 和服务器管理员的权限，再给 Windows 服务账号增加下面的权限：
+
+| 路径 | 服务账号权限 |
+| --- | --- |
+| `D:\FlowPilot\flowpilot.root` | 读取 |
+| `D:\FlowPilot\App` | 读取和执行 |
+| `D:\FlowPilot\Config` | 读取 |
+| `D:\FlowPilot\Secrets` | 读取 |
+| `D:\FlowPilot\Data\Attachments` | 修改 |
+| `D:\FlowPilot\Logs` | 修改 |
+| `D:\FlowPilot\Temp` | 修改 |
+
+操作方法：
+
+1. 在资源管理器中右键对应文件夹，选择“属性”。
+2. 打开“安全”页签。
+3. 点击“编辑”→“添加”。
+4. 输入服务账号，例如 `DOMAIN\svc_flowpilot`。
+5. 按上表勾选权限。
+6. 点击“应用”。
+
+不要给服务账号以下权限：
+
+- 本地管理员；
+- 对整个部署盘的完全控制；
+- SQL Server `sysadmin`；
+- IIS 前端目录以外不必要的权限。
+
+后续配置 IIS 时，IIS 应用程序池账号不能读取 `Secrets` 和 `Data\Attachments`。
+
+## 十一、创建 current 目录联接
+
+Windows 服务以后永远从 `App\current` 启动，而不是写死某个版本号。
+
+在管理员 PowerShell 中执行：
 
 ```powershell
-$FlowPilotCurrentLink = Join-Path $FlowPilotDeployRoot "App\current"
-if (Test-Path -LiteralPath $FlowPilotCurrentLink) {
-    throw "current 已经存在；首次安装不得覆盖，升级请走第 14 节。"
+$FlowPilotReleasePath = Join-Path $FlowPilotDeployRoot "App\releases\$FlowPilotReleaseId"
+$FlowPilotCurrentPath = Join-Path $FlowPilotDeployRoot "App\current"
+
+if (Test-Path -LiteralPath $FlowPilotCurrentPath) {
+    throw "current 已经存在。这不是首次安装，请停止操作。"
 }
 
-New-Item -ItemType Junction -Path $FlowPilotCurrentLink -Target $FlowPilotReleaseRoot | Out-Null
+New-Item -ItemType Junction -Path $FlowPilotCurrentPath -Target $FlowPilotReleasePath | Out-Null
 
-(Get-Item -LiteralPath $FlowPilotCurrentLink).Target
+$FlowPilotCurrentItem = Get-Item -LiteralPath $FlowPilotCurrentPath
+Write-Host "current 指向：$($FlowPilotCurrentItem.Target)" -ForegroundColor Green
 ```
 
-输出目标必须是本机 `{部署根目录}\App\releases\{releaseId}`。
+显示的路径必须是本次版本，例如：
 
-## 11. 注册 Windows Service
+```text
+D:\FlowPilot\App\releases\2026.09.04.1
+```
 
-### 11.1 注册
+如果指向别处，停止部署，不要继续注册服务。
 
-使用组织标准服务部署工具优先。以下 PowerShell 示例会通过安全凭据对话框读取普通域服务账号密码，不把密码写进脚本：
+## 十二、安装 Windows 服务
+
+确认你已经拿到服务账号和密码，并且该账号已被允许“作为服务登录”。
+
+在管理员 PowerShell 中执行，先修改服务账号：
 
 ```powershell
-$FlowPilotServiceName = "FlowPilot API"
-$FlowPilotServiceDisplayName = "FlowPilot API"
 $FlowPilotServiceAccount = "DOMAIN\svc_flowpilot"
-$FlowPilotStableApiExe = Join-Path $FlowPilotDeployRoot "App\current\api\FlowPilot.Api.exe"
+$FlowPilotServiceName = "FlowPilot API"
+$FlowPilotApiExe = Join-Path $FlowPilotDeployRoot "App\current\api\FlowPilot.Api.exe"
 
-if (-not (Test-Path -LiteralPath $FlowPilotStableApiExe -PathType Leaf)) {
-    throw "找不到稳定 API 执行文件：$FlowPilotStableApiExe"
+if (-not (Test-Path -LiteralPath $FlowPilotApiExe -PathType Leaf)) {
+    throw "找不到 FlowPilot.Api.exe，请检查 current 指向和发布包。"
+}
+
+if (Get-Service -Name $FlowPilotServiceName -ErrorAction SilentlyContinue) {
+    throw "FlowPilot API 服务已经存在。这不是首次安装，请停止操作。"
 }
 
 $FlowPilotServiceCredential = Get-Credential -UserName $FlowPilotServiceAccount
-$FlowPilotServiceBinaryPath = "`"$FlowPilotStableApiExe`" --environment Production"
+$FlowPilotServiceCommand = "`"$FlowPilotApiExe`" --environment Production"
 
-New-Service -Name $FlowPilotServiceName -BinaryPathName $FlowPilotServiceBinaryPath -DisplayName $FlowPilotServiceDisplayName -Description "FlowPilot ASP.NET Core API" -StartupType Automatic -Credential $FlowPilotServiceCredential
+New-Service -Name $FlowPilotServiceName -BinaryPathName $FlowPilotServiceCommand -DisplayName $FlowPilotServiceName -Description "FlowPilot ASP.NET Core API" -StartupType Automatic -Credential $FlowPilotServiceCredential
 
 sc.exe config $FlowPilotServiceName start= delayed-auto
+sc.exe failure $FlowPilotServiceName reset= 86400 actions= restart/60000/restart/300000/restart/900000
+sc.exe failureflag $FlowPilotServiceName 1
 ```
 
-如果使用 gMSA，由域管理员按组织标准注册，不在本文中设置密码。
+系统会弹出凭据窗口。输入服务账号密码，不要把密码写进 PowerShell 命令。
 
-`--environment Production` 不包含秘密，并能避免服务器上的全局开发环境变量误把服务启动为 Development。服务注册后仍应检查并清理服务器上错误的 `DOTNET_ENVIRONMENT` 或 `ASPNETCORE_ENVIRONMENT` 全局值。
-
-### 11.2 恢复策略
-
-示例恢复策略：
-
-```powershell
-sc.exe failure "FlowPilot API" reset= 86400 actions= restart/60000/restart/300000/restart/900000
-sc.exe failureflag "FlowPilot API" 1
-```
-
-含义：第一次失败 1 分钟后重启，第二次 5 分钟后重启，后续 15 分钟后重启；连续正常 24 小时后重置失败计数。具体退避时间可按运维标准调整。
-
-### 11.3 启动
+然后启动服务：
 
 ```powershell
 Start-Service "FlowPilot API"
+Start-Sleep -Seconds 5
 Get-Service "FlowPilot API"
 ```
 
-状态应进入 `Running`。如果启动失败，先检查 Windows 服务事件和 `{部署根目录}\Logs`，不要反复修改权限或把账号提升为管理员。
-
-## 12. 后端独立健康检查
-
-### 12.1 存活检查
-
-生产 `AllowedHosts` 通常不包含 `127.0.0.1`，所以本机直连时显式发送外部 Host：
-
-```powershell
-$FlowPilotExternalHost = "flowpilot.internal.example"
-$FlowPilotHealthHeaders = @{ Host = $FlowPilotExternalHost }
-
-Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/flowpilot/v1/health/live" -Headers $FlowPilotHealthHeaders
-```
-
-预期 HTTP `200`，状态为 `ok`。
-
-### 12.2 就绪检查
-
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/flowpilot/v1/health/ready" -Headers $FlowPilotHealthHeaders
-```
-
-预期 HTTP `200`，并返回当前应用版本。HTTP `503` 表示数据库连接、数据库版本、Seed 或结构检查未通过。
-
-### 12.3 监听范围
-
-```powershell
-Get-NetTCPConnection -LocalPort 3000 -State Listen | Select-Object LocalAddress, LocalPort, OwningProcess
-```
-
-`LocalAddress` 必须是 `127.0.0.1`，不能是 `0.0.0.0`、服务器局域网 IP 或 `::`。
-
-再从另一台局域网机器确认以下地址不可达：
+正常结果中的 `Status` 是：
 
 ```text
-http://<服务器局域网IP>:3000/api/flowpilot/v1/health/live
+Running
 ```
 
-### 12.4 重启恢复
+如果是 `Stopped`，不要连续重试，直接看第十五节“故障处理”。
+
+## 十三、检查后端是否正常
+
+### 1. 检查日志
+
+打开：
+
+```text
+D:\FlowPilot\Logs
+```
+
+应当出现名称类似下面的日志文件：
+
+```text
+flowpilot-api-20260904.json
+```
+
+### 2. 检查存活状态
+
+在管理员 PowerShell 中执行：
 
 ```powershell
-Restart-Service "FlowPilot API"
-Get-Service "FlowPilot API"
+Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/flowpilot/v1/health/live"
 ```
 
-重启后重新执行 live 和 ready。检查最新日志没有连接字符串、密码、Cookie、会话令牌、完整表单或附件正文。
-
-## 13. 接入 IIS 前的后端验收
-
-以下全部通过后，才进入 IIS/ARR 配置：
-
-- [ ] Windows Service 使用专用低权限账号运行。
-- [ ] API 只监听 `127.0.0.1:3000`。
-- [ ] `health/live` 返回 `200`。
-- [ ] `health/ready` 返回 `200`。
-- [ ] 运行账号通过 `pnpm db:verify`。
-- [ ] 生产 Secrets 不包含迁移账号和超级管理员初始密码。
-- [ ] 附件目录位于 release 和 IIS 目录之外。
-- [ ] IIS 应用程序池账号无法读取 Secrets 和附件。
-- [ ] 日志写入外置 Logs，且未记录秘密或业务正文。
-- [ ] 停止和重启服务后能够恢复。
-- [ ] releaseId、Git commit、数据库结构版本、Runtime 版本和文件哈希已记录。
-
-接下来按 [`IIS_DEPLOYMENT.md`](./IIS_DEPLOYMENT.md) 配置 `/flowpilot` 和 `/api/flowpilot/*`。
-
-## 14. 后端升级
-
-### 14.1 升级前
-
-1. 在 `App\releases` 中落地新的完整、不可变 release。
-2. 校验 `release.json`、哈希、API/Web 文件和目标数据库兼容范围。
-3. 记录 `current` 实际目标。
-4. 停止 API 服务，并暂停 IIS `/flowpilot` 应用或使其脱机。
-5. 备份数据库和同一时间点的附件清单。
-6. 需要结构变化时，由 DBA 执行第 7.4 节。
-
-### 14.2 切换目录联接
-
-切换前必须确认：
-
-- 新旧目标都是本机目录；
-- 都是 `App\releases` 的直接子目录；
-- 旧 `current` 确实是目录联接；
-- 新 release 同时包含 `api`、`web` 和 `release.json`；
-- 服务和 IIS 已停止。
-
-先建立临时 `next` 联接并验证目标，再将旧 `current` 记为 `previous`，最后切换 `current`。删除或替换联接前，部署脚本必须再次检查 ReparsePoint 属性和解析后的绝对目标，不能对未验证路径执行递归删除。
-
-### 14.3 升级后
+正常结果包含：
 
 ```text
-启动 FlowPilot API
--> 检查 live
--> 检查 ready
--> 启动 IIS
--> 检查登录
--> 检查一个只读列表
--> 检查一个受控写操作
--> 检查附件上传/下载
--> 使用测试邮箱检查一封通知
--> 观察日志和 health/details
+status : ok
 ```
 
-至少保留 `current` 和 `previous` 对应的两个完整 release。清理更旧 release 前必须解析所有目录联接目标，不能跟随联接递归清理，也不能触碰持久化目录。
+### 3. 检查数据库准备状态
 
-## 15. 回滚
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/flowpilot/v1/health/ready"
+```
 
-文件回滚只恢复 API/Web 文件，不恢复数据库结构和业务数据。
-
-回滚前必须满足至少一项：
-
-- 新数据库结构仍在旧程序声明的兼容范围内；
-- DBA 已执行并验证批准的数据恢复方案。
-
-回滚顺序：
+正常结果同样包含：
 
 ```text
-停止 FlowPilot API 和 IIS
--> 记录失败 release、日志和健康结果
--> 确认 previous 目标及数据库兼容性
--> 将 current 切回 previous 对应的完整 release
--> 启动 FlowPilot API
--> 检查 live 和 ready
--> 启动 IIS
--> 完成登录和关键业务冒烟
+status : ok
 ```
 
-禁止通过覆盖外置 Config/Secrets/Data、删除迁移记录、直接覆盖 release 或 `git reset` 回滚生产系统。
+如果返回 `503`，通常是数据库连接、Seed 或数据库结构问题，按第十五节处理。
 
-## 16. 常见故障
+当前版本的 ready 接口主要检查数据库和 Seed；附件目录权限仍要按第十节人工确认，不能只依赖 ready 结果。
 
-| 现象 | 常见原因 | 处理 |
-| --- | --- | --- |
-| 服务立即停止 | 缺少 `flowpilot.root` | 确认标记位于唯一部署根，且在 API 向上 6 层搜索范围内 |
-| 服务立即停止 | API 不在 `App\releases` 或合法 `current` 联接内 | 检查 release 目录和联接真实目标 |
-| 服务立即停止 | Config/Secrets 缺失或无读取权限 | 检查两个固定 JSON 和服务账号 ACL |
-| 服务立即停止 | Kestrel 配置被覆盖为非 loopback | 删除不安全的 `urls`/环境变量覆盖，恢复 `127.0.0.1` |
-| 服务立即停止 | `AllowedHosts` 缺失或含 `*` | 填写 IIS 实际绑定的明确 Host |
-| 服务立即停止 | 生产连接串未显式加密或信任任意证书 | 使用 `Encrypt=true;TrustServerCertificate=false` 和可信证书 |
-| live 失败 | 进程未运行、端口冲突或 Host 不允许 | 检查服务、日志、端口并在本机探测时发送真实 Host 头 |
-| ready 返回 503 | 数据库不可达 | 核对网络、SQL 登录、证书链和连接池配置 |
-| ready 返回 503 | 数据库结构或 Seed 版本不匹配 | 使用相同 release 的 DatabaseTool 执行 init、seed、verify |
-| 附件上传返回 507 | 磁盘低于保留空间 | 扩容或清理受控数据，不能降低为不安全的负数 |
-| 没有发送邮件 | SMTP 未启用、Outbox 重试或测试邮箱配置 | 检查脱敏 health/details、Outbox 和 `TestEMail` |
-| 本机 127.0.0.1 健康检查返回 400 | `AllowedHosts` 拒绝 loopback Host | 使用本文示例显式发送外部 Host，不建议为了探测加入通配符 |
+### 4. 检查监听地址
 
-## 17. 首次上线记录
+```powershell
+Get-NetTCPConnection -LocalPort 3000 -State Listen | Select-Object LocalAddress, LocalPort
+```
 
-上线工单至少记录：
+正确结果：
 
 ```text
-releaseId:
-Git commit:
-API productVersion:
-API contractVersion:
-数据库结构版本:
-Seed 版本:
-.NET Runtime 版本:
-部署根目录:
-current 实际目标:
-previous 实际目标:
-服务账号:
-SQL Server 版本:
-数据库兼容级别:
-数据库排序规则:
-数据库备份编号:
-附件备份/清单编号:
-live 检查时间与结果:
-ready 检查时间与结果:
-回滚演练结果:
-部署人员:
-复核人员:
+LocalAddress LocalPort
+------------ ---------
+127.0.0.1         3000
 ```
 
-## 18. 当前需继续完善的自动化
+如果看到 `0.0.0.0`、`::` 或服务器局域网 IP，立即停止服务并联系开发人员。
 
-本 Runbook 描述现有代码可以执行的部署路径，但仓库尚未提供完整的一键生产部署器。正式规模化发布前建议继续补齐：
+## 十四、后端部署完成标准
 
-1. release 组装、`release.json` 和文件哈希生成脚本；
-2. 具备目标校验的 `current`/`previous` 安全切换脚本；
-3. DatabaseTool 的独立 DBA 发布包和生产输入方式；
-4. Windows Service 安装、恢复策略和卸载脚本；
-5. IIS/ARR 规则自动化与伪造转发头验收脚本；
-6. 数据库与附件同一恢复点的备份/恢复演练脚本。
+下面全部勾选后，后端首次部署才算完成：
 
-在这些自动化完成前，每次生产部署都应由两人复核路径、账号、数据库目标、releaseId 和联接目标。
+- [ ] `.NET 10 ASP.NET Core Runtime x64` 已安装。
+- [ ] 发布包中的 `api`、`web`、`release.json` 完整。
+- [ ] DBA 已确认 initialize、seed、verify 全部成功。
+- [ ] Config 和 Secrets JSON 格式检查通过。
+- [ ] Secrets 只包含 SQL 运行账号，不包含迁移账号。
+- [ ] Windows 服务账号权限已按表设置。
+- [ ] `current` 指向本次 release。
+- [ ] `FlowPilot API` 服务状态为 `Running`。
+- [ ] `health/live` 返回 `ok`。
+- [ ] `health/ready` 返回 `ok`。
+- [ ] 端口 3000 只监听 `127.0.0.1`。
+- [ ] 日志写入 `D:\FlowPilot\Logs`。
+
+完成后再交给 IIS 管理员，继续按照 [`IIS_DEPLOYMENT.md`](./IIS_DEPLOYMENT.md) 配置前端和 `/api/flowpilot/*` 反向代理。
+
+## 十五、故障处理
+
+### 服务启动后马上停止
+
+按下面顺序检查：
+
+1. `D:\FlowPilot\Logs` 是否有最新日志。
+2. `D:\FlowPilot\flowpilot.root` 是否存在且没有 `.txt` 后缀。
+3. `D:\FlowPilot\App\current\api\FlowPilot.Api.exe` 是否存在。
+4. `Config\appsettings.Production.json` 是否存在。
+5. `Secrets\secrets.Production.json` 是否存在。
+6. 服务账号是否能读取 Config、Secrets 和 API 文件。
+7. 服务账号是否能写入 Logs、Temp 和 Data\Attachments。
+
+如果 Windows 服务显示错误 `1069`，通常是服务账号密码错误、密码已过期或账号没有“作为服务登录”权限。请让 Windows 管理员在“服务”管理器中修正登录账号，不要删除 release 或数据库。
+
+仍无法启动时，把下面信息发给开发人员：
+
+- releaseId；
+- Windows 服务状态；
+- Windows 事件查看器中的错误；
+- 最新日志中错误附近的内容；
+- 不要发送 Secrets 文件或数据库密码。
+
+### 健康检查返回 400
+
+最常见原因是 `AllowedHosts` 写错。
+
+确认 Config 中的 `FlowPilot.Http.AllowedHosts` 至少包含：
+
+```text
+实际网站域名或 IP
+127.0.0.1
+```
+
+不要为了通过检查把 `AllowedHosts` 改成 `*`。
+
+### 健康检查返回 503
+
+把返回内容中的 `code` 记录下来，交给 DBA 或开发人员。常见原因：
+
+- SQL Server 地址、账号或密码错误；
+- SQL Server 证书不受服务器信任；
+- DBA 未完成初始化或 Seed；
+- 运行账号权限不足；
+- 数据库排序规则与 Config 不一致；
+
+不要通过给 SQL 运行账号 `sysadmin` 来绕过错误。
+
+### 日志提示找不到 Runtime
+
+重新确认安装的是 `.NET 10 ASP.NET Core Runtime x64`，不是只安装普通 `.NET Runtime`，也不是 x86 版本。
+
+### 日志提示配置文件格式错误
+
+重新执行第九节的 JSON 检查。重点检查：
+
+- 每一项之间是否有英文逗号；
+- 是否误用了中文引号；
+- 大括号是否成对；
+- 密码中如果包含双引号，是否由开发人员正确进行 JSON 转义。
+
+不熟悉 JSON 时，不要反复试错，请让开发人员生成完整的 Secrets 文件并通过安全渠道交付。
+
+## 十六、升级和回滚说明
+
+本手册只用于第一次安装。
+
+升级和回滚会涉及：
+
+- 停止 Windows 服务和 IIS；
+- 数据库与附件备份；
+- 数据库结构兼容性确认；
+- `current`、`previous` 目录联接切换；
+- 失败后的回滚判断。
+
+这些操作做错可能造成程序版本与数据库版本不匹配。仓库目前还没有给普通部署人员使用的一键升级脚本，因此不要用“复制并覆盖 `App\current`”的方式升级。
+
+升级前由开发、DBA 和 Windows 管理员共同按照 [`IIS_DEPLOYMENT.md`](./IIS_DEPLOYMENT.md) 的升级与回滚章节制定本次变更单。
+
+## 十七、部署结果记录
+
+把下面内容复制到上线工单：
+
+```text
+部署日期：
+部署服务器：
+部署根目录：
+releaseId：
+Git commit（来自 release.json）：
+Windows 服务账号：
+.NET Runtime 版本：
+SQL Server 版本：
+数据库名：
+数据库结构版本：
+Seed 版本：
+数据库排序规则：
+current 实际指向：
+health/live 结果：
+health/ready 结果：
+端口 3000 监听地址：
+日志文件位置：
+部署人员：
+复核人员：
+```

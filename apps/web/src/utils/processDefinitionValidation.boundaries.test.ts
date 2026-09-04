@@ -320,6 +320,32 @@ describe("流程发布校验边界", () => {
     expect(check(checks, "email-notification").pass).toBe(true);
   });
 
+  it("rejects invalid choice options configured on table columns", () => {
+    const snapshot = validApprovalSnapshot();
+    snapshot.form.fields.push({
+      id: "detail",
+      type: "table",
+      label: "明细",
+      columns: [{
+        id: "category",
+        label: "类别",
+        type: "select",
+        options: [],
+      }],
+    });
+
+    const result = validateProcessSnapshot({
+      name: "表格选项校验",
+      instancePrefix: "TABLE_OPTIONS",
+      type: "approval",
+      starterGroups: ["starter"],
+      closeGroups: ["closer"],
+    }, snapshot, context);
+
+    expect(result.status).toBe("未通过");
+    expect(result.issues).toContain("单选、复选、下拉或多级下拉存在空白、重复或缺失的选项");
+  });
+
   it("rejects branches that do not start with approvals or share a common join", () => {
     const invalidDirectTarget = validateApprovalFlow(
       [flowNode("start", "start"), flowNode("review", "approval"), flowNode("end", "end")],

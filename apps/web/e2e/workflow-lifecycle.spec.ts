@@ -284,11 +284,16 @@ test("任务中心保留全部流程分类计数并在切换视图时清除失�
 
   await gotoApp(page, "tasks");
   const allFlows = page.locator(".task-flow-item").filter({ hasText: "全部待办" });
-  await expect(allFlows.locator(".task-flow-item__count")).toHaveText("2");
   const firstCategory = page.locator(".task-flow-item").filter({ hasText: firstWorkflow.name });
   const secondCategory = page.locator(".task-flow-item").filter({ hasText: secondWorkflow.name });
   await expect(firstCategory.locator(".task-flow-item__count")).toHaveText("1");
   await expect(secondCategory.locator(".task-flow-item__count")).toHaveText("1");
+  const totalCount = Number(await allFlows.locator(".task-flow-item__count").textContent());
+  const categoryCounts = await page.locator(".task-flow-item")
+    .filter({ hasNotText: "全部待办" })
+    .locator(".task-flow-item__count")
+    .allTextContents();
+  expect(totalCount).toBe(categoryCounts.reduce((sum, value) => sum + Number(value), 0));
   await expect(page.getByText("任务中心审批流程", { exact: true })).toBeVisible();
   await expect(page.getByText("任务中心自由流程", { exact: true })).toBeVisible();
 

@@ -15,10 +15,11 @@ export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.spec.ts",
   outputDir: "./test-results/playwright",
-  fullyParallel: true,
+  // 真实后端用例共享同一个隔离测试库，顺序执行以避免不同业务链路互相污染。
+  fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : 4,
+  workers: 1,
   timeout: 60_000,
   expect: {
     timeout: 8_000,

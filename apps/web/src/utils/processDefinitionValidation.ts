@@ -207,10 +207,11 @@ export const validateApprovalFlow = (
       }
       return distances;
     });
+    const totalBranchDistance = (nodeId: string) => branchDistances
+      .reduce((sum, distances) => sum + distances.get(nodeId)!, 0);
     const commonJoin = joinNodes
       .filter((node) => branchDistances.every((distances) => distances.has(node.id)))
-      .sort((left, right) => branchDistances.reduce((sum, distances) => sum + (distances.get(left.id) ?? Number.MAX_SAFE_INTEGER), 0)
-        - branchDistances.reduce((sum, distances) => sum + (distances.get(right.id) ?? Number.MAX_SAFE_INTEGER), 0))[0];
+      .sort((left, right) => totalBranchDistance(left.id) - totalBranchDistance(right.id))[0];
     if (invalidTargets.length || !commonJoin) {
       invalidSplits.push(splitNode.data?.label || splitNode.id);
       return;
