@@ -27,7 +27,7 @@
 - `POST /attachments`、附件元数据/内容读取和暂存删除，支持流式写入、字段策略校验与单 Range 下载；
 - `GET /me/visible-process-definitions` 按流程发起、任务/清单或实例监控数据范围返回定义及所需版本快照；
 - 邮件 Outbox 查询、详情和幂等手工重试，操作审计查询，以及流程清单 Excel 数据集；
-- LDAPS 域账号登录、MailKit SMTP 后台发送，以及附件、会话、幂等记录和已发送邮件的定时清理；
+- LDAP 域账号登录、MailKit SMTP 后台发送，以及附件、会话、幂等记录和已发送邮件的定时清理；
 - 受运维权限保护的 `GET /health/details` 脱敏运行状态；
 - 存活与就绪检查。
 
@@ -47,7 +47,7 @@ Copy-Item apps/api/config/appsettings.Development.local.example.json apps/api/co
 - `ConnectionStrings:FlowPilotMigration`：初始化和 Seed 账号；
 - `FlowPilot:Database:ExpectedCollation`：目标数据库排序规则；
 - `FlowPilot:Bootstrap:SuperAdminPassword`：首次创建 `superadmin` 时使用。
-- `FlowPilot:Ldap`：存在域登录用户时填写 LDAPS 地址、Base DN 和 UPN 后缀；
+- `FlowPilot:Ldap`：存在域登录用户时填写 LDAP 地址、Base DN 和 UPN 后缀；当前内网部署使用 `ldap://` 时还必须显式设置 `AllowPlainText=true`；
 - `FlowPilot:Smtp`：需要发信时填写服务器、TLS、账号和固定发件人，并把 `Enabled` 改为 `true`。联调时可填写 `TestEMail`，所有通知只投递到该测试邮箱；留空则使用用户实际邮箱。
 
 附件调试目录默认是 `apps/api/.local-data/Attachments`，已被 Git 忽略。通常无需配置；需要放到其他磁盘时，可在同一 JSON 中设置 `FlowPilot:Attachments:RootDirectory`，相对路径以 `apps/api` 为基准。
@@ -56,7 +56,7 @@ Development API、数据库工具和本地调试共用该文件，不要求逐�
 
 数据库结构版本和内置数据版本由后端代码统一维护，不属于环境配置，无需在本地或生产 JSON 中填写。`db:init`、`db:seed`、`db:verify` 和就绪检查始终使用当前代码要求的版本，避免配置与程序不一致。
 
-示例连接字符串只面向 `127.0.0.1` 本机调试，默认使用 `Encrypt=false`，避免本机 SQL Server 没有可用 TLS 凭据时无法建立连接。连接远程数据库或部署时必须使用 `Encrypt=true;TrustServerCertificate=false` 和与服务器名称匹配的可信证书；不要把本地例外复制到生产配置。
+当前部署环境明确使用隔离内网中的 SQL Server，并采用 `Encrypt=false;TrustServerCertificate=true`。开发和生产配置都必须显式写出这两个值，避免依赖 SqlClient 版本默认值；该设置不提供传输加密，只能用于已确认并接受风险的内网环境。
 
 数据库需要先在 SQL Server 中创建好，并设置兼容级别不低于 130；工具不会创建或删除数据库。
 
@@ -108,7 +108,7 @@ pnpm dev:remote
 - 会话闲置 8 小时、绝对 24 小时；
 - 登录和注销执行同源校验；
 - 真实登录操作者为内置超级管理员时，可以查询启用的非内置用户并在当前服务端会话中开始或结束模拟身份。模拟期间权限和数据范围只按目标用户计算，会话保留真实操作者、模拟记录和审计；多个浏览器会话各自关联自己的模拟记录。
-- 已配置为域登录的用户使用本地 JSON 中的 LDAPS 配置校验；服务不可用或配置不完整返回明确的 503，账号密码错误返回 401，且不会回退本地密码。
+- 已配置为域登录的用户使用本地 JSON 中的 LDAP 配置校验；服务不可用或配置不完整返回明确的 503，账号密码错误返回 401，且不会回退本地密码。
 - 登录后可查询任务中心的“我的待办”“可代办”和“我的发起”；待办列表按流程实例分页，同一实例的并行任务放在同一个 `tasks` 数组中。
 - 审批人可读取单个任务并按任务 ETag 提交通过、确认或驳回。服务端动态校验当前流程权限组成员资格，以首个成功写入者为准，并在一个事务中保存授权字段和附件、实际处理人、后续节点激活、并行待办取消、实例状态、时间线和审计。驳回按锁定版本进入待重新提交或自动关闭。
 - 节点开启“允许重复修改”后，原实际处理人或超级管理员可继续修改本节点授权字段和附件；原通过/确认结果保持不变，不重新激活任务或节点。每次保存只记录修改人、时间、说明及字段标识/名称，不保存旧值和新值。

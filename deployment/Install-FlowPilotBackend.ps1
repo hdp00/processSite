@@ -228,6 +228,11 @@ function Assert-SqlConnectionString {
     param([Parameter(Mandatory = $true)][string]$ConnectionString)
 
     try {
+        $outerBuilder = New-Object System.Data.Common.DbConnectionStringBuilder
+        $outerBuilder.ConnectionString = $ConnectionString
+        if ($outerBuilder.Count -eq 1 -and $outerBuilder.ContainsKey("ConnectionString")) {
+            $ConnectionString = [string]$outerBuilder["ConnectionString"]
+        }
         $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder($ConnectionString)
     }
     catch {
@@ -245,12 +250,12 @@ function Assert-SqlConnectionString {
         Stop-Installation "当前部署要求使用 SQL 账号，不能使用 Integrated Security。"
     }
 
-    if (-not $builder.ContainsKey("Encrypt") -or -not $builder.Encrypt) {
-        Stop-Installation "生产连接字符串必须设置 Encrypt=true。"
+    if (-not $builder.ContainsKey("Encrypt") -or $builder.Encrypt) {
+        Stop-Installation "当前部署要求连接字符串设置 Encrypt=false。"
     }
 
-    if (-not $builder.ContainsKey("TrustServerCertificate") -or $builder.TrustServerCertificate) {
-        Stop-Installation "生产连接字符串必须设置 TrustServerCertificate=false。"
+    if (-not $builder.ContainsKey("TrustServerCertificate") -or -not $builder.TrustServerCertificate) {
+        Stop-Installation "当前部署要求连接字符串设置 TrustServerCertificate=true。"
     }
 }
 
@@ -594,24 +599,24 @@ try {
     $connectionString = ConvertTo-PlainText $connectionStringSecure
     Assert-SqlConnectionString $connectionString
 
-    $enableLdap = Read-YesNo "本次是否启用域账号登录（LDAPS）" $false
+    $enableLdap = Read-YesNo "本次是否启用域账号登录（LDAP）" $false
     $ldapUrl = ""
     $ldapBaseDn = ""
     $ldapUpnSuffix = ""
     if ($enableLdap) {
-        $ldapUrl = Read-RequiredValue "LDAPS 地址，例如 ldaps://dc01.internal.example"
+        $ldapUrl = Read-RequiredValue "LDAP 地址，例如 ldap://dc01.internal.example:389"
         $ldapBaseDn = Read-RequiredValue "Base DN，例如 DC=internal,DC=example"
         $ldapUpnSuffix = Read-RequiredValue "UPN 后缀，例如 internal.example"
 
         $ldapUri = $null
         if (-not [Uri]::TryCreate($ldapUrl, [UriKind]::Absolute, [ref]$ldapUri) -or
-            $ldapUri.Scheme -ne "ldaps" -or
+            $ldapUri.Scheme -notin @("ldap", "ldaps") -or
             [string]::IsNullOrWhiteSpace($ldapUri.Host) -or
             -not [string]::IsNullOrEmpty($ldapUri.UserInfo) -or
             $ldapUri.AbsolutePath -ne "/" -or
             -not [string]::IsNullOrEmpty($ldapUri.Query) -or
             -not [string]::IsNullOrEmpty($ldapUri.Fragment)) {
-            Stop-Installation "LDAPS 地址无效。请只填写类似 ldaps://dc01.internal.example 的服务器地址。"
+            Stop-Installation "LDAP 地址无效。请填写类似 ldap://dc01.internal.example:389 的服务器地址。"
         }
     }
 
@@ -667,7 +672,7 @@ try {
     Write-Host "数据库排序规则：$expectedCollation"
     Write-Host "服务账号：     $serviceAccount"
     Write-Host "HTTPS：        $useHttps"
-    Write-Host "LDAPS：        $enableLdap"
+    Write-Host "LDAP：         $enableLdap"
     Write-Host "SMTP：         $enableSmtp"
     Write-Host "SQL 和 SMTP 密码不会显示。"
     Write-Host ""
@@ -772,6 +777,7 @@ try {
             BaseDn = $ldapBaseDn
             UpnSuffix = $ldapUpnSuffix
             TimeoutSeconds = 10
+            AllowPlainText = ($ldapUri.Scheme -eq "ldap")
         }
     }
 

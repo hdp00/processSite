@@ -105,7 +105,7 @@ Unblock-File -LiteralPath "C:\FlowPilot-Install\Install-FlowPilotBackend.ps1"
 - [ ] DBA 确认数据库已经完成“初始化、Seed、运行账号验证”。
 - [ ] DBA 确认的数据库排序规则，例如 `Chinese_PRC_CI_AS`。
 - [ ] `.NET 10 ASP.NET Core Runtime x64` 安装程序。
-- [ ] 如果本次启用域账号登录：LDAPS 地址、Base DN、UPN 后缀。
+- [ ] 如果本次启用域账号登录：LDAP 地址、Base DN、UPN 后缀。
 - [ ] 如果本次启用邮件：SMTP 地址、端口、账号、密码和发件地址。
 
 发布压缩包解压后必须直接看到：
@@ -337,7 +337,7 @@ notepad (Join-Path $FlowPilotDeployRoot "Secrets\secrets.Production.json")
 ```json
 {
   "ConnectionStrings": {
-    "FlowPilot": "Server=<SQL主机>;Database=<数据库名>;User ID=<运行账号>;Password=<运行密码>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100"
+    "FlowPilot": "Server=<SQL主机>;Database=<数据库名>;User ID=<运行账号>;Password=<运行密码>;Encrypt=false;TrustServerCertificate=true;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100"
   },
   "FlowPilot": {
     "Smtp": {
@@ -354,14 +354,15 @@ notepad (Join-Path $FlowPilotDeployRoot "Secrets\secrets.Production.json")
 ```json
 {
   "ConnectionStrings": {
-    "FlowPilot": "Server=<SQL主机>;Database=<数据库名>;User ID=<运行账号>;Password=<运行密码>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100"
+    "FlowPilot": "Server=<SQL主机>;Database=<数据库名>;User ID=<运行账号>;Password=<运行密码>;Encrypt=false;TrustServerCertificate=true;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100"
   },
   "FlowPilot": {
     "Ldap": {
-      "Url": "ldaps://<域服务器地址>",
+      "Url": "ldap://<域服务器地址>:389",
       "BaseDn": "<目录搜索根>",
       "UpnSuffix": "<UPN后缀>",
-      "TimeoutSeconds": 10
+      "TimeoutSeconds": 10,
+      "AllowPlainText": true
     },
     "Smtp": {
       "Enabled": true,

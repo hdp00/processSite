@@ -7,17 +7,16 @@ namespace FlowPilot.UnitTests.Configuration;
 public sealed class ProductionStartupConfigurationValidatorTests
 {
     private const string SensitiveConnectionString =
-        "Server=sql.internal;Database=FlowPilot;User ID=flowpilot_user;Password=never-log-this;Encrypt=Strict;TrustServerCertificate=false";
+        "Server=sql.internal;Database=FlowPilot;User ID=flowpilot_user;Password=never-log-this;Encrypt=false;TrustServerCertificate=true";
 
     [Theory]
-    [InlineData("true")]
-    [InlineData("Mandatory")]
-    [InlineData("Strict")]
-    public void Validate_AcceptsStrongEncryptionValues(string encryptValue)
+    [InlineData("false")]
+    [InlineData("Optional")]
+    public void Validate_AcceptsApprovedInternalNetworkSettings(string encryptValue)
     {
         var configuration = CreateValidConfiguration();
         configuration["ConnectionStrings:FlowPilot"] =
-            $"Server=sql.internal;Database=FlowPilot;Integrated Security=true;Encrypt={encryptValue};TrustServerCertificate=false";
+            $"Server=sql.internal;Database=FlowPilot;Integrated Security=true;Encrypt={encryptValue};TrustServerCertificate=true";
 
         ProductionStartupConfigurationValidator.Validate(configuration);
     }
@@ -143,7 +142,7 @@ public sealed class ProductionStartupConfigurationValidatorTests
     {
         var configuration = CreateValidConfiguration();
         configuration["ConnectionStrings:FlowPilot"] =
-            "Server=sql.internal;Database=FlowPilot;Password=never-log-this;TrustServerCertificate=false";
+            "Server=sql.internal;Database=FlowPilot;Password=never-log-this;TrustServerCertificate=true";
 
         var exception = AssertFailure(
             configuration,
@@ -154,17 +153,18 @@ public sealed class ProductionStartupConfigurationValidatorTests
     }
 
     [Theory]
-    [InlineData("false")]
-    [InlineData("Optional")]
-    public void Validate_RejectsWeakEncryptSetting(string encryptValue)
+    [InlineData("true")]
+    [InlineData("Mandatory")]
+    [InlineData("Strict")]
+    public void Validate_RejectsEncryptEnabledForApprovedInternalNetworkConfiguration(string encryptValue)
     {
         var configuration = CreateValidConfiguration();
         configuration["ConnectionStrings:FlowPilot"] =
-            $"Server=sql.internal;Database=FlowPilot;Integrated Security=true;Encrypt={encryptValue};TrustServerCertificate=false";
+            $"Server=sql.internal;Database=FlowPilot;Integrated Security=true;Encrypt={encryptValue};TrustServerCertificate=true";
 
         AssertFailure(
             configuration,
-            ProductionConfigurationFailure.WeakEncryptSetting,
+            ProductionConfigurationFailure.EncryptMustBeDisabled,
             "ConnectionStrings:FlowPilot");
     }
 
@@ -173,7 +173,7 @@ public sealed class ProductionStartupConfigurationValidatorTests
     {
         var configuration = CreateValidConfiguration();
         configuration["ConnectionStrings:FlowPilot"] =
-            "Server=sql.internal;Database=FlowPilot;Integrated Security=true;Encrypt=Strict";
+            "Server=sql.internal;Database=FlowPilot;Integrated Security=true;Encrypt=false";
 
         AssertFailure(
             configuration,
@@ -182,15 +182,15 @@ public sealed class ProductionStartupConfigurationValidatorTests
     }
 
     [Fact]
-    public void Validate_RejectsEnabledTrustServerCertificate()
+    public void Validate_RejectsDisabledTrustServerCertificate()
     {
         var configuration = CreateValidConfiguration();
         configuration["ConnectionStrings:FlowPilot"] =
-            "Server=sql.internal;Database=FlowPilot;Integrated Security=true;Encrypt=Strict;TrustServerCertificate=true";
+            "Server=sql.internal;Database=FlowPilot;Integrated Security=true;Encrypt=false;TrustServerCertificate=false";
 
         AssertFailure(
             configuration,
-            ProductionConfigurationFailure.TrustServerCertificateEnabled,
+            ProductionConfigurationFailure.TrustServerCertificateMustBeEnabled,
             "ConnectionStrings:FlowPilot");
     }
 
@@ -226,6 +226,32 @@ public sealed class ProductionStartupConfigurationValidatorTests
             configurationKey);
 
         Assert.DoesNotContain(configuredValue, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_AcceptsPlainTextLdapWhenExplicitlyAllowed()
+    {
+        var configuration = CreateValidConfiguration();
+        configuration["FlowPilot:Ldap:Url"] = "ldap://directory.internal:389";
+        configuration["FlowPilot:Ldap:BaseDn"] = "DC=internal,DC=example";
+        configuration["FlowPilot:Ldap:UpnSuffix"] = "internal.example";
+        configuration["FlowPilot:Ldap:AllowPlainText"] = "true";
+
+        ProductionStartupConfigurationValidator.Validate(configuration);
+    }
+
+    [Fact]
+    public void Validate_RejectsPlainTextLdapWithoutExplicitOptIn()
+    {
+        var configuration = CreateValidConfiguration();
+        configuration["FlowPilot:Ldap:Url"] = "ldap://directory.internal:389";
+        configuration["FlowPilot:Ldap:BaseDn"] = "DC=internal,DC=example";
+        configuration["FlowPilot:Ldap:UpnSuffix"] = "internal.example";
+
+        AssertFailure(
+            configuration,
+            ProductionConfigurationFailure.InvalidLdapConfiguration,
+            "FlowPilot:Ldap");
     }
 
     private static ProductionConfigurationException AssertFailure(

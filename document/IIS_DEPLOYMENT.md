@@ -11,7 +11,7 @@
 - SQL Server、LDAP、SMTP 和附件目录只能由服务账号访问，浏览器与 IIS 应用池不能直接访问。
 - 不使用 WinSW，也不把 Kestrel 直接暴露到局域网。
 
-当前 Windows Server 2016 与 SQL Server 2016 SP2 部署的生命周期风险已经接受，本项目不制定升级计划；支持较新的 SQL Server 版本只是兼容能力。部署仍须实施内网隔离、最小权限、受信 TLS、适用补丁、备份恢复和审计。
+当前 Windows Server 2016 与 SQL Server 2016 SP2 部署的生命周期风险已经接受，本项目不制定升级计划；支持较新的 SQL Server 版本只是兼容能力。部署仍须实施内网隔离、最小权限、适用补丁、备份恢复和审计。
 
 ## 2. 前置条件
 
@@ -101,7 +101,9 @@ dotnet publish src/FlowPilot.Api/FlowPilot.Api.csproj -c Release -r win-x64 --no
 
 Secrets 是明文 JSON，不使用 DPAPI、Data Protection 密钥文件或外部秘密平台。只允许服务账号读取、指定部署管理员修改；禁止提交 Git、复制到 IIS 目录或写入日志。首次初始化成功后从 Secrets 删除超级管理员初始密码。
 
-SQL Server 连接字符串必须显式设置连接安全参数、`Connection Timeout`、`Min Pool Size` 和 `Max Pool Size`。远程数据库默认使用 `Encrypt=true;TrustServerCertificate=false`，并由服务账号信任与服务器名称匹配的证书链；不得依赖 Microsoft.Data.SqlClient 的版本默认值。只有 API 与 SQL Server 确认使用同机 `127.0.0.1` 且部署记录批准时，才允许配置例外。连接测试、健康检查和日志不得输出服务器地址、完整连接字符串或证书明细。
+SQL Server 连接字符串必须显式设置 `Encrypt=false;TrustServerCertificate=true`、`Connection Timeout`、`Min Pool Size` 和 `Max Pool Size`，不得依赖 Microsoft.Data.SqlClient 的版本默认值。该设置不提供 TDS 传输加密，已作为当前隔离内网部署要求接受；数据库端口必须限制为仅允许指定应用服务器和管理来源访问。连接测试、健康检查和日志不得输出服务器地址或完整连接字符串。
+
+当前域认证同样使用隔离内网中的 `ldap://` 服务。Secrets 必须显式设置 `FlowPilot:Ldap:AllowPlainText=true`；LDAP 端口必须限制为仅允许指定应用服务器和管理来源访问。域账号密码不得写入日志、数据库或部署记录。
 
 数据库命令超时属于非敏感配置，统一放在 `FlowPilot:Database`：`ApplicationCommandTimeoutSeconds` 默认 30、`ReadinessCommandTimeoutSeconds` 默认 5、`SchemaProbeCommandTimeoutSeconds` 默认 15、`MigrationPreflightCommandTimeoutSeconds` 默认 15、`MigrationCommandTimeoutSeconds` 默认 300。每项只能配置为 1–3600 秒；`0` 会形成无限等待，因此启动或数据库工具必须拒绝。运行账号连接池上限需按单实例容量和 SQL Server 会话预算确认，生产 Secrets 示例默认 `Min Pool Size=0;Max Pool Size=100`。
 

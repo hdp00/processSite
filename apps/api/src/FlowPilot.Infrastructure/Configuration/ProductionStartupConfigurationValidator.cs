@@ -29,12 +29,14 @@ public static class ProductionStartupConfigurationValidator
     private static void ValidateLdap(IConfiguration configuration)
     {
         var urlText = configuration["FlowPilot:Ldap:Url"];
+        var plainTextAllowed = configuration.GetValue("FlowPilot:Ldap:AllowPlainText", false);
         var anyValue = !string.IsNullOrWhiteSpace(urlText)
             || !string.IsNullOrWhiteSpace(configuration["FlowPilot:Ldap:BaseDn"])
             || !string.IsNullOrWhiteSpace(configuration["FlowPilot:Ldap:UpnSuffix"]);
         if (!anyValue) return;
         if (!Uri.TryCreate(urlText, UriKind.Absolute, out var url)
-            || url.Scheme != "ldaps"
+            || url.Scheme is not ("ldap" or "ldaps")
+            || url.Scheme == "ldap" && !plainTextAllowed
             || string.IsNullOrWhiteSpace(url.Host)
             || url.Port is < 1 or > 65535
             || !string.IsNullOrEmpty(url.UserInfo)
@@ -202,11 +204,10 @@ public static class ProductionStartupConfigurationValidator
                 ConnectionStringKey);
         }
 
-        if (builder.Encrypt != SqlConnectionEncryptOption.Mandatory &&
-            builder.Encrypt != SqlConnectionEncryptOption.Strict)
+        if (builder.Encrypt != SqlConnectionEncryptOption.Optional)
         {
             throw new ProductionConfigurationException(
-                ProductionConfigurationFailure.WeakEncryptSetting,
+                ProductionConfigurationFailure.EncryptMustBeDisabled,
                 ConnectionStringKey);
         }
 
@@ -217,10 +218,10 @@ public static class ProductionStartupConfigurationValidator
                 ConnectionStringKey);
         }
 
-        if (builder.TrustServerCertificate)
+        if (!builder.TrustServerCertificate)
         {
             throw new ProductionConfigurationException(
-                ProductionConfigurationFailure.TrustServerCertificateEnabled,
+                ProductionConfigurationFailure.TrustServerCertificateMustBeEnabled,
                 ConnectionStringKey);
         }
     }

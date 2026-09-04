@@ -55,7 +55,7 @@
 
 ```json
 {
-  "ConnectionStrings": { "FlowPilot": "Server=<主机>;Database=<数据库>;User ID=<运行账号>;Password=<运行密码>;Encrypt=true;TrustServerCertificate=false;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100" },
+  "ConnectionStrings": { "FlowPilot": "Server=<主机>;Database=<数据库>;User ID=<运行账号>;Password=<运行密码>;Encrypt=false;TrustServerCertificate=true;Connection Timeout=15;Min Pool Size=0;Max Pool Size=100" },
   "FlowPilot": {
     "Database": {
       "ExpectedCollation": "<DBA 确认值>",
@@ -65,7 +65,7 @@
       "MigrationPreflightCommandTimeoutSeconds": 15,
       "MigrationCommandTimeoutSeconds": 300
     },
-    "Ldap": { "Url": "<ldaps://...>", "BaseDn": "<...>", "UpnSuffix": "<...>" },
+    "Ldap": { "Url": "<ldap://...:389>", "BaseDn": "<...>", "UpnSuffix": "<...>", "AllowPlainText": true },
     "Smtp": { "Host": "<...>", "Port": 587, "UserName": "<...>", "Password": "<...>", "From": "<...>" },
     "Bootstrap": { "SuperAdminPassword": "<首次初始化临时值>" }
   }
@@ -85,7 +85,7 @@
 - [ ] 禁止 `EnsureCreated()`、启动 `Database.Migrate()` 和运行账号 DDL 权限。
 - [ ] 每次结构变更包含 EF migration、DBA 审查 SQL、空库/上一版测试、结构版本和校验和。
 - [ ] 数据库启动预检验证：SQL Server 13.x 只接受 SP2/SP3，主版本 14 及以上接受；兼容级别不低于 130，并检查排序规则、schema 和结构版本。
-- [ ] SQL 连接显式配置 `Encrypt=true;TrustServerCertificate=false` 并验证证书链和主机名；任何同机回环例外都已记录批准，日志和健康接口不输出连接字符串。
+- [ ] SQL 连接显式配置 `Encrypt=false;TrustServerCertificate=true`，部署记录已接受无 TDS 传输加密的内网风险，并实施网络隔离和最小权限；日志和健康接口不输出连接字符串。
 - [ ] 在真实 SQL Server 2016 SP2/兼容级别 130 最低基线和实际部署的较新版本/兼容级别上执行迁移、数据访问、事务、锁、JSON、投影和死锁测试；不以 SQLite、EF InMemory 或单独的较新 SQL 版本替代最低基线。
 - [ ] 权限组用途关联至少一项且不可重复；流程版本不保存与发布指针、校验结果重复的通用 status。
 - [ ] 任务表和 API 区分审批、自由协作、重新提交；自由协作当前受理人、唯一 pending 任务、参与人投影、时间线和实例更新时间保持事务一致。
@@ -93,7 +93,7 @@
 
 ## 6. 身份、会话与安全
 
-- [ ] LDAP 使用 `System.DirectoryServices.Protocols`，默认 LDAPS，过滤器值转义，UPN bind 后唯一确认同一 sAM/UPN。
+- [ ] LDAP 使用 `System.DirectoryServices.Protocols`；当前隔离内网部署显式配置 `ldap://` 与 `AllowPlainText=true`，过滤器值转义，UPN bind 后唯一确认同一 sAM/UPN。
 - [ ] 密码用户只使用 `PasswordHasher<TUser>`；`SuccessRehashNeeded` 时渐进重哈希；域用户密码散列为 NULL。
 - [ ] 域故障不回退本地密码；密码用户成功、失败、停用均不探测 LDAP。
 - [ ] 自定义数据库会话保存令牌散列；Cookie 闲置 8 小时、绝对 24 小时，停用/重置/登录方式变化使会话失效。
@@ -143,7 +143,7 @@
 
 - 实际部署根目录、Windows 服务账号和 IIS 应用池账号。
 - SQL Server 主机/端口、数据库名、运行账号、迁移账号、排序规则和证书信任。
-- LDAP/LDAPS 地址、Base DN、UPN 后缀、证书，以及必要时的只读搜索账号。
+- LDAP 地址、Base DN、UPN 后缀，以及必要时的只读搜索账号。
 - SMTP 地址/端口/TLS、账号、固定发件人和测试收件人。
 - IIS 内外网绑定、端口，以及首次超级管理员密码。
 
