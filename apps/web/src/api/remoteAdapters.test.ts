@@ -154,6 +154,11 @@ describe("formal REST response adapters", () => {
       freeAssigneeCandidates: [
         { id: "user-2", name: "侯冬平", departmentPath: "研发 / 软件" },
       ],
+      approvalAssigneeCandidatesByNode: {
+        "node-1": [
+          { id: "user-3", name: "李文", departmentPath: "质量 / 体系" },
+        ],
+      },
       initiator: { id: "user-1", name: "王敏", departmentPath: "质量" },
       formValues: { priority: "紧急", description: "说明" },
       fieldRevisions: { title: 2 },
@@ -188,6 +193,9 @@ describe("formal REST response adapters", () => {
       priority: "紧急",
       canTransferFree: true,
       freeAssigneeCandidates: [{ id: "user-2", name: "侯冬平", departmentPath: "研发 / 软件" }],
+      approvalAssigneeCandidatesByNode: {
+        "node-1": [{ id: "user-3", name: "李文", departmentPath: "质量 / 体系" }],
+      },
       fieldRevisions: { title: 2 },
     });
     expect(task).toMatchObject({ status: "待处理", handlingMode: "approval", editableFieldIds: ["title"], allowedActions: ["pass", "reject"] });

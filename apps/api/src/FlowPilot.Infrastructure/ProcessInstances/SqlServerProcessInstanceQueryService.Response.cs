@@ -42,6 +42,7 @@ public sealed partial class SqlServerProcessInstanceQueryService
             CanTransferFree = source.CanTransferFree,
             CanClose = source.CanClose,
             FreeAssigneeCandidates = source.FreeAssigneeCandidates,
+            ApprovalAssigneeCandidatesByNode = source.ApprovalAssigneeCandidatesByNode,
             CreatedAt = AsUtc(source.Instance.CreatedAt),
             UpdatedAt = AsUtc(source.Instance.UpdatedAt),
             ListValues = ProjectListValues(source.FormValues, source.Fields),

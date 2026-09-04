@@ -40,6 +40,7 @@ import {
 } from "../state/useProcessDefinitionStore";
 import { formatInstanceNumber } from "../utils/instanceNumber";
 import { formatDisplayDateTime } from "../utils/domainTime";
+import { includeUnresolvedDirectoryUserOptions, useDirectoryUserCandidates } from "../hooks/useDirectoryUserCandidates";
 import "./process-admin-pages.css";
 
 interface ProcessBasicConfigPageProps {
@@ -60,16 +61,27 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     ?? "";
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === resolvedId));
   const isNew = resolvedId === "new";
-  const identityUsers = useIdentityStore((state) => state.users);
   const identityRoles = useIdentityStore((state) => state.roles);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
-  const userOptions = useMemo(() => identityUsers
-    .filter((user) => user.status === "启用" && !user.builtIn)
-    .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
-    .map((user) => ({
-      value: user.id,
-      label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}`,
-    })), [identityUsers]);
+  const [form] = Form.useForm<BasicConfigValues>();
+  const [userKeyword, setUserKeyword] = useState("");
+  const selectedVisibleUserIds = Form.useWatch("visibleUsers", form) ?? [];
+  const directoryUsers = useDirectoryUserCandidates({
+    keyword: userKeyword,
+    active: true,
+    selectedIds: selectedVisibleUserIds,
+  });
+  const userOptions = useMemo(() => includeUnresolvedDirectoryUserOptions(
+    directoryUsers
+      .filter((user) => !user.builtIn)
+      .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
+      .map((user) => ({
+        value: user.id,
+        label: [user.name, user.departmentPath, user.jobTitle].filter(Boolean).join(" · "),
+        disabled: user.status !== "启用",
+      })),
+    selectedVisibleUserIds,
+  ), [directoryUsers, selectedVisibleUserIds]);
   const roleOptions = useMemo(() => identityRoles
     .filter((role) => role.status === "启用" && !role.builtIn)
     .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
@@ -97,7 +109,6 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
     visibleRoles: [],
     visibleUsers: [],
   }), [definition?.code, definition?.description, definition?.name, definition?.type, searchParams, version?.basic]);
-  const [form] = Form.useForm<BasicConfigValues>();
   const [lastSavedAt, setLastSavedAt] = useState(() => formatDisplayDateTime(version?.updatedAt ?? new Date().toISOString()));
   const [dirty, setDirty] = useState(false);
   const [versionEtag, setVersionEtag] = useState<string>();
@@ -299,6 +310,8 @@ export function ProcessBasicConfigPage({ definitionId }: ProcessBasicConfigPageP
                     <Select
                       mode="multiple"
                       showSearch
+                      filterOption={false}
+                      onSearch={setUserKeyword}
                       optionFilterProp="label"
                       maxTagCount="responsive"
                       placeholder="搜索并选择一个或多个流程权限组"

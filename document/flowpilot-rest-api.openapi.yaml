@@ -5345,6 +5345,13 @@ components:
               description: 此自由协作流程锁定版本的受理权限组中当前有效且启用的用户；非自由流程为空数组。
               items:
                 $ref: "#/components/schemas/UserRef"
+            approvalAssigneeCandidatesByNode:
+              type: object
+              description: 当前登录发起人可在首个审核结果产生前修改内容时，按实例锁定版本审批节点返回当前有效且启用的默认审核人员候选人；键为节点 ID，其他场景省略。
+              additionalProperties:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserRef"
             reviewProgress:
               type: array
               items:

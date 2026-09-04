@@ -348,7 +348,9 @@ export function FreeFlowDetailPage({ instanceOverride }: FreeFlowDetailPageProps
 
   const submitCollaboration = async () => {
     if (nextAssignee) {
-      const assigneeName = findIdentityUser(nextAssignee)?.name ?? "所选人员";
+      const assigneeName = instance.freeAssigneeCandidates?.find((user) => user.id === nextAssignee)?.name
+        ?? findIdentityUser(nextAssignee)?.name
+        ?? "所选人员";
       const updated = await applyInstanceMutation((etag) => flowPilotApi.freeFlows.transfer(
         instance.id,
         nextAssignee,

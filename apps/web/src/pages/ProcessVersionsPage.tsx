@@ -15,6 +15,9 @@ import { buildFlowLevels, conditionOperatorLabel, normalizeDesignerInputPermissi
 import { displayDesignerChoiceValue, flattenDesignerChoiceOptions } from "../utils/designerOptions";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import { createNextProcessVersion } from "../utils/processVersionActions";
+import type { DirectoryUser } from "../api/contracts";
+import { useDirectoryUserCandidates } from "../hooks/useDirectoryUserCandidates";
+import { directoryUserDisplay, processVersionReferencedUserIds } from "../utils/processDefinitionUserReferences";
 import "./process-admin-pages.css";
 
 const fieldTypeLabels: Record<string, string> = {
@@ -72,19 +75,14 @@ function VersionTableColumns({ field }: { field: StoredDesignerField }) {
   </div>;
 }
 
-function VersionFlowSnapshot({ version, type }: { version: ProcessVersion; type: "approval" | "free" }) {
-  const users = useIdentityStore((state) => state.users);
+function VersionFlowSnapshot({ version, type, users }: { version: ProcessVersion; type: "approval" | "free"; users: DirectoryUser[] }) {
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const emailNotificationText = (notification?: StoredNodeEmailNotification) => {
     if (!notification?.enabled) return "不发送";
     const recipients = [
       notification.notifyReviewers ? "审核人" : "",
       notification.notifyInitiator ? "发起人" : "",
-      ...(notification.extraUserIds ?? []).map((userId) => {
-        const user = users.find((item) => item.id === userId);
-        const email = user && "email" in user ? String(user.email ?? "").trim() : "";
-        return user ? `${user.name}${email ? ` <${email}>` : "（未维护邮箱）"}` : userId;
-      }),
+      ...(notification.extraUserIds ?? []).map((userId) => directoryUserDisplay(users, userId, true)),
     ].filter(Boolean);
     return recipients.length ? recipients.join("、") : "已启用，未配置收件人";
   };
@@ -153,7 +151,6 @@ export function ProcessVersionsPage() {
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const roles = useIdentityStore((state) => state.roles);
-  const users = useIdentityStore((state) => state.users);
   const personaId = usePrototypeStore((state) => state.personaId);
   const canEditDefinition = hasPersonaPermission(personaId, "config-definition:编辑");
   const canPublishDefinition = hasPersonaPermission(personaId, "config-definition:发布");
@@ -162,6 +159,13 @@ export function ProcessVersionsPage() {
   const [unpublishTarget, setUnpublishTarget] = useState<ProcessVersion>();
   const [unpublishReason, setUnpublishReason] = useState("");
   const [validatingVersionId, setValidatingVersionId] = useState<string>();
+  const selectedReferencedUserIds = useMemo(() => processVersionReferencedUserIds(selected), [selected]);
+  const selectedReferencedUsers = useDirectoryUserCandidates({
+    active: Boolean(selected),
+    selectedIds: selectedReferencedUserIds,
+    includeSearchResults: false,
+    errorMessage: "流程版本中的人员信息加载失败，请刷新后重试",
+  });
 
   const versions = useMemo(() => definition ? [...definition.versions].sort((a, b) => Number(b.version.slice(1)) - Number(a.version.slice(1))) : [], [definition]);
   if (!definition) return <Alert type="error" showIcon title="流程定义不存在" action={<AppBackButton onClick={() => navigate("/admin/processes")} />} />;
@@ -280,12 +284,12 @@ export function ProcessVersionsPage() {
     <Card className="content-card pa-table-card" styles={{ body: { padding: 0 } }}><div className="table-result-head pa-table-head"><div><strong>版本记录</strong><Tag variant="filled">{versions.length} 个</Tag></div><Typography.Text type="secondary">任何版本都可复制新建；已有实例的版本永久只读</Typography.Text></div><Table<ProcessVersion> rowKey="id" columns={columns} dataSource={versions} scroll={{ x: 1210 }} pagination={false} rowClassName={(record) => definition.publishedVersionId === record.id ? "pa-effective-row" : ""} /></Card>
     <Drawer title={selected ? `${definition.name} · ${selected.version} 完整快照` : "版本详情"} size="large" open={Boolean(selected)} onClose={() => setSelected(undefined)} extra={selected && canEditDefinition && canEditVersion(definition, selected) ? <Button type="primary" icon={<EditOutlined />} onClick={() => edit(selected)}>编辑版本</Button> : null}>
       {selected && <Tabs className="pa-version-snapshot-tabs" defaultActiveKey="overview" items={[
-        { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.starterGroups).join("、") || "—", span: 2 }, { key: "closer", label: "关闭权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.closeGroups).join("、") || "—", span: 2 }, ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.assigneeGroups ?? []).join("、") || "—", span: 2 as const }] : []), { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles.map((roleId) => roles.find((role) => role.id === roleId)?.name ?? "已删除角色"), ...selected.basic.visibleUsers.map((userId) => users.find((user) => user.id === userId)?.name ?? "已删除用户")].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${formatDisplayDateTime(selected.updatedAt)} · ${selected.updatedBy}`, span: 2 }]} />
+        { key: "overview", label: "版本概览", children: <Space orientation="vertical" size={18} style={{ width: "100%" }}><Descriptions column={2} bordered size="small" items={[{ key: "status", label: "版本状态", children: <StatusPill status={getVersionStatus(definition, selected.id)} /> }, { key: "source", label: "来源版本", children: selected.basedOn ?? "首次创建" }, { key: "prefix", label: "编号前缀", children: selected.basic.instancePrefix || "—" }, { key: "instances", label: "实例数", children: selected.instanceCount }, { key: "starter", label: "发起权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.starterGroups).join("、") || "—", span: 2 }, { key: "closer", label: "关闭权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.closeGroups).join("、") || "—", span: 2 }, ...(definition.type === "free" ? [{ key: "assignee", label: "审批/受理权限组", children: resolveWorkflowGroupLabels(workflowGroups, selected.basic.assigneeGroups ?? []).join("、") || "—", span: 2 as const }] : []), { key: "visible", label: "额外可见范围", children: [...selected.basic.visibleRoles.map((roleId) => roles.find((role) => role.id === roleId)?.name ?? "已删除角色"), ...selected.basic.visibleUsers.map((userId) => directoryUserDisplay(selectedReferencedUsers, userId))].join("、") || "—", span: 2 }, { key: "updated", label: "最近更新", children: `${formatDisplayDateTime(selected.updatedAt)} · ${selected.updatedBy}`, span: 2 }]} />
           <Alert type={selected.validation.status === "通过" ? "success" : "error"} showIcon title={selected.validation.status === "通过" ? "版本校验通过，可以发布" : "版本校验未通过"} description={selected.validation.issues.length ? selected.validation.issues.join("；") : `自动校验于 ${formatDisplayDateTime(selected.validation.checkedAt)} 完成`} />
           <Timeline items={[{ color: "blue", content: <><strong>创建 {selected.version}</strong><br /><Typography.Text type="secondary">{formatDisplayDateTime(selected.createdAt)} · {selected.createdBy}</Typography.Text></> }, ...(selected.firstPublishedAt ? [{ color: "green", content: <><strong>首次发布</strong><br /><Typography.Text type="secondary">{formatDisplayDateTime(selected.firstPublishedAt)} · {selected.firstPublishedBy}</Typography.Text></> }] : []), ...(selected.lastUnpublishedAt ? [{ color: "gray", content: <><strong>最近取消发布</strong><br /><Typography.Text type="secondary">{formatDisplayDateTime(selected.lastUnpublishedAt)} · {selected.lastUnpublishedBy}<br />原因：{selected.lastUnpublishReason ?? "—"}</Typography.Text></> }] : [])]} />
         </Space> },
         { key: "form", label: <span><FormOutlined /> 初始表单</span>, children: <VersionFormSnapshot version={selected} /> },
-        { key: "flow", label: <span><ApartmentOutlined /> {definition.type === "approval" ? "审批流程" : "协作规则"}</span>, children: <VersionFlowSnapshot version={selected} type={definition.type} /> },
+        { key: "flow", label: <span><ApartmentOutlined /> {definition.type === "approval" ? "审批流程" : "协作规则"}</span>, children: <VersionFlowSnapshot version={selected} type={definition.type} users={selectedReferencedUsers} /> },
       ]} />}
     </Drawer>
     <Modal

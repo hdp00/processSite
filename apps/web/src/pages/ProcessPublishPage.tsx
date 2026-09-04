@@ -13,6 +13,8 @@ import { getPublishedVersion, getVersionStatus, useProcessDefinitionStore } from
 import { buildFlowLevels, conditionOperatorLabel, rejectionHandlingLabel, type StoredNodeEmailNotification } from "../utils/designerStorage";
 import { displayDesignerChoiceValue } from "../utils/designerOptions";
 import { formatDisplayDateTime } from "../utils/domainTime";
+import { useDirectoryUserCandidates } from "../hooks/useDirectoryUserCandidates";
+import { directoryUserDisplay, processVersionReferencedUserIds } from "../utils/processDefinitionUserReferences";
 import "./process-admin-pages.css";
 
 export function ProcessPublishPage() {
@@ -23,12 +25,18 @@ export function ProcessPublishPage() {
   const definition = useProcessDefinitionStore((state) => state.definitions.find((item) => item.id === definitionId));
   const versionId = searchParams.get("versionId") ?? definition?.versions[0]?.id ?? "";
   const version = definition?.versions.find((item) => item.id === versionId);
-  const users = useIdentityStore((state) => state.users);
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [validating, setValidating] = useState(false);
   const [changeNote, setChangeNote] = useState("");
+  const referencedUserIds = useMemo(() => processVersionReferencedUserIds(version), [version]);
+  const referencedUsers = useDirectoryUserCandidates({
+    active: Boolean(version),
+    selectedIds: referencedUserIds,
+    includeSearchResults: false,
+    errorMessage: "流程版本中的人员信息加载失败，请刷新后重试",
+  });
 
   const approvalNodes = useMemo(() => version?.snapshot.flow.nodes.filter((node) => node.data?.kind === "approval") ?? [], [version]);
   const topologyLevels = useMemo(() => {
@@ -59,11 +67,7 @@ export function ProcessPublishPage() {
     const recipients = [
       notification.notifyReviewers ? "审核人" : "",
       notification.notifyInitiator ? "发起人" : "",
-      ...(notification.extraUserIds ?? []).map((userId) => {
-        const user = users.find((item) => item.id === userId);
-        const email = user && "email" in user ? String(user.email ?? "").trim() : "";
-        return user ? `${user.name}${email ? ` <${email}>` : "（未维护邮箱）"}` : userId;
-      }),
+      ...(notification.extraUserIds ?? []).map((userId) => directoryUserDisplay(referencedUsers, userId, true)),
     ].filter(Boolean);
     return recipients.length ? recipients.join("、") : "已启用，未配置收件人";
   };

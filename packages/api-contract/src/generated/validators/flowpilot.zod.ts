@@ -1596,6 +1596,7 @@ export const ProcessInstanceDetailDto = ProcessInstanceSummaryDto.and(zod.strict
   "canTransferFree": zod.boolean().optional().describe('当前登录人是否可以在此进行中的自由协作事项中变更受理人；非自由流程或非进行中事项为 false。'),
   "canClose": zod.boolean().describe('后端根据当前会话的关闭动作权限和实例锁定版本的关闭流程权限组计算；超级管理员具有关闭资格。'),
   "freeAssigneeCandidates": zod.array(UserRef).optional().describe('此自由协作流程锁定版本的受理权限组中当前有效且启用的用户；非自由流程为空数组。'),
+  "approvalAssigneeCandidatesByNode": zod.record(zod.string(), zod.array(UserRef)).optional().describe('当前登录发起人可在首个审核结果产生前修改内容时，按实例锁定版本审批节点返回当前有效且启用的默认审核人员候选人；键为节点 ID，其他场景省略。'),
   "reviewProgress": zod.array(ReviewProgressDto),
   "tasks": zod.array(WorkflowTaskDto),
   "timeline": zod.array(TimelineEventDto),

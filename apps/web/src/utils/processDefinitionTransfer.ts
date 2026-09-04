@@ -1,5 +1,6 @@
 import { cloneDefaultSystemListFields } from "../data/listFieldConfig";
-import type { DomainRole, DomainUser, WorkflowPermissionGroup } from "../state/useIdentityStore";
+import type { DirectoryUser } from "../api/contracts";
+import type { DomainRole, WorkflowPermissionGroup } from "../state/useIdentityStore";
 import type { DefinitionType, ProcessBasicConfig, ProcessDefinition, ProcessVersion } from "../state/useProcessDefinitionStore";
 import {
   PROCESS_TITLE_FIELD_ID,
@@ -21,7 +22,7 @@ import {
 import { createClientUuid } from "./clientId";
 
 interface TransferIdentityContext {
-  users: DomainUser[];
+  users: DirectoryUser[];
   roles: DomainRole[];
   workflowGroups: WorkflowPermissionGroup[];
 }
@@ -45,6 +46,28 @@ export interface ProcessDefinitionImportPreview {
   definition: ImportedProcessDefinition;
   warnings: string[];
 }
+
+export const processDefinitionImportReferencedUserNames = (document: unknown) => {
+  const names = new Set<string>();
+  const visit = (value: unknown) => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+      if ((key === "额外可见用户" || key === "额外通知用户") && Array.isArray(child)) {
+        child.forEach((name) => {
+          if (typeof name === "string" && name.trim()) names.add(name.trim());
+        });
+      } else {
+        visit(child);
+      }
+    });
+  };
+  visit(document);
+  return [...names];
+};
 
 const fieldTypeLabels: Record<string, string> = {
   text: "文本框",

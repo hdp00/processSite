@@ -83,42 +83,13 @@ import { flowPilotApi } from "../api/flowPilotApi";
 import { refreshRemoteWorkflowGroups } from "../api/remoteHydration";
 import type { AuditEvent, EffectiveWorkflowMember } from "../api/contracts";
 import type { ProcessInstance } from "../data/types";
+import { useDirectoryUserCandidates } from "../hooks/useDirectoryUserCandidates";
 import "./governance-pages.css";
 
 type EnableStatus = "启用" | "停用";
 type JobTitle = string;
 
 type UserRecord = DomainUser;
-
-function useDirectoryUserCandidates(keyword: string, active: boolean, selectedIds: string[] = []) {
-  const { message } = App.useApp();
-  const [remoteUsers, setRemoteUsers] = useState<UserRecord[]>([]);
-  const selectedKey = selectedIds.join(",");
-  useEffect(() => {
-    if (!active) return;
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void Promise.all([
-        flowPilotApi.directory.users({ page: 1, pageSize: 100, q: keyword.trim() || undefined, status: "启用" }),
-        ...selectedIds.map((id) => flowPilotApi.directory.user(id).catch(() => undefined)),
-      ]).then(([page, ...selected]) => {
-        if (cancelled) return;
-        const byId = new Map<string, UserRecord>();
-        [...page.items, ...selected].forEach((user) => {
-          if (user) byId.set(user.id, { ...user, password: "" });
-        });
-        setRemoteUsers([...byId.values()]);
-      }).catch(() => {
-        if (!cancelled) message.error("人员候选加载失败，请重试");
-      });
-    }, 200);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [active, keyword, selectedKey]);
-  return remoteUsers;
-}
 
 const authenticationModeLabel: Record<AuthenticationMode, string> = {
   domain: "域登录",
@@ -806,7 +777,7 @@ export function RoleManagementPage() {
     });
   };
   const filtered = roles.filter((role) => `${role.name}${role.description}`.toLowerCase().includes(keyword.toLowerCase()));
-  const candidateUsers = useDirectoryUserCandidates(roleMemberKeyword, editor !== null, editingMemberIds);
+  const candidateUsers = useDirectoryUserCandidates({ keyword: roleMemberKeyword, active: editor !== null, selectedIds: editingMemberIds });
   const roleMemberCandidates = candidateUsers.filter((user) => !user.builtIn).map((user) => ({
     id: user.id,
     name: user.name,
@@ -1171,7 +1142,7 @@ export function WorkflowPermissionGroupsPage() {
       .catch(() => message.error("流程权限组引用统计加载失败，请刷新后重试"))
       .finally(() => setRemoteGroupsLoading(false));
   }, []);
-  const candidateUsers = useDirectoryUserCandidates(effectiveMemberKeyword, editor !== null, directMemberUserIds);
+  const candidateUsers = useDirectoryUserCandidates({ keyword: effectiveMemberKeyword, active: editor !== null, selectedIds: directMemberUserIds });
   const [form] = Form.useForm();
   const { guard: workflowGroupEditorGuard } = useUnsavedChangesGuard({
     dirty: editorDirty,
@@ -1355,7 +1326,8 @@ export function InstanceMonitorPage() {
   const monitorRows = useMemo(() => remoteInstances.map((instance): MonitorRecord => {
     const definition = definitions.find((item) => item.id === instance.definitionId);
     const version = definition?.versions.find((item) => item.id === instance.versionId);
-    const assignee = instance.currentAssigneeId ? findIdentityUser(instance.currentAssigneeId)?.name : instance.currentAssignee;
+    const assignee = instance.currentAssignee
+      ?? (instance.currentAssigneeId ? findIdentityUser(instance.currentAssigneeId)?.name : undefined);
     return {
       id: instance.id,
       code: instance.code,

@@ -29,6 +29,8 @@ const task = (nodeId: string, status: WorkflowTask["status"]): WorkflowTask => (
   nodeId,
   nodeName: nodeId,
   permissionGroupId: `${nodeId}-group`,
+  defaultAssigneeId: `${nodeId}-user-id`,
+  defaultAssigneeName: `${nodeId}-审核人`,
   status,
   createdAt: "2026-08-20 10:00",
   round: 1,
@@ -60,6 +62,7 @@ describe("workflow progress topology", () => {
     expect(stages[1].nodes[0]).toMatchObject({
       status: "待激活",
       handlingMode: "confirmation",
+      defaultAssigneeName: "manager-审核人",
       predecessorLabels: ["研发审核", "质量审核"],
     });
   });

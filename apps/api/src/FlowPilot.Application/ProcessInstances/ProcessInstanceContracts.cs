@@ -208,6 +208,9 @@ public sealed record ProcessInstanceDetailDto
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<TaskCenterUserRefDto>? FreeAssigneeCandidates { get; init; }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyDictionary<string, IReadOnlyList<TaskCenterUserRefDto>>? ApprovalAssigneeCandidatesByNode { get; init; }
+
     public required DateTimeOffset CreatedAt { get; init; }
 
     public required DateTimeOffset UpdatedAt { get; init; }

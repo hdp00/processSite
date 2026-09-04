@@ -76,6 +76,13 @@ public sealed partial class SqlServerProcessInstanceQueryService(
             .ThenBy(item => item.Id)
             .ToArrayAsync(cancellationToken)
             .ConfigureAwait(false);
+        var approvalAssigneeCandidatesByNode = await LoadApprovalAssigneeCandidatesByNodeAsync(
+                definition.Type,
+                instance,
+                tasks,
+                actor,
+                cancellationToken)
+            .ConfigureAwait(false);
         var events = await _dbContext.WorkflowEvents
             .AsNoTracking()
             .Where(item => item.InstanceId == instance.Id)
@@ -192,6 +199,7 @@ public sealed partial class SqlServerProcessInstanceQueryService(
             freeAccess.CanTransfer,
             canClose,
             freeAccess.AssigneeCandidates,
+            approvalAssigneeCandidatesByNode,
             effectiveGroupIds,
             actor));
         return new ProcessInstanceQueryResult(detail, null);
@@ -363,6 +371,94 @@ public sealed partial class SqlServerProcessInstanceQueryService(
         return new FreeAccess(canTransfer, candidates);
     }
 
+    private async Task<IReadOnlyDictionary<string, IReadOnlyList<TaskCenterUserRefDto>>?> LoadApprovalAssigneeCandidatesByNodeAsync(
+        string workflowType,
+        WorkflowInstanceEntity instance,
+        IReadOnlyList<WorkflowTaskEntity> tasks,
+        ProcessInstanceQueryActor actor,
+        CancellationToken cancellationToken)
+    {
+        if (workflowType != "approval"
+            || instance.Status != "reviewing"
+            || !actor.CanResubmit
+            || (!actor.IsSuperAdmin && instance.InitiatorUserId != actor.UserId)
+            || tasks.Any(task => task.Round == instance.CurrentRound && task.Action is "pass" or "confirm" or "reject"))
+        {
+            return null;
+        }
+
+        var nodeTasks = tasks
+            .Where(task => task.TaskType == "approval"
+                && task.Round == instance.CurrentRound
+                && task.GroupId.HasValue
+                && task.NodeId is not null
+                && task.Status != "skipped")
+            .ToArray();
+        var groupIds = nodeTasks.Select(task => task.GroupId!.Value).Distinct().ToArray();
+        if (groupIds.Length == 0)
+        {
+            return new Dictionary<string, IReadOnlyList<TaskCenterUserRefDto>>(StringComparer.Ordinal);
+        }
+
+        var directMembers = await (
+                from member in _dbContext.RuntimeWorkflowGroupUsers.AsNoTracking()
+                join workflowGroup in _dbContext.RuntimeWorkflowGroups.AsNoTracking()
+                    on member.GroupId equals workflowGroup.Id
+                join user in _dbContext.OrganizationUserReferences.AsNoTracking()
+                    on member.UserId equals user.Id
+                where groupIds.Contains(member.GroupId) && workflowGroup.IsEnabled && user.IsEnabled
+                select new { member.GroupId, member.UserId })
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var roleMembers = await (
+                from groupRole in _dbContext.RuntimeWorkflowGroupRoles.AsNoTracking()
+                join workflowGroup in _dbContext.RuntimeWorkflowGroups.AsNoTracking()
+                    on groupRole.GroupId equals workflowGroup.Id
+                join role in _dbContext.RuntimeRoles.AsNoTracking()
+                    on groupRole.RoleId equals role.Id
+                join userRole in _dbContext.RuntimeUserRoles.AsNoTracking()
+                    on role.Id equals userRole.RoleId
+                join user in _dbContext.OrganizationUserReferences.AsNoTracking()
+                    on userRole.UserId equals user.Id
+                where groupIds.Contains(groupRole.GroupId)
+                    && workflowGroup.IsEnabled
+                    && role.IsEnabled
+                    && user.IsEnabled
+                select new { groupRole.GroupId, userRole.UserId })
+            .ToArrayAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var membersByGroup = directMembers
+            .Concat(roleMembers)
+            .DistinctBy(item => (item.GroupId, item.UserId))
+            .GroupBy(item => item.GroupId)
+            .ToDictionary(group => group.Key, group => group.Select(item => item.UserId).ToArray());
+        var candidateIds = membersByGroup.Values.SelectMany(ids => ids).Distinct().ToArray();
+        var candidates = await (
+                from user in _dbContext.OrganizationUserReferences.AsNoTracking()
+                join department in _dbContext.Departments.AsNoTracking()
+                    on user.DepartmentId equals department.Id into departments
+                from department in departments.DefaultIfEmpty()
+                where candidateIds.Contains(user.Id)
+                select new TaskCenterUserRefDto(
+                    user.Id,
+                    user.DisplayName,
+                    department == null ? null : department.Path))
+            .ToDictionaryAsync(item => item.Id, cancellationToken)
+            .ConfigureAwait(false);
+
+        return nodeTasks
+            .GroupBy(task => task.NodeId!, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<TaskCenterUserRefDto>)group
+                    .SelectMany(task => membersByGroup.GetValueOrDefault(task.GroupId!.Value) ?? [])
+                    .Distinct()
+                    .Select(userId => candidates[userId])
+                    .OrderBy(user => user.Name, StringComparer.Ordinal)
+                    .ToArray(),
+                StringComparer.Ordinal);
+    }
+
     private static JsonObject ParseObject(string json)
     {
         try
@@ -403,6 +499,7 @@ public sealed partial class SqlServerProcessInstanceQueryService(
         bool CanTransferFree,
         bool CanClose,
         IReadOnlyList<TaskCenterUserRefDto> FreeAssigneeCandidates,
+        IReadOnlyDictionary<string, IReadOnlyList<TaskCenterUserRefDto>>? ApprovalAssigneeCandidatesByNode,
         IReadOnlySet<Guid> EffectiveGroupIds,
         ProcessInstanceQueryActor Actor);
 

@@ -1511,6 +1511,11 @@ export type ProcessInstanceDetailDtoFormValues = {[key: string]: JsonValue};
 export type ProcessInstanceDetailDtoFieldRevisions = {[key: string]: number};
 
 /**
+ * 当前登录发起人可在首个审核结果产生前修改内容时，按实例锁定版本审批节点返回当前有效且启用的默认审核人员候选人；键为节点 ID，其他场景省略。
+ */
+export type ProcessInstanceDetailDtoApprovalAssigneeCandidatesByNode = {[key: string]: UserRef[]};
+
+/**
  * 普通业务接口可见状态；上传中、失败和已删除仅供内部恢复及运维使用
  */
 export type AttachmentStatus = typeof AttachmentStatus[keyof typeof AttachmentStatus];
@@ -1694,6 +1699,8 @@ export type ProcessInstanceDetailDto = ProcessInstanceSummaryDto & {
   canClose: boolean;
   /** 此自由协作流程锁定版本的受理权限组中当前有效且启用的用户；非自由流程为空数组。 */
   freeAssigneeCandidates?: UserRef[];
+  /** 当前登录发起人可在首个审核结果产生前修改内容时，按实例锁定版本审批节点返回当前有效且启用的默认审核人员候选人；键为节点 ID，其他场景省略。 */
+  approvalAssigneeCandidatesByNode?: ProcessInstanceDetailDtoApprovalAssigneeCandidatesByNode;
   reviewProgress: ReviewProgressDto[];
   tasks: WorkflowTaskDto[];
   timeline: TimelineEventDto[];

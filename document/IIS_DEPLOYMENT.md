@@ -1,7 +1,7 @@
 # FlowPilot IIS 与 .NET Windows Service 部署指南
 
 > 目标环境：Windows Server 2016、IIS、公司内网 HTTP、SQL Server 2016 SP2 及之后版本（兼容级别不低于 130）
-> 状态：目标部署设计；仓库现有 NestJS 骨架尚未迁移为 .NET 10，当前不能按本文直接投产。
+> 状态：.NET 10 后端和主要部署约束已经实现；目标服务器安装、权限、IIS/ARR、备份恢复和回滚仍需按本文完成环境验收。后端逐步操作见 [`BACKEND_DEPLOYMENT_RUNBOOK.md`](./BACKEND_DEPLOYMENT_RUNBOOK.md)。
 
 ## 1. 部署拓扑
 

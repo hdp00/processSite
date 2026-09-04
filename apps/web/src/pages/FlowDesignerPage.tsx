@@ -73,6 +73,7 @@ import { ProcessWizardSteps } from "../components/ProcessWizardSteps";
 import { StatusPill } from "../components/StatusPill";
 import { useUnsavedChangesGuard } from "../components/UnsavedChangesGuard";
 import { useUndoRedoHistory } from "../hooks/useUndoRedoHistory";
+import { includeUnresolvedDirectoryUserOptions, useDirectoryUserCandidates } from "../hooks/useDirectoryUserCandidates";
 import { effectiveGroupMemberIds, resolveWorkflowGroupLabels, useIdentityStore } from "../state/useIdentityStore";
 import {
   canEditVersion,
@@ -509,7 +510,6 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
   const { message } = App.useApp();
   const navigate = useNavigate();
   const workflowGroups = useIdentityStore((state) => state.workflowGroups);
-  const users = useIdentityStore((state) => state.users);
   const [versionEtag, setVersionEtag] = useState<string>();
   const starterGroupOptions = workflowGroups
     .filter((group) => group.status === "启用" && group.purposes.includes("发起"))
@@ -517,17 +517,6 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
   const approvalGroupOptions = workflowGroups
     .filter((group) => group.status === "启用" && group.purposes.includes("审批/受理"))
     .map((group) => ({ value: group.id, label: group.name }));
-  const extraEmailUserOptions: EmailUserOption[] = users.map((user) => {
-    const email = "email" in user ? String(user.email ?? "").trim() : "";
-    const unavailable = user.status !== "启用" || !email;
-    return {
-      value: user.id,
-      label: user.name,
-      disabled: unavailable,
-      email,
-      searchText: `${user.name} ${email}`,
-    };
-  });
   const [nodes, setNodes, onNodesChange] = useNodesState<DesignerNode>(initialDraft.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<DesignerEdge>(initialDraft.edges);
   const [meta, setMeta] = useState<FlowMeta>(initialDraft.meta);
@@ -535,6 +524,7 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
     initialDraft.nodes.find((node) => node.data.kind === "approval")?.id ?? null,
   );
   const [propertyMode, setPropertyMode] = useState<"flow" | "node">("node");
+  const [extraEmailUserKeyword, setExtraEmailUserKeyword] = useState("");
   const [validationOpen, setValidationOpen] = useState(false);
   const [autoSaved, setAutoSaved] = useState(true);
   const { fitView, screenToFlowPosition } = useReactFlow<DesignerNode, DesignerEdge>();
@@ -578,6 +568,25 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
   const selectedEmailNotification = selectedNode && (selectedNode.data.kind === "approval" || selectedNode.data.kind === "end")
     ? normalizeEmailNotification(selectedNode.data.kind, selectedNode.data.emailNotification)
     : undefined;
+  const extraEmailUsers = useDirectoryUserCandidates({
+    keyword: extraEmailUserKeyword,
+    active: Boolean(selectedEmailNotification),
+    selectedIds: selectedEmailNotification?.extraUserIds ?? [],
+  });
+  const extraEmailUserOptions: EmailUserOption[] = includeUnresolvedDirectoryUserOptions(
+    extraEmailUsers.map((user) => {
+      const email = String(user.email ?? "").trim();
+      const unavailable = user.status !== "启用" || !email;
+      return {
+        value: user.id,
+        label: user.name,
+        disabled: unavailable,
+        email,
+        searchText: `${user.name} ${email}`,
+      };
+    }),
+    selectedEmailNotification?.extraUserIds ?? [],
+  );
   const selectedActivationCondition = selectedNode?.data.kind === "approval"
     ? normalizeActivationCondition(selectedNode.data.activationCondition)
     : undefined;
@@ -1319,6 +1328,8 @@ const DesignerWorkspace = ({ initialDraft, definitionId, versionId, editableFiel
                           <Select
                             mode="multiple"
                             showSearch
+                            filterOption={false}
+                            onSearch={setExtraEmailUserKeyword}
                             allowClear
                             optionFilterProp="searchText"
                             maxTagCount={2}

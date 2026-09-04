@@ -11,6 +11,7 @@ export interface WorkflowProgressNode {
   handlingMode: "approval" | "confirmation";
   status: WorkflowProgressStatus;
   defaultAssigneeId?: string;
+  defaultAssigneeName?: string;
   actualAssigneeName?: string;
   actionAt?: string;
   substitute?: boolean;
@@ -76,6 +77,7 @@ export const buildWorkflowProgressStages = (
         handlingMode: node.data.handlingMode ?? "approval",
         status: progressStatus(task, reviewer),
         defaultAssigneeId: task?.defaultAssigneeId,
+        defaultAssigneeName: task?.defaultAssigneeName,
         actualAssigneeName: reviewer?.actionAt ? reviewer.name : task?.completedByName,
         actionAt: reviewer?.actionAt ?? task?.completedAt,
         substitute: reviewer?.substitute || Boolean(task?.defaultAssigneeId && task.completedById && task.defaultAssigneeId !== task.completedById),

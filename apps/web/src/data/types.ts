@@ -115,6 +115,12 @@ export interface ProcessInstance {
     name: string;
     departmentPath?: string;
   }>;
+  /** 后端按实例锁定版本和当前有效成员计算的默认审核人员候选列表。 */
+  approvalAssigneeCandidatesByNode?: Record<string, Array<{
+    id: string;
+    name: string;
+    departmentPath?: string;
+  }>>;
   freeTimeline?: FreeFlowEntry[];
   formValues?: Record<string, unknown>;
   /** 正式后端返回的字段并发版本，用于审核字段级乐观锁。 */

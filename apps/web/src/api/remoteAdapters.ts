@@ -705,6 +705,18 @@ export const normalizeProcessInstance = (value: unknown): ProcessInstance => {
           departmentPath: text(item.departmentPath) || undefined,
         })).filter((item) => item.id && item.name)
       : undefined,
+    approvalAssigneeCandidatesByNode: isRecord(value.approvalAssigneeCandidatesByNode)
+      ? Object.fromEntries(Object.entries(value.approvalAssigneeCandidatesByNode).map(([nodeId, candidates]) => [
+          nodeId,
+          Array.isArray(candidates)
+            ? candidates.filter(isRecord).map((item) => ({
+                id: text(item.id),
+                name: text(item.name),
+                departmentPath: text(item.departmentPath) || undefined,
+              })).filter((item) => item.id && item.name)
+            : [],
+        ]))
+      : undefined,
     description: text(formValues.description),
     category: text(formValues.category) || undefined,
     formValues,

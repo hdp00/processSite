@@ -68,6 +68,7 @@ import { formatRoundLabel, formatRoundStartLabel, prefixWithRound } from "../uti
 import { buildWorkflowProgressStages, type WorkflowProgressStatus } from "../utils/workflowProgress";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import { convertXlsxToPdf, type ExcelPdfConversionResult } from "../utils/excelToPdf";
+import { includeSelectedAssigneeOption, isSelectedAssigneeCandidate } from "../utils/assigneeOptions";
 
 const reviewMeta: Record<ReviewerProgress["status"], { icon: React.ReactNode }> = {
   待审核: { icon: <HistoryOutlined /> },
@@ -553,7 +554,11 @@ export function ProcessDetailPage() {
     }
     const invalidAssigneeNode = assignableApprovalNodes.find((node) => {
       const groupId = node.data?.permissionGroup ?? "";
-      return !draftAssignees[node.id] || !effectiveGroupMemberIds(groupId).includes(draftAssignees[node.id]);
+      return !isSelectedAssigneeCandidate(
+        draftAssignees[node.id],
+        instance.approvalAssigneeCandidatesByNode?.[node.id],
+        effectiveGroupMemberIds(groupId),
+      );
     });
     if (invalidAssigneeNode) {
       message.warning(`请为“${invalidAssigneeNode.data?.label ?? "审批节点"}”选择当前流程权限组内的有效人员`);
@@ -593,14 +598,31 @@ export function ProcessDetailPage() {
   };
   const updateDynamicValue = (fieldId: string, value: unknown) =>
     setDynamicValues((current) => ({ ...current, [fieldId]: value }));
-  const assigneeOptions = (groupId: string) => {
-    const memberIds = new Set(effectiveGroupMemberIds(groupId));
-    return identityUsers
-      .filter((user) => memberIds.has(user.id))
-      .map((user) => ({
+  const assigneeOptions = (groupId: string, nodeId: string) => {
+    const remoteCandidates = instance.approvalAssigneeCandidatesByNode?.[nodeId];
+    const options = remoteCandidates
+      ? remoteCandidates.map((user) => ({
         value: user.id,
-        label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}`,
-      }));
+        label: user.departmentPath ? `${user.name} · ${user.departmentPath}` : user.name,
+      }))
+      : (() => {
+          const memberIds = new Set(effectiveGroupMemberIds(groupId));
+          return identityUsers
+            .filter((user) => memberIds.has(user.id))
+            .map((user) => ({
+              value: user.id,
+              label: `${user.name} · ${user.departmentPath} · ${user.jobTitle}`,
+            }));
+        })();
+    const savedTask = tasks.find((task) =>
+      task.instanceId === instance.id && task.round === instance.round && task.nodeId === nodeId,
+    );
+    return includeSelectedAssigneeOption(
+      options,
+      draftAssignees[nodeId] || savedTask?.defaultAssigneeId,
+      savedTask?.defaultAssigneeName,
+      remoteCandidates !== undefined,
+    );
   };
   const stageAttachment = async (field: StoredDesignerField, file: File) => {
     const isInlinePdf = inlinePdfEnabled(field);
@@ -937,7 +959,7 @@ export function ProcessDetailPage() {
           type="info"
           showIcon
           icon={<TeamOutlined />}
-          title={isSuperAdmin ? `超级管理员正在处理“${currentReviewer?.shortGroup ?? "审批"}”待办` : `这是 ${findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name ?? "其他成员"} 的默认任务，你可以作为同组成员直接代办`}
+          title={isSuperAdmin ? `超级管理员正在处理“${currentReviewer?.shortGroup ?? "审批"}”待办` : `这是 ${currentTask?.defaultAssigneeName ?? findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name ?? "其他成员"} 的默认任务，你可以作为同组成员直接代办`}
           description={isSuperAdmin ? "这是系统级处理权限，不会把超级管理员加入该节点的流程权限组或人员名单；提交后仍记录实际处理人。" : "无需转交或填写代办原因；提交后系统会记录实际处理人为你。"}
         />
       )}
@@ -1013,7 +1035,7 @@ export function ProcessDetailPage() {
                       <strong>{node.label}</strong>
                       <Tooltip title={permissionGroupName}><small>{permissionGroupName}</small></Tooltip>
                       <div className="branch-predecessors">前序：{node.predecessorLabels.join("、") || "开始"}</div>
-                      <div className="branch-person"><UserOutlined /> 默认：{findIdentityUser(node.defaultAssigneeId ?? "")?.name ?? "组内共享"}</div>
+                      <div className="branch-person"><UserOutlined /> 默认：{node.defaultAssigneeName ?? findIdentityUser(node.defaultAssigneeId ?? "")?.name ?? "组内共享"}</div>
                       {node.actionAt && node.actualAssigneeName ? <div className="branch-action">实际：{node.actualAssigneeName}{node.substitute && <Tag color="purple">代办</Tag>}</div> : null}
                     </div>;
                   })}
@@ -1054,7 +1076,7 @@ export function ProcessDetailPage() {
                           optionFilterProp="label"
                           value={draftAssignees[node.id] || undefined}
                           placeholder="搜索并选择默认责任人"
-                          options={assigneeOptions(groupId)}
+                          options={assigneeOptions(groupId, node.id)}
                           onChange={(assigneeId) => setDraftAssignees((current) => ({ ...current, [node.id]: assigneeId }))}
                         />
                         <small><TeamOutlined /> {instance.reviewers.find((reviewer) => reviewer.key === node.id)?.group ?? groupId}</small>
@@ -1131,7 +1153,7 @@ export function ProcessDetailPage() {
           <p>{pendingAction === "pass" ? "审核结果和表单修改将一次性提交。" : pendingAction === "confirm" ? "确认结果和本节点授权字段修改将一次性提交，提交后不能改为驳回。" : "其他未完成的并行任务会立即取消，流程转为等待发起方处理。"}</p>
           {changedLevel && <div><span>文件密级</span><del>{instance.documentLevel}</del><b>→</b><ins>{documentLevel}</ins></div>}
           <div><span>{pendingAction === "confirm" ? "确认说明" : "审核意见"}</span><strong>{comment.trim() || (pendingAction === "confirm" ? "未填写（选填）" : "未填写（通过时允许）")}</strong></div>
-          {isSubstitute && <Tag color="purple">将记录为代办：默认 {findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name} / 实际 {persona?.name}</Tag>}
+          {isSubstitute && <Tag color="purple">将记录为代办：默认 {currentTask?.defaultAssigneeName ?? findIdentityUser(currentTask?.defaultAssigneeId ?? "")?.name ?? "其他成员"} / 实际 {persona?.name}</Tag>}
         </div>
       </Modal>
 

@@ -11,7 +11,8 @@ import { useIdentityStore } from "../state/useIdentityStore";
 import { hasPersonaPermission } from "../state/rolePermissions";
 import { usePrototypeStore } from "../state/usePrototypeStore";
 import { definitionStatus, getPublishedVersion, type DefinitionStatus, type DefinitionType, type ProcessDefinition, type ProcessVersion } from "../state/useProcessDefinitionStore";
-import { parseProcessDefinitionImport, type ProcessDefinitionImportPreview } from "../utils/processDefinitionTransfer";
+import { parseProcessDefinitionImport, processDefinitionImportReferencedUserNames, type ProcessDefinitionImportPreview } from "../utils/processDefinitionTransfer";
+import { mergeDirectoryUsers } from "../hooks/useDirectoryUserCandidates";
 import { formatDisplayDateTime } from "../utils/domainTime";
 import "./process-admin-pages.css";
 
@@ -164,8 +165,19 @@ export function ProcessManagementPage() {
     }
     try {
       const sourceText = await file.text();
-      const preview = parseProcessDefinitionImport(sourceText, { users, roles, workflowGroups });
-      setImportPreview({ ...preview, fileName: file.name, document: JSON.parse(sourceText) as unknown });
+      const document = JSON.parse(sourceText) as unknown;
+      const referencedUserNames = processDefinitionImportReferencedUserNames(document);
+      const matchedUserPages = await Promise.all(referencedUserNames.map((name) =>
+        flowPilotApi.directory.users({ page: 1, pageSize: 100, q: name })));
+      const referencedUsers = matchedUserPages
+        .flatMap((page) => page.items)
+        .filter((user) => referencedUserNames.includes(user.name));
+      const preview = parseProcessDefinitionImport(sourceText, {
+        users: mergeDirectoryUsers([...users, ...referencedUsers]),
+        roles,
+        workflowGroups,
+      });
+      setImportPreview({ ...preview, fileName: file.name, document });
     } catch (error) {
       message.error(error instanceof Error ? error.message : "流程定义导入文件无法解析");
     }
