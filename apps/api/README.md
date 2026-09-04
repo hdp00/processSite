@@ -148,5 +148,6 @@ pnpm publish:api
 - [数据库结构](../../document/BACKEND_DATABASE_SCHEMA.md)
 - [后端生产部署 Runbook](../../document/BACKEND_DEPLOYMENT_RUNBOOK.md)
 - [后端首次安装向导](../../deployment/Install-FlowPilotBackend.ps1)
+- [数据库更新向导](../../deployment/Update-FlowPilotDatabase.ps1)
 - [IIS 部署指南](../../document/IIS_DEPLOYMENT.md)
 - [OpenAPI 契约](../../document/flowpilot-rest-api.openapi.yaml)

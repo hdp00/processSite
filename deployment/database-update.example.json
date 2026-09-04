@@ -1,0 +1,6 @@
+{
+  "DeploymentRoot": "D:\\web\\flowpilot",
+  "ConnectionStrings": {
+    "FlowPilotMigration": "Server=<SQL Server 主机>;Database=<数据库名>;User ID=<迁移账号>;Password=<迁移密码>;Encrypt=false;TrustServerCertificate=true;Connection Timeout=15;Min Pool Size=0;Max Pool Size=20"
+  }
+}

@@ -670,6 +670,23 @@ LocalAddress LocalPort
 
 本手册只用于第一次安装。
 
+数据库结构更新使用：
+
+```text
+deployment\Update-FlowPilotDatabase.ps1
+deployment\database-update.local.json
+```
+
+首次使用时，复制 `database-update.example.json` 的结构填写本机配置。`database-update.local.json` 已被 Git 明确忽略，只保存迁移账号连接字符串和部署根目录，不得改名后提交。
+
+在与新发布版本完全一致的仓库中执行：
+
+```powershell
+& ".\deployment\Update-FlowPilotDatabase.ps1"
+```
+
+脚本读取部署目录中的运行账号与排序规则，核对迁移账号和运行账号指向同一数据库，然后依次执行 initialize、seed 和 verify。脚本不停止或启动服务、不切换发布目录，也不执行数据库备份。
+
 升级和回滚会涉及：
 
 - 停止 Windows 服务和 IIS；
